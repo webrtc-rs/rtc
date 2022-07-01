@@ -1,8 +1,8 @@
 [package]
 name = "rtc"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
-authors = ["Rain Liu <y@liu.x>"]
+authors = ["Rain Liu <y@liu.mx>"]
 description = "RTC in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc"
