@@ -1,0 +1,36 @@
+[package]
+name = "srtp"
+version = "0.9.1"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
+edition = "2021"
+description = "SRTP in Rust"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/srtp"
+repository = "https://github.com/webrtc-rs/srtp"
+
+[dependencies]
+util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = [
+    "conn",
+    "buffer",
+    "marshal",
+] }
+rtp = "0.7.0"
+rtcp = "0.8.0"
+shared = { version = "0.1.0", path = "../shared", package = "shared" }
+
+byteorder = "1"
+bytes = "1"
+thiserror = "1.0"
+hmac = { version = "0.12.1", features = ["std", "reset"] }
+sha1 = "0.10.5"
+ctr = "0.8.0"
+aes = "0.7.5"
+subtle = "2.4"
+tokio = { version = "1.19", features = ["full"] }
+log = "0.4.16"
+aead = { version = "0.4.3", features = ["std"] }
+aes-gcm = { version = "0.10.1", features = ["std"] }
+
+[dev-dependencies]
+tokio-test = "0.4.0" # must match the min version of the `tokio` crate above
+lazy_static = "1.4.0"
