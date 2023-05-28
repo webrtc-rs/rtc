@@ -17,7 +17,7 @@ util = { version = "0.7.0", package = "webrtc-util", default-features = false, f
 rtp = "0.7.0"
 rtcp = "0.8.0"
 shared = { version = "0.1.0", path = "../shared", package = "shared" }
-
+retty = "0.23.3"
 byteorder = "1"
 bytes = "1"
 thiserror = "1.0"
