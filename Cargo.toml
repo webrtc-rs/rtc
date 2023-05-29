@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "rtcp",
+    "rtp",
+    "sdp",
     "shared",
     "srtp",
     "webrtc",

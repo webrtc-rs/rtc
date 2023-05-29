@@ -5,11 +5,11 @@ mod srtcp_test;
 #[cfg(test)]
 mod srtp_test;
 
-use crate::error::Result;
 use crate::{
-    cipher::cipher_aead_aes_gcm::*, cipher::cipher_aes_cm_hmac_sha1::*, cipher::*, error::Error,
-    option::*, protection_profile::*,
+    cipher::cipher_aead_aes_gcm::*, cipher::cipher_aes_cm_hmac_sha1::*, cipher::*, option::*,
+    protection_profile::*,
 };
+use shared::error::{Error, Result};
 
 use std::collections::HashMap;
 use util::replay_detector::*;

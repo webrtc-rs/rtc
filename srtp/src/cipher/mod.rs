@@ -3,7 +3,7 @@ pub mod cipher_aes_cm_hmac_sha1;
 
 use bytes::Bytes;
 
-use crate::error::Result;
+use shared::error::Result;
 
 ///NOTE: Auth tag and AEAD auth tag are placed at the different position in SRTCP
 ///

@@ -1,7 +1,17 @@
 [package]
 name = "shared"
-version = "0.1.0"
+version = "0.0.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
+description = "Shared in Rust"
+license = "MIT/Apache-2.0"
+
+[features]
+default = ["crypto", "marshal"]
+crypto = []
+marshal = []
 
 [dependencies]
 thiserror = "~1.0.2"
+bytes = "1.4.0"
+aes-gcm = { version = "0.10.1", features = ["std"] }

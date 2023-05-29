@@ -3,14 +3,12 @@ mod session_rtcp_test;
 #[cfg(test)]
 mod session_rtp_test;
 
-use crate::{
-    config::*,
-    context::*,
+use crate::{config::*, context::*, option::*, stream::*};
+use shared::{
     error::{Error, Result},
-    option::*,
-    stream::*,
+    marshal::{Marshal, Unmarshal},
 };
-use util::{conn::Conn, marshal::*};
+use util::conn::Conn;
 
 use bytes::Bytes;
 use std::collections::HashSet;

@@ -1,7 +1,9 @@
 use super::Cipher;
-use crate::error::Result;
-use crate::{error::Error, key_derivation::*, protection_profile::*};
-use util::marshal::*;
+use crate::{key_derivation::*, protection_profile::*};
+use shared::{
+    error::{Error, Result},
+    marshal::*,
+};
 
 use aes::cipher::generic_array::GenericArray;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};

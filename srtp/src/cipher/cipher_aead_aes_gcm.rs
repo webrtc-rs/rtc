@@ -6,11 +6,11 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 
 use super::Cipher;
-use crate::{
+use crate::key_derivation::*;
+use shared::{
     error::{Error, Result},
-    key_derivation::*,
+    marshal::*,
 };
-use util::marshal::*;
 
 pub const CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN: usize = 16;
 

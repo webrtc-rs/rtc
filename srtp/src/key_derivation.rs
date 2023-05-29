@@ -5,7 +5,7 @@ use aes::{Aes128, BlockEncrypt};
 use byteorder::{BigEndian, WriteBytesExt};
 use std::io::BufWriter;
 
-use crate::error::{Error, Result};
+use shared::error::{Error, Result};
 
 pub const LABEL_SRTP_ENCRYPTION: u8 = 0x00;
 pub const LABEL_SRTP_AUTHENTICATION_TAG: u8 = 0x01;

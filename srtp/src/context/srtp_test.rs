@@ -1,5 +1,5 @@
 use super::*;
-use util::marshal::*;
+use shared::marshal::*;
 
 use bytes::Bytes;
 use lazy_static::lazy_static;
