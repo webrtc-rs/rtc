@@ -3,7 +3,7 @@ use aes_gcm::{
     Aes128Gcm, KeyInit, Nonce,
 };
 use byteorder::{BigEndian, ByteOrder};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use super::Cipher;
 use crate::key_derivation::*;
@@ -34,7 +34,7 @@ impl Cipher for CipherAeadAesGcm {
         payload: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes> {
+    ) -> Result<BytesMut> {
         // Grow the given buffer to fit the output.
         let mut writer =
             BytesMut::with_capacity(header.marshal_size() + payload.len() + self.auth_tag_len());
@@ -53,7 +53,7 @@ impl Cipher for CipherAeadAesGcm {
         )?;
 
         writer.extend(encrypted);
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
     fn decrypt_rtp(
@@ -61,7 +61,7 @@ impl Cipher for CipherAeadAesGcm {
         ciphertext: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes> {
+    ) -> Result<BytesMut> {
         if ciphertext.len() < self.auth_tag_len() {
             return Err(Error::ErrFailedToVerifyAuthTag);
         }
@@ -80,10 +80,15 @@ impl Cipher for CipherAeadAesGcm {
         writer.extend_from_slice(&ciphertext[..payload_offset]);
         writer.extend(decrypted_msg);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
-    fn encrypt_rtcp(&mut self, decrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn encrypt_rtcp(
+        &mut self,
+        decrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         let iv = self.rtcp_initialization_vector(srtcp_index, ssrc);
         let aad = self.rtcp_additional_authenticated_data(decrypted, srtcp_index);
 
@@ -100,10 +105,15 @@ impl Cipher for CipherAeadAesGcm {
         writer.extend(encrypted_data);
         writer.extend_from_slice(&aad[8..]);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
-    fn decrypt_rtcp(&mut self, encrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn decrypt_rtcp(
+        &mut self,
+        encrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         if encrypted.len() < self.auth_tag_len() + SRTCP_INDEX_SIZE {
             return Err(Error::ErrFailedToVerifyAuthTag);
         }
@@ -123,7 +133,7 @@ impl Cipher for CipherAeadAesGcm {
         writer.extend_from_slice(&encrypted[..8]);
         writer.extend(decrypted_data);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
     fn get_rtcp_index(&self, input: &[u8]) -> usize {

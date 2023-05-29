@@ -7,7 +7,7 @@ use shared::{
 
 use aes::cipher::generic_array::GenericArray;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use ctr::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
@@ -171,7 +171,7 @@ impl Cipher for CipherAesCmHmacSha1 {
         payload: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes> {
+    ) -> Result<BytesMut> {
         let mut writer =
             BytesMut::with_capacity(header.marshal_size() + payload.len() + self.auth_tag_len());
 
@@ -199,7 +199,7 @@ impl Cipher for CipherAesCmHmacSha1 {
         let auth_tag = self.generate_srtp_auth_tag(&writer, roc)?;
         writer.extend(auth_tag);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
     fn decrypt_rtp(
@@ -207,7 +207,7 @@ impl Cipher for CipherAesCmHmacSha1 {
         encrypted: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes> {
+    ) -> Result<BytesMut> {
         if encrypted.len() < self.auth_tag_len() {
             return Err(Error::SrtpTooSmall(encrypted.len(), self.auth_tag_len()));
         }
@@ -245,10 +245,15 @@ impl Cipher for CipherAesCmHmacSha1 {
         stream.seek(0);
         stream.apply_keystream(&mut writer[payload_offset..]);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
-    fn encrypt_rtcp(&mut self, decrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn encrypt_rtcp(
+        &mut self,
+        decrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         let mut writer =
             BytesMut::with_capacity(decrypted.len() + SRTCP_INDEX_SIZE + self.auth_tag_len());
 
@@ -278,10 +283,15 @@ impl Cipher for CipherAesCmHmacSha1 {
         let auth_tag = self.generate_srtcp_auth_tag(&writer);
         writer.extend(auth_tag);
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 
-    fn decrypt_rtcp(&mut self, encrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn decrypt_rtcp(
+        &mut self,
+        encrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         if encrypted.len() < self.auth_tag_len() + SRTCP_INDEX_SIZE {
             return Err(Error::SrtcpTooSmall(
                 encrypted.len(),
@@ -297,7 +307,7 @@ impl Cipher for CipherAesCmHmacSha1 {
 
         let is_encrypted = encrypted[tail_offset] >> 7;
         if is_encrypted == 0 {
-            return Ok(writer.freeze());
+            return Ok(writer);
         }
 
         // Split the auth tag and the cipher text into two parts.
@@ -329,6 +339,6 @@ impl Cipher for CipherAesCmHmacSha1 {
             &mut writer[rtcp::header::HEADER_LENGTH + rtcp::header::SSRC_LENGTH..],
         );
 
-        Ok(writer.freeze())
+        Ok(writer)
     }
 }

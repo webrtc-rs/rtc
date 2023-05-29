@@ -1,11 +1,11 @@
 use super::*;
 use shared::{error::Result, marshal::Unmarshal};
 
-use bytes::Bytes;
+use bytes::BytesMut;
 
 impl Context {
     /// DecryptRTCP decrypts a RTCP packet with an encrypted payload
-    pub fn decrypt_rtcp(&mut self, encrypted: &[u8]) -> Result<Bytes> {
+    pub fn decrypt_rtcp(&mut self, encrypted: &[u8]) -> Result<BytesMut> {
         let mut buf = encrypted;
         rtcp::header::Header::unmarshal(&mut buf)?;
 
@@ -39,7 +39,7 @@ impl Context {
 
     /// EncryptRTCP marshals and encrypts an RTCP packet, writing to the dst buffer provided.
     /// If the dst buffer does not have the capacity to hold `len(plaintext) + 14` bytes, a new one will be allocated and returned.
-    pub fn encrypt_rtcp(&mut self, decrypted: &[u8]) -> Result<Bytes> {
+    pub fn encrypt_rtcp(&mut self, decrypted: &[u8]) -> Result<BytesMut> {
         let mut buf = decrypted;
         rtcp::header::Header::unmarshal(&mut buf)?;
 

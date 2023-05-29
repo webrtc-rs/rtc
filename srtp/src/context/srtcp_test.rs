@@ -243,7 +243,7 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
     for (i, expected_index) in [1, 1, 2, 2].iter().enumerate() {
         assert_eq!(
             *expected_index,
-            get_rtcp_index(&encrypted_rctps[i], auth_tag_len),
+            get_rtcp_index(&encrypted_rctps[i].clone().freeze(), auth_tag_len),
             "RTCP index does not match"
         );
     }

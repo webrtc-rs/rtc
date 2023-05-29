@@ -1,7 +1,7 @@
 pub mod cipher_aead_aes_gcm;
 pub mod cipher_aes_cm_hmac_sha1;
 
-use bytes::Bytes;
+use bytes::BytesMut;
 
 use shared::error::Result;
 
@@ -43,7 +43,7 @@ pub(crate) trait Cipher {
         payload: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes>;
+    ) -> Result<BytesMut>;
 
     /// Decrypt RTP payload.
     fn decrypt_rtp(
@@ -51,11 +51,11 @@ pub(crate) trait Cipher {
         payload: &[u8],
         header: &rtp::header::Header,
         roc: u32,
-    ) -> Result<Bytes>;
+    ) -> Result<BytesMut>;
 
     /// Encrypt RTCP payload.
-    fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes>;
+    fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;
 
     /// Decrypt RTCP payload.
-    fn decrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes>;
+    fn decrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;
 }
