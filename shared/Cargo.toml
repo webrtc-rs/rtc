@@ -7,9 +7,10 @@ description = "Shared in Rust"
 license = "MIT/Apache-2.0"
 
 [features]
-default = ["crypto", "marshal"]
+default = ["crypto", "marshal", "replay"]
 crypto = []
 marshal = []
+replay = []
 
 [dependencies]
 thiserror = "~1.0.2"

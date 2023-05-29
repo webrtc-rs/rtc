@@ -1,4 +1,4 @@
-use util::replay_detector::*;
+use shared::replay_detector::*;
 
 pub type ContextOption = Box<dyn (Fn() -> Box<dyn ReplayDetector + Send + 'static>) + Send + Sync>;
 
