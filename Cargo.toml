@@ -5,6 +5,7 @@ members = [
     "sdp",
     "shared",
     "srtp",
+    "stun",
     "webrtc",
 ]
 

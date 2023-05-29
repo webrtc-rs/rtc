@@ -1,0 +1,42 @@
+[package]
+name = "stun"
+version = "0.0.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
+edition = "2021"
+description = "STUN in Rust"
+license = "MIT/Apache-2.0"
+
+[features]
+default = []
+bench = []
+
+[dependencies]
+shared = { path = "../shared", package = "shared", default-features = false, features = [] }
+
+lazy_static = "1.4"
+url = "2.2"
+rand = "0.8.5"
+base64 = "0.13.0"
+subtle = "2.4"
+crc = "3.0"
+ring = "0.16.20"
+md-5 = "0.10.1"
+thiserror = "1.0"
+
+[dev-dependencies]
+clap = "3.2.6"
+criterion = "0.4.0"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[[example]]
+name = "stun_client"
+path = "examples/stun_client.rs"
+bench = false
+
+[[example]]
+name = "stun_decode"
+path = "examples/stun_decode.rs"
+bench = false
