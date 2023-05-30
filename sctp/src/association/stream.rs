@@ -1,9 +1,9 @@
 use crate::association::state::AssociationState;
 use crate::association::Association;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
-use crate::error::{Error, Result};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
 use crate::{ErrorCauseCode, Side};
+use shared::error::{Error, Result};
 
 use crate::util::{ByteSlice, BytesArray, BytesSource};
 use bytes::Bytes;

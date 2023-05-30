@@ -18,8 +18,8 @@ pub(crate) mod chunk_shutdown_ack;
 pub(crate) mod chunk_shutdown_complete;
 pub(crate) mod chunk_type;
 
-use crate::error::{Error, Result};
 use chunk_header::*;
+use shared::error::{Error, Result};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::marker::Sized;

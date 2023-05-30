@@ -14,7 +14,6 @@ use crate::chunk::{
     ErrorCauseUnrecognizedChunkType,
 };
 use crate::config::{ServerConfig, TransportConfig, COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE};
-use crate::error::{Error, Result};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
     param_heartbeat_info::ParamHeartbeatInfo,
@@ -28,6 +27,7 @@ use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side, Transmit};
+use shared::error::{Error, Result};
 use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
 use timer::{RtoManager, Timer, TimerTable, ACK_INTERVAL};
 
@@ -52,7 +52,7 @@ mod timer;
 mod association_test;
 
 /// Reasons why an association might be lost
-#[derive(Debug, Error, Eq, Clone, PartialEq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum AssociationError {
     /// Handshake failed
     #[error("{0}")]

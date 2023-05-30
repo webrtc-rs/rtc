@@ -14,8 +14,8 @@ use crate::chunk::chunk_shutdown_ack::ChunkShutdownAck;
 use crate::chunk::chunk_shutdown_complete::ChunkShutdownComplete;
 use crate::chunk::chunk_type::*;
 use crate::chunk::Chunk;
-use crate::error::{Error, Result};
 use crate::util::*;
+use shared::error::{Error, Result};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crc::{Crc, CRC_32_ISCSI};

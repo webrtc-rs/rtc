@@ -43,9 +43,6 @@ pub use crate::config::{ClientConfig, EndpointConfig, ServerConfig, TransportCon
 mod endpoint;
 pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoint};
 
-mod error;
-pub use crate::error::Error;
-
 mod packet;
 
 mod shared;

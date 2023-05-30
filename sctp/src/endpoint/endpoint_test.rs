@@ -1,6 +1,6 @@
 use super::*;
 use crate::association::Event;
-use crate::error::{Error, Result};
+use shared::error::{Error, Result};
 
 use crate::association::state::{AckMode, AssociationState};
 use crate::association::stream::{ReliabilityType, Stream};

@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};
 
