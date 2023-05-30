@@ -8,8 +8,9 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn"] }
-shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto"] }
+shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto", "replay"] }
 
+retty = "0.23.3"
 byteorder = "1"
 rand_core = "0.6.3"
 hkdf = "~0.12.1"

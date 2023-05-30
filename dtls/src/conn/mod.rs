@@ -22,9 +22,10 @@ use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use crate::signature_hash_algorithm::parse_signature_schemes;
 use crate::state::*;
-use shared::error::*;
 
-use util::{replay_detector::*, Conn};
+use shared::{error::*, replay_detector::*};
+
+use util::Conn;
 
 use async_trait::async_trait;
 use log::*;
