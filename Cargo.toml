@@ -1,12 +1,12 @@
 [workspace]
 members = [
+    "rtc",
     "rtcp",
     "rtp",
     "sdp",
     "shared",
     "srtp",
     "stun",
-    "webrtc",
 ]
 
 [profile.dev]
