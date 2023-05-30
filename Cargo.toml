@@ -3,6 +3,7 @@ members = [
     "rtc",
     "rtcp",
     "rtp",
+    "sctp",
     "sdp",
     "shared",
     "srtp",
