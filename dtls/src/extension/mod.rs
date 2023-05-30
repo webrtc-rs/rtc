@@ -13,7 +13,7 @@ use extension_supported_signature_algorithms::*;
 use extension_use_extended_master_secret::*;
 use extension_use_srtp::*;
 
-use crate::error::*;
+use shared::error::*;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};

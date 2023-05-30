@@ -2,11 +2,11 @@ use super::flight2::*;
 use super::*;
 use crate::config::*;
 use crate::conn::*;
-use crate::error::Error;
 use crate::extension::*;
 use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use crate::*;
+use shared::error::Error;
 
 use async_trait::async_trait;
 use rand::Rng;

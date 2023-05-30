@@ -1,6 +1,6 @@
 use rand_core::OsRng; // requires 'getrandom' feature
 
-use crate::error::*;
+use shared::error::*;
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 #[repr(u16)]

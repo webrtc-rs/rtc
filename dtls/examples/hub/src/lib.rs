@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use util::Conn;
 
-use dtls::Error;
+use shared::error::Error;
 
 const BUF_SIZE: usize = 8192;
 

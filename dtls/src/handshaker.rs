@@ -3,9 +3,9 @@ use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
 use crate::crypto::*;
-use crate::error::*;
 use crate::extension::extension_use_srtp::*;
 use crate::signature_hash_algorithm::*;
+use shared::error::*;
 
 use log::*;
 use std::collections::HashMap;

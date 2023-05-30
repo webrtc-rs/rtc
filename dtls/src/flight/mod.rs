@@ -7,11 +7,11 @@ pub(crate) mod flight5;
 pub(crate) mod flight6;
 
 use crate::alert::*;
-use crate::error::Error;
 use crate::handshake::handshake_cache::*;
 use crate::handshaker::*;
 use crate::record_layer::*;
 use crate::state::*;
+use shared::error::Error;
 
 use async_trait::async_trait;
 use std::fmt;

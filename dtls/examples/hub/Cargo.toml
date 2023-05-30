@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn"] }
+shared = { path = "../../../shared", package = "shared", default-features = false, features = [] }
 dtls = { package = "dtls", path = "../../" }
 
 tokio = { version = "1", features = ["full"] }

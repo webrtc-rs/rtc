@@ -1,9 +1,9 @@
 use crate::config::*;
 use crate::conn::DTLSConn;
 use crate::content::ContentType;
-use crate::error::Result;
 use crate::record_layer::record_layer_header::RecordLayerHeader;
 use crate::record_layer::unpack_datagram;
+use shared::error::*;
 
 use async_trait::async_trait;
 use std::future::Future;
@@ -44,7 +44,11 @@ pub async fn listen<A: 'static + ToSocketAddrs>(laddr: A, config: Config) -> Res
         ..Default::default()
     };
 
-    let parent = Arc::new(lc.listen(laddr).await?);
+    let parent = Arc::new(
+        lc.listen(laddr)
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?,
+    );
     Ok(DTLSListener { parent, config })
 }
 

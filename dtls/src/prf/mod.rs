@@ -15,8 +15,8 @@ type HmacSha1 = Hmac<Sha1>;
 use crate::cipher_suite::CipherSuiteHash;
 use crate::content::ContentType;
 use crate::curve::named_curve::*;
-use crate::error::*;
 use crate::record_layer::record_layer_header::ProtocolVersion;
+use shared::error::*;
 
 pub(crate) const PRF_MASTER_SECRET_LABEL: &str = "master secret";
 pub(crate) const PRF_EXTENDED_MASTER_SECRET_LABEL: &str = "extended master secret";

@@ -4,7 +4,6 @@ use crate::cipher_suite::*;
 use crate::compression_methods::*;
 use crate::crypto::*;
 use crate::curve::*;
-use crate::error::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
 use crate::extension::extension_supported_signature_algorithms::*;
@@ -17,6 +16,7 @@ use crate::handshake::handshake_message_server_hello_done::*;
 use crate::handshake::handshake_message_server_key_exchange::*;
 use crate::handshake::handshake_random::*;
 use crate::signature_hash_algorithm::*;
+use shared::error::*;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use rand::Rng;
@@ -2081,7 +2081,10 @@ async fn test_protocol_version_validation() -> Result<()> {
                 }
 
                 let _ = ca.send(&packet).await;
-                n = ca.recv(&mut resp).await?;
+                n = ca
+                    .recv(&mut resp)
+                    .await
+                    .map_err(|err| Error::Other(err.to_string()))?;
             }
 
             let mut reader = BufReader::new(&resp[..n]);
@@ -2213,7 +2216,10 @@ async fn test_protocol_version_validation() -> Result<()> {
 
             let mut resp = vec![0; 1024];
             for record in records {
-                let _ = ca.recv(&mut resp).await?;
+                let _ = ca
+                    .recv(&mut resp)
+                    .await
+                    .map_err(|err| Error::Other(err.to_string()))?;
 
                 let mut packet = vec![];
                 {
@@ -2223,7 +2229,10 @@ async fn test_protocol_version_validation() -> Result<()> {
                 let _ = ca.send(&packet).await;
             }
 
-            let n = ca.recv(&mut resp).await?;
+            let n = ca
+                .recv(&mut resp)
+                .await
+                .map_err(|err| Error::Other(err.to_string()))?;
 
             let mut reader = BufReader::new(&resp[..n]);
             let h = RecordLayerHeader::unmarshal(&mut reader)?;
@@ -2304,7 +2313,10 @@ async fn test_multiple_hello_verify_request() -> Result<()> {
 
         // read client hello
         let mut resp = vec![0; 1024];
-        let n = cb.recv(&mut resp).await?;
+        let n = cb
+            .recv(&mut resp)
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
         let mut reader = BufReader::new(&resp[..n]);
         let record = RecordLayer::unmarshal(&mut reader)?;
         match record.content {
@@ -2325,7 +2337,9 @@ async fn test_multiple_hello_verify_request() -> Result<()> {
             break;
         }
         // write hello verify request
-        cb.send(&packets[i]).await?;
+        cb.send(&packets[i])
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
     }
 
     Ok(())
@@ -2364,7 +2378,9 @@ async fn send_client_hello(
         record.marshal(&mut writer)?;
     }
 
-    ca.send(&packet).await?;
+    ca.send(&packet)
+        .await
+        .map_err(|err| Error::Other(err.to_string()))?;
 
     Ok(())
 }
@@ -2398,7 +2414,10 @@ async fn test_renegotation_info() -> Result<()> {
         let ca: Arc<dyn Conn + Send + Sync> = Arc::new(ca);
         send_client_hello(vec![], &ca, 0, send_renegotiation_info).await?;
 
-        let n = ca.recv(&mut resp).await?;
+        let n = ca
+            .recv(&mut resp)
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
         let mut reader = BufReader::new(&resp[..n]);
         let record = RecordLayer::unmarshal(&mut reader)?;
 
@@ -2421,7 +2440,10 @@ async fn test_renegotation_info() -> Result<()> {
             send_renegotiation_info,
         )
         .await?;
-        let n = ca.recv(&mut resp).await?;
+        let n = ca
+            .recv(&mut resp)
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
         let messages = unpack_datagram(&resp[..n])?;
 
         let mut reader = BufReader::new(&messages[0][..]);
@@ -2449,7 +2471,9 @@ async fn test_renegotation_info() -> Result<()> {
             "{name}: Received ServerHello without RenegotiationInfo"
         );
 
-        ca.close().await?;
+        ca.close()
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
     }
 
     Ok(())

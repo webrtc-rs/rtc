@@ -1,7 +1,7 @@
 use clap::{App, AppSettings, Arg};
 use dtls::config::{ClientAuthType, ExtendedMasterSecretType};
-use dtls::Error;
 use dtls::{config::Config, listener::listen};
+use shared::error::Error;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::sync::Arc;
@@ -112,5 +112,8 @@ async fn main() -> Result<(), Error> {
 
     done_tx.take();
 
-    Ok(listener.close().await?)
+    Ok(listener
+        .close()
+        .await
+        .map_err(|err| Error::Other(err.to_string()))?)
 }

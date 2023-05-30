@@ -2,7 +2,7 @@
 mod alert_test;
 
 use super::content::*;
-use crate::error::Result;
+use shared::error::Result;
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::fmt;

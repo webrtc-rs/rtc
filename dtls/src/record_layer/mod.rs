@@ -4,12 +4,12 @@ pub mod record_layer_header;
 mod record_layer_test;
 
 use super::content::*;
-use super::error::*;
 use crate::alert::Alert;
 use crate::application_data::ApplicationData;
 use crate::change_cipher_spec::ChangeCipherSpec;
 use crate::handshake::Handshake;
 use record_layer_header::*;
+use shared::error::*;
 
 use std::io::{Read, Write};
 

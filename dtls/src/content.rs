@@ -2,7 +2,7 @@ use super::alert::*;
 use super::application_data::*;
 use super::change_cipher_spec::*;
 use super::handshake::*;
-use crate::error::*;
+use shared::error::*;
 
 use std::io::{Read, Write};
 

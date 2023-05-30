@@ -7,9 +7,9 @@ pub mod crypto_gcm;
 pub mod padding;
 
 use crate::curve::named_curve::*;
-use crate::error::*;
 use crate::record_layer::record_layer_header::*;
 use crate::signature_hash_algorithm::{HashAlgorithm, SignatureAlgorithm, SignatureHashAlgorithm};
+use shared::error::*;
 
 use der_parser::{oid, oid::Oid};
 use rcgen::KeyPair;

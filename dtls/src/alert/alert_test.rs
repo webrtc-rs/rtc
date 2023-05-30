@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Error;
+use shared::error::Error;
 
 use std::io::{BufReader, BufWriter};
 

@@ -5,7 +5,6 @@ use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
 use crate::curve::*;
-use crate::error::Error;
 use crate::handshake::handshake_message_certificate::*;
 use crate::handshake::handshake_message_certificate_verify::*;
 use crate::handshake::handshake_message_client_key_exchange::*;
@@ -16,6 +15,7 @@ use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use crate::signature_hash_algorithm::*;
+use shared::error::Error;
 
 use async_trait::async_trait;
 use std::fmt;

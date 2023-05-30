@@ -1,6 +1,6 @@
 use crate::content::*;
 
-use crate::error::*;
+use shared::error::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};

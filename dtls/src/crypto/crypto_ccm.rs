@@ -14,8 +14,8 @@ use std::io::Cursor;
 
 use super::*;
 use crate::content::*;
-use crate::error::*;
 use crate::record_layer::record_layer_header::*;
+use shared::error::*;
 
 use aes::Aes128;
 use ccm::aead::{generic_array::GenericArray, AeadInPlace, NewAead};

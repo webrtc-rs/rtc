@@ -5,7 +5,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 
 use super::content::*;
-use super::error::*;
+use shared::error::*;
 
 // The change cipher spec protocol exists to signal transitions in
 // ciphering strategies.  The protocol consists of a single message,

@@ -19,7 +19,7 @@ use std::fmt;
 use std::io::{Read, Write};
 
 use super::content::*;
-use super::error::*;
+use shared::error::*;
 
 use handshake_header::*;
 use handshake_message_certificate::*;

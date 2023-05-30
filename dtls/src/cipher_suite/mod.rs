@@ -11,8 +11,8 @@ use std::fmt;
 use std::marker::{Send, Sync};
 
 use super::client_certificate_type::*;
-use super::error::*;
 use super::record_layer::record_layer_header::*;
+use shared::error::*;
 
 use cipher_suite_aes_128_gcm_sha256::*;
 use cipher_suite_aes_256_cbc_sha::*;

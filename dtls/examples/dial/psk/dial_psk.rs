@@ -1,7 +1,7 @@
 use clap::{App, AppSettings, Arg};
 use dtls::cipher_suite::CipherSuiteId;
-use dtls::Error;
 use dtls::{config::*, conn::DTLSConn};
+use shared::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -75,7 +75,10 @@ async fn main() -> Result<(), Error> {
     println!("Connected; type 'exit' to shutdown gracefully");
     let _ = hub::utilities::chat(Arc::clone(&dtls_conn)).await;
 
-    dtls_conn.close().await?;
+    dtls_conn
+        .close()
+        .await
+        .map_err(|err| Error::Other(err.to_string()))?;
 
     Ok(())
 }

@@ -1,7 +1,7 @@
 use clap::{App, AppSettings, Arg};
 use dtls::config::ExtendedMasterSecretType;
-use dtls::Error;
 use dtls::{config::Config, crypto::Certificate, listener::listen};
+use shared::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 use util::conn::*;
@@ -81,5 +81,8 @@ async fn main() -> Result<(), Error> {
 
     h.chat().await;
 
-    Ok(listener.close().await?)
+    Ok(listener
+        .close()
+        .await
+        .map_err(|err| Error::Other(err.to_string()))?)
 }

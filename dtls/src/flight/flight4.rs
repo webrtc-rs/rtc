@@ -8,7 +8,6 @@ use crate::content::*;
 use crate::crypto::*;
 use crate::curve::named_curve::*;
 use crate::curve::*;
-use crate::error::Error;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
 use crate::extension::extension_use_extended_master_secret::*;
@@ -24,6 +23,7 @@ use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use crate::signature_hash_algorithm::*;
+use shared::error::Error;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use async_trait::async_trait;
@@ -769,7 +769,7 @@ impl Flight for Flight4 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Result;
+    use shared::error::Result;
     use std::sync::Arc;
 
     struct MockCipherSuite {}

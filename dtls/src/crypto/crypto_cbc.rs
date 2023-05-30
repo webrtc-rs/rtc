@@ -12,9 +12,9 @@ use std::io::Cursor;
 use std::ops::Not;
 
 use crate::content::*;
-use crate::error::*;
 use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
+use shared::error::*;
 
 use aes::Aes256;
 use block_modes::BlockModeError;

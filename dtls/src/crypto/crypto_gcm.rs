@@ -13,8 +13,8 @@ use std::io::Cursor;
 
 use super::*;
 use crate::content::*;
-use crate::error::*;
 use crate::record_layer::record_layer_header::*;
+use shared::error::*;
 
 use aes_gcm::aead::{generic_array::GenericArray, AeadInPlace};
 use aes_gcm::Aes128Gcm; // what about Aes256Gcm?

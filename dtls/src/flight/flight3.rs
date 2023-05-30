@@ -4,7 +4,6 @@ use crate::compression_methods::*;
 use crate::config::*;
 use crate::content::*;
 use crate::curve::named_curve::*;
-use crate::error::Error;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -17,6 +16,7 @@ use crate::handshake::handshake_message_server_key_exchange::*;
 use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
+use shared::error::Error;
 
 use crate::cipher_suite::cipher_suite_for_id;
 use crate::prf::{prf_pre_master_secret, prf_psk_pre_master_secret};

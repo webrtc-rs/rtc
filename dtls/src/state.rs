@@ -4,7 +4,7 @@ use super::curve::named_curve::*;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
 use super::prf::*;
-use crate::error::*;
+use shared::error::*;
 
 use serde::{Deserialize, Serialize};
 use shared::crypto::KeyingMaterialExporter;
@@ -259,11 +259,11 @@ impl KeyingMaterialExporter for State {
         length: usize,
     ) -> shared::error::Result<Vec<u8>> {
         if self.local_epoch.load(Ordering::SeqCst) == 0 {
-            return Err(shared::error::Error::HandshakeInProgress);
+            return Err(Error::HandshakeInProgress);
         } else if !context.is_empty() {
-            return Err(shared::error::Error::ContextUnsupported);
+            return Err(Error::ContextUnsupported);
         } else if INVALID_KEYING_LABELS.contains(&label) {
-            return Err(shared::error::Error::ReservedExportKeyingMaterial);
+            return Err(Error::ReservedExportKeyingMaterial);
         }
 
         let mut local_random = vec![];
@@ -290,10 +290,10 @@ impl KeyingMaterialExporter for State {
         if let Some(cipher_suite) = &*cipher_suite {
             match prf_p_hash(&self.master_secret, &seed, length, cipher_suite.hash_func()) {
                 Ok(v) => Ok(v),
-                Err(err) => Err(shared::error::Error::Hash(err.to_string())),
+                Err(err) => Err(Error::Hash(err.to_string())),
             }
         } else {
-            Err(shared::error::Error::CipherSuiteUnset)
+            Err(Error::CipherSuiteUnset)
         }
     }
 }

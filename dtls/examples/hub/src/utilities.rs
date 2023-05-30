@@ -25,9 +25,9 @@ pub enum Error {
     Other(String),
 }
 
-impl From<Error> for dtls::Error {
+impl From<Error> for shared::error::Error {
     fn from(e: Error) -> Self {
-        dtls::Error::Other(e.to_string())
+        shared::error::Error::Other(e.to_string())
     }
 }
 

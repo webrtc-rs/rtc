@@ -5,7 +5,6 @@ use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
 use crate::curve::named_curve::*;
-use crate::error::Error;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -17,6 +16,7 @@ use crate::handshake::handshake_message_client_hello::*;
 use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
+use shared::error::Error;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use async_trait::async_trait;

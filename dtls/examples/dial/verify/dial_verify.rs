@@ -1,6 +1,6 @@
 use clap::{App, AppSettings, Arg};
-use dtls::Error;
 use dtls::{config::*, conn::DTLSConn};
+use shared::error::Error;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::sync::Arc;
@@ -84,7 +84,10 @@ async fn main() -> Result<(), Error> {
     println!("Connected; type 'exit' to shutdown gracefully");
     let _ = hub::utilities::chat(Arc::clone(&dtls_conn)).await;
 
-    dtls_conn.close().await?;
+    dtls_conn
+        .close()
+        .await
+        .map_err(|err| Error::Other(err.to_string()))?;
 
     Ok(())
 }

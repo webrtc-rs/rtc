@@ -7,7 +7,6 @@ use crate::cipher_suite::*;
 use crate::config::*;
 use crate::content::*;
 use crate::curve::named_curve::NamedCurve;
-use crate::error::*;
 use crate::extension::extension_use_srtp::*;
 use crate::flight::flight0::*;
 use crate::flight::flight1::*;
@@ -23,6 +22,7 @@ use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use crate::signature_hash_algorithm::parse_signature_schemes;
 use crate::state::*;
+use shared::error::*;
 
 use util::{replay_detector::*, Conn};
 
@@ -475,7 +475,10 @@ impl DTLSConn {
                 let mut reader_close_tx = self.reader_close_tx.lock().await;
                 reader_close_tx.take();
             }
-            self.conn.close().await?;
+            self.conn
+                .close()
+                .await
+                .map_err(|err| Error::Other(err.to_string()))?;
         }
 
         Ok(())
@@ -511,7 +514,10 @@ impl DTLSConn {
     pub(crate) async fn write_packets(&self, pkts: Vec<Packet>) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(1);
 
-        self.packet_tx.send((pkts, Some(tx))).await?;
+        self.packet_tx
+            .send((pkts, Some(tx)))
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
 
         if let Some(result) = rx.recv().await {
             result
@@ -581,7 +587,10 @@ impl DTLSConn {
                 compact_raw_packets(&raw_packets, maximum_transmission_unit);
 
             for compacted_raw_packets in &compacted_raw_packets {
-                next_conn.send(compacted_raw_packets).await?;
+                next_conn
+                    .send(compacted_raw_packets)
+                    .await
+                    .map_err(|err| Error::Other(err.to_string()))?;
             }
         }
 
@@ -751,7 +760,10 @@ impl DTLSConn {
         local_epoch: &Arc<AtomicU16>,
         handshake_completed_successfully: &Arc<AtomicBool>,
     ) -> Result<()> {
-        let n = next_conn.recv(buf).await?;
+        let n = next_conn
+            .recv(buf)
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;
         let pkts = unpack_datagram(&buf[..n])?;
         let mut has_handshake = false;
         for pkt in pkts {

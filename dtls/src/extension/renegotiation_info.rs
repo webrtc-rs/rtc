@@ -2,7 +2,7 @@
 mod renegotiation_info_test;
 
 use super::*;
-use crate::error::Error::ErrInvalidPacketLength;
+use shared::error::Error;
 
 const RENEGOTIATION_INFO_HEADER_SIZE: usize = 5;
 
@@ -36,7 +36,7 @@ impl ExtensionRenegotiationInfo {
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let l = reader.read_u16::<BigEndian>()?; //length
         if l != 1 {
-            return Err(ErrInvalidPacketLength);
+            return Err(Error::ErrInvalidPacketLength);
         }
 
         let renegotiated_connection = reader.read_u8()?;
