@@ -421,7 +421,7 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
         },
         cache: HandshakeCache::new(),
         decrypted_rx: Mutex::new(decrypted_rx),
-        handshake_completed_successfully: Arc::new(AtomicBool::new(false)),
+        handshake_completed: false,
         connection_closed_by_user: false,
         closed: AtomicBool::new(false),
         current_flight: Box::new(Flight0 {}) as Box<dyn Flight + Send + Sync>,

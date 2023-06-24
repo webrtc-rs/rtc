@@ -20,20 +20,17 @@ use crate::handshaker::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
 use crate::state::*;
+use std::collections::VecDeque;
 
 use shared::{error::*, replay_detector::*};
 
-use util::Conn;
-
-use async_trait::async_trait;
 use log::*;
 use std::io::{BufReader, BufWriter};
 use std::marker::{Send, Sync};
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::Duration;
 
 pub(crate) const INITIAL_TICKER_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const COOKIE_LENGTH: usize = 20;
@@ -73,7 +70,7 @@ pub struct DTLSConn {
     decrypted_rx: Mutex<mpsc::Receiver<Result<Vec<u8>>>>, // Decrypted Application Data or error, pull by calling `Read`
     pub(crate) state: State,                              // Internal state
 
-    handshake_completed_successfully: Arc<AtomicBool>,
+    handshake_completed: bool,
     connection_closed_by_user: bool,
     // closeLock              sync.Mutex
     closed: AtomicBool, //  *closer.Closer
@@ -89,19 +86,23 @@ pub struct DTLSConn {
     cancelHandshaker      func()
     cancelHandshakeReader func()
     */
+    pub(crate) current_handshake_state: HandshakeState,
+    pub(crate) current_retransmit_timer: Option<Instant>,
+
     pub(crate) current_flight: Box<dyn Flight + Send + Sync>,
     pub(crate) flights: Option<Vec<Packet>>,
     pub(crate) cfg: HandshakeConfig,
     pub(crate) retransmit: bool,
     pub(crate) handshake_rx: mpsc::Receiver<mpsc::Sender<()>>,
 
-    pub(crate) packet_tx: Arc<mpsc::Sender<PacketSendRequest>>,
+    pub(crate) packet_tx: VecDeque<Packet>,
     pub(crate) handle_queue_tx: mpsc::Sender<mpsc::Sender<()>>,
     pub(crate) handshake_done_tx: Option<mpsc::Sender<()>>,
 
     reader_close_tx: Mutex<Option<mpsc::Sender<()>>>,
 }
 
+/*
 type UtilResult<T> = std::result::Result<T, util::Error>;
 
 #[async_trait]
@@ -113,17 +114,17 @@ impl Conn for DTLSConn {
         self.read(buf, None).await.map_err(util::Error::from_std)
     }
     async fn recv_from(&self, buf: &mut [u8]) -> UtilResult<(usize, SocketAddr)> {
-        /*TODO: if let Some(raddr) = self.conn.remote_addr() {
+         if let Some(raddr) = self.conn.remote_addr() {
             let n = self.read(buf, None).await.map_err(util::Error::from_std)?;
             Ok((n, raddr))
-        } else */{
+        } else {
             Err(util::Error::Other(
                 "No remote address is provided by underlying Conn".to_owned(),
             ))
         }
     }
     async fn send(&self, buf: &[u8]) -> UtilResult<usize> {
-        self.write(buf, None).await.map_err(util::Error::from_std)
+        self.write(buf).map_err(util::Error::from_std)
     }
     async fn send_to(&self, _buf: &[u8], _target: SocketAddr) -> UtilResult<usize> {
         Err(util::Error::Other("Not applicable".to_owned()))
@@ -139,7 +140,7 @@ impl Conn for DTLSConn {
     async fn close(&self) -> UtilResult<()> {
         self.close().await.map_err(util::Error::from_std)
     }
-}
+}*/
 
 impl DTLSConn {
     pub fn new(
@@ -172,38 +173,34 @@ impl DTLSConn {
             )
         };
 
-        let (decrypted_tx, decrypted_rx) = mpsc::channel(1);
-        let (handshake_tx, handshake_rx) = mpsc::channel(1);
-        let (handshake_done_tx, handshake_done_rx) = mpsc::channel(1);
-        let (packet_tx, mut packet_rx) = mpsc::channel(1);
-        let (handle_queue_tx, mut handle_queue_rx) = mpsc::channel(1);
-        let (reader_close_tx, mut reader_close_rx) = mpsc::channel(1);
+        let (_decrypted_tx, decrypted_rx) = mpsc::channel(1);
+        let (_handshake_tx, handshake_rx) = mpsc::channel(1);
+        let (handshake_done_tx, _handshake_done_rx) = mpsc::channel(1);
+        let (handle_queue_tx, _handle_queue_rx) = mpsc::channel(1);
+        let (reader_close_tx, _reader_close_rx) = mpsc::channel(1);
 
-        let packet_tx = Arc::new(packet_tx);
-        let packet_tx2 = Arc::clone(&packet_tx);
         //let next_conn_rx = Arc::clone(&conn);
         //let next_conn_tx = Arc::clone(&conn);
         let cache = HandshakeCache::new();
-        let mut cache1 = cache.clone();
-        let cache2 = cache.clone();
-        let handshake_completed_successfully = Arc::new(AtomicBool::new(false));
-        let handshake_completed_successfully2 = Arc::clone(&handshake_completed_successfully);
 
         Self {
             //conn: Arc::clone(&conn),
             cache,
             decrypted_rx: Mutex::new(decrypted_rx),
             state,
-            handshake_completed_successfully,
+            handshake_completed: false,
             connection_closed_by_user: false,
             closed: AtomicBool::new(false),
+
+            current_handshake_state: initial_fsm_state,
+            current_retransmit_timer: None,
 
             current_flight: flight,
             flights: None,
             cfg: handshake_config,
             retransmit: false,
             handshake_rx,
-            packet_tx,
+            packet_tx: VecDeque::new(),
             handle_queue_tx,
             handshake_done_tx: Some(handshake_done_tx),
             reader_close_tx: Mutex::new(Some(reader_close_tx)),
@@ -305,12 +302,11 @@ impl DTLSConn {
 
         trace!("Handshake Completed");
         */
-
     }
 
     // Read reads data from the connection.
     pub async fn read(&self, p: &mut [u8], duration: Option<Duration>) -> Result<usize> {
-        if !self.is_handshake_completed_successfully() {
+        if !self.is_handshake_completed() {
             return Err(Error::ErrHandshakeInProgress);
         }
 
@@ -347,12 +343,12 @@ impl DTLSConn {
     }
 
     // Write writes len(p) bytes from p to the DTLS connection
-    pub async fn write(&self, p: &[u8], duration: Option<Duration>) -> Result<usize> {
+    pub fn write(&mut self, p: &[u8]) -> Result<usize> {
         if self.is_connection_closed() {
             return Err(Error::ErrConnClosed);
         }
 
-        if !self.is_handshake_completed_successfully() {
+        if !self.is_handshake_completed() {
             return Err(Error::ErrHandshakeInProgress);
         }
 
@@ -366,41 +362,28 @@ impl DTLSConn {
             reset_local_sequence_number: false,
         }];
 
-        if let Some(d) = duration {
-            let timer = tokio::time::sleep(d);
-            tokio::pin!(timer);
-
-            tokio::select! {
-                result = self.write_packets(pkts) => {
-                    result?;
-                }
-                _ = timer.as_mut() => return Err(Error::ErrDeadlineExceeded),
-            }
-        } else {
-            self.write_packets(pkts).await?;
-        }
+        self.write_packets(pkts);
 
         Ok(p.len())
     }
 
     // Close closes the connection.
-    pub async fn close(&self) -> Result<()> {
+    pub async fn close(&mut self) -> Result<()> {
         if !self.closed.load(Ordering::SeqCst) {
             self.closed.store(true, Ordering::SeqCst);
 
             // Discard error from notify() to return non-error on the first user call of Close()
             // even if the underlying connection is already closed.
-            self.notify(AlertLevel::Warning, AlertDescription::CloseNotify)
-                .await?;
+            self.notify(AlertLevel::Warning, AlertDescription::CloseNotify);
 
             {
                 let mut reader_close_tx = self.reader_close_tx.lock().await;
                 reader_close_tx.take();
             }
             /*TODO: self.conn
-                .close()
-                .await
-                .map_err(|err| Error::Other(err.to_string()))?;*/
+            .close()
+            .await
+            .map_err(|err| Error::Other(err.to_string()))?;*/
         }
 
         Ok(())
@@ -417,7 +400,7 @@ impl DTLSConn {
         self.state.srtp_protection_profile
     }
 
-    pub(crate) async fn notify(&self, level: AlertLevel, desc: AlertDescription) -> Result<()> {
+    pub(crate) fn notify(&mut self, level: AlertLevel, desc: AlertDescription) {
         self.write_packets(vec![Packet {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
@@ -427,24 +410,14 @@ impl DTLSConn {
                     alert_description: desc,
                 }),
             ),
-            should_encrypt: self.is_handshake_completed_successfully(),
+            should_encrypt: self.is_handshake_completed(),
             reset_local_sequence_number: false,
-        }])
-        .await
+        }]);
     }
 
-    pub(crate) async fn write_packets(&self, pkts: Vec<Packet>) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(1);
-
-        self.packet_tx
-            .send((pkts, Some(tx)))
-            .await
-            .map_err(|err| Error::Other(err.to_string()))?;
-
-        if let Some(result) = rx.recv().await {
-            result
-        } else {
-            Ok(())
+    pub(crate) fn write_packets(&mut self, pkts: Vec<Packet>) {
+        for pkt in pkts {
+            self.packet_tx.push_back(pkt);
         }
     }
 
@@ -472,14 +445,13 @@ impl DTLSConn {
                     p.record.record_layer_header.epoch,
                     h.handshake_header.message_sequence
                 );
-                cache
-                    .push(
-                        handshake_raw[RECORD_LAYER_HEADER_SIZE..].to_vec(),
-                        p.record.record_layer_header.epoch,
-                        h.handshake_header.message_sequence,
-                        h.handshake_header.handshake_type,
-                        is_client,
-                    );
+                cache.push(
+                    handshake_raw[RECORD_LAYER_HEADER_SIZE..].to_vec(),
+                    p.record.record_layer_header.epoch,
+                    h.handshake_header.message_sequence,
+                    h.handshake_header.handshake_type,
+                    is_client,
+                );
 
                 let raw_handshake_packets = DTLSConn::process_handshake_packet(
                     local_sequence_number,
@@ -664,13 +636,12 @@ impl DTLSConn {
         Ok(fragmented_handshakes)
     }
 
-    pub(crate) fn set_handshake_completed_successfully(&mut self) {
-        self.handshake_completed_successfully
-            .store(true, Ordering::SeqCst);
+    pub(crate) fn set_handshake_completed(&mut self) {
+        self.handshake_completed = true;
     }
 
-    pub(crate) fn is_handshake_completed_successfully(&self) -> bool {
-        self.handshake_completed_successfully.load(Ordering::SeqCst)
+    pub(crate) fn is_handshake_completed(&self) -> bool {
+        self.handshake_completed
     }
 
     async fn read_and_buffer(
@@ -954,14 +925,13 @@ impl DTLSConn {
                     }
                 };
 
-                ctx.cache
-                    .push(
-                        out,
-                        epoch,
-                        raw_handshake.handshake_header.message_sequence,
-                        raw_handshake.handshake_header.handshake_type,
-                        !ctx.is_client,
-                    );
+                ctx.cache.push(
+                    out,
+                    epoch,
+                    raw_handshake.handshake_header.message_sequence,
+                    raw_handshake.handshake_header.handshake_type,
+                    !ctx.is_client,
+                );
             }
 
             return (true, None, None);

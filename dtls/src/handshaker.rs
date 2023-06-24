@@ -11,6 +11,7 @@ use log::*;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 //use std::io::BufWriter;
 
@@ -90,7 +91,7 @@ pub struct HandshakeConfig {
     pub(crate) roots_cas: rustls::RootCertStore,
     pub(crate) server_cert_verifier: Arc<dyn rustls::ServerCertVerifier>,
     pub(crate) client_cert_verifier: Option<Arc<dyn rustls::ClientCertVerifier>>,
-    pub(crate) retransmit_interval: tokio::time::Duration,
+    pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
     //log           logging.LeveledLogger
     //mu sync.Mutex
@@ -197,32 +198,34 @@ pub(crate) fn srv_cli_str(is_client: bool) -> String {
 }
 
 impl DTLSConn {
-    pub(crate) async fn handshake(&mut self, mut state: HandshakeState) -> Result<()> {
+    pub(crate) fn handshake(&mut self) -> Result<()> {
         loop {
             trace!(
                 "[handshake:{}] {}: {}",
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string(),
-                state.to_string()
+                self.current_handshake_state.to_string()
             );
 
-            if state == HandshakeState::Finished && !self.is_handshake_completed_successfully() {
-                self.set_handshake_completed_successfully();
+            if self.current_handshake_state == HandshakeState::Finished
+                && !self.is_handshake_completed()
+            {
+                self.set_handshake_completed();
                 self.handshake_done_tx.take(); // drop it by take
                 return Ok(());
             }
 
-            state = match state {
-                HandshakeState::Preparing => self.prepare().await?,
-                HandshakeState::Sending => self.send().await?,
-                HandshakeState::Waiting => self.wait().await?,
-                HandshakeState::Finished => self.finish().await?,
+            self.current_handshake_state = match self.current_handshake_state {
+                HandshakeState::Preparing => self.prepare()?,
+                HandshakeState::Sending => self.send()?,
+                HandshakeState::Waiting => self.wait()?,
+                HandshakeState::Finished => self.finish()?,
                 _ => return Err(Error::ErrInvalidFsmTransition),
             };
         }
     }
 
-    async fn prepare(&mut self) -> Result<HandshakeState> {
+    fn prepare(&mut self) -> Result<HandshakeState> {
         self.flights = None;
 
         // Prepare flights
@@ -233,15 +236,9 @@ impl DTLSConn {
             .generate(&mut self.state, &self.cache, &self.cfg);
 
         match result {
-            Err((a, mut err)) => {
+            Err((a, err)) => {
                 if let Some(a) = a {
-                    let alert_err = self.notify(a.alert_level, a.alert_description).await;
-
-                    if let Err(alert_err) = alert_err {
-                        if err.is_some() {
-                            err = Some(alert_err);
-                        }
-                    }
+                    self.notify(a.alert_level, a.alert_description);
                 }
                 if let Some(err) = err {
                     return Err(err);
@@ -275,23 +272,21 @@ impl DTLSConn {
 
         Ok(HandshakeState::Sending)
     }
-    async fn send(&mut self) -> Result<HandshakeState> {
+    fn send(&mut self) -> Result<HandshakeState> {
         // Send flights
         if let Some(pkts) = self.flights.clone() {
-            self.write_packets(pkts).await?;
+            self.write_packets(pkts);
         }
 
         if self.current_flight.is_last_send_flight() {
             Ok(HandshakeState::Finished)
         } else {
+            self.current_retransmit_timer = Some(Instant::now() + self.cfg.retransmit_interval);
             Ok(HandshakeState::Waiting)
         }
     }
-    async fn wait(&mut self) -> Result<HandshakeState> {
-        let retransmit_timer = tokio::time::sleep(self.cfg.retransmit_interval);
-        tokio::pin!(retransmit_timer);
-
-        loop {
+    fn wait(&mut self) -> Result<HandshakeState> {
+        /*loop {
             tokio::select! {
                  done = self.handshake_rx.recv() =>{
                     if done.is_none() {
@@ -311,13 +306,7 @@ impl DTLSConn {
                                     err);
 
                             if let Some(alert) = alert {
-                                let alert_err = self.notify(alert.alert_level, alert.alert_description).await;
-
-                                if let Err(alert_err) = alert_err {
-                                    if err.is_some() {
-                                        err = Some(alert_err);
-                                    }
-                                }
+                                self.notify(alert.alert_level, alert.alert_description);
                             }
                             if let Some(err) = err {
                                 return Err(err);
@@ -333,23 +322,24 @@ impl DTLSConn {
                         }
                     };
                 }
-
-                _ = retransmit_timer.as_mut() =>{
-                    trace!("[handshake:{}] {} retransmit_timer", srv_cli_str(self.state.is_client), self.current_flight.to_string());
-
-                    if !self.retransmit {
-                        return Ok(HandshakeState::Waiting);
-                    }
-                    return Ok(HandshakeState::Sending);
-                }
-
-                /*_ = self.done_rx.recv() => {
-                    return Err(Error::new("done_rx recv".to_owned()));
-                }*/
             }
+        }*/
+
+        trace!(
+            "[handshake:{}] {} retransmit_timer",
+            srv_cli_str(self.state.is_client),
+            self.current_flight.to_string()
+        );
+
+        if self.retransmit {
+            Ok(HandshakeState::Sending)
+        } else {
+            self.current_retransmit_timer = Some(Instant::now() + self.cfg.retransmit_interval);
+            Ok(HandshakeState::Waiting)
         }
     }
-    async fn finish(&mut self) -> Result<HandshakeState> {
+    fn finish(&mut self) -> Result<HandshakeState> {
+        /*TODO:
         let retransmit_timer = tokio::time::sleep(self.cfg.retransmit_interval);
 
         tokio::select! {
@@ -363,12 +353,7 @@ impl DTLSConn {
                 match result {
                     Err((alert, mut err)) => {
                         if let Some(alert) = alert {
-                            let alert_err = self.notify(alert.alert_level, alert.alert_description).await;
-                            if let Err(alert_err) = alert_err {
-                                if err.is_some() {
-                                    err = Some(alert_err);
-                                }
-                            }
+                            self.notify(alert.alert_level, alert.alert_description);
                         }
                         if let Some(err) = err {
                             return Err(err);
@@ -381,11 +366,7 @@ impl DTLSConn {
                     }
                 };
             }
-
-            /*_ = self.done_rx.recv() => {
-                return Err(Error::new("done_rx recv".to_owned()));
-            }*/
-        }
+        }*/
 
         Ok(HandshakeState::Finished)
     }

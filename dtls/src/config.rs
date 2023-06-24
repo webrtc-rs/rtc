@@ -1,14 +1,14 @@
-use std::net::SocketAddr;
 use crate::cipher_suite::*;
 use crate::crypto::*;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::handshaker::{HandshakeConfig, VerifyPeerCertificateFn};
 use crate::signature_hash_algorithm::{parse_signature_schemes, SignatureScheme};
 use shared::error::*;
+use std::net::SocketAddr;
 
+use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use std::sync::Arc;
 use tokio::time::Duration;
-use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
@@ -182,30 +182,26 @@ impl Config {
             }
         }
 
-        parse_cipher_suites(
-            &self.cipher_suites,
-            self.psk.is_none(),
-            self.psk.is_some(),
-        )?;
+        parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?;
 
         Ok(())
     }
 
-    pub fn generate_handshake_config(&mut self, is_client: bool, remote_addr: Option<SocketAddr>) -> Result<HandshakeConfig> {
+    pub fn generate_handshake_config(
+        &mut self,
+        is_client: bool,
+        remote_addr: Option<SocketAddr>,
+    ) -> Result<HandshakeConfig> {
         self.validate_config(is_client)?;
 
-        let local_cipher_suites: Vec<CipherSuiteId> = parse_cipher_suites(
-            &self.cipher_suites,
-            self.psk.is_none(),
-            self.psk.is_some(),
-        )?
-            .iter()
-            .map(|cs| cs.id())
-            .collect();
+        let local_cipher_suites: Vec<CipherSuiteId> =
+            parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?
+                .iter()
+                .map(|cs| cs.id())
+                .collect();
 
         let sigs: Vec<u16> = self.signature_schemes.iter().map(|x| *x as u16).collect();
         let local_signature_schemes = parse_signature_schemes(&sigs, self.insecure_hashes)?;
-
 
         let retransmit_interval = if self.flight_interval != Duration::from_secs(0) {
             self.flight_interval
@@ -213,13 +209,9 @@ impl Config {
             INITIAL_TICKER_INTERVAL
         };
 
-        let maximum_transmission_unit = if self.mtu == 0 {
-            DEFAULT_MTU
-        } else {
-            self.mtu
-        };
+        let _maximum_transmission_unit = if self.mtu == 0 { DEFAULT_MTU } else { self.mtu };
 
-        let replay_protection_window = if self.replay_protection_window == 0 {
+        let _replay_protection_window = if self.replay_protection_window == 0 {
             DEFAULT_REPLAY_PROTECTION_WINDOW
         } else {
             self.replay_protection_window
@@ -254,7 +246,9 @@ impl Config {
             client_cert_verifier: if self.client_auth as u8
                 >= ClientAuthType::VerifyClientCertIfGiven as u8
             {
-                Some(rustls::AllowAnyAuthenticatedClient::new(self.client_cas.clone()))
+                Some(rustls::AllowAnyAuthenticatedClient::new(
+                    self.client_cas.clone(),
+                ))
             } else {
                 None
             },
