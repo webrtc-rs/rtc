@@ -73,7 +73,7 @@ impl fmt::Display for HandshakeState {
 pub(crate) type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>) + Send + Sync>;
 
-pub(crate) struct HandshakeConfig {
+pub struct HandshakeConfig {
     pub(crate) local_psk_callback: Option<PskCallback>,
     pub(crate) local_psk_identity_hint: Option<Vec<u8>>,
     pub(crate) local_cipher_suites: Vec<CipherSuiteId>, // Available CipherSuites
@@ -230,8 +230,7 @@ impl DTLSConn {
 
         let result = self
             .current_flight
-            .generate(&mut self.state, &self.cache, &self.cfg)
-            .await;
+            .generate(&mut self.state, &self.cache, &self.cfg);
 
         match result {
             Err((a, mut err)) => {
@@ -248,22 +247,7 @@ impl DTLSConn {
                     return Err(err);
                 }
             }
-            Ok(pkts) => {
-                /*if !pkts.is_empty() {
-                    let mut s = vec![];
-                    {
-                        let mut writer = BufWriter::<&mut Vec<u8>>::new(s.as_mut());
-                        pkts[0].record.content.marshal(&mut writer)?;
-                    }
-                    trace!(
-                        "[handshake:{}] {}: {:?}",
-                        srv_cli_str(self.state.is_client),
-                        self.current_flight.to_string(),
-                        s,
-                    );
-                }*/
-                self.flights = Some(pkts)
-            }
+            Ok(pkts) => self.flights = Some(pkts),
         };
 
         let epoch = self.cfg.initial_epoch;
@@ -316,7 +300,7 @@ impl DTLSConn {
                     }
 
                     //trace!("[handshake:{}] {} received handshake_rx", srv_cli_str(self.state.is_client), self.current_flight.to_string());
-                    let result = self.current_flight.parse(&mut self.handle_queue_tx, &mut self.state, &self.cache, &self.cfg).await;
+                    let result = self.current_flight.parse(/*&mut self.handle_queue_tx,*/ &mut self.state, &self.cache, &self.cfg);
                     drop(done);
                     match result {
                         Err((alert, mut err)) => {
@@ -374,7 +358,7 @@ impl DTLSConn {
                     trace!("[handshake:{}] {} handshake_tx is dropped", srv_cli_str(self.state.is_client), self.current_flight.to_string());
                     return Err(Error::ErrAlertFatalOrClose);
                 }
-                let result = self.current_flight.parse(&mut self.handle_queue_tx, &mut self.state, &self.cache, &self.cfg).await;
+                let result = self.current_flight.parse(/*&mut self.handle_queue_tx,*/ &mut self.state, &self.cache, &self.cfg);
                 drop(done);
                 match result {
                     Err((alert, mut err)) => {

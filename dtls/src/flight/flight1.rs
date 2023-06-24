@@ -34,35 +34,32 @@ impl fmt::Display for Flight1 {
 
 #[async_trait]
 impl Flight for Flight1 {
-    async fn parse(
+    fn parse(
         &self,
-        tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
         // HelloVerifyRequest can be skipped by the server,
         // so allow ServerHello during flight1 also
-        let (seq, msgs) = match cache
-            .full_pull_map(
-                state.handshake_recv_sequence,
-                &[
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::HelloVerifyRequest,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: true,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: true,
-                    },
-                ],
-            )
-            .await
-        {
+        let (seq, msgs) = match cache.full_pull_map(
+            state.handshake_recv_sequence,
+            &[
+                HandshakeCachePullRule {
+                    typ: HandshakeType::HelloVerifyRequest,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: true,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: true,
+                },
+            ],
+        ) {
             // No valid message received. Keep reading
             Ok((seq, msgs)) => (seq, msgs),
             Err(_) => return Err((None, None)),
@@ -72,7 +69,7 @@ impl Flight for Flight1 {
             // Flight1 and flight2 were skipped.
             // Parse as flight3.
             let flight3 = Flight3 {};
-            return flight3.parse(tx, state, cache, cfg).await;
+            return flight3.parse(/*tx,*/ state, cache, cfg);
         }
 
         if let Some(message) = msgs.get(&HandshakeType::HelloVerifyRequest) {
@@ -115,7 +112,7 @@ impl Flight for Flight1 {
         }
     }
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         _cache: &HandshakeCache,

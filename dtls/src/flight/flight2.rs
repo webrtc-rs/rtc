@@ -25,31 +25,28 @@ impl Flight for Flight2 {
         false
     }
 
-    async fn parse(
+    fn parse(
         &self,
-        tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
-        let (seq, msgs) = match cache
-            .full_pull_map(
-                state.handshake_recv_sequence,
-                &[HandshakeCachePullRule {
-                    typ: HandshakeType::ClientHello,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                }],
-            )
-            .await
-        {
+        let (seq, msgs) = match cache.full_pull_map(
+            state.handshake_recv_sequence,
+            &[HandshakeCachePullRule {
+                typ: HandshakeType::ClientHello,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            }],
+        ) {
             // No valid message received. Keep reading
             Ok((seq, msgs)) => (seq, msgs),
 
             // Client may retransmit the first ClientHello when HelloVerifyRequest is dropped.
             // Parse as flight 0 in this case.
-            Err(_) => return Flight0 {}.parse(tx, state, cache, cfg).await,
+            Err(_) => return Flight0 {}.parse(/*tx,*/ state, cache, cfg),
         };
 
         state.handshake_recv_sequence = seq;
@@ -105,7 +102,7 @@ impl Flight for Flight2 {
         }
     }
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         _cache: &HandshakeCache,

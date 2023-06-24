@@ -6,8 +6,6 @@ use crate::handshake::*;
 
 use std::collections::HashMap;
 use std::io::BufReader;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 
@@ -30,17 +28,17 @@ pub(crate) struct HandshakeCachePullRule {
 
 #[derive(Clone)]
 pub(crate) struct HandshakeCache {
-    cache: Arc<Mutex<Vec<HandshakeCacheItem>>>,
+    cache: Vec<HandshakeCacheItem>,
 }
 
 impl HandshakeCache {
     pub(crate) fn new() -> Self {
         HandshakeCache {
-            cache: Arc::new(Mutex::new(vec![])),
+            cache: vec![],
         }
     }
 
-    pub(crate) async fn push(
+    pub(crate) fn push(
         &mut self,
         data: Vec<u8>,
         epoch: u16,
@@ -48,15 +46,13 @@ impl HandshakeCache {
         typ: HandshakeType,
         is_client: bool,
     ) -> bool {
-        let mut cache = self.cache.lock().await;
-
-        for i in &*cache {
+        for i in &self.cache {
             if i.message_sequence == message_sequence && i.is_client == is_client {
                 return false;
             }
         }
 
-        cache.push(HandshakeCacheItem {
+        self.cache.push(HandshakeCacheItem {
             typ,
             is_client,
             epoch,
@@ -70,13 +66,11 @@ impl HandshakeCache {
     // returns a list handshakes that match the requested rules
     // the list will contain null entries for rules that can't be satisfied
     // multiple entries may match a rule, but only the last match is returned (ie ClientHello with cookies)
-    pub(crate) async fn pull(&self, rules: &[HandshakeCachePullRule]) -> Vec<HandshakeCacheItem> {
-        let cache = self.cache.lock().await;
-
+    pub(crate) fn pull(&self, rules: &[HandshakeCachePullRule]) -> Vec<HandshakeCacheItem> {
         let mut out = vec![];
         for r in rules {
             let mut item: Option<HandshakeCacheItem> = None;
-            for c in &*cache {
+            for c in &self.cache {
                 if c.typ == r.typ && c.is_client == r.is_client && c.epoch == r.epoch {
                     if let Some(x) = &item {
                         if x.message_sequence < c.message_sequence {
@@ -97,17 +91,15 @@ impl HandshakeCache {
     }
 
     // full_pull_map pulls all handshakes between rules[0] to rules[len(rules)-1] as map.
-    pub(crate) async fn full_pull_map(
+    pub(crate) fn full_pull_map(
         &self,
         start_seq: isize,
         rules: &[HandshakeCachePullRule],
     ) -> Result<(isize, HashMap<HandshakeType, HandshakeMessage>)> {
-        let cache = self.cache.lock().await;
-
         let mut ci = HashMap::new();
         for r in rules {
             let mut item: Option<HandshakeCacheItem> = None;
-            for c in &*cache {
+            for c in &self.cache {
                 if c.typ == r.typ && c.is_client == r.is_client && c.epoch == r.epoch {
                     if let Some(x) = &item {
                         if x.message_sequence < c.message_sequence {
@@ -150,10 +142,10 @@ impl HandshakeCache {
     }
 
     // pull_and_merge calls pull and then merges the results, ignoring any null entries
-    pub(crate) async fn pull_and_merge(&self, rules: &[HandshakeCachePullRule]) -> Vec<u8> {
+    pub(crate) fn pull_and_merge(&self, rules: &[HandshakeCachePullRule]) -> Vec<u8> {
         let mut merged = vec![];
 
-        for p in &self.pull(rules).await {
+        for p in &self.pull(rules) {
             merged.extend_from_slice(&p.data);
         }
 
@@ -162,7 +154,7 @@ impl HandshakeCache {
 
     // session_hash returns the session hash for Extended Master Secret support
     // https://tools.ietf.org/html/draft-ietf-tls-session-hash-06#section-4
-    pub(crate) async fn session_hash(
+    pub(crate) fn session_hash(
         &self,
         hf: CipherSuiteHash,
         epoch: u16,
@@ -221,8 +213,7 @@ impl HandshakeCache {
                     is_client: true,
                     optional: false,
                 },
-            ])
-            .await;
+            ]);
 
         for p in &handshake_buffer {
             merged.extend_from_slice(&p.data);

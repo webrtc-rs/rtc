@@ -22,7 +22,7 @@ pub struct State {
     pub(crate) local_random: HandshakeRandom,
     pub(crate) remote_random: HandshakeRandom,
     pub(crate) master_secret: Vec<u8>,
-    pub(crate) cipher_suite: Arc<std::sync::Mutex<Option<Box<dyn CipherSuite + Send + Sync>>>>, // nil if a cipher_suite hasn't been chosen
+    pub(crate) cipher_suite: Option<Box<dyn CipherSuite + Send + Sync>>, // nil if a cipher_suite hasn't been chosen
 
     pub(crate) srtp_protection_profile: SrtpProtectionProfile, // Negotiated srtp_protection_profile
     pub peer_certificates: Vec<Vec<u8>>,
@@ -71,7 +71,7 @@ impl Default for State {
             local_random: HandshakeRandom::default(),
             remote_random: HandshakeRandom::default(),
             master_secret: vec![],
-            cipher_suite: Arc::new(std::sync::Mutex::new(None)), // nil if a cipher_suite hasn't been chosen
+            cipher_suite: None, // nil if a cipher_suite hasn't been chosen
 
             srtp_protection_profile: SrtpProtectionProfile::Unsupported, // Negotiated srtp_protection_profile
             peer_certificates: vec![],
@@ -134,8 +134,7 @@ impl State {
             lsn[local_epoch as usize]
         };
         let cipher_suite_id = {
-            let cipher_suite = self.cipher_suite.lock()?;
-            match &*cipher_suite {
+            match &self.cipher_suite {
                 Some(cipher_suite) => cipher_suite.id() as u16,
                 None => return Err(Error::ErrCipherSuiteUnset),
             }
@@ -183,9 +182,7 @@ impl State {
         self.master_secret = serialized.master_secret.clone();
 
         // Set cipher suite
-        self.cipher_suite = Arc::new(std::sync::Mutex::new(Some(cipher_suite_for_id(
-            serialized.cipher_suite_id.into(),
-        )?)));
+        self.cipher_suite = Some(cipher_suite_for_id(serialized.cipher_suite_id.into())?);
 
         self.srtp_protection_profile = serialized.srtp_protection_profile.into();
 
@@ -197,8 +194,7 @@ impl State {
     }
 
     pub fn init_cipher_suite(&mut self) -> Result<()> {
-        let mut cipher_suite = self.cipher_suite.lock()?;
-        if let Some(cipher_suite) = &mut *cipher_suite {
+        if let Some(cipher_suite) = &mut self.cipher_suite {
             if cipher_suite.is_initialized() {
                 return Ok(());
             }
@@ -286,8 +282,7 @@ impl KeyingMaterialExporter for State {
             seed.extend_from_slice(&local_random);
         }
 
-        let cipher_suite = self.cipher_suite.lock()?;
-        if let Some(cipher_suite) = &*cipher_suite {
+        if let Some(cipher_suite) = &self.cipher_suite {
             match prf_p_hash(&self.master_secret, &seed, length, cipher_suite.hash_func()) {
                 Ok(v) => Ok(v),
                 Err(err) => Err(Error::Hash(err.to_string())),

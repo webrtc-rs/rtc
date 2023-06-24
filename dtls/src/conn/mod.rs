@@ -4,7 +4,6 @@ mod conn_test;
 use crate::alert::*;
 use crate::application_data::*;
 use crate::cipher_suite::*;
-use crate::config::*;
 use crate::content::*;
 use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::*;
@@ -20,7 +19,6 @@ use crate::handshake::*;
 use crate::handshaker::*;
 use crate::record_layer::record_layer_header::*;
 use crate::record_layer::*;
-use crate::signature_hash_algorithm::parse_signature_schemes;
 use crate::state::*;
 
 use shared::{error::*, replay_detector::*};
@@ -70,7 +68,7 @@ struct ConnReaderContext {
 
 // Conn represents a DTLS connection
 pub struct DTLSConn {
-    conn: Arc<dyn Conn + Send + Sync>,
+    //conn: Arc<dyn Conn + Send + Sync>,
     pub(crate) cache: HandshakeCache, // caching of handshake messages for verifyData generation
     decrypted_rx: Mutex<mpsc::Receiver<Result<Vec<u8>>>>, // Decrypted Application Data or error, pull by calling `Read`
     pub(crate) state: State,                              // Internal state
@@ -115,10 +113,10 @@ impl Conn for DTLSConn {
         self.read(buf, None).await.map_err(util::Error::from_std)
     }
     async fn recv_from(&self, buf: &mut [u8]) -> UtilResult<(usize, SocketAddr)> {
-        if let Some(raddr) = self.conn.remote_addr() {
+        /*TODO: if let Some(raddr) = self.conn.remote_addr() {
             let n = self.read(buf, None).await.map_err(util::Error::from_std)?;
             Ok((n, raddr))
-        } else {
+        } else */{
             Err(util::Error::Other(
                 "No remote address is provided by underlying Conn".to_owned(),
             ))
@@ -131,10 +129,12 @@ impl Conn for DTLSConn {
         Err(util::Error::Other("Not applicable".to_owned()))
     }
     fn local_addr(&self) -> UtilResult<SocketAddr> {
-        self.conn.local_addr()
+        //TODO: self.conn.local_addr()
+        Err(util::Error::Other("Not applicable".to_owned()))
     }
     fn remote_addr(&self) -> Option<SocketAddr> {
-        self.conn.remote_addr()
+        //TODO: self.conn.remote_addr()
+        None
     }
     async fn close(&self) -> UtilResult<()> {
         self.close().await.map_err(util::Error::from_std)
@@ -142,91 +142,11 @@ impl Conn for DTLSConn {
 }
 
 impl DTLSConn {
-    pub async fn new(
-        conn: Arc<dyn Conn + Send + Sync>,
-        mut config: Config,
+    pub fn new(
+        handshake_config: HandshakeConfig,
         is_client: bool,
         initial_state: Option<State>,
-    ) -> Result<Self> {
-        validate_config(is_client, &config)?;
-
-        let local_cipher_suites: Vec<CipherSuiteId> = parse_cipher_suites(
-            &config.cipher_suites,
-            config.psk.is_none(),
-            config.psk.is_some(),
-        )?
-        .iter()
-        .map(|cs| cs.id())
-        .collect();
-
-        let sigs: Vec<u16> = config.signature_schemes.iter().map(|x| *x as u16).collect();
-        let local_signature_schemes = parse_signature_schemes(&sigs, config.insecure_hashes)?;
-
-        let retransmit_interval = if config.flight_interval != Duration::from_secs(0) {
-            config.flight_interval
-        } else {
-            INITIAL_TICKER_INTERVAL
-        };
-
-        /*
-           loggerFactory := config.LoggerFactory
-           if loggerFactory == nil {
-               loggerFactory = logging.NewDefaultLoggerFactory()
-           }
-
-           logger := loggerFactory.NewLogger("dtls")
-        */
-        let maximum_transmission_unit = if config.mtu == 0 {
-            DEFAULT_MTU
-        } else {
-            config.mtu
-        };
-
-        let replay_protection_window = if config.replay_protection_window == 0 {
-            DEFAULT_REPLAY_PROTECTION_WINDOW
-        } else {
-            config.replay_protection_window
-        };
-
-        let mut server_name = config.server_name.clone();
-
-        // Use host from conn address when server_name is not provided
-        if is_client && server_name.is_empty() {
-            if let Some(remote_addr) = conn.remote_addr() {
-                server_name = remote_addr.ip().to_string();
-            } else {
-                log::warn!("conn.remote_addr is empty, please set explicitly server_name in Config! Use default \"localhost\" as server_name now");
-                server_name = "localhost".to_owned();
-            }
-        }
-
-        let cfg = HandshakeConfig {
-            local_psk_callback: config.psk.take(),
-            local_psk_identity_hint: config.psk_identity_hint.take(),
-            local_cipher_suites,
-            local_signature_schemes,
-            extended_master_secret: config.extended_master_secret,
-            local_srtp_protection_profiles: config.srtp_protection_profiles.clone(),
-            server_name,
-            client_auth: config.client_auth,
-            local_certificates: config.certificates.clone(),
-            insecure_skip_verify: config.insecure_skip_verify,
-            insecure_verification: config.insecure_verification,
-            verify_peer_certificate: config.verify_peer_certificate.take(),
-            roots_cas: config.roots_cas,
-            client_cert_verifier: if config.client_auth as u8
-                >= ClientAuthType::VerifyClientCertIfGiven as u8
-            {
-                Some(rustls::AllowAnyAuthenticatedClient::new(config.client_cas))
-            } else {
-                None
-            },
-            retransmit_interval,
-            //log: logger,
-            initial_epoch: 0,
-            ..Default::default()
-        };
-
+    ) -> Self {
         let (state, flight, initial_fsm_state) = if let Some(state) = initial_state {
             let flight = if is_client {
                 Box::new(Flight5 {}) as Box<dyn Flight + Send + Sync>
@@ -261,16 +181,16 @@ impl DTLSConn {
 
         let packet_tx = Arc::new(packet_tx);
         let packet_tx2 = Arc::clone(&packet_tx);
-        let next_conn_rx = Arc::clone(&conn);
-        let next_conn_tx = Arc::clone(&conn);
+        //let next_conn_rx = Arc::clone(&conn);
+        //let next_conn_tx = Arc::clone(&conn);
         let cache = HandshakeCache::new();
         let mut cache1 = cache.clone();
         let cache2 = cache.clone();
         let handshake_completed_successfully = Arc::new(AtomicBool::new(false));
         let handshake_completed_successfully2 = Arc::clone(&handshake_completed_successfully);
 
-        let mut c = DTLSConn {
-            conn: Arc::clone(&conn),
+        Self {
+            //conn: Arc::clone(&conn),
             cache,
             decrypted_rx: Mutex::new(decrypted_rx),
             state,
@@ -280,111 +200,112 @@ impl DTLSConn {
 
             current_flight: flight,
             flights: None,
-            cfg,
+            cfg: handshake_config,
             retransmit: false,
             handshake_rx,
             packet_tx,
             handle_queue_tx,
             handshake_done_tx: Some(handshake_done_tx),
             reader_close_tx: Mutex::new(Some(reader_close_tx)),
-        };
+        }
+        /*TODO:
+                let cipher_suite1 = Arc::clone(&c.state.cipher_suite);
+                let sequence_number = Arc::clone(&c.state.local_sequence_number);
 
-        let cipher_suite1 = Arc::clone(&c.state.cipher_suite);
-        let sequence_number = Arc::clone(&c.state.local_sequence_number);
 
-        tokio::spawn(async move {
-            loop {
-                let rx = packet_rx.recv().await;
-                if let Some(r) = rx {
-                    let (pkt, result_tx) = r;
+                tokio::spawn(async move {
+                    loop {
+                        let rx = packet_rx.recv().await;
+                        if let Some(r) = rx {
+                            let (pkt, result_tx) = r;
 
-                    let result = DTLSConn::handle_outgoing_packets(
-                        &next_conn_tx,
-                        pkt,
-                        &mut cache1,
+                            let result = DTLSConn::handle_outgoing_packets(
+                                &next_conn_tx,
+                                pkt,
+                                &mut cache1,
+                                is_client,
+                                &sequence_number,
+                                &cipher_suite1,
+                                maximum_transmission_unit,
+                            )
+                            .await;
+
+                            if let Some(tx) = result_tx {
+                                let _ = tx.send(result).await;
+                            }
+                        } else {
+                            trace!("{}: handle_outgoing_packets exit", srv_cli_str(is_client));
+                            break;
+                        }
+                    }
+                });
+
+                let local_epoch = Arc::clone(&c.state.local_epoch);
+                let remote_epoch = Arc::clone(&c.state.remote_epoch);
+                let cipher_suite2 = Arc::clone(&c.state.cipher_suite);
+
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; INBOUND_BUFFER_SIZE];
+                    let mut ctx = ConnReaderContext {
                         is_client,
-                        &sequence_number,
-                        &cipher_suite1,
-                        maximum_transmission_unit,
-                    )
-                    .await;
+                        replay_protection_window,
+                        replay_detector: vec![],
+                        decrypted_tx,
+                        encrypted_packets: vec![],
+                        fragment_buffer: FragmentBuffer::new(),
+                        cache: cache2,
+                        cipher_suite: cipher_suite2,
+                        remote_epoch,
+                        handshake_tx,
+                        handshake_done_rx,
+                        packet_tx: packet_tx2,
+                    };
 
-                    if let Some(tx) = result_tx {
-                        let _ = tx.send(result).await;
-                    }
-                } else {
-                    trace!("{}: handle_outgoing_packets exit", srv_cli_str(is_client));
-                    break;
-                }
-            }
-        });
-
-        let local_epoch = Arc::clone(&c.state.local_epoch);
-        let remote_epoch = Arc::clone(&c.state.remote_epoch);
-        let cipher_suite2 = Arc::clone(&c.state.cipher_suite);
-
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; INBOUND_BUFFER_SIZE];
-            let mut ctx = ConnReaderContext {
-                is_client,
-                replay_protection_window,
-                replay_detector: vec![],
-                decrypted_tx,
-                encrypted_packets: vec![],
-                fragment_buffer: FragmentBuffer::new(),
-                cache: cache2,
-                cipher_suite: cipher_suite2,
-                remote_epoch,
-                handshake_tx,
-                handshake_done_rx,
-                packet_tx: packet_tx2,
-            };
-
-            //trace!("before enter read_and_buffer: {}] ", srv_cli_str(is_client));
-            loop {
-                tokio::select! {
-                    _ = reader_close_rx.recv() => {
-                        trace!(
-                                "{}: read_and_buffer exit",
-                                srv_cli_str(ctx.is_client),
-                            );
-                        break;
-                    }
-                    result = DTLSConn::read_and_buffer(
-                                            &mut ctx,
-                                            &next_conn_rx,
-                                            &mut handle_queue_rx,
-                                            &mut buf,
-                                            &local_epoch,
-                                            &handshake_completed_successfully2,
-                                        ) => {
-                        if let Err(err) = result {
-                            trace!(
-                                "{}: read_and_buffer return err: {}",
-                                srv_cli_str(is_client),
-                                err
-                            );
-                            if Error::ErrAlertFatalOrClose == err {
+                    //trace!("before enter read_and_buffer: {}] ", srv_cli_str(is_client));
+                    loop {
+                        tokio::select! {
+                            _ = reader_close_rx.recv() => {
                                 trace!(
-                                    "{}: read_and_buffer exit with {}",
-                                    srv_cli_str(ctx.is_client),
-                                    err
-                                );
-
+                                        "{}: read_and_buffer exit",
+                                        srv_cli_str(ctx.is_client),
+                                    );
                                 break;
+                            }
+                            result = DTLSConn::read_and_buffer(
+                                                    &mut ctx,
+                                                    &next_conn_rx,
+                                                    &mut handle_queue_rx,
+                                                    &mut buf,
+                                                    &local_epoch,
+                                                    &handshake_completed_successfully2,
+                                                ) => {
+                                if let Err(err) = result {
+                                    trace!(
+                                        "{}: read_and_buffer return err: {}",
+                                        srv_cli_str(is_client),
+                                        err
+                                    );
+                                    if Error::ErrAlertFatalOrClose == err {
+                                        trace!(
+                                            "{}: read_and_buffer exit with {}",
+                                            srv_cli_str(ctx.is_client),
+                                            err
+                                        );
+
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-        });
+                });
 
         // Do handshake
-        c.handshake(initial_fsm_state).await?;
+        c.handshake(initial_fsm_state)?;//TODO:.await?;
 
         trace!("Handshake Completed");
+        */
 
-        Ok(c)
     }
 
     // Read reads data from the connection.
@@ -476,10 +397,10 @@ impl DTLSConn {
                 let mut reader_close_tx = self.reader_close_tx.lock().await;
                 reader_close_tx.take();
             }
-            self.conn
+            /*TODO: self.conn
                 .close()
                 .await
-                .map_err(|err| Error::Other(err.to_string()))?;
+                .map_err(|err| Error::Other(err.to_string()))?;*/
         }
 
         Ok(())
@@ -558,8 +479,7 @@ impl DTLSConn {
                         h.handshake_header.message_sequence,
                         h.handshake_header.handshake_type,
                         is_client,
-                    )
-                    .await;
+                    );
 
                 let raw_handshake_packets = DTLSConn::process_handshake_packet(
                     local_sequence_number,
@@ -1041,8 +961,7 @@ impl DTLSConn {
                         raw_handshake.handshake_header.message_sequence,
                         raw_handshake.handshake_header.handshake_type,
                         !ctx.is_client,
-                    )
-                    .await;
+                    );
             }
 
             return (true, None, None);

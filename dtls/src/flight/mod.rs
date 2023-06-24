@@ -13,9 +13,7 @@ use crate::record_layer::*;
 use crate::state::*;
 use shared::error::Error;
 
-use async_trait::async_trait;
 use std::fmt;
-use tokio::sync::mpsc;
 
 /*
   DTLS messages are grouped into a series of message flights, according
@@ -57,7 +55,6 @@ pub(crate) struct Packet {
     pub(crate) reset_local_sequence_number: bool,
 }
 
-#[async_trait]
 pub(crate) trait Flight: fmt::Display + fmt::Debug {
     fn is_last_send_flight(&self) -> bool {
         false
@@ -69,15 +66,15 @@ pub(crate) trait Flight: fmt::Display + fmt::Debug {
         true
     }
 
-    async fn parse(
+    fn parse(
         &self,
-        tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)>;
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         cache: &HandshakeCache,

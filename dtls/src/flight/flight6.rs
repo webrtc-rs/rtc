@@ -24,25 +24,22 @@ impl Flight for Flight6 {
         true
     }
 
-    async fn parse(
+    fn parse(
         &self,
-        _tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //_tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
-        let (_, msgs) = match cache
-            .full_pull_map(
-                state.handshake_recv_sequence - 1,
-                &[HandshakeCachePullRule {
-                    typ: HandshakeType::Finished,
-                    epoch: cfg.initial_epoch + 1,
-                    is_client: true,
-                    optional: false,
-                }],
-            )
-            .await
-        {
+        let (_, msgs) = match cache.full_pull_map(
+            state.handshake_recv_sequence - 1,
+            &[HandshakeCachePullRule {
+                typ: HandshakeType::Finished,
+                epoch: cfg.initial_epoch + 1,
+                is_client: true,
+                optional: false,
+            }],
+        ) {
             Ok((seq, msgs)) => (seq, msgs),
             // No valid message received. Keep reading
             Err(_) => return Err((None, None)),
@@ -67,7 +64,7 @@ impl Flight for Flight6 {
         Ok(Box::new(Flight6 {}))
     }
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         cache: &HandshakeCache,
@@ -84,84 +81,70 @@ impl Flight for Flight6 {
         }];
 
         if state.local_verify_data.is_empty() {
-            let plain_text = cache
-                .pull_and_merge(&[
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::CertificateRequest,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHelloDone,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::CertificateVerify,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Finished,
-                        epoch: cfg.initial_epoch + 1,
-                        is_client: true,
-                        optional: false,
-                    },
-                ])
-                .await;
+            let plain_text = cache.pull_and_merge(&[
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::CertificateRequest,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHelloDone,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::CertificateVerify,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Finished,
+                    epoch: cfg.initial_epoch + 1,
+                    is_client: true,
+                    optional: false,
+                },
+            ]);
 
-            let cipher_suite = match state.cipher_suite.lock() {
-                Ok(cipher_suite) => cipher_suite,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::InternalError,
-                        }),
-                        Some(err.into()),
-                    ))
-                }
-            };
-            if let Some(cipher_suite) = &*cipher_suite {
+            if let Some(cipher_suite) = &state.cipher_suite {
                 state.local_verify_data = match prf_verify_data_server(
                     &state.master_secret,
                     &plain_text,

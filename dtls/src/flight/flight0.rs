@@ -24,25 +24,22 @@ impl fmt::Display for Flight0 {
 
 #[async_trait]
 impl Flight for Flight0 {
-    async fn parse(
+    fn parse(
         &self,
-        _tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //_tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
-        let (seq, msgs) = match cache
-            .full_pull_map(
-                0,
-                &[HandshakeCachePullRule {
-                    typ: HandshakeType::ClientHello,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                }],
-            )
-            .await
-        {
+        let (seq, msgs) = match cache.full_pull_map(
+            0,
+            &[HandshakeCachePullRule {
+                typ: HandshakeType::ClientHello,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            }],
+        ) {
             Ok((seq, msgs)) => (seq, msgs),
             Err(_) => return Err((None, None)),
         };
@@ -85,19 +82,7 @@ impl Flight for Flight0 {
                         srv_cli_str(state.is_client),
                         cipher_suite.to_string()
                     );
-                    let mut cs = match state.cipher_suite.lock() {
-                        Ok(cs) => cs,
-                        Err(err) => {
-                            return Err((
-                                Some(Alert {
-                                    alert_level: AlertLevel::Fatal,
-                                    alert_description: AlertDescription::InternalError,
-                                }),
-                                Some(err.into()),
-                            ))
-                        }
-                    };
-                    *cs = Some(cipher_suite);
+                    state.cipher_suite = Some(cipher_suite);
                 }
             } else {
                 return Err((
@@ -190,7 +175,7 @@ impl Flight for Flight0 {
         }
     }
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         _cache: &HandshakeCache,

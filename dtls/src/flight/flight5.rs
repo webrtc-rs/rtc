@@ -36,25 +36,22 @@ impl Flight for Flight5 {
         true
     }
 
-    async fn parse(
+    fn parse(
         &self,
-        _tx: &mut mpsc::Sender<mpsc::Sender<()>>,
+        //_tx: &mut mpsc::Sender<mpsc::Sender<()>>,
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
-        let (_seq, msgs) = match cache
-            .full_pull_map(
-                state.handshake_recv_sequence,
-                &[HandshakeCachePullRule {
-                    typ: HandshakeType::Finished,
-                    epoch: cfg.initial_epoch + 1,
-                    is_client: false,
-                    optional: false,
-                }],
-            )
-            .await
-        {
+        let (_seq, msgs) = match cache.full_pull_map(
+            state.handshake_recv_sequence,
+            &[HandshakeCachePullRule {
+                typ: HandshakeType::Finished,
+                epoch: cfg.initial_epoch + 1,
+                is_client: false,
+                optional: false,
+            }],
+        ) {
             Ok((seq, msgs)) => (seq, msgs),
             Err(_) => return Err((None, None)),
         };
@@ -72,85 +69,71 @@ impl Flight for Flight5 {
                 ));
             };
 
-        let plain_text = cache
-            .pull_and_merge(&[
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ClientHello,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerHello,
-                    epoch: cfg.initial_epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::Certificate,
-                    epoch: cfg.initial_epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerKeyExchange,
-                    epoch: cfg.initial_epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::CertificateRequest,
-                    epoch: cfg.initial_epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerHelloDone,
-                    epoch: cfg.initial_epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::Certificate,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ClientKeyExchange,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::CertificateVerify,
-                    epoch: cfg.initial_epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::Finished,
-                    epoch: cfg.initial_epoch + 1,
-                    is_client: true,
-                    optional: false,
-                },
-            ])
-            .await;
+        let plain_text = cache.pull_and_merge(&[
+            HandshakeCachePullRule {
+                typ: HandshakeType::ClientHello,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerHello,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::Certificate,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerKeyExchange,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::CertificateRequest,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerHelloDone,
+                epoch: cfg.initial_epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::Certificate,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ClientKeyExchange,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::CertificateVerify,
+                epoch: cfg.initial_epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::Finished,
+                epoch: cfg.initial_epoch + 1,
+                is_client: true,
+                optional: false,
+            },
+        ]);
 
         {
-            let cipher_suite = match state.cipher_suite.lock() {
-                Ok(cipher_suite) => cipher_suite,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::InternalError,
-                        }),
-                        Some(err.into()),
-                    ))
-                }
-            };
-            if let Some(cipher_suite) = &*cipher_suite {
+            if let Some(cipher_suite) = &state.cipher_suite {
                 let expected_verify_data = match prf_verify_data_server(
                     &state.master_secret,
                     &plain_text,
@@ -183,7 +166,7 @@ impl Flight for Flight5 {
         Ok(Box::new(Flight5 {}))
     }
 
-    async fn generate(
+    fn generate(
         &self,
         state: &mut State,
         cache: &HandshakeCache,
@@ -253,14 +236,12 @@ impl Flight for Flight5 {
             reset_local_sequence_number: false,
         });
 
-        let server_key_exchange_data = cache
-            .pull_and_merge(&[HandshakeCachePullRule {
-                typ: HandshakeType::ServerKeyExchange,
-                epoch: cfg.initial_epoch,
-                is_client: false,
-                optional: false,
-            }])
-            .await;
+        let server_key_exchange_data = cache.pull_and_merge(&[HandshakeCachePullRule {
+            typ: HandshakeType::ServerKeyExchange,
+            epoch: cfg.initial_epoch,
+            is_client: false,
+            optional: false,
+        }]);
 
         let mut server_key_exchange = HandshakeMessageServerKeyExchange {
             identity_hint: vec![],
@@ -346,7 +327,7 @@ impl Flight for Flight5 {
         }
 
         if let Err((alert, err)) =
-            initalize_cipher_suite(state, cache, cfg, &server_key_exchange, &merged).await
+            initalize_cipher_suite(state, cache, cfg, &server_key_exchange, &merged)
         {
             return Err((alert, err));
         }
@@ -355,58 +336,56 @@ impl Flight for Flight5 {
         // CertificateVerify message is sent to explicitly verify possession of the
         // private key in the certificate.
         if state.remote_requested_certificate && !cfg.local_certificates.is_empty() {
-            let mut plain_text = cache
-                .pull_and_merge(&[
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::CertificateRequest,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHelloDone,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                ])
-                .await;
+            let mut plain_text = cache.pull_and_merge(&[
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::CertificateRequest,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHelloDone,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+            ]);
 
             plain_text.extend_from_slice(&merged);
 
@@ -504,86 +483,72 @@ impl Flight for Flight5 {
         });
 
         if state.local_verify_data.is_empty() {
-            let mut plain_text = cache
-                .pull_and_merge(&[
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHello,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::CertificateRequest,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ServerHelloDone,
-                        epoch: cfg.initial_epoch,
-                        is_client: false,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Certificate,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::ClientKeyExchange,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::CertificateVerify,
-                        epoch: cfg.initial_epoch,
-                        is_client: true,
-                        optional: false,
-                    },
-                    HandshakeCachePullRule {
-                        typ: HandshakeType::Finished,
-                        epoch: cfg.initial_epoch + 1,
-                        is_client: true,
-                        optional: false,
-                    },
-                ])
-                .await;
+            let mut plain_text = cache.pull_and_merge(&[
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHello,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::CertificateRequest,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ServerHelloDone,
+                    epoch: cfg.initial_epoch,
+                    is_client: false,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Certificate,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::ClientKeyExchange,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::CertificateVerify,
+                    epoch: cfg.initial_epoch,
+                    is_client: true,
+                    optional: false,
+                },
+                HandshakeCachePullRule {
+                    typ: HandshakeType::Finished,
+                    epoch: cfg.initial_epoch + 1,
+                    is_client: true,
+                    optional: false,
+                },
+            ]);
 
             plain_text.extend_from_slice(&merged);
 
-            let cipher_suite = match state.cipher_suite.lock() {
-                Ok(cipher_suite) => cipher_suite,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::InternalError,
-                        }),
-                        Some(err.into()),
-                    ))
-                }
-            };
-            if let Some(cipher_suite) = &*cipher_suite {
+            if let Some(cipher_suite) = &state.cipher_suite {
                 state.local_verify_data = match prf_verify_data_client(
                     &state.master_secret,
                     &plain_text,
@@ -620,29 +585,18 @@ impl Flight for Flight5 {
         Ok(pkts)
     }
 }
-async fn initalize_cipher_suite(
+
+fn initalize_cipher_suite(
     state: &mut State,
     cache: &HandshakeCache,
     cfg: &HandshakeConfig,
     h: &HandshakeMessageServerKeyExchange,
     sending_plain_text: &[u8],
 ) -> Result<(), (Option<Alert>, Option<Error>)> {
-    let cipher_suite = {
-        match state.cipher_suite.lock() {
-            Ok(cipher_suite) => (*cipher_suite)
-                .as_ref()
-                .map(|cipher_suite| (cipher_suite.is_initialized(), cipher_suite.hash_func())),
-            Err(err) => {
-                return Err((
-                    Some(Alert {
-                        alert_level: AlertLevel::Fatal,
-                        alert_description: AlertDescription::InternalError,
-                    }),
-                    Some(err.into()),
-                ))
-            }
-        }
-    };
+    let cipher_suite = state
+        .cipher_suite
+        .as_ref()
+        .map(|cipher_suite| (cipher_suite.is_initialized(), cipher_suite.hash_func()));
 
     if let Some(cipher_suite) = &cipher_suite {
         if cipher_suite.0 {
@@ -663,14 +617,11 @@ async fn initalize_cipher_suite(
 
     if let Some((_, cipher_suite_hash_func)) = cipher_suite {
         if state.extended_master_secret {
-            let session_hash = match cache
-                .session_hash(
-                    cipher_suite_hash_func,
-                    cfg.initial_epoch,
-                    sending_plain_text,
-                )
-                .await
-            {
+            let session_hash = match cache.session_hash(
+                cipher_suite_hash_func,
+                cfg.initial_epoch,
+                sending_plain_text,
+            ) {
                 Ok(s) => s,
                 Err(err) => {
                     return Err((
@@ -790,21 +741,7 @@ async fn initalize_cipher_suite(
         }
     }
 
-    let mut cipher_suite = {
-        match state.cipher_suite.lock() {
-            Ok(cipher_suite) => cipher_suite,
-            Err(err) => {
-                return Err((
-                    Some(Alert {
-                        alert_level: AlertLevel::Fatal,
-                        alert_description: AlertDescription::InternalError,
-                    }),
-                    Some(err.into()),
-                ))
-            }
-        }
-    };
-    if let Some(cipher_suite) = &mut *cipher_suite {
+    if let Some(cipher_suite) = &mut state.cipher_suite {
         if let Err(err) =
             cipher_suite.init(&state.master_secret, &client_random, &server_random, true)
         {

@@ -1,12 +1,14 @@
+use std::net::SocketAddr;
 use crate::cipher_suite::*;
 use crate::crypto::*;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
-use crate::handshaker::VerifyPeerCertificateFn;
-use crate::signature_hash_algorithm::SignatureScheme;
+use crate::handshaker::{HandshakeConfig, VerifyPeerCertificateFn};
+use crate::signature_hash_algorithm::{parse_signature_schemes, SignatureScheme};
 use shared::error::*;
 
 use std::sync::Arc;
 use tokio::time::Duration;
+use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
@@ -154,36 +156,111 @@ pub enum ExtendedMasterSecretType {
     Disable = 2,
 }
 
-pub(crate) fn validate_config(is_client: bool, config: &Config) -> Result<()> {
-    if is_client && config.psk.is_some() && config.psk_identity_hint.is_none() {
-        return Err(Error::ErrPskAndIdentityMustBeSetForClient);
-    }
-
-    if !is_client && config.psk.is_none() && config.certificates.is_empty() {
-        return Err(Error::ErrServerMustHaveCertificate);
-    }
-
-    if !config.certificates.is_empty() && config.psk.is_some() {
-        return Err(Error::ErrPskAndCertificate);
-    }
-
-    if config.psk_identity_hint.is_some() && config.psk.is_none() {
-        return Err(Error::ErrIdentityNoPsk);
-    }
-
-    for cert in &config.certificates {
-        match cert.private_key.kind {
-            CryptoPrivateKeyKind::Ed25519(_) => {}
-            CryptoPrivateKeyKind::Ecdsa256(_) => {}
-            _ => return Err(Error::ErrInvalidPrivateKey),
+impl Config {
+    fn validate_config(&self, is_client: bool) -> Result<()> {
+        if is_client && self.psk.is_some() && self.psk_identity_hint.is_none() {
+            return Err(Error::ErrPskAndIdentityMustBeSetForClient);
         }
+
+        if !is_client && self.psk.is_none() && self.certificates.is_empty() {
+            return Err(Error::ErrServerMustHaveCertificate);
+        }
+
+        if !self.certificates.is_empty() && self.psk.is_some() {
+            return Err(Error::ErrPskAndCertificate);
+        }
+
+        if self.psk_identity_hint.is_some() && self.psk.is_none() {
+            return Err(Error::ErrIdentityNoPsk);
+        }
+
+        for cert in &self.certificates {
+            match cert.private_key.kind {
+                CryptoPrivateKeyKind::Ed25519(_) => {}
+                CryptoPrivateKeyKind::Ecdsa256(_) => {}
+                _ => return Err(Error::ErrInvalidPrivateKey),
+            }
+        }
+
+        parse_cipher_suites(
+            &self.cipher_suites,
+            self.psk.is_none(),
+            self.psk.is_some(),
+        )?;
+
+        Ok(())
     }
 
-    parse_cipher_suites(
-        &config.cipher_suites,
-        config.psk.is_none(),
-        config.psk.is_some(),
-    )?;
+    pub fn generate_handshake_config(&mut self, is_client: bool, remote_addr: Option<SocketAddr>) -> Result<HandshakeConfig> {
+        self.validate_config(is_client)?;
 
-    Ok(())
+        let local_cipher_suites: Vec<CipherSuiteId> = parse_cipher_suites(
+            &self.cipher_suites,
+            self.psk.is_none(),
+            self.psk.is_some(),
+        )?
+            .iter()
+            .map(|cs| cs.id())
+            .collect();
+
+        let sigs: Vec<u16> = self.signature_schemes.iter().map(|x| *x as u16).collect();
+        let local_signature_schemes = parse_signature_schemes(&sigs, self.insecure_hashes)?;
+
+
+        let retransmit_interval = if self.flight_interval != Duration::from_secs(0) {
+            self.flight_interval
+        } else {
+            INITIAL_TICKER_INTERVAL
+        };
+
+        let maximum_transmission_unit = if self.mtu == 0 {
+            DEFAULT_MTU
+        } else {
+            self.mtu
+        };
+
+        let replay_protection_window = if self.replay_protection_window == 0 {
+            DEFAULT_REPLAY_PROTECTION_WINDOW
+        } else {
+            self.replay_protection_window
+        };
+
+        let mut server_name = self.server_name.clone();
+
+        // Use host from conn address when server_name is not provided
+        if is_client && server_name.is_empty() {
+            if let Some(remote_addr) = remote_addr {
+                server_name = remote_addr.ip().to_string();
+            } else {
+                log::warn!("conn.remote_addr is empty, please set explicitly server_name in Config! Use default \"localhost\" as server_name now");
+                server_name = "localhost".to_owned();
+            }
+        }
+
+        Ok(HandshakeConfig {
+            local_psk_callback: self.psk.take(),
+            local_psk_identity_hint: self.psk_identity_hint.take(),
+            local_cipher_suites,
+            local_signature_schemes,
+            extended_master_secret: self.extended_master_secret,
+            local_srtp_protection_profiles: self.srtp_protection_profiles.clone(),
+            server_name,
+            client_auth: self.client_auth,
+            local_certificates: self.certificates.clone(),
+            insecure_skip_verify: self.insecure_skip_verify,
+            insecure_verification: self.insecure_verification,
+            verify_peer_certificate: self.verify_peer_certificate.take(),
+            roots_cas: self.roots_cas.clone(),
+            client_cert_verifier: if self.client_auth as u8
+                >= ClientAuthType::VerifyClientCertIfGiven as u8
+            {
+                Some(rustls::AllowAnyAuthenticatedClient::new(self.client_cas.clone()))
+            } else {
+                None
+            },
+            retransmit_interval,
+            initial_epoch: 0,
+            ..Default::default()
+        })
+    }
 }
