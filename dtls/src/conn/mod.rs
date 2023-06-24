@@ -93,7 +93,7 @@ pub struct DTLSConn {
     pub(crate) flights: Option<Vec<Packet>>,
     pub(crate) cfg: HandshakeConfig,
     pub(crate) retransmit: bool,
-    pub(crate) handshake_rx: mpsc::Receiver<mpsc::Sender<()>>,
+    pub(crate) handshake_rx: Option<()>,
 
     pub(crate) packet_tx: VecDeque<Packet>,
     pub(crate) handle_queue_tx: mpsc::Sender<mpsc::Sender<()>>,
@@ -174,7 +174,6 @@ impl DTLSConn {
         };
 
         let (_decrypted_tx, decrypted_rx) = mpsc::channel(1);
-        let (_handshake_tx, handshake_rx) = mpsc::channel(1);
         let (handshake_done_tx, _handshake_done_rx) = mpsc::channel(1);
         let (handle_queue_tx, _handle_queue_rx) = mpsc::channel(1);
         let (reader_close_tx, _reader_close_rx) = mpsc::channel(1);
@@ -199,7 +198,7 @@ impl DTLSConn {
             flights: None,
             cfg: handshake_config,
             retransmit: false,
-            handshake_rx,
+            handshake_rx: None,
             packet_tx: VecDeque::new(),
             handle_queue_tx,
             handshake_done_tx: Some(handshake_done_tx),

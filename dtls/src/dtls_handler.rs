@@ -54,7 +54,7 @@ impl InboundHandler for DtlsInboundHandler {
         };
         if let Err(err) = result {
             ctx.fire_read_exception(Box::new(err));
-        }
+        } //TODO: ctx.fire_write()
     }
 
     fn transport_inactive(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>) {
@@ -74,6 +74,18 @@ impl InboundHandler for DtlsInboundHandler {
     }
 
     fn handle_timeout(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, now: Instant) {
+        let result = {
+            let mut conn = self.conn.borrow_mut();
+            if !conn.is_handshake_completed() {
+                conn.handshake_timeout(now)
+            } else {
+                Ok(())
+            }
+        };
+        if let Err(err) = result {
+            ctx.fire_read_exception(Box::new(err));
+        } //TODO: ctx.fire_write()
+
         ctx.fire_handle_timeout(now);
     }
 

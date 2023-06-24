@@ -428,7 +428,7 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
         flights: None,
         cfg: HandshakeConfig::default(),
         retransmit: false,
-        handshake_rx,
+        handshake_rx: None,
 
         packet_tx: Arc::new(packet_tx),
         handle_queue_tx,
