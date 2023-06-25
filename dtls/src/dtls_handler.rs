@@ -1,5 +1,5 @@
 use retty::channel::{Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler};
-use retty::transport::TaggedBytesMut;
+use retty::transport::{TaggedBytesMut, TransportContext};
 use std::cell::RefCell;
 use std::error::Error;
 use std::rc::Rc;
@@ -8,9 +8,11 @@ use std::time::Instant;
 use crate::conn::DTLSConn;
 use crate::handshaker::HandshakeConfig;
 use crate::state::State;
+use bytes::BytesMut;
 use shared::error::Result;
 
 struct DtlsInboundHandler {
+    transport: Option<TransportContext>,
     conn: Rc<RefCell<DTLSConn>>,
 }
 struct DtlsOutboundHandler {
@@ -25,6 +27,7 @@ impl DtlsHandler {
     fn new(
         handshake_config: HandshakeConfig,
         is_client: bool,
+        client_transport: Option<TransportContext>,
         initial_state: Option<State>,
     ) -> Self {
         let conn = Rc::new(RefCell::new(DTLSConn::new(
@@ -35,9 +38,31 @@ impl DtlsHandler {
 
         DtlsHandler {
             inbound: DtlsInboundHandler {
+                transport: client_transport,
                 conn: Rc::clone(&conn),
             },
             outbound: DtlsOutboundHandler { conn },
+        }
+    }
+}
+
+impl DtlsInboundHandler {
+    fn handle_outgoing(&mut self, ctx: &InboundContext<TaggedBytesMut, TaggedBytesMut>) {
+        if let Some(transport) = &self.transport {
+            let mut outgoing_raw_packets = vec![];
+            {
+                let mut conn = self.conn.borrow_mut();
+                while let Some(pkt) = conn.outgoing_raw_packet() {
+                    outgoing_raw_packets.push(pkt);
+                }
+            };
+            for message in outgoing_raw_packets {
+                ctx.fire_write(TaggedBytesMut {
+                    now: Instant::now(),
+                    transport: *transport,
+                    message,
+                });
+            }
         }
     }
 }
@@ -51,10 +76,10 @@ impl InboundHandler for DtlsInboundHandler {
             let mut conn = self.conn.borrow_mut();
             conn.handshake()
         };
-        //TODO: ctx.fire_write()
         if let Err(err) = try_dtls_active() {
             ctx.fire_read_exception(Box::new(err));
         }
+        self.handle_outgoing(ctx);
 
         ctx.fire_transport_active();
     }
@@ -64,7 +89,12 @@ impl InboundHandler for DtlsInboundHandler {
     }
 
     fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
-        let try_dtls_read = || -> Result<()> {
+        if self.transport.is_none() {
+            self.transport = Some(msg.transport);
+        }
+
+        let try_dtls_read = || -> Result<Vec<BytesMut>> {
+            let mut messages = vec![];
             let mut conn = self.conn.borrow_mut();
             conn.read_and_buffer(&msg.message)?;
             if !conn.is_handshake_completed() {
@@ -72,18 +102,23 @@ impl InboundHandler for DtlsInboundHandler {
                 conn.handle_queued_packets()?;
             }
             while let Some(message) = conn.incoming_application_data() {
-                ctx.fire_read(TaggedBytesMut {
-                    now: msg.now,
-                    transport: msg.transport,
-                    message,
-                });
+                messages.push(message);
             }
-            Ok(())
+            Ok(messages)
         };
-        //TODO: ctx.fire_write()
-        if let Err(err) = try_dtls_read() {
-            ctx.fire_read_exception(Box::new(err));
-        }
+        match try_dtls_read() {
+            Ok(messages) => {
+                for message in messages {
+                    ctx.fire_read(TaggedBytesMut {
+                        now: msg.now,
+                        transport: msg.transport,
+                        message,
+                    })
+                }
+            }
+            Err(err) => ctx.fire_read_exception(Box::new(err)),
+        };
+        self.handle_outgoing(ctx);
     }
 
     fn read_exception(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, err: Box<dyn Error>) {
@@ -102,10 +137,10 @@ impl InboundHandler for DtlsInboundHandler {
             }
             Ok(())
         };
-        //TODO: ctx.fire_write()
         if let Err(err) = try_dtls_timeout() {
             ctx.fire_read_exception(Box::new(err));
         }
+        self.handle_outgoing(ctx);
 
         ctx.fire_handle_timeout(now);
     }

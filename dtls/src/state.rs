@@ -96,17 +96,7 @@ impl Default for State {
 }
 
 impl State {
-    pub(crate) async fn clone(&self) -> Self {
-        let mut state = State::default();
-
-        if let Ok(serialized) = self.serialize().await {
-            let _ = state.deserialize(&serialized).await;
-        }
-
-        state
-    }
-
-    async fn serialize(&self) -> Result<SerializedState> {
+    fn serialize(&self) -> Result<SerializedState> {
         let mut local_rand = vec![];
         {
             let mut writer = BufWriter::<&mut Vec<u8>>::new(local_rand.as_mut());
@@ -149,7 +139,7 @@ impl State {
         })
     }
 
-    async fn deserialize(&mut self, serialized: &SerializedState) -> Result<()> {
+    fn deserialize(&mut self, serialized: &SerializedState) -> Result<()> {
         // Set epoch values
         self.local_epoch = serialized.local_epoch;
         self.remote_epoch = serialized.remote_epoch;
@@ -213,8 +203,8 @@ impl State {
     }
 
     // marshal_binary is a binary.BinaryMarshaler.marshal_binary implementation
-    pub async fn marshal_binary(&self) -> Result<Vec<u8>> {
-        let serialized = self.serialize().await?;
+    pub fn marshal_binary(&self) -> Result<Vec<u8>> {
+        let serialized = self.serialize()?;
 
         match bincode::serialize(&serialized) {
             Ok(enc) => Ok(enc),
@@ -223,12 +213,12 @@ impl State {
     }
 
     // unmarshal_binary is a binary.BinaryUnmarshaler.unmarshal_binary implementation
-    pub async fn unmarshal_binary(&mut self, data: &[u8]) -> Result<()> {
+    pub fn unmarshal_binary(&mut self, data: &[u8]) -> Result<()> {
         let serialized: SerializedState = match bincode::deserialize(data) {
             Ok(dec) => dec,
             Err(err) => return Err(Error::Other(err.to_string())),
         };
-        self.deserialize(&serialized).await?;
+        self.deserialize(&serialized)?;
         self.init_cipher_suite()?;
 
         Ok(())

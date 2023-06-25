@@ -1,7 +1,7 @@
 use super::*;
 
-#[tokio::test]
-async fn test_handshake_cache_single_push() -> Result<()> {
+#[test]
+fn test_handshake_cache_single_push() -> Result<()> {
     let tests = vec![
         (
             "Single Push",
@@ -322,10 +322,9 @@ async fn test_handshake_cache_single_push() -> Result<()> {
     for (name, inputs, rules, expected) in tests {
         let mut h = HandshakeCache::new();
         for i in inputs {
-            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client)
-                .await;
+            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client);
         }
-        let verify_data = h.pull_and_merge(&rules).await;
+        let verify_data = h.pull_and_merge(&rules);
         assert_eq!(
             verify_data, expected,
             "handshakeCache '{name}' exp:{expected:?} actual {verify_data:?}",
@@ -335,8 +334,8 @@ async fn test_handshake_cache_single_push() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_handshake_cache_session_hash() -> Result<()> {
+#[test]
+fn test_handshake_cache_session_hash() -> Result<()> {
     let tests = vec![
         (
             "Standard Handshake",
@@ -642,11 +641,10 @@ async fn test_handshake_cache_session_hash() -> Result<()> {
     for (name, inputs, expected) in tests {
         let mut h = HandshakeCache::new();
         for i in inputs {
-            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client)
-                .await;
+            h.push(i.data, i.epoch, i.message_sequence, i.typ, i.is_client);
         }
 
-        let verify_data = h.session_hash(CipherSuiteHash::Sha256, 0, &[]).await?;
+        let verify_data = h.session_hash(CipherSuiteHash::Sha256, 0, &[])?;
 
         assert_eq!(
             verify_data, expected,

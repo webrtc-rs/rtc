@@ -7,9 +7,7 @@ description = "DTLS in Rust"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn"] }
 shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto", "replay"] }
-
 retty = "0.23.3"
 bytes = "1.4.0"
 byteorder = "1"
@@ -26,8 +24,6 @@ aes = "0.6.0"
 block-modes = "0.7.0"
 aes-gcm = "0.10.1"
 ccm = "0.3.0"
-tokio = { version = "1.19", features = ["full"] }
-async-trait = "0.1.56"
 x25519-dalek = { version = "2.0.0-rc.2", features = ["static_secrets"] }
 x509-parser = "0.13.2"
 der-parser = "8.1"
@@ -43,7 +39,7 @@ thiserror = "1.0"
 pem = { version = "1", optional = true }
 
 [dev-dependencies]
-tokio-test = "0.4.0" # must match the min version of the `tokio` crate above
+util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn"] }
 env_logger = "0.9.0"
 chrono = "0.4.23"
 clap = "3.2.6"

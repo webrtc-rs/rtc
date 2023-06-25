@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 
 use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use std::sync::Arc;
-use tokio::time::Duration;
+use std::time::Duration;
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.

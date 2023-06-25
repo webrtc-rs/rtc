@@ -27,9 +27,7 @@ use bytes::BytesMut;
 use log::*;
 use std::io::{BufReader, BufWriter};
 use std::marker::{Send, Sync};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex};
 
 pub(crate) const INITIAL_TICKER_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const COOKIE_LENGTH: usize = 20;
@@ -44,10 +42,6 @@ pub static INVALID_KEYING_LABELS: &[&str] = &[
     "master secret",
     "key expansion",
 ];
-
-type PacketSendRequest = (Vec<Packet>, Option<mpsc::Sender<Result<()>>>);
-
-struct ConnReaderContext {}
 
 // Conn represents a DTLS connection
 pub struct DTLSConn {
@@ -67,7 +61,7 @@ pub struct DTLSConn {
     handshake_completed: bool,
     connection_closed_by_user: bool,
     // closeLock              sync.Mutex
-    closed: AtomicBool, //  *closer.Closer
+    closed: bool, //  *closer.Closer
     //handshakeLoopsFinished sync.WaitGroup
 
     //readDeadline  :deadline.Deadline,
@@ -88,10 +82,6 @@ pub struct DTLSConn {
     pub(crate) cfg: HandshakeConfig,
     pub(crate) retransmit: bool,
     pub(crate) handshake_rx: Option<()>,
-
-    pub(crate) handle_queue_tx: mpsc::Sender<mpsc::Sender<()>>,
-    pub(crate) handshake_done_tx: Option<mpsc::Sender<()>>,
-    reader_close_tx: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl DTLSConn {
@@ -125,11 +115,6 @@ impl DTLSConn {
             )
         };
 
-        let (handshake_done_tx, _handshake_done_rx) = mpsc::channel(1);
-        let (handle_queue_tx, _handle_queue_rx) = mpsc::channel(1);
-        let (reader_close_tx, _reader_close_rx) = mpsc::channel(1);
-        let cache = HandshakeCache::new();
-
         Self {
             is_client,
             maximum_transmission_unit: handshake_config.maximum_transmission_unit,
@@ -141,11 +126,11 @@ impl DTLSConn {
             outgoing_packets: VecDeque::new(),
             outgoing_compacted_raw_packets: VecDeque::new(),
 
-            cache,
+            cache: HandshakeCache::new(),
             state,
             handshake_completed: false,
             connection_closed_by_user: false,
-            closed: AtomicBool::new(false),
+            closed: false,
 
             current_handshake_state: initial_fsm_state,
             current_retransmit_timer: None,
@@ -155,9 +140,6 @@ impl DTLSConn {
             cfg: handshake_config,
             retransmit: false,
             handshake_rx: None,
-            handle_queue_tx,
-            handshake_done_tx: Some(handshake_done_tx),
-            reader_close_tx: Mutex::new(Some(reader_close_tx)),
         }
     }
 
@@ -171,8 +153,12 @@ impl DTLSConn {
     }
 
     pub fn outgoing_raw_packet(&mut self) -> Option<BytesMut> {
-        if self.handle_outgoing_packets().is_err() {
-            return None;
+        if let Err(err) = self.handle_outgoing_packets() {
+            warn!(
+                "handle_outgoing_packets [{}] with error {}",
+                srv_cli_str(self.is_client),
+                err
+            );
         }
         self.outgoing_compacted_raw_packets.pop_front()
     }
@@ -205,22 +191,13 @@ impl DTLSConn {
     }
 
     // Close closes the connection.
-    pub async fn close(&mut self) -> Result<()> {
-        if !self.closed.load(Ordering::SeqCst) {
-            self.closed.store(true, Ordering::SeqCst);
+    pub fn close(&mut self) -> Result<()> {
+        if !self.closed {
+            self.closed = true;
 
             // Discard error from notify() to return non-error on the first user call of Close()
             // even if the underlying connection is already closed.
             self.notify(AlertLevel::Warning, AlertDescription::CloseNotify);
-
-            {
-                let mut reader_close_tx = self.reader_close_tx.lock().await;
-                reader_close_tx.take();
-            }
-            /*TODO: self.conn
-            .close()
-            .await
-            .map_err(|err| Error::Other(err.to_string()))?;*/
         }
 
         Ok(())
@@ -228,8 +205,8 @@ impl DTLSConn {
 
     /// connection_state returns basic DTLS details about the connection.
     /// Note that this replaced the `Export` function of v1.
-    pub async fn connection_state(&self) -> State {
-        self.state.clone().await
+    pub fn connection_state(&self) -> &State {
+        &self.state
     }
 
     /// selected_srtpprotection_profile returns the selected SRTPProtectionProfile
@@ -759,7 +736,7 @@ impl DTLSConn {
     }
 
     fn is_connection_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+        self.closed
     }
 
     pub(crate) fn set_local_epoch(&mut self, epoch: u16) {

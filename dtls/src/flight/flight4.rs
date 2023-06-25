@@ -769,10 +769,10 @@ mod tests {
     // Assert that if a client sends a certificate they must also send a `CertificateVerify`
     // message. The `Flight4` must not interact with the `cipher_suite` if the `CertificateVerify`
     // is missing.
-    #[tokio::test]
-    async fn test_flight4_process_certificateverify() {
+    #[test]
+    fn test_flight4_process_certificateverify() {
         let mut state = State {
-            cipher_suite: Arc::new(std::sync::Mutex::new(Some(Box::new(MockCipherSuite {})))),
+            cipher_suite: Some(Box::new(MockCipherSuite {})),
             ..Default::default()
         };
 
@@ -818,25 +818,21 @@ mod tests {
         ];
 
         let mut cache = HandshakeCache::new();
-        cache
-            .push(raw_certificate, 0, 0, HandshakeType::Certificate, true)
-            .await;
-        cache
-            .push(
-                raw_client_key_exchange,
-                0,
-                1,
-                HandshakeType::ClientKeyExchange,
-                true,
-            )
-            .await;
+        cache.push(raw_certificate, 0, 0, HandshakeType::Certificate, true);
+        cache.push(
+            raw_client_key_exchange,
+            0,
+            1,
+            HandshakeType::ClientKeyExchange,
+            true,
+        );
 
         let cfg = HandshakeConfig::default();
 
         let (mut tx, _rx) = mpsc::channel::<mpsc::Sender<()>>(1);
 
         let f = Flight4 {};
-        let res = f.parse(&mut tx, &mut state, &cache, &cfg).await;
+        let res = f.parse(&mut tx, &mut state, &cache, &cfg);
         assert!(res.is_err());
     }
 }

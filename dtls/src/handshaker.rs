@@ -117,7 +117,7 @@ impl Default for HandshakeConfig {
             roots_cas: rustls::RootCertStore::empty(),
             server_cert_verifier: Arc::new(rustls::WebPKIVerifier::new()),
             client_cert_verifier: None,
-            retransmit_interval: tokio::time::Duration::from_secs(0),
+            retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
             maximum_transmission_unit: DEFAULT_MTU,
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
@@ -214,7 +214,6 @@ impl DTLSConn {
                 && !self.is_handshake_completed()
             {
                 self.set_handshake_completed();
-                self.handshake_done_tx.take(); // drop it by take
                 return Ok(());
             }
 
