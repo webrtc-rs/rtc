@@ -26,7 +26,7 @@ use crate::signature_hash_algorithm::*;
 use shared::error::Error;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
-use async_trait::async_trait;
+
 use log::*;
 use std::fmt;
 use std::io::BufWriter;
@@ -40,7 +40,6 @@ impl fmt::Display for Flight4 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight4 {
     fn parse(
         &self,

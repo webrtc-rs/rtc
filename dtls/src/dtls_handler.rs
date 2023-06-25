@@ -8,6 +8,7 @@ use std::time::Instant;
 use crate::conn::DTLSConn;
 use crate::handshaker::HandshakeConfig;
 use crate::state::State;
+use shared::error::Result;
 
 struct DtlsInboundHandler {
     conn: Rc<RefCell<DTLSConn>>,
@@ -62,7 +63,22 @@ impl InboundHandler for DtlsInboundHandler {
     }
 
     fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
-        ctx.fire_read(msg);
+        let try_dtls_read = || -> Result<()> {
+            let mut conn = self.conn.borrow_mut();
+            if !conn.is_handshake_completed() {
+                conn.handshake_read(&msg.message)?;
+                conn.handshake()?;
+            } else {
+                //conn.read(&msg.message)?;
+            }
+
+            Ok(())
+        };
+        if let Err(err) = try_dtls_read() {
+            ctx.fire_read_exception(Box::new(err));
+        }
+
+        //TODO:ctx.fire_read(msg);
     }
 
     fn read_exception(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, err: Box<dyn Error>) {

@@ -93,8 +93,9 @@ pub struct HandshakeConfig {
     pub(crate) client_cert_verifier: Option<Arc<dyn rustls::ClientCertVerifier>>,
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
-    //log           logging.LeveledLogger
-    //mu sync.Mutex
+    pub(crate) maximum_transmission_unit: usize,
+    pub(crate) replay_protection_window: usize, //log           logging.LeveledLogger
+                                                //mu sync.Mutex
 }
 
 impl Default for HandshakeConfig {
@@ -118,6 +119,8 @@ impl Default for HandshakeConfig {
             client_cert_verifier: None,
             retransmit_interval: tokio::time::Duration::from_secs(0),
             initial_epoch: 0,
+            maximum_transmission_unit: DEFAULT_MTU,
+            replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
     }
 }
@@ -352,6 +355,10 @@ impl DTLSConn {
         }
 
         Ok(HandshakeState::Finished)
+    }
+
+    pub(crate) fn handshake_read(&mut self, _msg: &[u8]) -> Result<()> {
+        Ok(())
     }
 
     pub(crate) fn handshake_timeout(&mut self, _now: Instant) -> Result<()> {

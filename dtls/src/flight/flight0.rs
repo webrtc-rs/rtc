@@ -8,10 +8,8 @@ use crate::record_layer::record_layer_header::*;
 use crate::*;
 use shared::error::Error;
 
-use async_trait::async_trait;
 use rand::Rng;
 use std::fmt;
-use std::sync::atomic::Ordering;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flight0;
@@ -22,7 +20,6 @@ impl fmt::Display for Flight0 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight0 {
     fn parse(
         &self,
@@ -185,10 +182,8 @@ impl Flight for Flight0 {
         state.cookie = vec![0; COOKIE_LENGTH];
         rand::thread_rng().fill(state.cookie.as_mut_slice());
 
-        //TODO: figure out difference between golang's atom store and rust atom store
-        let zero_epoch = 0;
-        state.local_epoch.store(zero_epoch, Ordering::SeqCst);
-        state.remote_epoch.store(zero_epoch, Ordering::SeqCst);
+        state.local_epoch = 0;
+        state.remote_epoch = 0;
 
         state.named_curve = DEFAULT_NAMED_CURVE;
         state.local_random.populate();

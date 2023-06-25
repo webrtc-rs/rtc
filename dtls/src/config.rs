@@ -209,9 +209,9 @@ impl Config {
             INITIAL_TICKER_INTERVAL
         };
 
-        let _maximum_transmission_unit = if self.mtu == 0 { DEFAULT_MTU } else { self.mtu };
+        let maximum_transmission_unit = if self.mtu == 0 { DEFAULT_MTU } else { self.mtu };
 
-        let _replay_protection_window = if self.replay_protection_window == 0 {
+        let replay_protection_window = if self.replay_protection_window == 0 {
             DEFAULT_REPLAY_PROTECTION_WINDOW
         } else {
             self.replay_protection_window
@@ -254,6 +254,8 @@ impl Config {
             },
             retransmit_interval,
             initial_epoch: 0,
+            maximum_transmission_unit,
+            replay_protection_window,
             ..Default::default()
         })
     }

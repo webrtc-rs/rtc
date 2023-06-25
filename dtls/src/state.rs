@@ -10,15 +10,12 @@ use serde::{Deserialize, Serialize};
 use shared::crypto::KeyingMaterialExporter;
 use std::io::{BufWriter, Cursor};
 use std::marker::{Send, Sync};
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 pub struct State {
-    pub(crate) local_epoch: Arc<AtomicU16>,
-    pub(crate) remote_epoch: Arc<AtomicU16>,
-    pub(crate) local_sequence_number: Arc<Mutex<Vec<u64>>>, // uint48
+    pub(crate) local_epoch: u16,
+    pub(crate) remote_epoch: u16,
+    pub(crate) local_sequence_number: Vec<u64>, // uint48
     pub(crate) local_random: HandshakeRandom,
     pub(crate) remote_random: HandshakeRandom,
     pub(crate) master_secret: Vec<u8>,
@@ -65,9 +62,9 @@ struct SerializedState {
 impl Default for State {
     fn default() -> Self {
         State {
-            local_epoch: Arc::new(AtomicU16::new(0)),
-            remote_epoch: Arc::new(AtomicU16::new(0)),
-            local_sequence_number: Arc::new(Mutex::new(vec![])),
+            local_epoch: 0,
+            remote_epoch: 0,
+            local_sequence_number: vec![],
             local_random: HandshakeRandom::default(),
             remote_random: HandshakeRandom::default(),
             master_secret: vec![],
@@ -127,12 +124,9 @@ impl State {
         local_random.copy_from_slice(&local_rand);
         remote_random.copy_from_slice(&remote_rand);
 
-        let local_epoch = self.local_epoch.load(Ordering::SeqCst);
-        let remote_epoch = self.remote_epoch.load(Ordering::SeqCst);
-        let sequence_number = {
-            let lsn = self.local_sequence_number.lock().await;
-            lsn[local_epoch as usize]
-        };
+        let local_epoch = self.local_epoch;
+        let remote_epoch = self.remote_epoch;
+        let sequence_number = self.local_sequence_number[local_epoch as usize];
         let cipher_suite_id = {
             match &self.cipher_suite {
                 Some(cipher_suite) => cipher_suite.id() as u16,
@@ -157,16 +151,14 @@ impl State {
 
     async fn deserialize(&mut self, serialized: &SerializedState) -> Result<()> {
         // Set epoch values
-        self.local_epoch
-            .store(serialized.local_epoch, Ordering::SeqCst);
-        self.remote_epoch
-            .store(serialized.remote_epoch, Ordering::SeqCst);
+        self.local_epoch = serialized.local_epoch;
+        self.remote_epoch = serialized.remote_epoch;
         {
-            let mut lsn = self.local_sequence_number.lock().await;
-            while lsn.len() <= serialized.local_epoch as usize {
-                lsn.push(0);
+            while self.local_sequence_number.len() <= serialized.local_epoch as usize {
+                self.local_sequence_number.push(0);
             }
-            lsn[serialized.local_epoch as usize] = serialized.sequence_number;
+            self.local_sequence_number[serialized.local_epoch as usize] =
+                serialized.sequence_number;
         }
 
         // Set random values
@@ -254,7 +246,7 @@ impl KeyingMaterialExporter for State {
         context: &[u8],
         length: usize,
     ) -> shared::error::Result<Vec<u8>> {
-        if self.local_epoch.load(Ordering::SeqCst) == 0 {
+        if self.local_epoch == 0 {
             return Err(Error::HandshakeInProgress);
         } else if !context.is_empty() {
             return Err(Error::ContextUnsupported);

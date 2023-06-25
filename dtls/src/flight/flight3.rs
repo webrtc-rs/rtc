@@ -23,7 +23,7 @@ use crate::prf::{prf_pre_master_secret, prf_psk_pre_master_secret};
 use crate::{find_matching_cipher_suite, find_matching_srtp_profile};
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
-use async_trait::async_trait;
+
 use log::*;
 use std::fmt;
 
@@ -36,7 +36,6 @@ impl fmt::Display for Flight3 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight3 {
     fn parse(
         &self,

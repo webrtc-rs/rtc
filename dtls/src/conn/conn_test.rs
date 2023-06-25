@@ -392,7 +392,6 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
     let expected_server_key = vec![0x61, 0x09, 0x9d, 0x7d, 0xcb, 0x08, 0x52, 0x2c, 0xe7, 0x7b];
     let expected_client_key = vec![0x87, 0xf0, 0x40, 0x02, 0xf6, 0x1c, 0xf1, 0xfe, 0x8c, 0x77];
 
-    let (_decrypted_tx, decrypted_rx) = mpsc::channel(1);
     let (_handshake_tx, handshake_rx) = mpsc::channel(1);
     let (packet_tx, _packet_rx) = mpsc::channel(1);
     let (handle_queue_tx, _handle_queue_rx) = mpsc::channel(1);

@@ -17,7 +17,6 @@ use crate::record_layer::*;
 use crate::signature_hash_algorithm::*;
 use shared::error::Error;
 
-use async_trait::async_trait;
 use std::fmt;
 use std::io::{BufReader, BufWriter};
 
@@ -30,7 +29,6 @@ impl fmt::Display for Flight5 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight5 {
     fn is_last_recv_flight(&self) -> bool {
         true

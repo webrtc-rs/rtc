@@ -7,7 +7,6 @@ use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use shared::error::Error;
 
-use async_trait::async_trait;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -19,7 +18,6 @@ impl fmt::Display for Flight2 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight2 {
     fn has_retransmit(&self) -> bool {
         false

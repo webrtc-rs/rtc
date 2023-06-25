@@ -19,9 +19,7 @@ use crate::record_layer::*;
 use shared::error::Error;
 
 use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
-use async_trait::async_trait;
 use std::fmt;
-use std::sync::atomic::Ordering;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flight1;
@@ -32,7 +30,6 @@ impl fmt::Display for Flight1 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight1 {
     fn parse(
         &self,
@@ -118,9 +115,8 @@ impl Flight for Flight1 {
         _cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Vec<Packet>, (Option<Alert>, Option<Error>)> {
-        let zero_epoch = 0;
-        state.local_epoch.store(zero_epoch, Ordering::SeqCst);
-        state.remote_epoch.store(zero_epoch, Ordering::SeqCst);
+        state.local_epoch = 0;
+        state.remote_epoch = 0;
 
         state.named_curve = DEFAULT_NAMED_CURVE;
         state.cookie = vec![];

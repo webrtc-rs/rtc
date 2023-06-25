@@ -6,7 +6,6 @@ use crate::handshake::*;
 use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 
-use async_trait::async_trait;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -18,7 +17,6 @@ impl fmt::Display for Flight6 {
     }
 }
 
-#[async_trait]
 impl Flight for Flight6 {
     fn is_last_send_flight(&self) -> bool {
         true
