@@ -3,7 +3,6 @@ mod conn_test;
 
 use crate::alert::*;
 use crate::application_data::*;
-use crate::cipher_suite::*;
 use crate::content::*;
 use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::*;
@@ -29,7 +28,6 @@ use log::*;
 use std::io::{BufReader, BufWriter};
 use std::marker::{Send, Sync};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 
@@ -54,6 +52,7 @@ struct ConnReaderContext {}
 // Conn represents a DTLS connection
 pub struct DTLSConn {
     is_client: bool,
+    maximum_transmission_unit: usize,
     replay_protection_window: usize,
     replay_detector: Vec<Box<dyn ReplayDetector + Send>>,
     incoming_decrypted_packets: VecDeque<BytesMut>, // Decrypted Application Data or error, pull by calling `Read`
@@ -61,6 +60,7 @@ pub struct DTLSConn {
     fragment_buffer: FragmentBuffer,
     pub(crate) cache: HandshakeCache, // caching of handshake messages for verifyData generation
     pub(crate) outgoing_packets: VecDeque<Packet>,
+    outgoing_compacted_raw_packets: VecDeque<BytesMut>,
 
     pub(crate) state: State, // Internal state
 
@@ -132,11 +132,14 @@ impl DTLSConn {
 
         Self {
             is_client,
+            maximum_transmission_unit: handshake_config.maximum_transmission_unit,
             replay_protection_window: handshake_config.replay_protection_window,
             replay_detector: vec![],
             incoming_decrypted_packets: VecDeque::new(),
             incoming_encrypted_packets: VecDeque::new(),
             fragment_buffer: FragmentBuffer::new(),
+            outgoing_packets: VecDeque::new(),
+            outgoing_compacted_raw_packets: VecDeque::new(),
 
             cache,
             state,
@@ -152,48 +155,26 @@ impl DTLSConn {
             cfg: handshake_config,
             retransmit: false,
             handshake_rx: None,
-            outgoing_packets: VecDeque::new(),
             handle_queue_tx,
             handshake_done_tx: Some(handshake_done_tx),
             reader_close_tx: Mutex::new(Some(reader_close_tx)),
         }
-        /*TODO:
-                tokio::spawn(async move {
-                    loop {
-                        let rx = packet_rx.recv().await;
-                        if let Some(r) = rx {
-                            let (pkt, result_tx) = r;
-
-                            let result = DTLSConn::handle_outgoing_packets(
-                                &next_conn_tx,
-                                pkt,
-                                &mut cache1,
-                                is_client,
-                                &sequence_number,
-                                &cipher_suite1,
-                                maximum_transmission_unit,
-                            )
-                            .await;
-
-                            if let Some(tx) = result_tx {
-                                let _ = tx.send(result).await;
-                            }
-                        } else {
-                            trace!("{}: handle_outgoing_packets exit", srv_cli_str(is_client));
-                            break;
-                        }
-                    }
-                });
-        */
     }
 
     // Read reads data from the connection.
-    pub fn read(&mut self) -> Option<BytesMut> {
+    pub fn incoming_application_data(&mut self) -> Option<BytesMut> {
         if !self.is_handshake_completed() {
             None
         } else {
             self.incoming_decrypted_packets.pop_front()
         }
+    }
+
+    pub fn outgoing_raw_packet(&mut self) -> Option<BytesMut> {
+        if self.handle_outgoing_packets().is_err() {
+            return None;
+        }
+        self.outgoing_compacted_raw_packets.pop_front()
     }
 
     // Write writes len(p) bytes from p to the DTLS connection
@@ -277,17 +258,9 @@ impl DTLSConn {
         }
     }
 
-    async fn handle_outgoing_packets(
-        next_conn: &Arc<dyn util::Conn + Send + Sync>,
-        mut pkts: Vec<Packet>,
-        cache: &mut HandshakeCache,
-        is_client: bool,
-        local_sequence_number: &Arc<Mutex<Vec<u64>>>,
-        cipher_suite: &Arc<std::sync::Mutex<Option<Box<dyn CipherSuite + Send + Sync>>>>,
-        maximum_transmission_unit: usize,
-    ) -> Result<()> {
+    fn handle_outgoing_packets(&mut self) -> Result<()> {
         let mut raw_packets = vec![];
-        for p in &mut pkts {
+        while let Some(p) = self.outgoing_packets.pop_front() {
             if let Content::Handshake(h) = &p.record.content {
                 let mut handshake_raw = vec![];
                 {
@@ -296,27 +269,20 @@ impl DTLSConn {
                 }
                 trace!(
                     "Send [handshake:{}] -> {} (epoch: {}, seq: {})",
-                    srv_cli_str(is_client),
+                    srv_cli_str(self.is_client),
                     h.handshake_header.handshake_type.to_string(),
                     p.record.record_layer_header.epoch,
                     h.handshake_header.message_sequence
                 );
-                cache.push(
+                self.cache.push(
                     handshake_raw[RECORD_LAYER_HEADER_SIZE..].to_vec(),
                     p.record.record_layer_header.epoch,
                     h.handshake_header.message_sequence,
                     h.handshake_header.handshake_type,
-                    is_client,
+                    self.is_client,
                 );
 
-                let raw_handshake_packets = DTLSConn::process_handshake_packet(
-                    local_sequence_number,
-                    cipher_suite,
-                    maximum_transmission_unit,
-                    p,
-                    h,
-                )
-                .await?;
+                let raw_handshake_packets = self.process_handshake_packet(&p, h)?;
                 raw_packets.extend_from_slice(&raw_handshake_packets);
             } else {
                 /*if let Content::Alert(a) = &p.record.content {
@@ -325,41 +291,33 @@ impl DTLSConn {
                     }
                 }*/
 
-                let raw_packet =
-                    DTLSConn::process_packet(local_sequence_number, cipher_suite, p).await?;
+                let raw_packet = self.process_packet(p)?;
                 raw_packets.push(raw_packet);
             }
         }
 
         if !raw_packets.is_empty() {
             let compacted_raw_packets =
-                compact_raw_packets(&raw_packets, maximum_transmission_unit);
+                compact_raw_packets(&raw_packets, self.maximum_transmission_unit);
 
-            for compacted_raw_packets in &compacted_raw_packets {
-                next_conn
-                    .send(compacted_raw_packets)
-                    .await
-                    .map_err(|err| Error::Other(err.to_string()))?;
+            for compacted_raw_packets in compacted_raw_packets {
+                self.outgoing_compacted_raw_packets
+                    .push_back(compacted_raw_packets);
             }
         }
 
         Ok(())
     }
 
-    async fn process_packet(
-        local_sequence_number: &Arc<Mutex<Vec<u64>>>,
-        cipher_suite: &Arc<std::sync::Mutex<Option<Box<dyn CipherSuite + Send + Sync>>>>,
-        p: &mut Packet,
-    ) -> Result<Vec<u8>> {
+    fn process_packet(&mut self, mut p: Packet) -> Result<Vec<u8>> {
         let epoch = p.record.record_layer_header.epoch as usize;
         let seq = {
-            let mut lsn = local_sequence_number.lock().await;
-            while lsn.len() <= epoch {
-                lsn.push(0);
+            while self.state.local_sequence_number.len() <= epoch {
+                self.state.local_sequence_number.push(0);
             }
 
-            lsn[epoch] += 1;
-            lsn[epoch] - 1
+            self.state.local_sequence_number[epoch] += 1;
+            self.state.local_sequence_number[epoch] - 1
         };
         //trace!("{}: seq = {}", srv_cli_str(is_client), seq);
 
@@ -378,8 +336,7 @@ impl DTLSConn {
         }
 
         if p.should_encrypt {
-            let cipher_suite = cipher_suite.lock()?;
-            if let Some(cipher_suite) = &*cipher_suite {
+            if let Some(cipher_suite) = &self.state.cipher_suite {
                 raw_packet = cipher_suite.encrypt(&p.record.record_layer_header, &raw_packet)?;
             }
         }
@@ -387,28 +344,21 @@ impl DTLSConn {
         Ok(raw_packet)
     }
 
-    async fn process_handshake_packet(
-        local_sequence_number: &Arc<Mutex<Vec<u64>>>,
-        cipher_suite: &Arc<std::sync::Mutex<Option<Box<dyn CipherSuite + Send + Sync>>>>,
-        maximum_transmission_unit: usize,
-        p: &Packet,
-        h: &Handshake,
-    ) -> Result<Vec<Vec<u8>>> {
+    fn process_handshake_packet(&mut self, p: &Packet, h: &Handshake) -> Result<Vec<Vec<u8>>> {
         let mut raw_packets = vec![];
 
-        let handshake_fragments = DTLSConn::fragment_handshake(maximum_transmission_unit, h)?;
+        let handshake_fragments = DTLSConn::fragment_handshake(self.maximum_transmission_unit, h)?;
 
         let epoch = p.record.record_layer_header.epoch as usize;
 
-        let mut lsn = local_sequence_number.lock().await;
-        while lsn.len() <= epoch {
-            lsn.push(0);
+        while self.state.local_sequence_number.len() <= epoch {
+            self.state.local_sequence_number.push(0);
         }
 
         for handshake_fragment in &handshake_fragments {
             let seq = {
-                lsn[epoch] += 1;
-                lsn[epoch] - 1
+                self.state.local_sequence_number[epoch] += 1;
+                self.state.local_sequence_number[epoch] - 1
             };
             //trace!("seq = {}", seq);
             if seq > MAX_SEQUENCE_NUMBER {
@@ -435,8 +385,7 @@ impl DTLSConn {
             raw_packet.extend_from_slice(&record_layer_header_bytes);
             raw_packet.extend_from_slice(handshake_fragment);
             if p.should_encrypt {
-                let cipher_suite = cipher_suite.lock()?;
-                if let Some(cipher_suite) = &*cipher_suite {
+                if let Some(cipher_suite) = &self.state.cipher_suite {
                     raw_packet = cipher_suite.encrypt(&record_layer_header, &raw_packet)?;
                 }
             }
@@ -538,11 +487,7 @@ impl DTLSConn {
 
     pub(crate) fn handle_queued_packets(&mut self) -> Result<()> {
         if self.is_handshake_completed() {
-            for p in self
-                .incoming_encrypted_packets
-                .drain(..)
-                .collect::<Vec<_>>()
-            {
+            while let Some(p) = self.incoming_encrypted_packets.pop_front() {
                 let (_, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
                 if let Some(alert) = alert {
                     self.outgoing_packets.push_back(Packet {
@@ -826,21 +771,23 @@ impl DTLSConn {
     }
 }
 
-fn compact_raw_packets(raw_packets: &[Vec<u8>], maximum_transmission_unit: usize) -> Vec<Vec<u8>> {
+fn compact_raw_packets(raw_packets: &[Vec<u8>], maximum_transmission_unit: usize) -> Vec<BytesMut> {
     let mut combined_raw_packets = vec![];
-    let mut current_combined_raw_packet = vec![];
+    let mut current_combined_raw_packet = BytesMut::new();
 
     for raw_packet in raw_packets {
         if !current_combined_raw_packet.is_empty()
             && current_combined_raw_packet.len() + raw_packet.len() >= maximum_transmission_unit
         {
             combined_raw_packets.push(current_combined_raw_packet);
-            current_combined_raw_packet = vec![];
+            current_combined_raw_packet = BytesMut::new();
         }
         current_combined_raw_packet.extend_from_slice(raw_packet);
     }
 
-    combined_raw_packets.push(current_combined_raw_packet);
+    if !current_combined_raw_packet.is_empty() {
+        combined_raw_packets.push(current_combined_raw_packet);
+    }
 
     combined_raw_packets
 }

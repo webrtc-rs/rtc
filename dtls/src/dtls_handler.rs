@@ -47,15 +47,16 @@ impl InboundHandler for DtlsInboundHandler {
     type Rout = Self::Rin;
 
     fn transport_active(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>) {
-        ctx.fire_transport_active();
-
-        let result = {
+        let try_dtls_active = || -> Result<()> {
             let mut conn = self.conn.borrow_mut();
             conn.handshake()
         };
-        if let Err(err) = result {
+        //TODO: ctx.fire_write()
+        if let Err(err) = try_dtls_active() {
             ctx.fire_read_exception(Box::new(err));
-        } //TODO: ctx.fire_write()
+        }
+
+        ctx.fire_transport_active();
     }
 
     fn transport_inactive(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>) {
@@ -70,17 +71,16 @@ impl InboundHandler for DtlsInboundHandler {
                 conn.handshake()?;
                 conn.handle_queued_packets()?;
             }
-
-            while let Some(message) = conn.read() {
+            while let Some(message) = conn.incoming_application_data() {
                 ctx.fire_read(TaggedBytesMut {
                     now: msg.now,
                     transport: msg.transport,
                     message,
                 });
             }
-
             Ok(())
         };
+        //TODO: ctx.fire_write()
         if let Err(err) = try_dtls_read() {
             ctx.fire_read_exception(Box::new(err));
         }
@@ -95,17 +95,17 @@ impl InboundHandler for DtlsInboundHandler {
     }
 
     fn handle_timeout(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, now: Instant) {
-        let result = {
+        let try_dtls_timeout = || -> Result<()> {
             let mut conn = self.conn.borrow_mut();
             if !conn.is_handshake_completed() {
-                conn.handshake_timeout(now)
-            } else {
-                Ok(())
+                conn.handshake_timeout(now)?
             }
+            Ok(())
         };
-        if let Err(err) = result {
+        //TODO: ctx.fire_write()
+        if let Err(err) = try_dtls_timeout() {
             ctx.fire_read_exception(Box::new(err));
-        } //TODO: ctx.fire_write()
+        }
 
         ctx.fire_handle_timeout(now);
     }
