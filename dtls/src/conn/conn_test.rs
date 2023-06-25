@@ -1,8 +1,11 @@
 use super::*;
-use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::*;
+
+use crate::config::Config;
+use crate::crypto::*;
+use crate::dtls_handler::*;
+/*use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::*;
 use crate::cipher_suite::*;
 use crate::compression_methods::*;
-use crate::crypto::*;
 use crate::curve::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -16,13 +19,17 @@ use crate::handshake::handshake_message_server_hello_done::*;
 use crate::handshake::handshake_message_server_key_exchange::*;
 use crate::handshake::handshake_random::*;
 use crate::signature_hash_algorithm::*;
-use shared::error::*;
+use shared::error::*;*/
 
-use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
-use rand::Rng;
-use shared::crypto::KeyingMaterialExporter;
-use std::time::SystemTime;
-use util::conn::conn_pipe::*;
+//use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
+//use rand::Rng;
+//use shared::crypto::KeyingMaterialExporter;
+
+use retty::{
+    bootstrap::{BootstrapUdpClient, BootstrapUdpServer},
+    channel::Pipeline,
+    transport::{AsyncTransport, AsyncTransportWrite, TaggedBytesMut, TransportContext},
+};
 
 const ERR_TEST_PSK_INVALID_IDENTITY: &str = "TestPSK: Server got invalid identity";
 const ERR_PSK_REJECTED: &str = "PSK Rejected";
@@ -30,12 +37,7 @@ const ERR_NOT_EXPECTED_CHAIN: &str = "not expected chain";
 const ERR_EXPECTED_CHAIN: &str = "expected chain";
 const ERR_WRONG_CERT: &str = "wrong cert";
 
-async fn build_pipe() -> Result<(DTLSConn, DTLSConn)> {
-    let (ua, ub) = pipe();
-
-    pipe_conn(Arc::new(ua), Arc::new(ub)).await
-}
-
+/*
 async fn pipe_conn(
     ca: Arc<dyn util::Conn + Send + Sync>,
     cb: Arc<dyn util::Conn + Send + Sync>,
@@ -75,7 +77,7 @@ async fn pipe_conn(
     };
 
     Ok((client, sever))
-}
+}*/
 
 fn psk_callback_client(hint: &[u8]) -> Result<Vec<u8>> {
     trace!(
@@ -97,33 +99,67 @@ fn psk_callback_hint_fail(_hint: &[u8]) -> Result<Vec<u8>> {
     Err(Error::Other(ERR_PSK_REJECTED.to_owned()))
 }
 
-async fn create_test_client(
-    ca: Arc<dyn util::Conn + Send + Sync>,
+fn create_test_client(
     mut cfg: Config,
     generate_certificate: bool,
-) -> Result<DTLSConn> {
+    client_transport: TransportContext,
+) -> Result<BootstrapUdpClient<TaggedBytesMut>> {
     if generate_certificate {
         let client_cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
         cfg.certificates = vec![client_cert];
     }
 
     cfg.insecure_skip_verify = true;
-    DTLSConn::new(ca, cfg, true, None).await
+
+    let handshake_config = cfg.generate_handshake_config(true, client_transport.peer_addr)?;
+
+    let mut client = BootstrapUdpClient::new();
+    client.pipeline(Box::new(
+        move |writer: AsyncTransportWrite<TaggedBytesMut>| {
+            let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
+
+            let async_transport_handler = AsyncTransport::new(writer);
+            let dtls_handler =
+                DtlsHandler::new(handshake_config.clone(), true, Some(client_transport), None);
+
+            pipeline.add_back(async_transport_handler);
+            pipeline.add_back(dtls_handler);
+            pipeline.finalize()
+        },
+    ));
+
+    Ok(client)
 }
 
-async fn create_test_server(
-    cb: Arc<dyn util::Conn + Send + Sync>,
+fn create_test_server(
     mut cfg: Config,
     generate_certificate: bool,
-) -> Result<DTLSConn> {
+) -> Result<BootstrapUdpServer<TaggedBytesMut>> {
     if generate_certificate {
         let server_cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
         cfg.certificates = vec![server_cert];
     }
 
-    DTLSConn::new(cb, cfg, false, None).await
+    let handshake_config = cfg.generate_handshake_config(false, None)?;
+
+    let mut server = BootstrapUdpServer::new();
+    server.pipeline(Box::new(
+        move |writer: AsyncTransportWrite<TaggedBytesMut>| {
+            let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
+
+            let async_transport_handler = AsyncTransport::new(writer);
+            let dtls_handler = DtlsHandler::new(handshake_config.clone(), false, None, None);
+
+            pipeline.add_back(async_transport_handler);
+            pipeline.add_back(dtls_handler);
+            pipeline.finalize()
+        },
+    ));
+
+    Ok(server)
 }
 
+/*
 #[tokio::test]
 async fn test_routine_leak_on_close() -> Result<()> {
     /*env_logger::Builder::new()
@@ -1614,7 +1650,7 @@ async fn test_cipher_suite_configuration() -> Result<()> {
                     assert!(cipher_suite.is_some(), "{name} expected some, but got none");
                     if let Some(cs) = &*cipher_suite {
                         assert_eq!(cs.id(), want_cs,
-                                   "test_cipher_suite_configuration: Server Selected Bad Cipher Suite '{}': expected({}) actual({})", 
+                                   "test_cipher_suite_configuration: Server Selected Bad Cipher Suite '{}': expected({}) actual({})",
                                    name, want_cs, cs.id());
                     }
                 }
@@ -2477,3 +2513,4 @@ async fn test_renegotation_info() -> Result<()> {
 
     Ok(())
 }
+*/

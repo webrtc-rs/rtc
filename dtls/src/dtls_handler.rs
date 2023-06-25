@@ -18,13 +18,13 @@ struct DtlsOutboundHandler {
     transport: Option<TransportContext>,
     conn: Rc<RefCell<DTLSConn>>,
 }
-struct DtlsHandler {
+pub struct DtlsHandler {
     inbound: DtlsInboundHandler,
     outbound: DtlsOutboundHandler,
 }
 
 impl DtlsHandler {
-    fn new(
+    pub fn new(
         handshake_config: HandshakeConfig,
         is_client: bool,
         client_transport: Option<TransportContext>,
