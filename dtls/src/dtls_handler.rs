@@ -65,11 +65,18 @@ impl InboundHandler for DtlsInboundHandler {
     fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
         let try_dtls_read = || -> Result<()> {
             let mut conn = self.conn.borrow_mut();
+            conn.read_and_buffer(&msg.message)?;
             if !conn.is_handshake_completed() {
-                conn.handshake_read(&msg.message)?;
                 conn.handshake()?;
-            } else {
-                //conn.read(&msg.message)?;
+                conn.handle_queued_packets()?;
+            }
+
+            while let Some(message) = conn.read() {
+                ctx.fire_read(TaggedBytesMut {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message,
+                });
             }
 
             Ok(())
@@ -77,8 +84,6 @@ impl InboundHandler for DtlsInboundHandler {
         if let Err(err) = try_dtls_read() {
             ctx.fire_read_exception(Box::new(err));
         }
-
-        //TODO:ctx.fire_read(msg);
     }
 
     fn read_exception(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, err: Box<dyn Error>) {

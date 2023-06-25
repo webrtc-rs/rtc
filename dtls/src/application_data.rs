@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use std::io::{Read, Write};
 
 use super::content::*;
@@ -10,7 +11,7 @@ use shared::error::Result;
 // https://tools.ietf.org/html/rfc5246#section-10
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ApplicationData {
-    pub data: Vec<u8>,
+    pub data: BytesMut,
 }
 
 impl ApplicationData {
@@ -29,9 +30,12 @@ impl ApplicationData {
     }
 
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
+        //TODO: use Bytes and implement trait Unmarshal
         let mut data: Vec<u8> = vec![];
         reader.read_to_end(&mut data)?;
 
-        Ok(ApplicationData { data })
+        Ok(ApplicationData {
+            data: BytesMut::from(&data[..]),
+        })
     }
 }

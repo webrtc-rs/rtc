@@ -24,6 +24,7 @@ use std::collections::VecDeque;
 
 use shared::{error::*, replay_detector::*};
 
+use bytes::BytesMut;
 use log::*;
 use std::io::{BufReader, BufWriter};
 use std::marker::{Send, Sync};
@@ -55,11 +56,11 @@ pub struct DTLSConn {
     is_client: bool,
     replay_protection_window: usize,
     replay_detector: Vec<Box<dyn ReplayDetector + Send>>,
-    decrypted_rx: VecDeque<Vec<u8>>, // Decrypted Application Data or error, pull by calling `Read`
-    encrypted_packets: Vec<Vec<u8>>,
+    incoming_decrypted_packets: VecDeque<BytesMut>, // Decrypted Application Data or error, pull by calling `Read`
+    incoming_encrypted_packets: VecDeque<Vec<u8>>,
     fragment_buffer: FragmentBuffer,
     pub(crate) cache: HandshakeCache, // caching of handshake messages for verifyData generation
-    pub(crate) packet_tx: VecDeque<Packet>,
+    pub(crate) outgoing_packets: VecDeque<Packet>,
 
     pub(crate) state: State, // Internal state
 
@@ -133,8 +134,8 @@ impl DTLSConn {
             is_client,
             replay_protection_window: handshake_config.replay_protection_window,
             replay_detector: vec![],
-            decrypted_rx: VecDeque::new(),
-            encrypted_packets: vec![],
+            incoming_decrypted_packets: VecDeque::new(),
+            incoming_encrypted_packets: VecDeque::new(),
             fragment_buffer: FragmentBuffer::new(),
 
             cache,
@@ -151,7 +152,7 @@ impl DTLSConn {
             cfg: handshake_config,
             retransmit: false,
             handshake_rx: None,
-            packet_tx: VecDeque::new(),
+            outgoing_packets: VecDeque::new(),
             handle_queue_tx,
             handshake_done_tx: Some(handshake_done_tx),
             reader_close_tx: Mutex::new(Some(reader_close_tx)),
@@ -187,20 +188,12 @@ impl DTLSConn {
     }
 
     // Read reads data from the connection.
-    pub fn read(&mut self, p: &mut [u8]) -> Result<usize> {
+    pub fn read(&mut self) -> Option<BytesMut> {
         if !self.is_handshake_completed() {
-            return Err(Error::ErrHandshakeInProgress);
+            None
+        } else {
+            self.incoming_decrypted_packets.pop_front()
         }
-
-        let mut n = 0;
-        if let Some(pkt) = self.decrypted_rx.pop_front() {
-            n = pkt.len();
-            if p.len() < n {
-                return Err(Error::ErrBufferTooSmall);
-            }
-            p[..n].copy_from_slice(&pkt);
-        }
-        Ok(n)
     }
 
     // Write writes len(p) bytes from p to the DTLS connection
@@ -217,7 +210,9 @@ impl DTLSConn {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
                 self.get_local_epoch(),
-                Content::ApplicationData(ApplicationData { data: p.to_vec() }),
+                Content::ApplicationData(ApplicationData {
+                    data: BytesMut::from(p),
+                }),
             ),
             should_encrypt: true,
             reset_local_sequence_number: false,
@@ -278,7 +273,7 @@ impl DTLSConn {
 
     pub(crate) fn write_packets(&mut self, pkts: Vec<Packet>) {
         for pkt in pkts {
-            self.packet_tx.push_back(pkt);
+            self.outgoing_packets.push_back(pkt);
         }
     }
 
@@ -505,11 +500,11 @@ impl DTLSConn {
         self.handshake_completed
     }
 
-    fn read_and_buffer(&mut self, buf: &[u8]) -> Result<()> {
+    pub(crate) fn read_and_buffer(&mut self, buf: &[u8]) -> Result<()> {
         for pkt in unpack_datagram(buf)? {
             let (hs, alert, err) = self.handle_incoming_packet(pkt, true);
             if let Some(alert) = alert {
-                self.packet_tx.push_back(Packet {
+                self.outgoing_packets.push_back(Packet {
                     record: RecordLayer::new(
                         PROTOCOL_VERSION1_2,
                         self.state.local_epoch,
@@ -538,64 +533,41 @@ impl DTLSConn {
             }
         }
 
-        /*TODO:
-        if has_handshake {
-            let (done_tx, mut done_rx) = mpsc::channel(1);
-
-            tokio::select! {
-                _ = ctx.handshake_tx.send(done_tx) => {
-                    let mut wait_done_rx = true;
-                    while wait_done_rx{
-                        tokio::select!{
-                            _ = done_rx.recv() => {
-                                // If the other party may retransmit the flight,
-                                // we should respond even if it not a new message.
-                                wait_done_rx = false;
-                            }
-                            done = handle_queue_rx.recv() => {
-                                //trace!("recv handle_queue: {} ", srv_cli_str(ctx.is_client));
-
-                                let pkts = ctx.encrypted_packets.drain(..).collect();
-                                DTLSConn::handle_queued_packets(ctx, local_epoch, self.is_handshake_completed(), pkts).await?;
-
-                                drop(done);
-                            }
-                        }
-                    }
-                }
-                _ = ctx.handshake_done_rx.recv() => {}
-            }
-        }*/
-
         Ok(())
     }
 
-    fn handle_queued_packets(&mut self, pkts: Vec<Vec<u8>>) -> Result<()> {
-        for p in pkts {
-            let (_, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
-            if let Some(alert) = alert {
-                self.packet_tx.push_back(Packet {
-                    record: RecordLayer::new(
-                        PROTOCOL_VERSION1_2,
-                        self.state.local_epoch,
-                        Content::Alert(Alert {
-                            alert_level: alert.alert_level,
-                            alert_description: alert.alert_description,
-                        }),
-                    ),
-                    should_encrypt: self.is_handshake_completed(),
-                    reset_local_sequence_number: false,
-                });
+    pub(crate) fn handle_queued_packets(&mut self) -> Result<()> {
+        if self.is_handshake_completed() {
+            for p in self
+                .incoming_encrypted_packets
+                .drain(..)
+                .collect::<Vec<_>>()
+            {
+                let (_, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
+                if let Some(alert) = alert {
+                    self.outgoing_packets.push_back(Packet {
+                        record: RecordLayer::new(
+                            PROTOCOL_VERSION1_2,
+                            self.state.local_epoch,
+                            Content::Alert(Alert {
+                                alert_level: alert.alert_level,
+                                alert_description: alert.alert_description,
+                            }),
+                        ),
+                        should_encrypt: self.is_handshake_completed(),
+                        reset_local_sequence_number: false,
+                    });
 
-                if alert.alert_level == AlertLevel::Fatal
-                    || alert.alert_description == AlertDescription::CloseNotify
-                {
-                    return Err(Error::ErrAlertFatalOrClose);
+                    if alert.alert_level == AlertLevel::Fatal
+                        || alert.alert_description == AlertDescription::CloseNotify
+                    {
+                        return Err(Error::ErrAlertFatalOrClose);
+                    }
                 }
-            }
 
-            if let Some(err) = err {
-                return Err(err);
+                if let Some(err) = err {
+                    return Err(err);
+                }
             }
         }
 
@@ -639,7 +611,7 @@ impl DTLSConn {
                     "{}: received packet of next epoch, queuing packet",
                     srv_cli_str(self.is_client)
                 );
-                self.encrypted_packets.push(pkt);
+                self.incoming_encrypted_packets.push_back(pkt);
             }
             return (false, None, None);
         }
@@ -679,7 +651,7 @@ impl DTLSConn {
                         "{}: handshake not finished, queuing packet",
                         srv_cli_str(self.is_client)
                     );
-                    self.encrypted_packets.push(pkt);
+                    self.incoming_encrypted_packets.push_back(pkt);
                 }
                 return (false, None, None);
             }
@@ -793,7 +765,7 @@ impl DTLSConn {
                             "{}: CipherSuite not initialized, queuing packet",
                             srv_cli_str(self.is_client)
                         );
-                        self.encrypted_packets.push(pkt);
+                        self.incoming_encrypted_packets.push_back(pkt);
                     }
                     return (false, None, None);
                 }
@@ -824,7 +796,7 @@ impl DTLSConn {
 
                 self.replay_detector[h.epoch as usize].accept();
 
-                self.decrypted_rx.push_back(a.data);
+                self.incoming_decrypted_packets.push_back(a.data);
             }
             _ => {
                 return (

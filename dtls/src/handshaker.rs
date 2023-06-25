@@ -357,10 +357,6 @@ impl DTLSConn {
         Ok(HandshakeState::Finished)
     }
 
-    pub(crate) fn handshake_read(&mut self, _msg: &[u8]) -> Result<()> {
-        Ok(())
-    }
-
     pub(crate) fn handshake_timeout(&mut self, _now: Instant) -> Result<()> {
         let next_handshake_state = if self.current_handshake_state == HandshakeState::Waiting {
             trace!(

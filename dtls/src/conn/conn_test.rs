@@ -419,7 +419,7 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
             ..Default::default()
         },
         cache: HandshakeCache::new(),
-        decrypted_rx: Mutex::new(decrypted_rx),
+        incoming_decrypted_packets: Mutex::new(decrypted_rx),
         handshake_completed: false,
         connection_closed_by_user: false,
         closed: AtomicBool::new(false),
@@ -429,7 +429,7 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
         retransmit: false,
         handshake_rx: None,
 
-        packet_tx: Arc::new(packet_tx),
+        outgoing_packets: Arc::new(packet_tx),
         handle_queue_tx,
         handshake_done_tx: None,
 
