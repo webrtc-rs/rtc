@@ -1,7 +1,6 @@
 use retty::channel::{Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler};
 use retty::transport::{TaggedBytesMut, TransportContext};
 use std::cell::RefCell;
-use std::error::Error;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -16,6 +15,7 @@ struct DtlsInboundHandler {
     conn: Rc<RefCell<DTLSConn>>,
 }
 struct DtlsOutboundHandler {
+    transport: Option<TransportContext>,
     conn: Rc<RefCell<DTLSConn>>,
 }
 struct DtlsHandler {
@@ -41,28 +41,10 @@ impl DtlsHandler {
                 transport: client_transport,
                 conn: Rc::clone(&conn),
             },
-            outbound: DtlsOutboundHandler { conn },
-        }
-    }
-}
-
-impl DtlsInboundHandler {
-    fn handle_outgoing(&mut self, ctx: &InboundContext<TaggedBytesMut, TaggedBytesMut>) {
-        if let Some(transport) = &self.transport {
-            let mut outgoing_raw_packets = vec![];
-            {
-                let mut conn = self.conn.borrow_mut();
-                while let Some(pkt) = conn.outgoing_raw_packet() {
-                    outgoing_raw_packets.push(pkt);
-                }
-            };
-            for message in outgoing_raw_packets {
-                ctx.fire_write(TaggedBytesMut {
-                    now: Instant::now(),
-                    transport: *transport,
-                    message,
-                });
-            }
+            outbound: DtlsOutboundHandler {
+                transport: client_transport,
+                conn,
+            },
         }
     }
 }
@@ -79,7 +61,7 @@ impl InboundHandler for DtlsInboundHandler {
         if let Err(err) = try_dtls_active() {
             ctx.fire_read_exception(Box::new(err));
         }
-        self.handle_outgoing(ctx);
+        handle_outgoing(ctx, &self.conn, &self.transport);
 
         ctx.fire_transport_active();
     }
@@ -99,7 +81,7 @@ impl InboundHandler for DtlsInboundHandler {
             conn.read_and_buffer(&msg.message)?;
             if !conn.is_handshake_completed() {
                 conn.handshake()?;
-                conn.handle_queued_packets()?;
+                conn.handle_incoming_queued_packets()?;
             }
             while let Some(message) = conn.incoming_application_data() {
                 messages.push(message);
@@ -118,15 +100,7 @@ impl InboundHandler for DtlsInboundHandler {
             }
             Err(err) => ctx.fire_read_exception(Box::new(err)),
         };
-        self.handle_outgoing(ctx);
-    }
-
-    fn read_exception(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, err: Box<dyn Error>) {
-        ctx.fire_read_exception(err);
-    }
-
-    fn read_eof(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>) {
-        ctx.fire_read_eof();
+        handle_outgoing(ctx, &self.conn, &self.transport);
     }
 
     fn handle_timeout(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, now: Instant) {
@@ -140,7 +114,7 @@ impl InboundHandler for DtlsInboundHandler {
         if let Err(err) = try_dtls_timeout() {
             ctx.fire_read_exception(Box::new(err));
         }
-        self.handle_outgoing(ctx);
+        handle_outgoing(ctx, &self.conn, &self.transport);
 
         ctx.fire_handle_timeout(now);
     }
@@ -164,18 +138,27 @@ impl OutboundHandler for DtlsOutboundHandler {
     type Wout = Self::Win;
 
     fn write(&mut self, ctx: &OutboundContext<Self::Win, Self::Wout>, msg: Self::Win) {
-        ctx.fire_write(msg);
-    }
+        if self.transport.is_none() {
+            self.transport = Some(msg.transport);
+        }
 
-    fn write_exception(
-        &mut self,
-        ctx: &OutboundContext<Self::Win, Self::Wout>,
-        err: Box<dyn Error>,
-    ) {
-        ctx.fire_write_exception(err);
+        let try_dtls_write = || -> Result<()> {
+            let mut conn = self.conn.borrow_mut();
+            conn.write(&msg.message)
+        };
+        if let Err(err) = try_dtls_write() {
+            ctx.fire_write_exception(Box::new(err));
+        }
+        handle_outgoing(ctx, &self.conn, &self.transport);
     }
 
     fn close(&mut self, ctx: &OutboundContext<Self::Win, Self::Wout>) {
+        {
+            let mut conn = self.conn.borrow_mut();
+            conn.close();
+        }
+        handle_outgoing(ctx, &self.conn, &self.transport);
+
         ctx.fire_close();
     }
 }
@@ -197,5 +180,28 @@ impl Handler for DtlsHandler {
         Box<dyn OutboundHandler<Win = Self::Win, Wout = Self::Wout>>,
     ) {
         (Box::new(self.inbound), Box::new(self.outbound))
+    }
+}
+
+fn handle_outgoing(
+    ctx: &OutboundContext<TaggedBytesMut, TaggedBytesMut>,
+    conn: &Rc<RefCell<DTLSConn>>,
+    transport: &Option<TransportContext>,
+) {
+    if let Some(transport) = transport {
+        let mut outgoing_raw_packets = vec![];
+        {
+            let mut c = conn.borrow_mut();
+            while let Some(pkt) = c.outgoing_raw_packet() {
+                outgoing_raw_packets.push(pkt);
+            }
+        };
+        for message in outgoing_raw_packets {
+            ctx.fire_write(TaggedBytesMut {
+                now: Instant::now(),
+                transport: *transport,
+                message,
+            });
+        }
     }
 }

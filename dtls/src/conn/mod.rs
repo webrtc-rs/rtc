@@ -54,6 +54,7 @@ pub struct DTLSConn {
     fragment_buffer: FragmentBuffer,
     pub(crate) cache: HandshakeCache, // caching of handshake messages for verifyData generation
     pub(crate) outgoing_packets: VecDeque<Packet>,
+    outgoing_queued_packets: VecDeque<Packet>,
     outgoing_compacted_raw_packets: VecDeque<BytesMut>,
 
     pub(crate) state: State, // Internal state
@@ -124,6 +125,7 @@ impl DTLSConn {
             incoming_encrypted_packets: VecDeque::new(),
             fragment_buffer: FragmentBuffer::new(),
             outgoing_packets: VecDeque::new(),
+            outgoing_queued_packets: VecDeque::new(),
             outgoing_compacted_raw_packets: VecDeque::new(),
 
             cache: HandshakeCache::new(),
@@ -163,17 +165,13 @@ impl DTLSConn {
         self.outgoing_compacted_raw_packets.pop_front()
     }
 
-    // Write writes len(p) bytes from p to the DTLS connection
-    pub fn write(&mut self, p: &[u8]) -> Result<usize> {
+    // Write writes p to the DTLS connection
+    pub fn write(&mut self, p: &[u8]) -> Result<()> {
         if self.is_connection_closed() {
             return Err(Error::ErrConnClosed);
         }
 
-        if !self.is_handshake_completed() {
-            return Err(Error::ErrHandshakeInProgress);
-        }
-
-        let pkts = vec![Packet {
+        let pkt = Packet {
             record: RecordLayer::new(
                 PROTOCOL_VERSION1_2,
                 self.get_local_epoch(),
@@ -183,15 +181,19 @@ impl DTLSConn {
             ),
             should_encrypt: true,
             reset_local_sequence_number: false,
-        }];
+        };
 
-        self.write_packets(pkts);
+        if self.is_handshake_completed() {
+            self.write_packets(vec![pkt]);
+        } else {
+            self.outgoing_queued_packets.push_back(pkt);
+        }
 
-        Ok(p.len())
+        Ok(())
     }
 
     // Close closes the connection.
-    pub fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self) {
         if !self.closed {
             self.closed = true;
 
@@ -199,8 +201,6 @@ impl DTLSConn {
             // even if the underlying connection is already closed.
             self.notify(AlertLevel::Warning, AlertDescription::CloseNotify);
         }
-
-        Ok(())
     }
 
     /// connection_state returns basic DTLS details about the connection.
@@ -236,6 +236,12 @@ impl DTLSConn {
     }
 
     fn handle_outgoing_packets(&mut self) -> Result<()> {
+        if self.is_handshake_completed() {
+            while let Some(pkt) = self.outgoing_queued_packets.pop_front() {
+                self.write_packets(vec![pkt]);
+            }
+        }
+
         let mut raw_packets = vec![];
         while let Some(p) = self.outgoing_packets.pop_front() {
             if let Content::Handshake(h) = &p.record.content {
@@ -462,7 +468,7 @@ impl DTLSConn {
         Ok(())
     }
 
-    pub(crate) fn handle_queued_packets(&mut self) -> Result<()> {
+    pub(crate) fn handle_incoming_queued_packets(&mut self) -> Result<()> {
         if self.is_handshake_completed() {
             while let Some(p) = self.incoming_encrypted_packets.pop_front() {
                 let (_, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
