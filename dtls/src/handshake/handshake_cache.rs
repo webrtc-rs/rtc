@@ -33,9 +33,7 @@ pub(crate) struct HandshakeCache {
 
 impl HandshakeCache {
     pub(crate) fn new() -> Self {
-        HandshakeCache {
-            cache: vec![],
-        }
+        HandshakeCache { cache: vec![] }
     }
 
     pub(crate) fn push(
@@ -163,57 +161,56 @@ impl HandshakeCache {
         let mut merged = vec![];
 
         // Order defined by https://tools.ietf.org/html/rfc5246#section-7.3
-        let handshake_buffer = self
-            .pull(&[
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ClientHello,
-                    epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerHello,
-                    epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::Certificate,
-                    epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerKeyExchange,
-                    epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::CertificateRequest,
-                    epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ServerHelloDone,
-                    epoch,
-                    is_client: false,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::Certificate,
-                    epoch,
-                    is_client: true,
-                    optional: false,
-                },
-                HandshakeCachePullRule {
-                    typ: HandshakeType::ClientKeyExchange,
-                    epoch,
-                    is_client: true,
-                    optional: false,
-                },
-            ]);
+        let handshake_buffer = self.pull(&[
+            HandshakeCachePullRule {
+                typ: HandshakeType::ClientHello,
+                epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerHello,
+                epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::Certificate,
+                epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerKeyExchange,
+                epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::CertificateRequest,
+                epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ServerHelloDone,
+                epoch,
+                is_client: false,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::Certificate,
+                epoch,
+                is_client: true,
+                optional: false,
+            },
+            HandshakeCachePullRule {
+                typ: HandshakeType::ClientKeyExchange,
+                epoch,
+                is_client: true,
+                optional: false,
+            },
+        ]);
 
         for p in &handshake_buffer {
             merged.extend_from_slice(&p.data);

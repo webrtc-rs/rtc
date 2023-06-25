@@ -723,7 +723,6 @@ impl Flight for Flight4 {
 mod tests {
     use super::*;
     use shared::error::Result;
-    use std::sync::Arc;
 
     struct MockCipherSuite {}
 
@@ -829,10 +828,8 @@ mod tests {
 
         let cfg = HandshakeConfig::default();
 
-        let (mut tx, _rx) = mpsc::channel::<mpsc::Sender<()>>(1);
-
         let f = Flight4 {};
-        let res = f.parse(&mut tx, &mut state, &cache, &cfg);
+        let res = f.parse(&mut state, &cache, &cfg);
         assert!(res.is_err());
     }
 }

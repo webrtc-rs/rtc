@@ -39,7 +39,6 @@ thiserror = "1.0"
 pem = { version = "1", optional = true }
 
 [dev-dependencies]
-util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn"] }
 env_logger = "0.9.0"
 chrono = "0.4.23"
 clap = "3.2.6"
@@ -48,32 +47,32 @@ hub = {path = "examples/hub"}
 [features]
 pem = ["dep:pem"]
 
-[[example]]
-name = "dial_psk"
-path = "examples/dial/psk/dial_psk.rs"
-bench = false
-
-[[example]]
-name = "dial_selfsign"
-path = "examples/dial/selfsign/dial_selfsign.rs"
-bench = false
-
-[[example]]
-name = "dial_verify"
-path = "examples/dial/verify/dial_verify.rs"
-bench = false
-
-[[example]]
-name = "listen_psk"
-path = "examples/listen/psk/listen_psk.rs"
-bench = false
-
-[[example]]
-name = "listen_selfsign"
-path = "examples/listen/selfsign/listen_selfsign.rs"
-bench = false
-
-[[example]]
-name = "listen_verify"
-path = "examples/listen/verify/listen_verify.rs"
-bench = false
+#[[example]]
+#name = "dial_psk"
+#path = "examples/dial/psk/dial_psk.rs"
+#bench = false
+#
+#[[example]]
+#name = "dial_selfsign"
+#path = "examples/dial/selfsign/dial_selfsign.rs"
+#bench = false
+#
+#[[example]]
+#name = "dial_verify"
+#path = "examples/dial/verify/dial_verify.rs"
+#bench = false
+#
+#[[example]]
+#name = "listen_psk"
+#path = "examples/listen/psk/listen_psk.rs"
+#bench = false
+#
+#[[example]]
+#name = "listen_selfsign"
+#path = "examples/listen/selfsign/listen_selfsign.rs"
+#bench = false
+#
+#[[example]]
+#name = "listen_verify"
+#path = "examples/listen/verify/listen_verify.rs"
+#bench = false
