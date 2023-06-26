@@ -24,10 +24,22 @@ use shared::error::*;*/
 //use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 //use rand::Rng;
 //use shared::crypto::KeyingMaterialExporter;
+use core_affinity::CoreId;
+use local_sync::mpsc::{
+    unbounded::channel, unbounded::Rx as LocalReceiver, unbounded::Tx as LocalSender,
+};
+use std::cell::RefCell;
+use std::io::Write;
+use std::net::SocketAddr;
+use std::rc::Rc;
+use std::str::FromStr;
 
 use retty::{
     bootstrap::{BootstrapUdpClient, BootstrapUdpServer},
-    channel::Pipeline,
+    channel::{
+        Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler, Pipeline,
+    },
+    executor::{spawn_local, yield_local, LocalExecutorBuilder},
     transport::{AsyncTransport, AsyncTransportWrite, TaggedBytesMut, TransportContext},
 };
 
@@ -37,47 +49,69 @@ const ERR_NOT_EXPECTED_CHAIN: &str = "not expected chain";
 const ERR_EXPECTED_CHAIN: &str = "expected chain";
 const ERR_WRONG_CERT: &str = "wrong cert";
 
-/*
-async fn pipe_conn(
-    ca: Arc<dyn util::Conn + Send + Sync>,
-    cb: Arc<dyn util::Conn + Send + Sync>,
-) -> Result<(DTLSConn, DTLSConn)> {
-    let (c_tx, mut c_rx) = mpsc::channel(1);
+struct EchoDecoder {
+    is_server: bool,
+    tx: Rc<RefCell<Option<LocalSender<TaggedBytesMut>>>>,
+}
+struct EchoEncoder;
+struct EchoHandler {
+    decoder: EchoDecoder,
+    encoder: EchoEncoder,
+}
 
-    // Setup client
-    tokio::spawn(async move {
-        let client = create_test_client(
-            ca,
-            Config {
-                srtp_protection_profiles: vec![SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80],
-                ..Default::default()
-            },
-            true,
-        )
-        .await;
+impl EchoHandler {
+    fn new(is_server: bool, tx: Rc<RefCell<Option<LocalSender<TaggedBytesMut>>>>) -> Self {
+        EchoHandler {
+            decoder: EchoDecoder { is_server, tx },
+            encoder: EchoEncoder,
+        }
+    }
+}
 
-        let _ = c_tx.send(client).await;
-    });
+impl InboundHandler for EchoDecoder {
+    type Rin = TaggedBytesMut;
+    type Rout = Self::Rin;
 
-    // Setup server
-    let sever = create_test_server(
-        cb,
-        Config {
-            srtp_protection_profiles: vec![SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80],
-            ..Default::default()
-        },
-        true,
-    )
-    .await?;
+    fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
+        if self.is_server {
+            ctx.fire_write(msg);
+        } else {
+            let tx = self.tx.borrow_mut();
+            if let Some(tx) = &*tx {
+                let _ = tx.send(msg);
+            }
+        }
+    }
+}
 
-    // Receive client
-    let client = match c_rx.recv().await.unwrap() {
-        Ok(client) => client,
-        Err(err) => return Err(err),
-    };
+impl OutboundHandler for EchoEncoder {
+    type Win = TaggedBytesMut;
+    type Wout = Self::Win;
 
-    Ok((client, sever))
-}*/
+    fn write(&mut self, ctx: &OutboundContext<Self::Win, Self::Wout>, msg: Self::Win) {
+        ctx.fire_write(msg);
+    }
+}
+
+impl Handler for EchoHandler {
+    type Rin = TaggedBytesMut;
+    type Rout = Self::Rin;
+    type Win = TaggedBytesMut;
+    type Wout = Self::Win;
+
+    fn name(&self) -> &str {
+        "EchoHandler"
+    }
+
+    fn split(
+        self,
+    ) -> (
+        Box<dyn InboundHandler<Rin = Self::Rin, Rout = Self::Rout>>,
+        Box<dyn OutboundHandler<Win = Self::Win, Wout = Self::Wout>>,
+    ) {
+        (Box::new(self.decoder), Box::new(self.encoder))
+    }
+}
 
 fn psk_callback_client(hint: &[u8]) -> Result<Vec<u8>> {
     trace!(
@@ -103,7 +137,10 @@ fn create_test_client(
     mut cfg: Config,
     generate_certificate: bool,
     client_transport: TransportContext,
-) -> Result<BootstrapUdpClient<TaggedBytesMut>> {
+) -> Result<(
+    BootstrapUdpClient<TaggedBytesMut>,
+    LocalReceiver<TaggedBytesMut>,
+)> {
     if generate_certificate {
         let client_cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
         cfg.certificates = vec![client_cert];
@@ -113,6 +150,9 @@ fn create_test_client(
 
     let handshake_config = cfg.generate_handshake_config(true, client_transport.peer_addr)?;
 
+    let (client_tx, client_rx) = channel();
+    let client_tx = Rc::new(RefCell::new(Some(client_tx)));
+
     let mut client = BootstrapUdpClient::new();
     client.pipeline(Box::new(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
@@ -121,14 +161,15 @@ fn create_test_client(
             let async_transport_handler = AsyncTransport::new(writer);
             let dtls_handler =
                 DtlsHandler::new(handshake_config.clone(), true, Some(client_transport), None);
-
+            let echo_handler = EchoHandler::new(false, Rc::clone(&client_tx));
             pipeline.add_back(async_transport_handler);
             pipeline.add_back(dtls_handler);
+            pipeline.add_back(echo_handler);
             pipeline.finalize()
         },
     ));
 
-    Ok(client)
+    Ok((client, client_rx))
 }
 
 fn create_test_server(
@@ -142,6 +183,8 @@ fn create_test_server(
 
     let handshake_config = cfg.generate_handshake_config(false, None)?;
 
+    let server_tx = Rc::new(RefCell::new(None));
+
     let mut server = BootstrapUdpServer::new();
     server.pipeline(Box::new(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
@@ -149,9 +192,11 @@ fn create_test_server(
 
             let async_transport_handler = AsyncTransport::new(writer);
             let dtls_handler = DtlsHandler::new(handshake_config.clone(), false, None, None);
+            let echo_handler = EchoHandler::new(true, Rc::clone(&server_tx));
 
             pipeline.add_back(async_transport_handler);
             pipeline.add_back(dtls_handler);
+            pipeline.add_back(echo_handler);
             pipeline.finalize()
         },
     ));
@@ -159,48 +204,95 @@ fn create_test_server(
     Ok(server)
 }
 
-/*
-#[tokio::test]
-async fn test_routine_leak_on_close() -> Result<()> {
-    /*env_logger::Builder::new()
-    .format(|buf, record| {
-        writeln!(
-            buf,
-            "{}:{} [{}] {} - {}",
-            record.file().unwrap_or("unknown"),
-            record.line().unwrap_or(0),
-            record.level(),
-            chrono::Local::now().format("%H:%M:%S.%6f"),
-            record.args()
-        )
-    })
-    .filter(None, LevelFilter::Trace)
-    .init();*/
+#[test]
+fn test_dtls_handler() {
+    env_logger::Builder::new()
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{}:{} [{}] {} - {}",
+                record.file().unwrap_or("unknown"),
+                record.line().unwrap_or(0),
+                record.level(),
+                chrono::Local::now().format("%H:%M:%S.%6f"),
+                record.args()
+            )
+        })
+        .filter(None, LevelFilter::Trace)
+        .init();
 
-    let (ca, cb) = build_pipe().await?;
+    let handler = LocalExecutorBuilder::new()
+        .name("test_dtls_handler_thread")
+        .core_id(CoreId { id: 0 })
+        .spawn(|| async move {
+            let (done_tx, mut done_rx) = channel();
 
-    let buf_a = vec![0xFA; 100];
-    let n_a = ca.write(&buf_a, Some(Duration::from_secs(5))).await?;
-    assert_eq!(n_a, 100);
+            let mut server = create_test_server(
+                Config {
+                    srtp_protection_profiles: vec![
+                        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+                    ],
+                    ..Default::default()
+                },
+                true,
+            )
+            .unwrap();
 
-    let mut buf_b = vec![0; 1024];
-    let n_b = cb.read(&mut buf_b, Some(Duration::from_secs(5))).await?;
-    assert_eq!(n_a, 100);
-    assert_eq!(&buf_a[..], &buf_b[0..n_b]);
+            let server_addr = server.bind("127.0.0.1:0").await.unwrap();
 
-    cb.close().await?;
-    ca.close().await?;
+            let client_transport = TransportContext {
+                local_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
+                peer_addr: Some(server_addr),
+                ecn: None,
+            };
 
-    {
-        drop(ca);
-        drop(cb);
-    }
+            spawn_local(async move {
+                let (mut client, mut client_rx) = create_test_client(
+                    Config {
+                        srtp_protection_profiles: vec![
+                            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+                        ],
+                        ..Default::default()
+                    },
+                    true,
+                    client_transport,
+                )
+                .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(1)).await;
+                client.bind(client_transport.local_addr).await.unwrap();
 
-    Ok(())
+                let client_pipeline = client.connect(server_addr).await.unwrap();
+
+                let buf = vec![0xFA; 100];
+
+                client_pipeline.write(TaggedBytesMut {
+                    now: Instant::now(),
+                    transport: client_transport,
+                    message: BytesMut::from(&buf[..]),
+                });
+                yield_local();
+
+                if let Some(echo) = client_rx.recv().await {
+                    assert_eq!(&buf, &echo.message);
+                } else {
+                    assert!(false);
+                }
+
+                client.graceful_stop().await;
+
+                assert!(done_tx.send(()).is_ok());
+            })
+            .detach();
+
+            assert!(done_rx.recv().await.is_some());
+
+            server.graceful_stop().await;
+        })
+        .unwrap();
+
+    handler.join().unwrap();
 }
-
+/*
 #[tokio::test]
 async fn test_sequence_number_overflow_on_application_data() -> Result<()> {
     /*env_logger::Builder::new()

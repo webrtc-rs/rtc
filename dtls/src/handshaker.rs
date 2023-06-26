@@ -218,13 +218,21 @@ impl DTLSConn {
                 return Ok(());
             }
 
-            self.current_handshake_state = match self.current_handshake_state {
+            let previous_handshake_state = self.current_handshake_state;
+            self.current_handshake_state = match previous_handshake_state {
                 HandshakeState::Preparing => self.prepare()?,
                 HandshakeState::Sending => self.send()?,
                 HandshakeState::Waiting => self.wait()?,
                 HandshakeState::Finished => self.finish()?,
                 _ => return Err(Error::ErrInvalidFsmTransition),
             };
+
+            if previous_handshake_state == self.current_handshake_state
+                && previous_handshake_state == HandshakeState::Waiting
+            {
+                // wait for timeout or incoming packet
+                return Ok(());
+            }
         }
     }
 
