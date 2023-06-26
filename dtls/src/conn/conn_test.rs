@@ -82,6 +82,13 @@ impl InboundHandler for EchoDecoder {
             }
         }
     }
+
+    fn read_exception(
+        &mut self,
+        _ctx: &InboundContext<Self::Rin, Self::Rout>,
+        _err: Box<dyn std::error::Error>,
+    ) {
+    }
 }
 
 impl OutboundHandler for EchoEncoder {
@@ -114,7 +121,7 @@ impl Handler for EchoHandler {
 }
 
 fn psk_callback_client(hint: &[u8]) -> Result<Vec<u8>> {
-    trace!(
+    debug!(
         "Server's hint: {}",
         String::from_utf8(hint.to_vec()).unwrap()
     );
@@ -122,7 +129,7 @@ fn psk_callback_client(hint: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn psk_callback_server(hint: &[u8]) -> Result<Vec<u8>> {
-    trace!(
+    debug!(
         "Client's hint: {}",
         String::from_utf8(hint.to_vec()).unwrap()
     );
@@ -218,7 +225,7 @@ fn test_dtls_handler() {
                 record.args()
             )
         })
-        .filter(None, LevelFilter::Trace)
+        .filter(None, LevelFilter::Debug)
         .init();
 
     let handler = LocalExecutorBuilder::new()
@@ -2436,7 +2443,7 @@ async fn test_multiple_hello_verify_request() -> Result<()> {
 
     for i in 0..cookies.len() {
         let cookie = &cookies[i];
-        trace!("cookie {}: {:?}", i, cookie);
+        debug!("cookie {}: {:?}", i, cookie);
 
         // read client hello
         let mut resp = vec![0; 1024];

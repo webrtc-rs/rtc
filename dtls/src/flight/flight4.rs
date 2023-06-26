@@ -104,7 +104,7 @@ impl Flight for Flight4 {
             };
 
             state.peer_certificates = h.certificate.clone();
-            trace!(
+            debug!(
                 "[handshake] PeerCertificates4 {}",
                 state.peer_certificates.len()
             );
@@ -437,7 +437,7 @@ impl Flight for Flight4 {
 
         match cfg.client_auth {
             ClientAuthType::RequireAnyClientCert => {
-                trace!(
+                debug!(
                     "{} peer_certificates.len() {}",
                     srv_cli_str(state.is_client),
                     state.peer_certificates.len(),

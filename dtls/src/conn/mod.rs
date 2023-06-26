@@ -250,7 +250,7 @@ impl DTLSConn {
                     let mut writer = BufWriter::<&mut Vec<u8>>::new(handshake_raw.as_mut());
                     p.record.marshal(&mut writer)?;
                 }
-                trace!(
+                debug!(
                     "Send [handshake:{}] -> {} (epoch: {}, seq: {})",
                     srv_cli_str(self.is_client),
                     h.handshake_header.handshake_type.to_string(),
@@ -302,7 +302,7 @@ impl DTLSConn {
             self.state.local_sequence_number[epoch] += 1;
             self.state.local_sequence_number[epoch] - 1
         };
-        //trace!("{}: seq = {}", srv_cli_str(is_client), seq);
+        //debug!("{}: seq = {}", srv_cli_str(is_client), seq);
 
         if seq > MAX_SEQUENCE_NUMBER {
             // RFC 6347 Section 4.1.0
@@ -343,7 +343,7 @@ impl DTLSConn {
                 self.state.local_sequence_number[epoch] += 1;
                 self.state.local_sequence_number[epoch] - 1
             };
-            //trace!("seq = {}", seq);
+            //debug!("seq = {}", seq);
             if seq > MAX_SEQUENCE_NUMBER {
                 return Err(Error::ErrSequenceNumberOverflow);
             }
@@ -615,7 +615,7 @@ impl DTLSConn {
                 let mut reader = BufReader::new(out.as_slice());
                 let raw_handshake = match Handshake::unmarshal(&mut reader) {
                     Ok(rh) => {
-                        trace!(
+                        debug!(
                             "Recv [handshake:{}] -> {} (epoch: {}, seq: {})",
                             srv_cli_str(self.is_client),
                             rh.handshake_header.handshake_type.to_string(),
@@ -663,7 +663,7 @@ impl DTLSConn {
 
         match r.content {
             Content::Alert(mut a) => {
-                trace!("{}: <- {}", srv_cli_str(self.is_client), a.to_string());
+                debug!("{}: <- {}", srv_cli_str(self.is_client), a.to_string());
                 if a.alert_description == AlertDescription::CloseNotify {
                     // Respond with a close_notify [RFC5246 Section 7.2.1]
                     a = Alert {
@@ -699,7 +699,7 @@ impl DTLSConn {
                 }
 
                 let new_remote_epoch = h.epoch + 1;
-                trace!(
+                debug!(
                     "{}: <- ChangeCipherSpec (epoch: {})",
                     srv_cli_str(self.is_client),
                     new_remote_epoch

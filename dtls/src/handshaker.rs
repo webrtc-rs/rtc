@@ -204,7 +204,7 @@ pub(crate) fn srv_cli_str(is_client: bool) -> String {
 impl DTLSConn {
     pub(crate) fn handshake(&mut self) -> Result<()> {
         loop {
-            trace!(
+            debug!(
                 "[handshake:{}] {}: {}",
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string(),
@@ -215,6 +215,10 @@ impl DTLSConn {
                 && !self.is_handshake_completed()
             {
                 self.set_handshake_completed();
+                debug!(
+                    "[handshake:{}] is completed",
+                    srv_cli_str(self.state.is_client),
+                );
                 return Ok(());
             }
 
@@ -273,7 +277,7 @@ impl DTLSConn {
             }
         }
         if epoch != next_epoch {
-            trace!(
+            debug!(
                 "[handshake:{}] -> changeCipherSpec (epoch: {})",
                 srv_cli_str(self.state.is_client),
                 next_epoch
@@ -298,8 +302,8 @@ impl DTLSConn {
     }
     fn wait(&mut self) -> Result<HandshakeState> {
         if self.handshake_rx.take().is_some() {
-            trace!(
-                "[handshake:{}] {} received handshake_rx",
+            debug!(
+                "[handshake:{}] {} received handshake packets",
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string()
             );
@@ -310,7 +314,7 @@ impl DTLSConn {
             );
             match result {
                 Err((alert, err)) => {
-                    trace!(
+                    debug!(
                         "[handshake:{}] {} result alert:{:?}, err:{:?}",
                         srv_cli_str(self.state.is_client),
                         self.current_flight.to_string(),
@@ -326,7 +330,7 @@ impl DTLSConn {
                     }
                 }
                 Ok(next_flight) => {
-                    trace!(
+                    debug!(
                         "[handshake:{}] {} -> {}",
                         srv_cli_str(self.state.is_client),
                         self.current_flight.to_string(),
@@ -367,7 +371,7 @@ impl DTLSConn {
 
     pub(crate) fn handshake_timeout(&mut self, _now: Instant) -> Result<()> {
         let next_handshake_state = if self.current_handshake_state == HandshakeState::Waiting {
-            trace!(
+            debug!(
                 "[handshake:{}] {} retransmit_timer",
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string()

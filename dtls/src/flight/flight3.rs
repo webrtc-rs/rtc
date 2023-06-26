@@ -269,7 +269,7 @@ impl Flight for Flight3 {
                 }
             };
 
-            trace!(
+            debug!(
                 "[handshake:{}] use cipher suite: {}",
                 srv_cli_str(state.is_client),
                 cipher_suite.to_string()
