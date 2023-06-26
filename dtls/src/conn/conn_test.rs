@@ -89,6 +89,8 @@ impl InboundHandler for EchoDecoder {
         _err: Box<dyn std::error::Error>,
     ) {
     }
+
+    fn handle_timeout(&mut self, _ctx: &InboundContext<Self::Rin, Self::Rout>, _now: Instant) {}
 }
 
 impl OutboundHandler for EchoEncoder {

@@ -307,6 +307,7 @@ impl DTLSConn {
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string()
             );
+            self.current_retransmit_timer = None;
             let result = self.current_flight.parse(
                 /*&mut self.handle_queue_tx,*/ &mut self.state,
                 &self.cache,
@@ -351,6 +352,12 @@ impl DTLSConn {
     }
     fn finish(&mut self) -> Result<HandshakeState> {
         if self.handshake_rx.take().is_some() {
+            debug!(
+                "[handshake:{}] {} received handshake packets",
+                srv_cli_str(self.state.is_client),
+                self.current_flight.to_string()
+            );
+            self.current_retransmit_timer = None;
             let result = self.current_flight.parse(
                 /*&mut self.handle_queue_tx,*/ &mut self.state,
                 &self.cache,
