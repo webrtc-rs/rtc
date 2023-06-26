@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod dtls_handler_test;
+
 use retty::channel::{Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler};
 use retty::transport::{TaggedBytesMut, TransportContext};
 use std::cell::RefCell;
@@ -106,10 +109,8 @@ impl InboundHandler for DtlsInboundHandler {
     fn handle_timeout(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, now: Instant) {
         let try_dtls_timeout = || -> Result<()> {
             let mut conn = self.conn.borrow_mut();
-            if conn.current_retransmit_timer.take().is_some() {
-                if !conn.is_handshake_completed() {
-                    conn.handshake_timeout(now)?
-                }
+            if conn.current_retransmit_timer.take().is_some() && !conn.is_handshake_completed() {
+                conn.handshake_timeout(now)?
             }
             Ok(())
         };
