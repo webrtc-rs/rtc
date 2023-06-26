@@ -237,7 +237,8 @@ impl DTLSConn {
 
     fn handle_outgoing_packets(&mut self) -> Result<()> {
         if self.is_handshake_completed() {
-            while let Some(pkt) = self.outgoing_queued_packets.pop_front() {
+            while let Some(mut pkt) = self.outgoing_queued_packets.pop_front() {
+                pkt.record.record_layer_header.epoch = self.get_local_epoch();
                 self.write_packets(vec![pkt]);
             }
         }
@@ -712,6 +713,10 @@ impl DTLSConn {
             }
             Content::ApplicationData(a) => {
                 if h.epoch == 0 {
+                    warn!(
+                        "{}: <- Unexpected ApplicationData Message",
+                        srv_cli_str(self.is_client),
+                    );
                     return (
                         false,
                         Some(Alert {
@@ -727,6 +732,10 @@ impl DTLSConn {
                 self.incoming_decrypted_packets.push_back(a.data);
             }
             _ => {
+                warn!(
+                    "{}: <- Unexpected Handshake Message",
+                    srv_cli_str(self.is_client),
+                );
                 return (
                     false,
                     Some(Alert {
