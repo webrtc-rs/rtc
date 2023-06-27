@@ -443,7 +443,7 @@ impl StreamState {
         // not increment its Stream Sequence Number when transmitting a DATA
         // chunk with U flag set to 1.
         if !unordered {
-            self.sequence_number += 1;
+            self.sequence_number = self.sequence_number.wrapping_add(1);
         }
 
         //let old_value = self.buffered_amount;
