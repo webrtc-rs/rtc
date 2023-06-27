@@ -10,6 +10,7 @@ use shared::error::*;
 use log::*;
 use std::collections::HashMap;
 use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -72,7 +73,7 @@ impl fmt::Display for HandshakeState {
 }
 
 pub(crate) type VerifyPeerCertificateFn =
-    Arc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>) + Send + Sync>;
+    Rc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>)>;
 
 #[derive(Clone)]
 pub struct HandshakeConfig {
@@ -90,7 +91,7 @@ pub struct HandshakeConfig {
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Arc<dyn rustls::ServerCertVerifier>,
+    pub(crate) server_cert_verifier: Rc<dyn rustls::ServerCertVerifier>,
     pub(crate) client_cert_verifier: Option<Arc<dyn rustls::ClientCertVerifier>>,
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
@@ -116,7 +117,7 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: Arc::new(rustls::WebPKIVerifier::new()),
+            server_cert_verifier: Rc::new(rustls::WebPKIVerifier::new()),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,

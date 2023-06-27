@@ -1,13 +1,12 @@
 use crate::cipher_suite::*;
+use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use crate::crypto::*;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::handshaker::{HandshakeConfig, VerifyPeerCertificateFn};
 use crate::signature_hash_algorithm::{parse_signature_schemes, SignatureScheme};
 use shared::error::*;
 use std::net::SocketAddr;
-
-use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Duration;
 
 /// Config is used to configure a DTLS client or server.
@@ -132,7 +131,7 @@ pub(crate) const DEFAULT_MTU: usize = 1200; // bytes
 
 // PSKCallback is called once we have the remote's psk_identity_hint.
 // If the remote provided none it will be nil
-pub(crate) type PskCallback = Arc<dyn (Fn(&[u8]) -> Result<Vec<u8>>) + Send + Sync>;
+pub(crate) type PskCallback = Rc<dyn (Fn(&[u8]) -> Result<Vec<u8>>)>;
 
 // ClientAuthType declares the policy the server will follow for
 // TLS Client Authentication.

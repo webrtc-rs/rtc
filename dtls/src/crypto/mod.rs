@@ -16,6 +16,7 @@ use rcgen::KeyPair;
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair, RsaKeyPair};
 use std::convert::TryFrom;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// A X.509 certificate(s) used to authenticate a DTLS connection.
@@ -483,7 +484,7 @@ pub(crate) fn verify_client_cert(
 
 pub(crate) fn verify_server_cert(
     raw_certificates: &[Vec<u8>],
-    cert_verifier: &Arc<dyn rustls::ServerCertVerifier>,
+    cert_verifier: &Rc<dyn rustls::ServerCertVerifier>,
     roots: &rustls::RootCertStore,
     server_name: &str,
 ) -> Result<Vec<rustls::Certificate>> {
