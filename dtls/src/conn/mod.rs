@@ -36,7 +36,7 @@ pub(crate) const INBOUND_BUFFER_SIZE: usize = 8192;
 // Default replay protection window is specified by RFC 6347 Section 4.1.2.6
 pub(crate) const DEFAULT_REPLAY_PROTECTION_WINDOW: usize = 64;
 
-pub static INVALID_KEYING_LABELS: &[&str] = &[
+pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
     "client finished",
     "server finished",
     "master secret",
@@ -209,8 +209,8 @@ impl DTLSConn {
         &self.state
     }
 
-    /// selected_srtpprotection_profile returns the selected SRTPProtectionProfile
-    pub fn selected_srtpprotection_profile(&self) -> SrtpProtectionProfile {
+    // selected_srtp_protection_profile returns the selected SRTPProtectionProfile
+    pub(crate) fn selected_srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.state.srtp_protection_profile
     }
 
@@ -433,7 +433,7 @@ impl DTLSConn {
         self.handshake_completed
     }
 
-    pub(crate) fn read_and_buffer(&mut self, buf: &[u8]) -> Result<()> {
+    pub fn read(&mut self, buf: &[u8]) -> Result<()> {
         for pkt in unpack_datagram(buf)? {
             let (hs, alert, err) = self.handle_incoming_packet(pkt, true);
             if let Some(alert) = alert {

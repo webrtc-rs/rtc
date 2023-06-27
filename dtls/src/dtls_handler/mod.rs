@@ -81,7 +81,7 @@ impl InboundHandler for DtlsInboundHandler {
         let try_dtls_read = || -> Result<Vec<BytesMut>> {
             let mut messages = vec![];
             let mut conn = self.conn.borrow_mut();
-            conn.read_and_buffer(&msg.message)?;
+            conn.read(&msg.message)?;
             if !conn.is_handshake_completed() {
                 conn.handshake()?;
                 conn.handle_incoming_queued_packets()?;
