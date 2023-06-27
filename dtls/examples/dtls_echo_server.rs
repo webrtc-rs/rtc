@@ -1,9 +1,7 @@
 use bytes::BytesMut;
 use clap::Parser;
-use std::{
-    cell::RefCell, collections::HashMap, io::Write, net::SocketAddr, rc::Rc, rc::Weak,
-    str::FromStr, time::Instant,
-};
+use std::rc::Rc;
+use std::{io::Write, str::FromStr, time::Instant};
 
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::config::{Config, ExtendedMasterSecretType};
@@ -12,106 +10,43 @@ use shared::error::*;
 
 use retty::bootstrap::BootstrapUdpServer;
 use retty::channel::{
-    Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler, OutboundPipeline,
-    Pipeline,
+    Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler, Pipeline,
 };
 use retty::codec::string_codec::TaggedString;
 use retty::executor::LocalExecutorBuilder;
-use retty::transport::{AsyncTransport, AsyncTransportWrite, TaggedBytesMut, TransportContext};
+use retty::transport::{AsyncTransport, AsyncTransportWrite, TaggedBytesMut};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-struct Shared {
-    peers: HashMap<SocketAddr, Weak<dyn OutboundPipeline<TaggedString>>>,
+
+struct EchoDecoder;
+struct EchoEncoder;
+struct EchoHandler {
+    decoder: EchoDecoder,
+    encoder: EchoEncoder,
 }
 
-impl Shared {
-    /// Create a new, empty, instance of `Shared`.
+impl EchoHandler {
     fn new() -> Self {
-        Shared {
-            peers: HashMap::new(),
-        }
-    }
-
-    fn contains(&self, peer: &SocketAddr) -> bool {
-        self.peers.contains_key(peer)
-    }
-
-    fn join(&mut self, peer: SocketAddr, pipeline: Weak<dyn OutboundPipeline<TaggedString>>) {
-        println!("{} joined", peer);
-        self.peers.insert(peer, pipeline);
-    }
-
-    fn leave(&mut self, peer: &SocketAddr) {
-        println!("{} left", peer);
-        self.peers.remove(peer);
-    }
-
-    /// Send message to every peer, except for the sender.
-    fn broadcast(&self, sender: SocketAddr, msg: TaggedString) {
-        print!("broadcast message: {}", msg.message);
-        for (peer, pipeline) in self.peers.iter() {
-            if *peer != sender {
-                let mut msg = msg.clone();
-                msg.transport.peer_addr = Some(*peer);
-                if let Some(pipeline) = pipeline.upgrade() {
-                    let _ = pipeline.write(msg);
-                }
-            }
+        EchoHandler {
+            decoder: EchoDecoder,
+            encoder: EchoEncoder,
         }
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-struct ChatDecoder {
-    state: Rc<RefCell<Shared>>,
-    pipeline: Weak<dyn OutboundPipeline<TaggedString>>,
-}
-struct ChatEncoder;
-struct ChatHandler {
-    decoder: ChatDecoder,
-    encoder: ChatEncoder,
-}
-
-impl ChatHandler {
-    fn new(state: Rc<RefCell<Shared>>, pipeline: Weak<dyn OutboundPipeline<TaggedString>>) -> Self {
-        ChatHandler {
-            decoder: ChatDecoder { state, pipeline },
-            encoder: ChatEncoder,
-        }
-    }
-}
-
-impl InboundHandler for ChatDecoder {
+impl InboundHandler for EchoDecoder {
     type Rin = TaggedBytesMut;
     type Rout = TaggedString;
 
-    fn read(&mut self, _ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
-        let peer_addr = *msg.transport.peer_addr.as_ref().unwrap();
+    fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
         let message = String::from_utf8(msg.message.to_vec()).unwrap();
-        println!(
-            "received: {} from {:?} to {}",
-            message, peer_addr, msg.transport.local_addr
-        );
-
-        let mut s = self.state.borrow_mut();
-        if message == "bye" {
-            s.leave(&peer_addr);
-        } else {
-            if !s.contains(&peer_addr) {
-                s.join(peer_addr, self.pipeline.clone());
-            }
-            s.broadcast(
-                peer_addr,
-                TaggedString {
-                    now: Instant::now(),
-                    transport: TransportContext {
-                        local_addr: msg.transport.local_addr,
-                        ecn: msg.transport.ecn,
-                        ..Default::default()
-                    },
-                    message,
-                },
-            );
+        println!("handling {} from {:?}", message, msg.transport.peer_addr);
+        if message != "bye" {
+            ctx.fire_write(TaggedBytesMut {
+                now: Instant::now(),
+                transport: msg.transport,
+                message: msg.message,
+            });
         }
     }
     fn poll_timeout(&mut self, _ctx: &InboundContext<Self::Rin, Self::Rout>, _eto: &mut Instant) {
@@ -119,7 +54,7 @@ impl InboundHandler for ChatDecoder {
     }
 }
 
-impl OutboundHandler for ChatEncoder {
+impl OutboundHandler for EchoEncoder {
     type Win = TaggedString;
     type Wout = TaggedBytesMut;
 
@@ -132,14 +67,14 @@ impl OutboundHandler for ChatEncoder {
     }
 }
 
-impl Handler for ChatHandler {
+impl Handler for EchoHandler {
     type Rin = TaggedBytesMut;
     type Rout = TaggedString;
     type Win = TaggedString;
     type Wout = TaggedBytesMut;
 
     fn name(&self) -> &str {
-        "ChatHandler"
+        "EchoHandler"
     }
 
     fn split(
@@ -153,10 +88,10 @@ impl Handler for ChatHandler {
 }
 
 #[derive(Parser)]
-#[command(name = "DTLS Chat Server")]
+#[command(name = "DTLS Echo Server")]
 #[command(author = "Rusty Rain <y@liu.mx>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of dtls chat server", long_about = None)]
+#[command(about = "An example of dtls echo server", long_about = None)]
 struct Cli {
     #[arg(short, long)]
     debug: bool,
@@ -193,12 +128,6 @@ fn main() -> anyhow::Result<()> {
     println!("listening {}:{}...", host, port);
 
     LocalExecutorBuilder::default().run(async move {
-        // Create the shared state. This is how all the peers communicate.
-        // The server task will hold a handle to this. For every new client, the
-        // `state` handle is cloned and passed into the handler that processes the
-        // client connection.
-        let state = Rc::new(RefCell::new(Shared::new()));
-
         let mut config = Config {
             psk: Some(Rc::new(|hint: &[u8]| -> Result<Vec<u8>> {
                 println!("Client's hint: {}", String::from_utf8(hint.to_vec())?);
@@ -214,17 +143,16 @@ fn main() -> anyhow::Result<()> {
         let mut bootstrap = BootstrapUdpServer::new();
         bootstrap.pipeline(Box::new(
             move |writer: AsyncTransportWrite<TaggedBytesMut>| {
-                let pipeline: Rc<Pipeline<TaggedBytesMut, TaggedString>> = Rc::new(Pipeline::new());
+                let pipeline: Pipeline<TaggedBytesMut, TaggedString> = Pipeline::new();
 
                 let async_transport_handler = AsyncTransport::new(writer);
                 let dtls_handler = DtlsHandler::new(handshake_config.clone(), false, None, None);
-                let pipeline_wr = Rc::downgrade(&pipeline);
-                let chat_handler = ChatHandler::new(state.clone(), pipeline_wr);
+                let echo_handler = EchoHandler::new();
 
                 pipeline.add_back(async_transport_handler);
                 pipeline.add_back(dtls_handler);
-                pipeline.add_back(chat_handler);
-                pipeline.update()
+                pipeline.add_back(echo_handler);
+                pipeline.finalize()
             },
         ));
 

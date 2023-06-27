@@ -56,8 +56,12 @@ name = "dtls_chat_server"
 path = "examples/dtls_chat_server.rs"
 
 [[example]]
-name = "dtls_chat_client"
-path = "examples/dtls_chat_client.rs"
+name = "dtls_echo_server"
+path = "examples/dtls_echo_server.rs"
+
+[[example]]
+name = "dtls_client"
+path = "examples/dtls_client.rs"
 
 #[[example]]
 #name = "dial_psk"
