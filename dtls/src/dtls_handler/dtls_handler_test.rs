@@ -111,7 +111,7 @@ fn create_test_client(
 
     cfg.insecure_skip_verify = true;
 
-    let handshake_config = cfg.generate_handshake_config(true, client_transport.peer_addr)?;
+    let handshake_config = cfg.generate_handshake_config(true, Some(client_transport.peer_addr))?;
 
     let (client_tx, client_rx) = channel();
     let client_tx = Rc::new(RefCell::new(Some(client_tx)));
@@ -205,7 +205,7 @@ fn test_dtls_handler() {
 
             let client_transport = TransportContext {
                 local_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
-                peer_addr: Some(server_addr),
+                peer_addr: server_addr,
                 ecn: None,
             };
 

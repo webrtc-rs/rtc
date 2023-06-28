@@ -8,7 +8,7 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto", "replay"] }
-retty = "0.23.3"
+retty = "0.24.0"
 bytes = "1.4.0"
 byteorder = "1"
 rand_core = "0.6.3"

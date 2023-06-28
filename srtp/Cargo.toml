@@ -11,7 +11,7 @@ shared = { path = "../shared", package = "shared", default-features = false, fea
 rtp = { path = "../rtp", package = "rtp" }
 rtcp = { path = "../rtcp", package = "rtcp" }
 
-retty = "0.23.3"
+retty = "0.24.0"
 byteorder = "1"
 bytes = "1"
 thiserror = "1.0"
