@@ -37,7 +37,6 @@ subtle = "2.4"
 log = "0.4.16"
 thiserror = "1.0"
 pem = { version = "1", optional = true }
-fxhash = "0.2.1"
 
 [dev-dependencies]
 local-sync = "0.1.0"

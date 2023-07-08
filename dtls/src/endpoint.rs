@@ -1,49 +1,15 @@
-use crate::config::{ConnectionId, ConnectionIdGenerator, EndpointConfig, ServerConfig};
+use crate::config::{ClientConfig, ServerConfig};
 use crate::conn::DTLSConn;
-use crate::Transmit;
-use fxhash::FxHashMap;
-use rand::rngs::StdRng;
-use std::collections::VecDeque;
-use std::fmt;
-use std::net::SocketAddr;
+use crate::{EcnCodepoint, Transmit};
+
+use shared::error::{Error, Result};
+
+use bytes::BytesMut;
+use std::collections::hash_map::Keys;
+use std::collections::{hash_map::Entry::Vacant, HashMap, VecDeque};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use thiserror::Error;
-
-/// The main entry point to the library
-///
-/// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
-/// `poll_transmit`, and consumes incoming packets and connections-generated events via `handle` and
-/// `handle_event`.
-pub struct Endpoint {
-    rng: StdRng,
-    transmits: VecDeque<Transmit>,
-    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
-    local_cid_generator: Box<dyn ConnectionIdGenerator>,
-    config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
-}
-
-impl fmt::Debug for Endpoint {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Endpoint<T>")
-            .field("rng", &self.rng)
-            .field("transmits", &self.transmits)
-            .field("connection_ids", &self.connection_ids)
-            .field("config", &self.config)
-            .field("server_config", &self.server_config)
-            .finish()
-    }
-}
-
-/// Internal identifier for a `Connection` currently associated with an endpoint
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ConnectionHandle(pub usize);
-
-impl From<ConnectionHandle> for usize {
-    fn from(x: ConnectionHandle) -> usize {
-        x.0
-    }
-}
+use std::time::Instant;
 
 /// Event resulting from processing a single datagram
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
@@ -52,36 +18,6 @@ pub enum DatagramEvent {
     ConnectionEvent(ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(DTLSConn),
-}
-
-/// Errors in the parameters being used to create a new connection
-///
-/// These arise before any I/O has been performed.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum ConnectError {
-    /// The endpoint can no longer create new connections
-    ///
-    /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
-    #[error("endpoint stopping")]
-    EndpointStopping,
-    /// The number of active connections on the local endpoint is at the limit
-    ///
-    /// Try using longer connection IDs.
-    #[error("too many connections")]
-    TooManyConnections,
-    /// The domain name supplied was malformed
-    #[error("invalid DNS name: {0}")]
-    InvalidDnsName(String),
-    /// The remote [`SocketAddr`] supplied was malformed
-    ///
-    /// Examples include attempting to connect to port 0, or using an inappropriate address family.
-    #[error("invalid remote address: {0}")]
-    InvalidRemoteAddress(SocketAddr),
-    /// No default client configuration was set up
-    ///
-    /// Use `Endpoint::connect_with` to specify a client configuration.
-    #[error("no default client config")]
-    NoDefaultClientConfig,
 }
 
 /// Events sent from an Endpoint to an Connection
@@ -119,4 +55,185 @@ impl EndpointEvent {
 pub(crate) enum EndpointEventInner {
     /// The connection has been drained
     Drained,
+}
+
+/// The main entry point to the library
+///
+/// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
+/// `poll_transmit`, and consumes incoming packets and connections-generated events via `handle` and
+/// `handle_event`.
+pub struct Endpoint {
+    transmits: VecDeque<Transmit>,
+    connections: HashMap<SocketAddr, DTLSConn>,
+    server_config: Option<Arc<ServerConfig>>,
+}
+
+impl Endpoint {
+    /// Create a new endpoint
+    ///
+    /// Returns `Err` if the configuration is invalid.
+    pub fn new(server_config: Option<Arc<ServerConfig>>) -> Self {
+        Self {
+            transmits: VecDeque::new(),
+            connections: HashMap::new(),
+            server_config,
+        }
+    }
+
+    /// Get the next packet to transmit
+    #[must_use]
+    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+        self.transmits.pop_front()
+    }
+
+    /// Replace the server configuration, affecting new incoming associations only
+    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
+        self.server_config = server_config;
+    }
+
+    /// Get keys of Connections
+    pub fn get_connections_keys(&self) -> Keys<'_, SocketAddr, DTLSConn> {
+        self.connections.keys()
+    }
+
+    /// Initiate an Association
+    pub fn connect(&mut self, config: ClientConfig, remote: SocketAddr) -> Result<()> {
+        if remote.port() == 0 {
+            return Err(Error::InvalidRemoteAddress(remote));
+        }
+
+        if let Vacant(e) = self.connections.entry(remote) {
+            let mut conn = DTLSConn::new(config.handshake_config, true, config.initial_state);
+            conn.handshake()?;
+
+            while let Some(payload) = conn.outgoing_raw_packet() {
+                self.transmits.push_back(Transmit {
+                    now: Instant::now(),
+                    remote,
+                    ecn: None,
+                    local_ip: None,
+                    payload,
+                });
+            }
+
+            e.insert(conn);
+        }
+
+        Ok(())
+    }
+
+    /// Process close
+    pub fn close(&mut self, remote: SocketAddr) -> Option<DTLSConn> {
+        if let Some(conn) = self.connections.get_mut(&remote) {
+            conn.close();
+            while let Some(payload) = conn.outgoing_raw_packet() {
+                self.transmits.push_back(Transmit {
+                    now: Instant::now(),
+                    remote,
+                    ecn: None,
+                    local_ip: None,
+                    payload,
+                });
+            }
+        }
+        self.connections.remove(&remote)
+    }
+
+    /// Process an incoming UDP datagram
+    pub fn read(
+        &mut self,
+        remote: SocketAddr,
+        now: Instant,
+        local_ip: Option<IpAddr>,
+        ecn: Option<EcnCodepoint>,
+        data: BytesMut,
+    ) -> Result<Vec<BytesMut>> {
+        if let Vacant(e) = self.connections.entry(remote) {
+            let server_config = self.server_config.as_ref().unwrap();
+            let handshake_config = server_config.handshake_config.clone();
+            let conn = DTLSConn::new(handshake_config, false, None);
+            e.insert(conn);
+        }
+
+        // Handle packet on existing association, if any
+        let mut messages = vec![];
+        if let Some(conn) = self.connections.get_mut(&remote) {
+            conn.read(&data)?;
+            if !conn.is_handshake_completed() {
+                conn.handshake()?;
+                conn.handle_incoming_queued_packets()?;
+            }
+            while let Some(message) = conn.incoming_application_data() {
+                messages.push(message);
+            }
+            while let Some(payload) = conn.outgoing_raw_packet() {
+                self.transmits.push_back(Transmit {
+                    now,
+                    remote,
+                    ecn,
+                    local_ip,
+                    payload,
+                });
+            }
+        }
+
+        Ok(messages)
+    }
+
+    pub fn write(&mut self, remote: SocketAddr, data: &[u8]) -> Result<()> {
+        if let Some(conn) = self.connections.get_mut(&remote) {
+            conn.write(data)?;
+            while let Some(payload) = conn.outgoing_raw_packet() {
+                self.transmits.push_back(Transmit {
+                    now: Instant::now(),
+                    remote,
+                    ecn: None,
+                    local_ip: None,
+                    payload,
+                });
+            }
+            Ok(())
+        } else {
+            Err(Error::InvalidRemoteAddress(remote))
+        }
+    }
+
+    pub fn handle_timeout(&mut self, remote: SocketAddr, now: Instant) -> Result<()> {
+        if let Some(conn) = self.connections.get_mut(&remote) {
+            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer {
+                if now >= *current_retransmit_timer {
+                    if conn.current_retransmit_timer.take().is_some()
+                        && !conn.is_handshake_completed()
+                    {
+                        conn.handshake_timeout(now)?;
+                    }
+                    while let Some(payload) = conn.outgoing_raw_packet() {
+                        self.transmits.push_back(Transmit {
+                            now,
+                            remote,
+                            ecn: None,
+                            local_ip: None,
+                            payload,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        } else {
+            Err(Error::InvalidRemoteAddress(remote))
+        }
+    }
+
+    pub fn poll_timeout(&mut self, remote: SocketAddr, eto: &mut Instant) -> Result<()> {
+        if let Some(conn) = self.connections.get_mut(&remote) {
+            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer {
+                if *current_retransmit_timer < *eto {
+                    *eto = *current_retransmit_timer;
+                }
+            }
+            Ok(())
+        } else {
+            Err(Error::InvalidRemoteAddress(remote))
+        }
+    }
 }

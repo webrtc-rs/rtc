@@ -3,6 +3,7 @@
 use rcgen::RcgenError;
 use std::io;
 use std::net;
+use std::net::SocketAddr;
 use std::num::ParseIntError;
 use std::string::FromUtf8Error;
 use thiserror::Error;
@@ -752,6 +753,31 @@ pub enum Error {
     ErrNetConnRead,
     #[error("Max Data Channel ID")]
     ErrMaxDataChannelID,
+
+    //DTLS
+    /// The endpoint can no longer create new connections
+    ///
+    /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
+    #[error("endpoint stopping")]
+    EndpointStopping,
+    /// The number of active connections on the local endpoint is at the limit
+    ///
+    /// Try using longer connection IDs.
+    #[error("too many connections")]
+    TooManyConnections,
+    /// The domain name supplied was malformed
+    #[error("invalid DNS name: {0}")]
+    InvalidDnsName(String),
+    /// The remote [`SocketAddr`] supplied was malformed
+    ///
+    /// Examples include attempting to connect to port 0, or using an inappropriate address family.
+    #[error("invalid remote address: {0}")]
+    InvalidRemoteAddress(SocketAddr),
+    /// No default client configuration was set up
+    ///
+    /// Use `Endpoint::connect_with` to specify a client configuration.
+    #[error("no default client config")]
+    NoDefaultClientConfig,
 
     //#[error("mpsc send: {0}")]
     //MpscSend(String),

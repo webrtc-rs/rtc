@@ -24,7 +24,7 @@ pub mod record_layer;
 pub mod signature_hash_algorithm;
 pub mod state;
 
-use bytes::Bytes;
+use bytes::BytesMut;
 use cipher_suite::*;
 use extension::extension_use_srtp::SrtpProtectionProfile;
 use std::net::{IpAddr, SocketAddr};
@@ -70,7 +70,7 @@ pub struct Transmit {
     /// Optional local IP address for the datagram
     pub local_ip: Option<IpAddr>,
     /// Payload of the datagram
-    pub payload: Vec<Bytes>,
+    pub payload: BytesMut,
 }
 
 /// Explicit congestion notification codepoint

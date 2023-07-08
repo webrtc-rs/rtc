@@ -5,6 +5,7 @@ use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::signature_hash_algorithm::{
     parse_signature_schemes, SignatureHashAlgorithm, SignatureScheme,
 };
+use crate::state::State;
 use shared::error::*;
 use std::collections::HashMap;
 use std::fmt;
@@ -352,16 +353,21 @@ impl ConfigBuilder {
     pub fn build_server_config(self, concurrent_connections: u32) -> Result<ServerConfig> {
         let handshake_config = self.build(false, None)?;
         Ok(ServerConfig {
-            handshake_config: Arc::new(handshake_config),
+            handshake_config,
             concurrent_connections,
         })
     }
 
     /// build client config
-    pub fn build_client_config(self, remote_addr: SocketAddr) -> Result<ClientConfig> {
+    pub fn build_client_config(
+        self,
+        initial_state: Option<State>,
+        remote_addr: SocketAddr,
+    ) -> Result<ClientConfig> {
         let handshake_config = self.build(true, Some(remote_addr))?;
         Ok(ClientConfig {
-            handshake_config: Arc::new(handshake_config),
+            handshake_config,
+            initial_state,
         })
     }
 }
@@ -484,84 +490,12 @@ impl HandshakeConfig {
     }
 }
 
-/// Identifier for an Connection.
-pub type ConnectionId = u32;
-
-/// Generates connection id for incoming connections
-pub trait ConnectionIdGenerator {
-    /// Generates a new CID
-    fn generate_cid(&mut self) -> ConnectionId;
-}
-
-/// Generates purely random Connection IDs of a certain length
-#[derive(Default, Debug, Clone, Copy)]
-pub struct RandomConnectionIdGenerator;
-
-impl RandomConnectionIdGenerator {
-    /// Initialize Random CID generator
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl ConnectionIdGenerator for RandomConnectionIdGenerator {
-    fn generate_cid(&mut self) -> ConnectionId {
-        rand::random::<u32>()
-    }
-}
-
-/// Global configuration for the endpoint, affecting all associations
-///
-/// Default values should be suitable for most internet applications.
-#[derive(Clone)]
-pub struct EndpointConfig {
-    /// CID generator factory
-    ///
-    /// Create a cid generator for local aid in Endpoint struct
-    pub(crate) cid_generator_factory: Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator>>,
-}
-
-impl Default for EndpointConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EndpointConfig {
-    /// Create a default config
-    pub fn new() -> Self {
-        let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
-            || Box::<RandomConnectionIdGenerator>::default();
-        Self {
-            cid_generator_factory: Arc::new(cid_factory),
-        }
-    }
-
-    /// Supply a custom Connection ID generator factory
-    pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + 'static>(
-        &mut self,
-        factory: F,
-    ) -> &mut Self {
-        self.cid_generator_factory = Arc::new(factory);
-        self
-    }
-}
-
-impl std::fmt::Debug for EndpointConfig {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt.debug_struct("EndpointConfig")
-            .field("cid_generator_factory", &"[ elided ]")
-            .finish()
-    }
-}
-
 /// Parameters governing incoming connections
 ///
 /// Default values should be suitable for most internet applications.
-#[derive(Debug, Clone)]
 pub struct ServerConfig {
     // Handshake configuration to use for incoming connections
-    pub(crate) handshake_config: Arc<HandshakeConfig>,
+    pub(crate) handshake_config: HandshakeConfig,
 
     // Maximum number of concurrent connections
     pub(crate) concurrent_connections: u32,
@@ -570,8 +504,9 @@ pub struct ServerConfig {
 /// Configuration for outgoing associations
 ///
 /// Default values should be suitable for most internet applications.
-#[derive(Debug, Clone)]
 pub struct ClientConfig {
     // Handshake configuration to use for outgoing connections
-    pub(crate) handshake_config: Arc<HandshakeConfig>,
+    pub(crate) handshake_config: HandshakeConfig,
+
+    pub(crate) initial_state: Option<State>,
 }
