@@ -7,6 +7,7 @@ use crate::signature_hash_algorithm::{
 };
 use shared::error::*;
 use std::collections::HashMap;
+use std::fmt;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -389,8 +390,33 @@ pub struct HandshakeConfig {
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
-    pub(crate) replay_protection_window: usize, //log           logging.LeveledLogger
-                                                //mu sync.Mutex
+    pub(crate) replay_protection_window: usize,
+}
+
+impl fmt::Debug for HandshakeConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("HandshakeConfig<T>")
+            .field("local_psk_identity_hint", &self.local_psk_identity_hint)
+            .field("local_cipher_suites", &self.local_cipher_suites)
+            .field("local_signature_schemes", &self.local_signature_schemes)
+            .field("extended_master_secret", &self.extended_master_secret)
+            .field(
+                "local_srtp_protection_profiles",
+                &self.local_srtp_protection_profiles,
+            )
+            .field("server_name", &self.server_name)
+            .field("client_auth", &self.client_auth)
+            .field("local_certificates", &self.local_certificates)
+            .field("name_to_certificate", &self.name_to_certificate)
+            .field("insecure_skip_verify", &self.insecure_skip_verify)
+            .field("insecure_verification", &self.insecure_verification)
+            .field("roots_cas", &self.roots_cas)
+            .field("retransmit_interval", &self.retransmit_interval)
+            .field("initial_epoch", &self.initial_epoch)
+            .field("maximum_transmission_unit", &self.maximum_transmission_unit)
+            .field("replay_protection_window", &self.replay_protection_window)
+            .finish()
+    }
 }
 
 impl Default for HandshakeConfig {
@@ -458,10 +484,81 @@ impl HandshakeConfig {
     }
 }
 
-/// Parameters governing incoming connections
+/// Identifier for an Connection.
+pub type ConnectionId = u32;
+
+/// Generates connection id for incoming connections
+pub trait ConnectionIdGenerator {
+    /// Generates a new CID
+    fn generate_cid(&mut self) -> ConnectionId;
+}
+
+/// Generates purely random Connection IDs of a certain length
+#[derive(Default, Debug, Clone, Copy)]
+pub struct RandomConnectionIdGenerator;
+
+impl RandomConnectionIdGenerator {
+    /// Initialize Random CID generator
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ConnectionIdGenerator for RandomConnectionIdGenerator {
+    fn generate_cid(&mut self) -> ConnectionId {
+        rand::random::<u32>()
+    }
+}
+
+/// Global configuration for the endpoint, affecting all associations
 ///
 /// Default values should be suitable for most internet applications.
 #[derive(Clone)]
+pub struct EndpointConfig {
+    /// CID generator factory
+    ///
+    /// Create a cid generator for local aid in Endpoint struct
+    pub(crate) cid_generator_factory: Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator>>,
+}
+
+impl Default for EndpointConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EndpointConfig {
+    /// Create a default config
+    pub fn new() -> Self {
+        let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+            || Box::<RandomConnectionIdGenerator>::default();
+        Self {
+            cid_generator_factory: Arc::new(cid_factory),
+        }
+    }
+
+    /// Supply a custom Connection ID generator factory
+    pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + 'static>(
+        &mut self,
+        factory: F,
+    ) -> &mut Self {
+        self.cid_generator_factory = Arc::new(factory);
+        self
+    }
+}
+
+impl std::fmt::Debug for EndpointConfig {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt.debug_struct("EndpointConfig")
+            .field("cid_generator_factory", &"[ elided ]")
+            .finish()
+    }
+}
+
+/// Parameters governing incoming connections
+///
+/// Default values should be suitable for most internet applications.
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     // Handshake configuration to use for incoming connections
     pub(crate) handshake_config: Arc<HandshakeConfig>,
@@ -473,7 +570,7 @@ pub struct ServerConfig {
 /// Configuration for outgoing associations
 ///
 /// Default values should be suitable for most internet applications.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClientConfig {
     // Handshake configuration to use for outgoing connections
     pub(crate) handshake_config: Arc<HandshakeConfig>,
