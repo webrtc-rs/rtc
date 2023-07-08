@@ -23,6 +23,7 @@ use std::collections::VecDeque;
 
 use shared::{error::*, replay_detector::*};
 
+use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
 use std::io::{BufReader, BufWriter};

@@ -1,17 +1,9 @@
-use crate::cipher_suite::*;
-use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
-use crate::crypto::*;
-use crate::extension::extension_use_srtp::*;
-use crate::signature_hash_algorithm::*;
 use shared::error::*;
 
 use log::*;
-use std::collections::HashMap;
 use std::fmt;
-use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Instant;
 
 //use std::io::BufWriter;
@@ -69,129 +61,6 @@ impl fmt::Display for HandshakeState {
             HandshakeState::Waiting => write!(f, "Waiting"),
             HandshakeState::Finished => write!(f, "Finished"),
         }
-    }
-}
-
-pub(crate) type VerifyPeerCertificateFn =
-    Rc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>)>;
-
-#[derive(Clone)]
-pub struct HandshakeConfig {
-    pub(crate) local_psk_callback: Option<PskCallback>,
-    pub(crate) local_psk_identity_hint: Option<Vec<u8>>,
-    pub(crate) local_cipher_suites: Vec<CipherSuiteId>, // Available CipherSuites
-    pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
-    pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
-    pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
-    pub(crate) server_name: String,
-    pub(crate) client_auth: ClientAuthType, // If we are a client should we request a client certificate
-    pub(crate) local_certificates: Vec<Certificate>,
-    pub(crate) name_to_certificate: HashMap<String, Certificate>,
-    pub(crate) insecure_skip_verify: bool,
-    pub(crate) insecure_verification: bool,
-    pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
-    pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Rc<dyn rustls::ServerCertVerifier>,
-    pub(crate) client_cert_verifier: Option<Arc<dyn rustls::ClientCertVerifier>>,
-    pub(crate) retransmit_interval: std::time::Duration,
-    pub(crate) initial_epoch: u16,
-    pub(crate) maximum_transmission_unit: usize,
-    pub(crate) replay_protection_window: usize, //log           logging.LeveledLogger
-                                                //mu sync.Mutex
-}
-
-impl Default for HandshakeConfig {
-    fn default() -> Self {
-        HandshakeConfig {
-            local_psk_callback: None,
-            local_psk_identity_hint: None,
-            local_cipher_suites: vec![],
-            local_signature_schemes: vec![],
-            extended_master_secret: ExtendedMasterSecretType::Disable,
-            local_srtp_protection_profiles: vec![],
-            server_name: String::new(),
-            client_auth: ClientAuthType::NoClientCert,
-            local_certificates: vec![],
-            name_to_certificate: HashMap::new(),
-            insecure_skip_verify: false,
-            insecure_verification: false,
-            verify_peer_certificate: None,
-            roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: Rc::new(rustls::WebPKIVerifier::new()),
-            client_cert_verifier: None,
-            retransmit_interval: std::time::Duration::from_secs(0),
-            initial_epoch: 0,
-            maximum_transmission_unit: DEFAULT_MTU,
-            replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
-        }
-    }
-}
-
-impl HandshakeConfig {
-    pub(crate) fn get_certificate(&self, server_name: &str) -> Result<Certificate> {
-        //TODO
-        /*if self.name_to_certificate.is_empty() {
-            let mut name_to_certificate = HashMap::new();
-            for cert in &self.local_certificates {
-                if let Ok((_rem, x509_cert)) = x509_parser::parse_x509_der(&cert.certificate) {
-                    if let Some(a) = x509_cert.tbs_certificate.subject.iter_common_name().next() {
-                        let common_name = match a.attr_value.as_str() {
-                            Ok(cn) => cn.to_lowercase(),
-                            Err(err) => return Err(Error::new(err.to_string())),
-                        };
-                        name_to_certificate.insert(common_name, cert.clone());
-                    }
-                    if let Some((_, sans)) = x509_cert.tbs_certificate.subject_alternative_name() {
-                        for gn in &sans.general_names {
-                            match gn {
-                                x509_parser::extensions::GeneralName::DNSName(san) => {
-                                    let san = san.to_lowercase();
-                                    name_to_certificate.insert(san, cert.clone());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                } else {
-                    continue;
-                }
-            }
-            self.name_to_certificate = name_to_certificate;
-        }*/
-
-        if self.local_certificates.is_empty() {
-            return Err(Error::ErrNoCertificates);
-        }
-
-        if self.local_certificates.len() == 1 {
-            // There's only one choice, so no point doing any work.
-            return Ok(self.local_certificates[0].clone());
-        }
-
-        if server_name.is_empty() {
-            return Ok(self.local_certificates[0].clone());
-        }
-
-        let lower = server_name.to_lowercase();
-        let name = lower.trim_end_matches('.');
-
-        if let Some(cert) = self.name_to_certificate.get(name) {
-            return Ok(cert.clone());
-        }
-
-        // try replacing labels in the name with wildcards until we get a
-        // match.
-        let mut labels: Vec<&str> = name.split_terminator('.').collect();
-        for i in 0..labels.len() {
-            labels[i] = "*";
-            let candidate = labels.join(".");
-            if let Some(cert) = self.name_to_certificate.get(&candidate) {
-                return Ok(cert.clone());
-            }
-        }
-
-        // If nothing matches, return the first certificate.
-        Ok(self.local_certificates[0].clone())
     }
 }
 

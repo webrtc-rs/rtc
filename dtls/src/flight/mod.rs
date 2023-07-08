@@ -13,6 +13,7 @@ use crate::record_layer::*;
 use crate::state::*;
 use shared::error::Error;
 
+use crate::config::HandshakeConfig;
 use std::fmt;
 
 /*

@@ -13,6 +13,7 @@ pub mod content;
 pub mod crypto;
 pub mod curve;
 pub mod dtls_handler;
+pub mod endpoint;
 pub mod extension;
 pub mod flight;
 pub mod fragment_buffer;

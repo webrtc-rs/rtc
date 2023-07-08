@@ -6,6 +6,7 @@ use crate::handshake::*;
 use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 
+use crate::config::HandshakeConfig;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]

@@ -17,6 +17,7 @@ use crate::record_layer::*;
 use crate::signature_hash_algorithm::*;
 use shared::error::Error;
 
+use crate::config::HandshakeConfig;
 use std::fmt;
 use std::io::{BufReader, BufWriter};
 

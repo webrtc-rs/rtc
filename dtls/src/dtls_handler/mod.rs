@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::config::HandshakeConfig;
 use crate::conn::DTLSConn;
-use crate::handshaker::HandshakeConfig;
 use crate::state::State;
 use bytes::BytesMut;
 use shared::error::Result;

@@ -7,6 +7,7 @@ use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
 use shared::error::Error;
 
+use crate::config::HandshakeConfig;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
