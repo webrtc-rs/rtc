@@ -5,7 +5,6 @@ use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::signature_hash_algorithm::{
     parse_signature_schemes, SignatureHashAlgorithm, SignatureScheme,
 };
-use crate::state::State;
 use shared::error::*;
 use std::collections::HashMap;
 use std::fmt;
@@ -278,7 +277,8 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    fn build(
+    /// build handshake config
+    pub fn build(
         mut self,
         is_client: bool,
         remote_addr: Option<SocketAddr>,
@@ -346,28 +346,6 @@ impl ConfigBuilder {
             maximum_transmission_unit,
             replay_protection_window,
             ..Default::default()
-        })
-    }
-
-    /// build server config
-    pub fn build_server_config(self, concurrent_connections: u32) -> Result<ServerConfig> {
-        let handshake_config = self.build(false, None)?;
-        Ok(ServerConfig {
-            handshake_config,
-            concurrent_connections,
-        })
-    }
-
-    /// build client config
-    pub fn build_client_config(
-        self,
-        initial_state: Option<State>,
-        remote_addr: SocketAddr,
-    ) -> Result<ClientConfig> {
-        let handshake_config = self.build(true, Some(remote_addr))?;
-        Ok(ClientConfig {
-            handshake_config,
-            initial_state,
         })
     }
 }
@@ -488,25 +466,4 @@ impl HandshakeConfig {
         // If nothing matches, return the first certificate.
         Ok(self.local_certificates[0].clone())
     }
-}
-
-/// Parameters governing incoming connections
-///
-/// Default values should be suitable for most internet applications.
-pub struct ServerConfig {
-    // Handshake configuration to use for incoming connections
-    pub(crate) handshake_config: HandshakeConfig,
-
-    // Maximum number of concurrent connections
-    pub(crate) concurrent_connections: u32,
-}
-
-/// Configuration for outgoing associations
-///
-/// Default values should be suitable for most internet applications.
-pub struct ClientConfig {
-    // Handshake configuration to use for outgoing connections
-    pub(crate) handshake_config: HandshakeConfig,
-
-    pub(crate) initial_state: Option<State>,
 }
