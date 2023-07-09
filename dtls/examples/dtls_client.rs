@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::{io::Write, net::SocketAddr, str::FromStr, time::Instant};
 
 use dtls::cipher_suite::CipherSuiteId;
-use dtls::config::{Config, ExtendedMasterSecretType};
+use dtls::config::{ConfigBuilder, ExtendedMasterSecretType};
 use dtls::dtls_handler::DtlsHandler;
 use shared::error::*;
 
@@ -14,7 +14,7 @@ use retty::channel::{
     Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler, Pipeline,
 };
 use retty::codec::string_codec::TaggedString;
-use retty::executor::LocalExecutorBuilder;
+use retty::executor::{yield_local, LocalExecutorBuilder};
 use retty::transport::{AsyncTransport, AsyncTransportWrite, TaggedBytesMut, TransportContext};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -131,18 +131,15 @@ fn main() -> anyhow::Result<()> {
     };
 
     LocalExecutorBuilder::default().run(async move {
-        let mut config = Config {
-            psk: Some(Rc::new(|hint: &[u8]| -> Result<Vec<u8>> {
+        let handshake_config = ConfigBuilder::default()
+            .with_psk(Some(Rc::new(|hint: &[u8]| -> Result<Vec<u8>> {
                 println!("Server's hint: {}", String::from_utf8(hint.to_vec())?);
                 Ok(vec![0xAB, 0xC1, 0x23])
-            })),
-            psk_identity_hint: Some("webrtc-rs DTLS Server".as_bytes().to_vec()),
-            cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
-            extended_master_secret: ExtendedMasterSecretType::Require,
-            ..Default::default()
-        };
-        let handshake_config = config
-            .generate_handshake_config(true, Some(transport.peer_addr))
+            })))
+            .with_psk_identity_hint(Some("webrtc-rs DTLS Server".as_bytes().to_vec()))
+            .with_cipher_suites(vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8])
+            .with_extended_master_secret(ExtendedMasterSecretType::Require)
+            .build(true, Some(transport.peer_addr))
             .unwrap();
 
         let mut bootstrap = BootstrapUdpClient::new();
@@ -150,9 +147,12 @@ fn main() -> anyhow::Result<()> {
             move |writer: AsyncTransportWrite<TaggedBytesMut>| {
                 let pipeline: Pipeline<TaggedBytesMut, TaggedString> = Pipeline::new();
 
+                let local_addr = writer.get_local_addr();
+                let peer_addr = writer.get_peer_addr();
+
                 let async_transport_handler = AsyncTransport::new(writer);
                 let dtls_handler =
-                    DtlsHandler::new(handshake_config.clone(), true, Some(transport), None);
+                    DtlsHandler::new(local_addr, handshake_config.clone(), true, peer_addr, None);
                 let echo_handler = EchoHandler::new();
 
                 pipeline.add_back(async_transport_handler);
@@ -165,6 +165,7 @@ fn main() -> anyhow::Result<()> {
         bootstrap.bind(transport.local_addr).await.unwrap();
 
         let pipeline = bootstrap.connect(transport.peer_addr).await.unwrap();
+        yield_local();
 
         println!("Enter bye to stop");
         let (mut tx, mut rx) = futures::channel::mpsc::channel(8);

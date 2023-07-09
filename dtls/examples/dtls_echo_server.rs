@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::{io::Write, str::FromStr, time::Instant};
 
 use dtls::cipher_suite::CipherSuiteId;
-use dtls::config::{Config, ExtendedMasterSecretType};
+use dtls::config::{ConfigBuilder, ExtendedMasterSecretType};
 use dtls::dtls_handler::DtlsHandler;
 use shared::error::*;
 
@@ -128,25 +128,27 @@ fn main() -> anyhow::Result<()> {
     println!("listening {}:{}...", host, port);
 
     LocalExecutorBuilder::default().run(async move {
-        let mut config = Config {
-            psk: Some(Rc::new(|hint: &[u8]| -> Result<Vec<u8>> {
+        let handshake_config = ConfigBuilder::default()
+            .with_psk(Some(Rc::new(|hint: &[u8]| -> Result<Vec<u8>> {
                 println!("Client's hint: {}", String::from_utf8(hint.to_vec())?);
                 Ok(vec![0xAB, 0xC1, 0x23])
-            })),
-            psk_identity_hint: Some("webrtc-rs DTLS Client".as_bytes().to_vec()),
-            cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
-            extended_master_secret: ExtendedMasterSecretType::Require,
-            ..Default::default()
-        };
-        let handshake_config = config.generate_handshake_config(false, None).unwrap();
+            })))
+            .with_psk_identity_hint(Some("webrtc-rs DTLS Client".as_bytes().to_vec()))
+            .with_cipher_suites(vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8])
+            .with_extended_master_secret(ExtendedMasterSecretType::Require)
+            .build(false, None)
+            .unwrap();
 
         let mut bootstrap = BootstrapUdpServer::new();
         bootstrap.pipeline(Box::new(
             move |writer: AsyncTransportWrite<TaggedBytesMut>| {
                 let pipeline: Pipeline<TaggedBytesMut, TaggedString> = Pipeline::new();
 
+                let local_addr = writer.get_local_addr();
+
                 let async_transport_handler = AsyncTransport::new(writer);
-                let dtls_handler = DtlsHandler::new(handshake_config.clone(), false, None, None);
+                let dtls_handler =
+                    DtlsHandler::new(local_addr, handshake_config.clone(), false, None, None);
                 let echo_handler = EchoHandler::new();
 
                 pipeline.add_back(async_transport_handler);

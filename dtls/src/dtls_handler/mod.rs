@@ -71,22 +71,24 @@ impl InboundHandler for DtlsInboundHandler {
     type Rout = Self::Rin;
 
     fn transport_active(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>) {
-        let mut try_dtls_active = || -> Result<()> {
-            let mut endpoint = self.endpoint.borrow_mut();
-            endpoint.connect(
-                self.peer_addr
-                    .take()
-                    .ok_or(Error::ErrClientTransportNotSet)?,
-                self.client_config.take().ok_or(Error::NoClientConfig)?,
-                self.initial_state.take(),
-            )?;
+        if self.client_config.is_some() {
+            let mut try_dtls_active = || -> Result<()> {
+                let mut endpoint = self.endpoint.borrow_mut();
+                endpoint.connect(
+                    self.peer_addr
+                        .take()
+                        .ok_or(Error::ErrClientTransportNotSet)?,
+                    self.client_config.take().ok_or(Error::NoClientConfig)?,
+                    self.initial_state.take(),
+                )?;
 
-            Ok(())
-        };
-        if let Err(err) = try_dtls_active() {
-            ctx.fire_read_exception(Box::new(err));
+                Ok(())
+            };
+            if let Err(err) = try_dtls_active() {
+                ctx.fire_read_exception(Box::new(err));
+            }
+            handle_outgoing(ctx, &self.endpoint, self.local_addr);
         }
-        handle_outgoing(ctx, &self.endpoint, self.local_addr);
 
         ctx.fire_transport_active();
     }

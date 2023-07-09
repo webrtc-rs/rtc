@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::Config;
+use crate::config::ConfigBuilder;
 use crate::crypto::*;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 
@@ -97,7 +97,7 @@ impl Handler for EchoHandler {
 }
 
 fn create_test_client(
-    mut cfg: Config,
+    mut builder: ConfigBuilder,
     generate_certificate: bool,
     client_transport: TransportContext,
 ) -> Result<(
@@ -106,12 +106,12 @@ fn create_test_client(
 )> {
     if generate_certificate {
         let client_cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
-        cfg.certificates = vec![client_cert];
+        builder = builder.with_certificates(vec![client_cert]);
     }
 
-    cfg.insecure_skip_verify = true;
+    builder = builder.with_insecure_skip_verify(true);
 
-    let handshake_config = cfg.generate_handshake_config(true, Some(client_transport.peer_addr))?;
+    let handshake_config = builder.build(true, Some(client_transport.peer_addr))?;
 
     let (client_tx, client_rx) = channel();
     let client_tx = Rc::new(RefCell::new(Some(client_tx)));
@@ -121,9 +121,12 @@ fn create_test_client(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
             let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
 
+            let local_addr = writer.get_local_addr();
+            let peer_addr = writer.get_peer_addr();
+
             let async_transport_handler = AsyncTransport::new(writer);
             let dtls_handler =
-                DtlsHandler::new(handshake_config.clone(), true, Some(client_transport), None);
+                DtlsHandler::new(local_addr, handshake_config.clone(), true, peer_addr, None);
             let echo_handler = EchoHandler::new(false, Rc::clone(&client_tx));
             pipeline.add_back(async_transport_handler);
             pipeline.add_back(dtls_handler);
@@ -136,15 +139,15 @@ fn create_test_client(
 }
 
 fn create_test_server(
-    mut cfg: Config,
+    mut builder: ConfigBuilder,
     generate_certificate: bool,
 ) -> Result<BootstrapUdpServer<TaggedBytesMut>> {
     if generate_certificate {
         let server_cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
-        cfg.certificates = vec![server_cert];
+        builder = builder.with_certificates(vec![server_cert]);
     }
 
-    let handshake_config = cfg.generate_handshake_config(false, None)?;
+    let handshake_config = builder.build(false, None)?;
 
     let server_tx = Rc::new(RefCell::new(None));
 
@@ -153,8 +156,11 @@ fn create_test_server(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
             let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
 
+            let local_addr = writer.get_local_addr();
+
             let async_transport_handler = AsyncTransport::new(writer);
-            let dtls_handler = DtlsHandler::new(handshake_config.clone(), false, None, None);
+            let dtls_handler =
+                DtlsHandler::new(local_addr, handshake_config.clone(), false, None, None);
             let echo_handler = EchoHandler::new(true, Rc::clone(&server_tx));
 
             pipeline.add_back(async_transport_handler);
@@ -191,12 +197,9 @@ fn test_dtls_handler() {
             let (done_tx, mut done_rx) = channel();
 
             let mut server = create_test_server(
-                Config {
-                    srtp_protection_profiles: vec![
-                        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
-                    ],
-                    ..Default::default()
-                },
+                ConfigBuilder::default().with_srtp_protection_profiles(vec![
+                    SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+                ]),
                 true,
             )
             .unwrap();
@@ -211,12 +214,9 @@ fn test_dtls_handler() {
 
             spawn_local(async move {
                 let (mut client, mut client_rx) = create_test_client(
-                    Config {
-                        srtp_protection_profiles: vec![
-                            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
-                        ],
-                        ..Default::default()
-                    },
+                    ConfigBuilder::default().with_srtp_protection_profiles(vec![
+                        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+                    ]),
                     true,
                     client_transport,
                 )
@@ -225,6 +225,7 @@ fn test_dtls_handler() {
                 client.bind(client_transport.local_addr).await.unwrap();
 
                 let client_pipeline = client.connect(server_addr).await.unwrap();
+                yield_local();
 
                 let buf = vec![0xFA; 100];
 
