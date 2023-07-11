@@ -1,6 +1,6 @@
 use crate::config::ConfigBuilder;
 use crate::crypto::*;
-use crate::dtls_handlers::dtls_endpoint_handler::DtlsEndpointHandler;
+use crate::dtls_handlers::dtls_connection_handler::DtlsConnectionHandler;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 
 use bytes::BytesMut;
@@ -124,15 +124,11 @@ fn create_test_client(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
             let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
 
-            let local_addr = writer.get_local_addr();
-            let peer_addr = writer.get_peer_addr();
-
             let async_transport_handler = AsyncTransport::new(writer);
-            let dtls_handler = DtlsEndpointHandler::new(
-                local_addr,
+            let dtls_handler = DtlsConnectionHandler::new(
                 handshake_config.clone(),
                 true,
-                peer_addr,
+                Some(client_transport),
                 None,
             );
             let echo_handler = EchoHandler::new(false, Rc::clone(&client_tx));
@@ -164,11 +160,9 @@ fn create_test_server(
         move |writer: AsyncTransportWrite<TaggedBytesMut>| {
             let pipeline: Pipeline<TaggedBytesMut, TaggedBytesMut> = Pipeline::new();
 
-            let local_addr = writer.get_local_addr();
-
             let async_transport_handler = AsyncTransport::new(writer);
             let dtls_handler =
-                DtlsEndpointHandler::new(local_addr, handshake_config.clone(), false, None, None);
+                DtlsConnectionHandler::new(handshake_config.clone(), false, None, None);
             let echo_handler = EchoHandler::new(true, Rc::clone(&server_tx));
 
             pipeline.add_back(async_transport_handler);
