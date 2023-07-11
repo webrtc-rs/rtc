@@ -5,7 +5,7 @@ use std::{io::Write, str::FromStr, time::Instant};
 
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::config::{ConfigBuilder, ExtendedMasterSecretType};
-use dtls::dtls_handler::DtlsHandler;
+use dtls::dtls_handlers::dtls_endpoint_handler::DtlsEndpointHandler;
 use shared::error::*;
 
 use retty::bootstrap::BootstrapUdpServer;
@@ -147,8 +147,13 @@ fn main() -> anyhow::Result<()> {
                 let local_addr = writer.get_local_addr();
 
                 let async_transport_handler = AsyncTransport::new(writer);
-                let dtls_handler =
-                    DtlsHandler::new(local_addr, handshake_config.clone(), false, None, None);
+                let dtls_handler = DtlsEndpointHandler::new(
+                    local_addr,
+                    handshake_config.clone(),
+                    false,
+                    None,
+                    None,
+                );
                 let echo_handler = EchoHandler::new();
 
                 pipeline.add_back(async_transport_handler);

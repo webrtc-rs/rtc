@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod dtls_handler_test;
-
 use retty::channel::{Handler, InboundContext, InboundHandler, OutboundContext, OutboundHandler};
 use retty::transport::{TaggedBytesMut, TransportContext};
 use std::cell::RefCell;
@@ -14,7 +11,7 @@ use crate::state::State;
 use bytes::BytesMut;
 use shared::error::{Error, Result};
 
-struct DtlsInboundHandler {
+struct DtlsEndpointInboundHandler {
     local_addr: SocketAddr,
     endpoint: Rc<RefCell<Endpoint>>,
 
@@ -23,16 +20,16 @@ struct DtlsInboundHandler {
     client_config: Option<HandshakeConfig>,
     peer_addr: Option<SocketAddr>,
 }
-struct DtlsOutboundHandler {
+struct DtlsEndpointOutboundHandler {
     local_addr: SocketAddr,
     endpoint: Rc<RefCell<Endpoint>>,
 }
-pub struct DtlsHandler {
-    inbound: DtlsInboundHandler,
-    outbound: DtlsOutboundHandler,
+pub struct DtlsEndpointHandler {
+    inbound: DtlsEndpointInboundHandler,
+    outbound: DtlsEndpointOutboundHandler,
 }
 
-impl DtlsHandler {
+impl DtlsEndpointHandler {
     pub fn new(
         local_addr: SocketAddr,
         handshake_config: HandshakeConfig,
@@ -48,8 +45,8 @@ impl DtlsHandler {
         };
         let endpoint = Rc::new(RefCell::new(endpoint));
 
-        DtlsHandler {
-            inbound: DtlsInboundHandler {
+        DtlsEndpointHandler {
+            inbound: DtlsEndpointInboundHandler {
                 local_addr,
                 endpoint: Rc::clone(&endpoint),
 
@@ -58,7 +55,7 @@ impl DtlsHandler {
                 client_config,
                 peer_addr,
             },
-            outbound: DtlsOutboundHandler {
+            outbound: DtlsEndpointOutboundHandler {
                 local_addr,
                 endpoint,
             },
@@ -66,7 +63,7 @@ impl DtlsHandler {
     }
 }
 
-impl InboundHandler for DtlsInboundHandler {
+impl InboundHandler for DtlsEndpointInboundHandler {
     type Rin = TaggedBytesMut;
     type Rout = Self::Rin;
 
@@ -154,7 +151,7 @@ impl InboundHandler for DtlsInboundHandler {
     }
 }
 
-impl OutboundHandler for DtlsOutboundHandler {
+impl OutboundHandler for DtlsEndpointOutboundHandler {
     type Win = TaggedBytesMut;
     type Wout = Self::Win;
 
@@ -183,14 +180,14 @@ impl OutboundHandler for DtlsOutboundHandler {
     }
 }
 
-impl Handler for DtlsHandler {
+impl Handler for DtlsEndpointHandler {
     type Rin = TaggedBytesMut;
     type Rout = Self::Rin;
     type Win = TaggedBytesMut;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
-        "DtlsHandler"
+        "DtlsEndpointHandler"
     }
 
     fn split(

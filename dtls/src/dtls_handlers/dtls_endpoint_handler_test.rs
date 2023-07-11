@@ -1,18 +1,21 @@
-use super::*;
 use crate::config::ConfigBuilder;
 use crate::crypto::*;
+use crate::dtls_handlers::dtls_endpoint_handler::DtlsEndpointHandler;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 
+use bytes::BytesMut;
 use core_affinity::CoreId;
 use local_sync::mpsc::{
     unbounded::channel, unbounded::Rx as LocalReceiver, unbounded::Tx as LocalSender,
 };
 use log::*;
+use shared::error::Result;
 use std::cell::RefCell;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::str::FromStr;
+use std::time::Instant;
 
 use retty::{
     bootstrap::{BootstrapUdpClient, BootstrapUdpServer},
@@ -125,8 +128,13 @@ fn create_test_client(
             let peer_addr = writer.get_peer_addr();
 
             let async_transport_handler = AsyncTransport::new(writer);
-            let dtls_handler =
-                DtlsHandler::new(local_addr, handshake_config.clone(), true, peer_addr, None);
+            let dtls_handler = DtlsEndpointHandler::new(
+                local_addr,
+                handshake_config.clone(),
+                true,
+                peer_addr,
+                None,
+            );
             let echo_handler = EchoHandler::new(false, Rc::clone(&client_tx));
             pipeline.add_back(async_transport_handler);
             pipeline.add_back(dtls_handler);
@@ -160,7 +168,7 @@ fn create_test_server(
 
             let async_transport_handler = AsyncTransport::new(writer);
             let dtls_handler =
-                DtlsHandler::new(local_addr, handshake_config.clone(), false, None, None);
+                DtlsEndpointHandler::new(local_addr, handshake_config.clone(), false, None, None);
             let echo_handler = EchoHandler::new(true, Rc::clone(&server_tx));
 
             pipeline.add_back(async_transport_handler);

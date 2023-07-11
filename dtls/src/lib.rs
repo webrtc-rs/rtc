@@ -12,7 +12,7 @@ pub mod conn;
 pub mod content;
 pub mod crypto;
 pub mod curve;
-pub mod dtls_handler;
+pub mod dtls_handlers;
 pub mod endpoint;
 pub mod extension;
 pub mod flight;
