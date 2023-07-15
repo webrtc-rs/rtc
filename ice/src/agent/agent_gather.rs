@@ -25,8 +25,6 @@ pub(crate) struct GatherCandidatesInternalParams {
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
     pub(crate) network_types: Vec<NetworkType>,
-    pub(crate) mdns_mode: MulticastDnsMode,
-    pub(crate) mdns_name: String,
     pub(crate) net: Arc<Net>,
     pub(crate) interface_filter: Arc<Option<InterfaceFilterFn>>,
     pub(crate) ip_filter: Arc<Option<IpFilterFn>>,
@@ -39,8 +37,6 @@ pub(crate) struct GatherCandidatesInternalParams {
 struct GatherCandidatesLocalParams {
     udp_network: UDPNetwork,
     network_types: Vec<NetworkType>,
-    mdns_mode: MulticastDnsMode,
-    mdns_name: String,
     interface_filter: Arc<Option<InterfaceFilterFn>>,
     ip_filter: Arc<Option<IpFilterFn>>,
     ext_ip_mapper: Arc<Option<ExternalIpMapper>>,
@@ -93,8 +89,6 @@ impl Agent {
                     let local_params = GatherCandidatesLocalParams {
                         udp_network: params.udp_network.clone(),
                         network_types: params.network_types.clone(),
-                        mdns_mode: params.mdns_mode,
-                        mdns_name: params.mdns_name.clone(),
                         interface_filter: Arc::clone(&params.interface_filter),
                         ip_filter: Arc::clone(&params.ip_filter),
                         ext_ip_mapper: Arc::clone(&params.ext_ip_mapper),
@@ -196,8 +190,6 @@ impl Agent {
         let GatherCandidatesLocalParams {
             udp_network,
             network_types,
-            mdns_mode,
-            mdns_name,
             interface_filter,
             ip_filter,
             ext_ip_mapper,
@@ -230,7 +222,7 @@ impl Agent {
         for ip in ips {
             let mut mapped_ip = ip;
 
-            if mdns_mode != MulticastDnsMode::QueryAndGather && ext_ip_mapper.is_some() {
+            if ext_ip_mapper.is_some() {
                 if let Some(ext_ip_mapper2) = ext_ip_mapper.as_ref() {
                     if ext_ip_mapper2.candidate_type == CandidateType::Host {
                         if let Ok(mi) = ext_ip_mapper2.find_external_ip(&ip.to_string()) {
@@ -246,11 +238,7 @@ impl Agent {
                 }
             }
 
-            let address = if mdns_mode == MulticastDnsMode::QueryAndGather {
-                mdns_name.clone()
-            } else {
-                mapped_ip.to_string()
-            };
+            let address = mapped_ip.to_string();
 
             //TODO: for network in networks
             let network = UDP.to_owned();
@@ -320,22 +308,7 @@ impl Agent {
 
                 let candidate: Arc<dyn Candidate + Send + Sync> =
                     match host_config.new_candidate_host() {
-                        Ok(candidate) => {
-                            if mdns_mode == MulticastDnsMode::QueryAndGather {
-                                if let Err(err) = candidate.set_ip(&ip) {
-                                    log::warn!(
-                                        "[{}]: Failed to create host candidate: {} {} {}: {:?}",
-                                        agent_internal.get_name(),
-                                        network,
-                                        mapped_ip,
-                                        port,
-                                        err
-                                    );
-                                    continue;
-                                }
-                            }
-                            Arc::new(candidate)
-                        }
+                        Ok(candidate) => Arc::new(candidate),
                         Err(err) => {
                             log::warn!(
                                 "[{}]: Failed to create host candidate: {} {} {}: {}",

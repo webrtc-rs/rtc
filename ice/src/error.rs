@@ -130,6 +130,10 @@ pub enum Error {
     #[error("invalid mDNS HostName, must end with .local and can only contain a single '.'")]
     ErrInvalidMulticastDnshostName,
 
+    /// Indicates mdns is not supported.
+    #[error("mdns is not supported")]
+    ErrMulticastDnsNotSupported,
+
     /// Indicates Restart was called when Agent is in GatheringStateGathering.
     #[error("ICE Agent can not be restarted when gathering")]
     ErrRestartWhenGathering,
@@ -205,8 +209,6 @@ pub enum Error {
     Stun(#[from] stun::Error),
     #[error("{0}")]
     ParseUrl(#[from] url::ParseError),
-    #[error("{0}")]
-    Mdns(#[from] mdns::Error),
     #[error("{0}")]
     Turn(#[from] turn::Error),
 

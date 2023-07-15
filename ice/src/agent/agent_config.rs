@@ -5,7 +5,6 @@ use util::vnet::net::*;
 
 use super::*;
 use crate::error::*;
-use crate::mdns::*;
 use crate::network_type::*;
 use crate::udp_network::UDPNetwork;
 use crate::url::*;
@@ -72,15 +71,6 @@ pub struct AgentConfig {
     /// 128 bits of random number generator output used to generate the password, and at least 24
     /// bits of output to generate the username fragment.
     pub local_pwd: String,
-
-    /// Controls mDNS behavior for the ICE agent.
-    pub multicast_dns_mode: MulticastDnsMode,
-
-    /// Controls the hostname for this agent. If none is specified a random one will be generated.
-    pub multicast_dns_host_name: String,
-
-    /// Control mDNS destination address
-    pub multicast_dns_dest_addr: String,
 
     /// Defaults to 5 seconds when this property is nil.
     /// If the duration is 0, the ICE Agent will never go to disconnected.
@@ -214,16 +204,12 @@ impl AgentConfig {
 
     pub(crate) fn init_ext_ip_mapping(
         &self,
-        mdns_mode: MulticastDnsMode,
         candidate_types: &[CandidateType],
     ) -> Result<Option<ExternalIpMapper>> {
         if let Some(ext_ip_mapper) =
             ExternalIpMapper::new(self.nat_1to1_ip_candidate_type, &self.nat_1to1_ips)?
         {
             if ext_ip_mapper.candidate_type == CandidateType::Host {
-                if mdns_mode == MulticastDnsMode::QueryAndGather {
-                    return Err(Error::ErrMulticastDnsWithNat1to1IpMapping);
-                }
                 let mut candi_host_enabled = false;
                 for candi_type in candidate_types {
                     if *candi_type == CandidateType::Host {

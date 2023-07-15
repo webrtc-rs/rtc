@@ -25,7 +25,6 @@ use std::time::SystemTime;
 use agent_config::*;
 use agent_internal::*;
 use agent_stats::*;
-use mdns::conn::*;
 use stun::agent::*;
 use stun::attributes::*;
 use stun::fingerprint::*;
@@ -41,7 +40,6 @@ use crate::agent::agent_gather::GatherCandidatesInternalParams;
 use crate::candidate::*;
 use crate::error::*;
 use crate::external_ip_mapper::*;
-use crate::mdns::*;
 use crate::network_type::*;
 use crate::rand::*;
 use crate::state::*;
@@ -104,9 +102,6 @@ pub struct Agent {
     pub(crate) udp_network: UDPNetwork,
     pub(crate) interface_filter: Arc<Option<InterfaceFilterFn>>,
     pub(crate) ip_filter: Arc<Option<IpFilterFn>>,
-    pub(crate) mdns_mode: MulticastDnsMode,
-    pub(crate) mdns_name: String,
-    pub(crate) mdns_conn: Option<Arc<DnsConn>>,
     pub(crate) net: Arc<Net>,
 
     // 1:1 D-NAT IP address mapping
@@ -122,28 +117,6 @@ pub struct Agent {
 impl Agent {
     /// Creates a new Agent.
     pub async fn new(config: AgentConfig) -> Result<Self> {
-        let mut mdns_name = config.multicast_dns_host_name.clone();
-        if mdns_name.is_empty() {
-            mdns_name = generate_multicast_dns_name();
-        }
-
-        if !mdns_name.ends_with(".local") || mdns_name.split('.').count() != 2 {
-            return Err(Error::ErrInvalidMulticastDnshostName);
-        }
-
-        let mdns_mode = config.multicast_dns_mode;
-
-        let mdns_conn =
-            match create_multicast_dns(mdns_mode, &mdns_name, &config.multicast_dns_dest_addr) {
-                Ok(c) => c,
-                Err(err) => {
-                    // Opportunistic mDNS: If we can't open the connection, that's ok: we
-                    // can continue without it.
-                    log::warn!("Failed to initialize mDNS {}: {}", mdns_name, err);
-                    None
-                }
-            };
-
         let (mut ai, chan_receivers) = AgentInternal::new(&config);
         let (chan_state_rx, chan_candidate_rx, chan_candidate_pair_rx) = (
             chan_receivers.chan_state_rx,
@@ -162,7 +135,6 @@ impl Agent {
         if ai.lite.load(Ordering::SeqCst)
             && (candidate_types.len() != 1 || candidate_types[0] != CandidateType::Host)
         {
-            Self::close_multicast_conn(&mdns_conn).await;
             return Err(Error::ErrLiteUsingNonHostCandidates);
         }
 
@@ -170,14 +142,12 @@ impl Agent {
             && !contains_candidate_type(CandidateType::ServerReflexive, &candidate_types)
             && !contains_candidate_type(CandidateType::Relay, &candidate_types)
         {
-            Self::close_multicast_conn(&mdns_conn).await;
             return Err(Error::ErrUselessUrlsProvided);
         }
 
-        let ext_ip_mapper = match config.init_ext_ip_mapping(mdns_mode, &candidate_types) {
+        let ext_ip_mapper = match config.init_ext_ip_mapping(&candidate_types) {
             Ok(ext_ip_mapper) => ext_ip_mapper,
             Err(err) => {
-                Self::close_multicast_conn(&mdns_conn).await;
                 return Err(err);
             }
         };
@@ -185,9 +155,6 @@ impl Agent {
         let net = if let Some(net) = config.net {
             if net.is_virtual() {
                 log::warn!("vnet is enabled");
-                if mdns_mode != MulticastDnsMode::Disabled {
-                    log::warn!("vnet does not support mDNS yet");
-                }
             }
 
             net
@@ -200,9 +167,6 @@ impl Agent {
             internal: Arc::new(ai),
             interface_filter: Arc::clone(&config.interface_filter),
             ip_filter: Arc::clone(&config.ip_filter),
-            mdns_mode,
-            mdns_name,
-            mdns_conn,
             net,
             ext_ip_mapper: Arc::new(ext_ip_mapper),
             gathering_state: Arc::new(AtomicU8::new(0)), //GatheringState::New,
@@ -221,7 +185,6 @@ impl Agent {
 
         // Restart is also used to initialize the agent for the first time
         if let Err(err) = agent.restart(config.local_ufrag, config.local_pwd).await {
-            Self::close_multicast_conn(&agent.mdns_conn).await;
             let _ = agent.close().await;
             return Err(err);
         }
@@ -272,30 +235,11 @@ impl Agent {
 
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
-            if self.mdns_mode == MulticastDnsMode::Disabled {
-                log::warn!(
-                    "remote mDNS candidate added, but mDNS is disabled: ({})",
-                    c.address()
-                );
-                return Ok(());
-            }
-
-            if c.candidate_type() != CandidateType::Host {
-                return Err(Error::ErrAddressParseFailed);
-            }
-
-            let ai = Arc::clone(&self.internal);
-            let host_candidate = Arc::clone(c);
-            let mdns_conn = self.mdns_conn.clone();
-            tokio::spawn(async move {
-                if let Some(mdns_conn) = mdns_conn {
-                    if let Ok(candidate) =
-                        Self::resolve_and_add_multicast_candidate(mdns_conn, host_candidate).await
-                    {
-                        ai.add_remote_candidate(&candidate).await;
-                    }
-                }
-            });
+            log::warn!(
+                "remote mDNS candidate added, but mDNS is disabled: ({})",
+                c.address()
+            );
+            return Err(Error::ErrMulticastDnsNotSupported);
         } else {
             let ai = Arc::clone(&self.internal);
             let candidate = Arc::clone(c);
@@ -455,8 +399,6 @@ impl Agent {
             candidate_types: self.candidate_types.clone(),
             urls: self.urls.clone(),
             network_types: self.network_types.clone(),
-            mdns_mode: self.mdns_mode,
-            mdns_name: self.mdns_name.clone(),
             net: Arc::clone(&self.net),
             interface_filter: self.interface_filter.clone(),
             ip_filter: self.ip_filter.clone(),
@@ -485,32 +427,5 @@ impl Agent {
     /// Returns a list of remote candidates stats.
     pub async fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
         self.internal.get_remote_candidates_stats().await
-    }
-
-    async fn resolve_and_add_multicast_candidate(
-        mdns_conn: Arc<DnsConn>,
-        c: Arc<dyn Candidate + Send + Sync>,
-    ) -> Result<Arc<dyn Candidate + Send + Sync>> {
-        //TODO: hook up _close_query_signal_tx to Agent or Candidate's Close signal?
-        let (_close_query_signal_tx, close_query_signal_rx) = mpsc::channel(1);
-        let src = match mdns_conn.query(&c.address(), close_query_signal_rx).await {
-            Ok((_, src)) => src,
-            Err(err) => {
-                log::warn!("Failed to discover mDNS candidate {}: {}", c.address(), err);
-                return Err(err.into());
-            }
-        };
-
-        c.set_ip(&src.ip())?;
-
-        Ok(c)
-    }
-
-    async fn close_multicast_conn(mdns_conn: &Option<Arc<DnsConn>>) {
-        if let Some(conn) = mdns_conn {
-            if let Err(err) = conn.close().await {
-                log::warn!("failed to close mDNS Conn: {}", err);
-            }
-        }
     }
 }
