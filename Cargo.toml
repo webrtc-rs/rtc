@@ -2,6 +2,7 @@
 members = [
     "data",
     "dtls",
+    "ice",
     "rtc",
     "rtcp",
     "rtp",
