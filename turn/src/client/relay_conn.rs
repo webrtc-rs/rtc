@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod relay_conn_test;
 
-// client implements the API for a TURN client
-use std::io;
 use std::net::SocketAddr;
+// client implements the API for a TURN client
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -15,7 +14,6 @@ use stun::message::*;
 use stun::textattrs::*;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
-use util::Conn;
 
 use super::binding::*;
 use super::periodic_timer::*;
@@ -102,7 +100,7 @@ impl<T: 'static + RelayConnObserver + Send + Sync> RelayConn<T> {
         c
     }
 }
-
+/*TODO:
 #[async_trait]
 impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
     async fn connect(&self, _addr: SocketAddr) -> Result<()> {
@@ -185,7 +183,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
             .map_err(|err| util::Error::Other(format!("{err}")));
         Ok(())
     }
-}
+}*/
 
 impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
     // new creates a new instance of UDPConn
