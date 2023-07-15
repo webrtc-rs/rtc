@@ -11,6 +11,7 @@ members = [
     "shared",
     "srtp",
     "stun",
+    "turn",
 ]
 
 [profile.dev]
