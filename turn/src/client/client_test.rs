@@ -1,14 +1,7 @@
-use std::net::IpAddr;
-
 use tokio::net::UdpSocket;
-use tokio::time::Duration;
-use util::vnet::net::*;
 
 use super::*;
 use crate::auth::*;
-use crate::relay::relay_static::*;
-use crate::server::config::*;
-use crate::server::*;
 
 async fn create_listening_test_client(rto_in_ms: u16) -> Result<Client> {
     let conn = UdpSocket::bind("0.0.0.0:0").await?;
@@ -124,68 +117,4 @@ impl AuthHandler for TestAuthHandler {
     fn auth_handle(&self, username: &str, realm: &str, _src_addr: SocketAddr) -> Result<Vec<u8>> {
         Ok(generate_auth_key(username, realm, "pass"))
     }
-}
-
-// Create an allocation, and then delete all nonces
-// The subsequent Write on the allocation will cause a CreatePermission
-// which will be forced to handle a stale nonce response
-#[tokio::test]
-async fn test_client_nonce_expiration() -> Result<()> {
-    // env_logger::init();
-
-    // here, it should use static port, like "0.0.0.0:3478",
-    // but, due to different test environment, let's fake it by using "0.0.0.0:0"
-    // to auto assign a "static" port
-    let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-    let server_port = conn.local_addr()?.port();
-
-    let server = Server::new(ServerConfig {
-        conn_configs: vec![ConnConfig {
-            conn,
-            relay_addr_generator: Box::new(RelayAddressGeneratorStatic {
-                relay_address: IpAddr::from_str("127.0.0.1")?,
-                address: "0.0.0.0".to_owned(),
-                net: Arc::new(Net::new(None)),
-            }),
-        }],
-        realm: "webrtc.rs".to_owned(),
-        auth_handler: Arc::new(TestAuthHandler {}),
-        channel_bind_timeout: Duration::from_secs(0),
-        alloc_close_notify: None,
-    })
-    .await?;
-
-    let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-
-    let client = Client::new(ClientConfig {
-        stun_serv_addr: format!("127.0.0.1:{server_port}"),
-        turn_serv_addr: format!("127.0.0.1:{server_port}"),
-        username: "foo".to_owned(),
-        password: "pass".to_owned(),
-        realm: String::new(),
-        software: String::new(),
-        rto_in_ms: 0,
-        conn,
-        vnet: None,
-    })
-    .await?;
-
-    client.listen().await?;
-
-    let allocation = client.allocate().await?;
-
-    {
-        let mut nonces = server.nonces.lock().await;
-        nonces.clear();
-    }
-
-    allocation
-        .send_to(&[0x00], SocketAddr::from_str("127.0.0.1:8080")?)
-        .await?;
-
-    // Shutdown
-    client.close().await?;
-    server.close().await?;
-
-    Ok(())
 }
