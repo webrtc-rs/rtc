@@ -5,10 +5,10 @@
 extern crate lazy_static;
 
 pub mod addr;
-//TODO: pub mod agent;
+pub mod agent;
 pub mod attributes;
 pub mod checks;
-//TODO: pub mod client;
+pub mod client;
 pub mod error_code;
 pub mod fingerprint;
 pub mod integrity;
