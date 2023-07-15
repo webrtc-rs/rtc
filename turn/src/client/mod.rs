@@ -16,7 +16,6 @@ use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use binding::*;
 use relay_conn::*;
-use stun::agent::*;
 use stun::attributes::*;
 use stun::error_code::*;
 use stun::fingerprint::*;
@@ -29,7 +28,6 @@ use transaction::*;
 use util::conn::*;
 use util::vnet::net::*;
 
-use crate::error::*;
 use crate::proto::chandata::*;
 use crate::proto::data::*;
 use crate::proto::lifetime::*;
@@ -37,6 +35,7 @@ use crate::proto::peeraddr::*;
 use crate::proto::relayaddr::*;
 use crate::proto::reqtrans::*;
 use crate::proto::PROTO_UDP;
+use shared::error::{Error, Result};
 
 const DEFAULT_RTO_IN_MS: u16 = 200;
 const MAX_DATA_BUFFER_SIZE: usize = u16::MAX as usize; // message size limit for Chromium
@@ -98,7 +97,7 @@ impl RelayConnObserver for ClientInternal {
     }
 
     // WriteTo sends data to the specified destination using the base socket.
-    async fn write_to(&self, data: &[u8], to: &str) -> std::result::Result<usize, util::Error> {
+    async fn write_to(&self, data: &[u8], to: &str) -> Result<usize> {
         let n = self.conn.send_to(data, SocketAddr::from_str(to)?).await?;
         Ok(n)
     }

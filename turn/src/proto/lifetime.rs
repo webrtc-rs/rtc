@@ -4,6 +4,7 @@ mod lifetime_test;
 use std::fmt;
 use std::time::Duration;
 
+use shared::error::Result;
 use stun::attributes::*;
 use stun::checks::*;
 use stun::message::*;
@@ -36,7 +37,7 @@ const LIFETIME_SIZE: usize = 4; // 4 bytes, 32 bits
 
 impl Setter for Lifetime {
     // AddTo adds LIFETIME to message.
-    fn add_to(&self, m: &mut Message) -> Result<(), stun::Error> {
+    fn add_to(&self, m: &mut Message) -> Result<()> {
         let mut v = vec![0; LIFETIME_SIZE];
         v.copy_from_slice(&(self.0.as_secs() as u32).to_be_bytes());
         m.add(ATTR_LIFETIME, &v);
@@ -46,7 +47,7 @@ impl Setter for Lifetime {
 
 impl Getter for Lifetime {
     // GetFrom decodes LIFETIME from message.
-    fn get_from(&mut self, m: &Message) -> Result<(), stun::Error> {
+    fn get_from(&mut self, m: &Message) -> Result<()> {
         let v = m.get(ATTR_LIFETIME)?;
 
         check_size(ATTR_LIFETIME, v.len(), LIFETIME_SIZE)?;

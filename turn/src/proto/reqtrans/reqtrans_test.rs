@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_requested_transport_string() -> Result<(), stun::Error> {
+fn test_requested_transport_string() -> Result<()> {
     let mut r = RequestedTransport {
         protocol: PROTO_UDP,
     };
@@ -27,7 +27,7 @@ fn test_requested_transport_string() -> Result<(), stun::Error> {
 }
 
 #[test]
-fn test_requested_transport_add_to() -> Result<(), stun::Error> {
+fn test_requested_transport_add_to() -> Result<()> {
     let mut m = Message::new();
     let r = RequestedTransport {
         protocol: PROTO_UDP,

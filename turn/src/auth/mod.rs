@@ -9,7 +9,7 @@ use base64::Engine;
 use md5::{Digest, Md5};
 use ring::hmac;
 
-use crate::error::*;
+use shared::error::{Error, Result};
 
 pub trait AuthHandler {
     fn auth_handle(&self, username: &str, realm: &str, src_addr: SocketAddr) -> Result<Vec<u8>>;

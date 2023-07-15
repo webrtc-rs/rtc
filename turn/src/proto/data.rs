@@ -4,6 +4,8 @@ mod data_test;
 use stun::attributes::*;
 use stun::message::*;
 
+use shared::error::Result;
+
 // Data represents DATA attribute.
 //
 // The DATA attribute is present in all Send and Data indications.  The
@@ -18,7 +20,7 @@ pub struct Data(pub Vec<u8>);
 
 impl Setter for Data {
     // AddTo adds DATA to message.
-    fn add_to(&self, m: &mut Message) -> Result<(), stun::Error> {
+    fn add_to(&self, m: &mut Message) -> Result<()> {
         m.add(ATTR_DATA, &self.0);
         Ok(())
     }
@@ -26,7 +28,7 @@ impl Setter for Data {
 
 impl Getter for Data {
     // GetFrom decodes DATA from message.
-    fn get_from(&mut self, m: &Message) -> Result<(), stun::Error> {
+    fn get_from(&mut self, m: &Message) -> Result<()> {
         self.0 = m.get(ATTR_DATA)?;
         Ok(())
     }

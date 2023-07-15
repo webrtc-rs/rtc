@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::Duration;
 use util::Conn;
 
-use crate::error::*;
+use shared::error::Error;
 
 const MAX_RTX_INTERVAL_IN_MS: u16 = 1600;
 const MAX_RTX_COUNT: u16 = 7; // total 7 requests (Rc)

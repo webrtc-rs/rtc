@@ -4,7 +4,4 @@
 
 pub mod auth;
 pub mod client;
-mod error;
 pub mod proto;
-
-pub use error::Error;

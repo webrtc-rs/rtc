@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_requested_address_family_string() -> Result<(), stun::Error> {
+fn test_requested_address_family_string() -> Result<()> {
     assert_eq!(
         REQUESTED_FAMILY_IPV4.to_string(),
         "IPv4",
@@ -28,7 +28,7 @@ fn test_requested_address_family_string() -> Result<(), stun::Error> {
 }
 
 #[test]
-fn test_requested_address_family_add_to() -> Result<(), stun::Error> {
+fn test_requested_address_family_add_to() -> Result<()> {
     let mut m = Message::new();
     let r = REQUESTED_FAMILY_IPV4;
     r.add_to(&mut m)?;

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_even_port_string() -> Result<(), stun::Error> {
+fn test_even_port_string() -> Result<()> {
     let mut p = EvenPort::default();
     assert_eq!(
         p.to_string(),
@@ -20,7 +20,7 @@ fn test_even_port_string() -> Result<(), stun::Error> {
 }
 
 #[test]
-fn test_even_port_false() -> Result<(), stun::Error> {
+fn test_even_port_false() -> Result<()> {
     let mut m = Message::new();
     let p = EvenPort {
         reserve_port: false,
@@ -38,7 +38,7 @@ fn test_even_port_false() -> Result<(), stun::Error> {
 }
 
 #[test]
-fn test_even_port_add_to() -> Result<(), stun::Error> {
+fn test_even_port_add_to() -> Result<()> {
     let mut m = Message::new();
     let p = EvenPort { reserve_port: true };
     p.add_to(&mut m)?;

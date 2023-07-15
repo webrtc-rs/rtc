@@ -2,7 +2,7 @@
 mod chandata_test;
 
 use super::channum::*;
-use crate::error::*;
+use shared::error::{Error, Result};
 
 const PADDING: usize = 4;
 

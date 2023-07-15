@@ -23,7 +23,7 @@ impl RelayConnObserver for DummyRelayConnObserver {
         self.realm.clone()
     }
 
-    async fn write_to(&self, _data: &[u8], _to: &str) -> std::result::Result<usize, util::Error> {
+    async fn write_to(&self, _data: &[u8], _to: &str) -> std::result::Result<usize> {
         Ok(0)
     }
 

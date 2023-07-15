@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_reservation_token() -> Result<(), stun::Error> {
+fn test_reservation_token() -> Result<()> {
     let mut m = Message::new();
     let mut v = vec![0; 8];
     v[2] = 33;

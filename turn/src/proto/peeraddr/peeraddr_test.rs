@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use super::*;
 
 #[test]
-fn test_peer_address() -> Result<(), stun::Error> {
+fn test_peer_address() -> Result<()> {
     // Simple tests because already tested in stun.
     let a = PeerAddress {
         ip: IpAddr::V4(Ipv4Addr::new(111, 11, 1, 2)),

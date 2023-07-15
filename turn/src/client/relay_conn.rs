@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use stun::agent::*;
 use stun::attributes::*;
 use stun::error_code::*;
 use stun::fingerprint::*;
@@ -22,7 +21,8 @@ use super::binding::*;
 use super::periodic_timer::*;
 use super::permission::*;
 use super::transaction::*;
-use crate::{proto, Error};
+use crate::proto;
+use shared::error::{Error, Result};
 
 const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 const MAX_RETRY_ATTEMPTS: u16 = 3;
@@ -38,13 +38,13 @@ pub trait RelayConnObserver {
     fn turn_server_addr(&self) -> String;
     fn username(&self) -> Username;
     fn realm(&self) -> Realm;
-    async fn write_to(&self, data: &[u8], to: &str) -> Result<usize, util::Error>;
+    async fn write_to(&self, data: &[u8], to: &str) -> Result<usize>;
     async fn perform_transaction(
         &mut self,
         msg: &Message,
         to: &str,
         ignore_result: bool,
-    ) -> Result<TransactionResult, Error>;
+    ) -> Result<TransactionResult>;
 }
 
 // RelayConnConfig is a set of configuration params use by NewUDPConn
@@ -105,11 +105,11 @@ impl<T: 'static + RelayConnObserver + Send + Sync> RelayConn<T> {
 
 #[async_trait]
 impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
-    async fn connect(&self, _addr: SocketAddr) -> Result<(), util::Error> {
+    async fn connect(&self, _addr: SocketAddr) -> Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "Not applicable").into())
     }
 
-    async fn recv(&self, _buf: &mut [u8]) -> Result<usize, util::Error> {
+    async fn recv(&self, _buf: &mut [u8]) -> Result<usize> {
         Err(io::Error::new(io::ErrorKind::Other, "Not applicable").into())
     }
 
@@ -123,7 +123,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
     // ReadFrom can be made to time out and return
     // an Error with Timeout() == true after a fixed time limit;
     // see SetDeadline and SetReadDeadline.
-    async fn recv_from(&self, p: &mut [u8]) -> Result<(usize, SocketAddr), util::Error> {
+    async fn recv_from(&self, p: &mut [u8]) -> Result<(usize, SocketAddr)> {
         let mut read_ch_rx = self.read_ch_rx.lock().await;
 
         if let Some(ib_data) = read_ch_rx.recv().await {
@@ -146,7 +146,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
         }
     }
 
-    async fn send(&self, _buf: &[u8]) -> Result<usize, util::Error> {
+    async fn send(&self, _buf: &[u8]) -> Result<usize> {
         Err(io::Error::new(io::ErrorKind::Other, "Not applicable").into())
     }
 
@@ -155,7 +155,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
     // an Error with Timeout() == true after a fixed time limit;
     // see SetDeadline and SetWriteDeadline.
     // On packet-oriented connections, write timeouts are rare.
-    async fn send_to(&self, p: &[u8], addr: SocketAddr) -> Result<usize, util::Error> {
+    async fn send_to(&self, p: &[u8], addr: SocketAddr) -> Result<usize> {
         let mut relay_conn = self.relay_conn.lock().await;
         match relay_conn.send_to(p, addr).await {
             Ok(n) => Ok(n),
@@ -164,7 +164,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
     }
 
     // LocalAddr returns the local network address.
-    fn local_addr(&self) -> Result<SocketAddr, util::Error> {
+    fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.relayed_addr)
     }
 
@@ -174,7 +174,7 @@ impl<T: RelayConnObserver + Send + Sync> Conn for RelayConn<T> {
 
     // Close closes the connection.
     // Any blocked ReadFrom or write_to operations will be unblocked and return errors.
-    async fn close(&self) -> Result<(), util::Error> {
+    async fn close(&self) -> Result<()> {
         self.refresh_alloc_timer.stop().await;
         self.refresh_perms_timer.stop().await;
 
@@ -206,7 +206,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
     // an Error with Timeout() == true after a fixed time limit;
     // see SetDeadline and SetWriteDeadline.
     // On packet-oriented connections, write timeouts are rare.
-    async fn send_to(&mut self, p: &[u8], addr: SocketAddr) -> Result<usize, Error> {
+    async fn send_to(&mut self, p: &[u8], addr: SocketAddr) -> Result<usize> {
         // check if we have a permission for the destination IP addr
         let perm = if let Some(perm) = self.perm_map.find(&addr) {
             Arc::clone(perm)
@@ -360,7 +360,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
     // all the data transmission. This is done assuming that the request
     // will be mostly likely successful and we can tolerate some loss of
     // UDP packet (or reorder), inorder to minimize the latency in most cases.
-    async fn create_perm(&mut self, perm: &Arc<Permission>, addr: SocketAddr) -> Result<(), Error> {
+    async fn create_perm(&mut self, perm: &Arc<Permission>, addr: SocketAddr) -> Result<()> {
         if perm.state() == PermState::Idle {
             // punch a hole! (this would block a bit..)
             if let Err(err) = self.create_permissions(&[addr]).await {
@@ -372,7 +372,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
         Ok(())
     }
 
-    async fn send_channel_data(&self, data: &[u8], ch_num: u16) -> Result<usize, Error> {
+    async fn send_channel_data(&self, data: &[u8], ch_num: u16) -> Result<usize> {
         let mut ch_data = proto::chandata::ChannelData {
             data: data.to_vec(),
             number: proto::channum::ChannelNumber(ch_num),
@@ -384,7 +384,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
         Ok(obs.write_to(&ch_data.raw, &obs.turn_server_addr()).await?)
     }
 
-    async fn create_permissions(&mut self, addrs: &[SocketAddr]) -> Result<(), Error> {
+    async fn create_permissions(&mut self, addrs: &[SocketAddr]) -> Result<()> {
         let res = {
             let msg = {
                 let obs = self.obs.lock().await;
@@ -448,16 +448,12 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
 
     // Close closes the connection.
     // Any blocked ReadFrom or write_to operations will be unblocked and return errors.
-    pub async fn close(&mut self) -> Result<(), Error> {
+    pub async fn close(&mut self) -> Result<()> {
         self.refresh_allocation(Duration::from_secs(0), true /* dontWait=true */)
             .await
     }
 
-    async fn refresh_allocation(
-        &mut self,
-        lifetime: Duration,
-        dont_wait: bool,
-    ) -> Result<(), Error> {
+    async fn refresh_allocation(&mut self, lifetime: Duration, dont_wait: bool) -> Result<()> {
         let res = {
             let mut obs = self.obs.lock().await;
 
@@ -511,7 +507,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
         Ok(())
     }
 
-    async fn refresh_permissions(&mut self) -> Result<(), Error> {
+    async fn refresh_permissions(&mut self) -> Result<()> {
         let addrs = self.perm_map.addrs();
         if addrs.is_empty() {
             log::debug!("no permission to refresh");
@@ -535,7 +531,7 @@ impl<T: RelayConnObserver + Send + Sync> RelayConnInternal<T> {
         bind_number: u16,
         nonce: Nonce,
         integrity: MessageIntegrity,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let (msg, turn_server_addr) = {
             let obs = rc_obs.lock().await;
 

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_data_add_to() -> Result<(), stun::Error> {
+fn test_data_add_to() -> Result<()> {
     let mut m = Message::new();
     let d = Data(vec![1, 2, 33, 44, 0x13, 0xaf]);
     d.add_to(&mut m)?;

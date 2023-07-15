@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_lifetime_string() -> Result<(), stun::Error> {
+fn test_lifetime_string() -> Result<()> {
     let l = Lifetime(Duration::from_secs(10));
     assert_eq!(l.to_string(), "10s", "bad string {l}, expected 10s");
 
@@ -9,7 +9,7 @@ fn test_lifetime_string() -> Result<(), stun::Error> {
 }
 
 #[test]
-fn test_lifetime_add_to() -> Result<(), stun::Error> {
+fn test_lifetime_add_to() -> Result<()> {
     let mut m = Message::new();
     let l = Lifetime(Duration::from_secs(10));
     l.add_to(&mut m)?;
