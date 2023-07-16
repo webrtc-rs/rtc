@@ -1,31 +1,16 @@
 #[cfg(test)]
 mod agent_test;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use rand::Rng;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
-
 use crate::client::ClientTransaction;
-use crate::error::*;
+use shared::error::*;
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
+
 use crate::message::*;
 
-/// Handler handles state changes of transaction.
-/// Handler is called on transaction state change.
-/// Usage of e is valid only during call, user must
-/// copy needed fields explicitly.
-pub type Handler = Option<Arc<mpsc::UnboundedSender<Event>>>;
-
-/// noop_handler just discards any event.
-pub fn noop_handler() -> Handler {
-    None
-}
-
 /// Agent is low-level abstraction over transaction list that
-/// handles concurrency (all calls are goroutine-safe) and
-/// time outs (via Collect call).
+/// handles concurrency and time outs (via Collect call).
+#[derive(Default)]
 pub struct Agent {
     /// transactions is map of transactions that are currently
     /// in progress. Event handling is done in such way when
@@ -35,8 +20,8 @@ pub struct Agent {
     transactions: HashMap<TransactionId, AgentTransaction>,
     /// all calls are invalid if true
     closed: bool,
-    /// handles transactions
-    handler: Handler,
+    /// events queue
+    events_queue: VecDeque<Event>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,27 +66,6 @@ pub(crate) struct AgentTransaction {
 /// sufficient to make function zero-alloc in most cases.
 const AGENT_COLLECT_CAP: usize = 100;
 
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Default, Debug)]
-pub struct TransactionId(pub [u8; TRANSACTION_ID_SIZE]);
-
-impl TransactionId {
-    /// new returns new random transaction ID using crypto/rand
-    /// as source.
-    pub fn new() -> Self {
-        let mut b = TransactionId([0u8; TRANSACTION_ID_SIZE]);
-        rand::thread_rng().fill(&mut b.0);
-        b
-    }
-}
-
-impl Setter for TransactionId {
-    fn add_to(&self, m: &mut Message) -> Result<()> {
-        m.transaction_id = *self;
-        m.write_transaction_id();
-        Ok(())
-    }
-}
-
 /// ClientAgent is Agent implementation that is used by Client to
 /// process transactions.
 #[derive(Debug)]
@@ -115,74 +79,69 @@ pub enum ClientAgent {
 
 impl Agent {
     /// new initializes and returns new Agent with provided handler.
-    pub fn new(handler: Handler) -> Self {
+    pub fn new() -> Self {
         Agent {
             transactions: HashMap::new(),
             closed: false,
-            handler,
+            events_queue: VecDeque::new(),
         }
     }
 
-    /// stop_with_error removes transaction from list and calls handler with
-    /// provided error. Can return ErrTransactionNotExists and ErrAgentClosed.
-    pub fn stop_with_error(&mut self, id: TransactionId, error: Error) -> Result<()> {
-        if self.closed {
-            return Err(Error::ErrAgentClosed);
+    pub(crate) fn handle_event(&mut self, client_agent: ClientAgent) -> Result<()> {
+        match client_agent {
+            ClientAgent::Process(message) => self.process(message),
+            ClientAgent::Collect(deadline) => self.collect(deadline),
+            ClientAgent::Start(tid, deadline) => self.start(tid, deadline),
+            ClientAgent::Stop(tid) => self.stop(tid),
+            ClientAgent::Close => self.close(),
         }
+    }
 
-        let v = self.transactions.remove(&id);
-        if let Some(t) = v {
-            if let Some(handler) = &self.handler {
-                handler.send(Event {
-                    event_type: EventType::Callback(t.id),
-                    event_body: Err(error),
-                })?;
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
+        let mut deadline = None;
+        for transaction in self.transactions.values() {
+            if deadline.is_none() || transaction.deadline < *deadline.as_ref().unwrap() {
+                deadline = Some(transaction.deadline);
             }
-            Ok(())
-        } else {
-            Err(Error::ErrTransactionNotExists)
         }
+        deadline
+    }
+
+    pub fn poll_event(&mut self) -> Option<Event> {
+        self.events_queue.pop_front()
     }
 
     /// process incoming message, synchronously passing it to handler.
-    pub fn process(&mut self, message: Message) -> Result<()> {
+    fn process(&mut self, message: Message) -> Result<()> {
         if self.closed {
             return Err(Error::ErrAgentClosed);
         }
 
         self.transactions.remove(&message.transaction_id);
 
-        let e = Event {
+        self.events_queue.push_back(Event {
             event_type: EventType::Callback(message.transaction_id),
             event_body: Ok(message),
-        };
-
-        if let Some(handler) = &self.handler {
-            handler.send(e)?;
-        }
+        });
 
         Ok(())
     }
 
     /// close terminates all transactions with ErrAgentClosed and renders Agent to
     /// closed state.
-    pub fn close(&mut self) -> Result<()> {
+    fn close(&mut self) -> Result<()> {
         if self.closed {
             return Err(Error::ErrAgentClosed);
         }
 
         for id in self.transactions.keys() {
-            let e = Event {
+            self.events_queue.push_back(Event {
                 event_type: EventType::Callback(*id),
                 event_body: Err(Error::ErrAgentClosed),
-            };
-            if let Some(handler) = &self.handler {
-                handler.send(e)?;
-            }
+            });
         }
         self.transactions = HashMap::new();
         self.closed = true;
-        self.handler = noop_handler();
 
         Ok(())
     }
@@ -191,7 +150,7 @@ impl Agent {
     /// Could return ErrAgentClosed, ErrTransactionExists.
     ///
     /// Agent handler is guaranteed to be eventually called.
-    pub fn start(&mut self, id: TransactionId, deadline: Instant) -> Result<()> {
+    fn start(&mut self, id: TransactionId, deadline: Instant) -> Result<()> {
         if self.closed {
             return Err(Error::ErrAgentClosed);
         }
@@ -207,8 +166,21 @@ impl Agent {
 
     /// stop stops transaction by id with ErrTransactionStopped, blocking
     /// until handler returns.
-    pub fn stop(&mut self, id: TransactionId) -> Result<()> {
-        self.stop_with_error(id, Error::ErrTransactionStopped)
+    fn stop(&mut self, id: TransactionId) -> Result<()> {
+        if self.closed {
+            return Err(Error::ErrAgentClosed);
+        }
+
+        let v = self.transactions.remove(&id);
+        if let Some(t) = v {
+            self.events_queue.push_back(Event {
+                event_type: EventType::Callback(t.id),
+                event_body: Err(Error::ErrTransactionStopped),
+            });
+            Ok(())
+        } else {
+            Err(Error::ErrTransactionNotExists)
+        }
     }
 
     /// collect terminates all transactions that have deadline before provided
@@ -216,7 +188,7 @@ impl Agent {
     /// Will return ErrAgentClosed if agent is already closed.
     ///
     /// It is safe to call Collect concurrently but makes no sense.
-    pub fn collect(&mut self, deadline: Instant) -> Result<()> {
+    fn collect(&mut self, deadline: Instant) -> Result<()> {
         if self.closed {
             // Doing nothing if agent is closed.
             // All transactions should be already closed
@@ -241,43 +213,12 @@ impl Agent {
         }
 
         for id in to_remove {
-            let event = Event {
+            self.events_queue.push_back(Event {
                 event_type: EventType::Callback(id),
                 event_body: Err(Error::ErrTransactionTimeOut),
-            };
-            if let Some(handler) = &self.handler {
-                handler.send(event)?;
-            }
+            });
         }
 
         Ok(())
-    }
-
-    /// set_handler sets agent handler to h.
-    pub fn set_handler(&mut self, h: Handler) -> Result<()> {
-        if self.closed {
-            return Err(Error::ErrAgentClosed);
-        }
-        self.handler = h;
-
-        Ok(())
-    }
-
-    pub(crate) async fn run(mut agent: Agent, mut rx: mpsc::Receiver<ClientAgent>) {
-        while let Some(client_agent) = rx.recv().await {
-            let result = match client_agent {
-                ClientAgent::Process(message) => agent.process(message),
-                ClientAgent::Collect(deadline) => agent.collect(deadline),
-                ClientAgent::Start(tid, deadline) => agent.start(tid, deadline),
-                ClientAgent::Stop(tid) => agent.stop(tid),
-                ClientAgent::Close => agent.close(),
-            };
-
-            if let Err(err) = result {
-                if Error::ErrAgentClosed == err {
-                    break;
-                }
-            }
-        }
     }
 }
