@@ -72,7 +72,7 @@ impl Agent {
         }
     }
 
-    pub(crate) fn handle_event(&mut self, client_agent: ClientAgent) -> Result<()> {
+    pub fn handle_event(&mut self, client_agent: ClientAgent) -> Result<()> {
         match client_agent {
             ClientAgent::Process(message) => self.process(message),
             ClientAgent::Collect(deadline) => self.collect(deadline),

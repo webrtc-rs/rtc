@@ -23,7 +23,6 @@ const DEFAULT_MAX_BUFFER_SIZE: usize = 8;
 pub struct ClientTransaction {
     id: TransactionId,
     attempt: u32,
-    calls: u32,
     start: Instant,
     rto: Duration,
     raw: Vec<u8>,
@@ -149,7 +148,7 @@ impl Client {
             // Doing re-transmission.
             ct.attempt += 1;
 
-            let raw = ct.raw.clone();
+            let payload = BytesMut::from(&ct.raw[..]);
             let timeout = ct.next_timeout(Instant::now());
             let id = ct.id;
 
@@ -172,7 +171,7 @@ impl Client {
                 remote: self.remote,
                 ecn: None,
                 local_ip: None,
-                payload: BytesMut::from(&raw[..]),
+                payload,
             });
         }
 
@@ -186,18 +185,19 @@ impl Client {
         self.agent.handle_event(ClientAgent::Process(msg))
     }
 
-    pub fn handle_write(&mut self, m: &Message) -> Result<()> {
+    pub fn handle_write(&mut self, m: Message) -> Result<()> {
         if self.settings.closed {
             return Err(Error::ErrClientClosed);
         }
 
+        let payload = BytesMut::from(&m.raw[..]);
+
         let ct = ClientTransaction {
             id: m.transaction_id,
             attempt: 0,
-            calls: 0,
             start: Instant::now(),
             rto: self.settings.rto,
-            raw: m.raw.clone(),
+            raw: m.raw,
         };
         let deadline = ct.next_timeout(ct.start);
         self.transactions.entry(ct.id).or_insert(ct);
@@ -209,7 +209,7 @@ impl Client {
             remote: self.remote,
             ecn: None,
             local_ip: None,
-            payload: BytesMut::from(&m.raw[..]),
+            payload,
         });
 
         Ok(())
@@ -223,8 +223,7 @@ impl Client {
         self.agent.handle_event(ClientAgent::Collect(now))
     }
 
-    /// close stops internal connection and agent, returning CloseErr on error.
-    pub fn close(&mut self) -> Result<()> {
+    pub fn handle_close(&mut self) -> Result<()> {
         if self.settings.closed {
             return Err(Error::ErrClientClosed);
         }
