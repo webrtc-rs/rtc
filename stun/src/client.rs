@@ -1,14 +1,14 @@
-#[cfg(test)]
-mod client_test;
-
+use bytes::BytesMut;
 use shared::error::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
+use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
 
 use crate::agent::*;
 use crate::message::*;
+use crate::Transmit;
 
 const DEFAULT_TIMEOUT_RATE: Duration = Duration::from_millis(5);
 const DEFAULT_RTO: Duration = Duration::from_millis(300);
@@ -97,30 +97,86 @@ impl ClientBuilder {
         }
     }
 
-    pub fn build(self) -> Result<Client> {
-        Ok(Client::new(self.settings))
+    pub fn build(self, remote: SocketAddr) -> Result<Client> {
+        Ok(Client::new(remote, self.settings))
     }
 }
 
 /// Client simulates "connection" to STUN server.
-#[derive(Default)]
 pub struct Client {
+    remote: SocketAddr,
     agent: Agent,
     settings: ClientSettings,
     transactions: HashMap<TransactionId, ClientTransaction>,
+    transmits: VecDeque<Transmit>,
 }
 
 impl Client {
-    fn new(settings: ClientSettings) -> Self {
+    fn new(remote: SocketAddr, settings: ClientSettings) -> Self {
         Self {
+            remote,
             agent: Agent::new(),
             settings,
             transactions: HashMap::new(),
+            transmits: VecDeque::new(),
         }
     }
 
+    /// Returns packets to transmit
+    ///
+    /// It should be polled for transmit after:
+    /// - the application performed some I/O
+    /// - a call was made to `handle_read`
+    /// - a call was made to `handle_write`
+    /// - a call was made to `handle_timeout`
+    #[must_use]
+    pub fn poll_transmit(&mut self, _now: Instant) -> Option<Transmit> {
+        self.transmits.pop_front()
+    }
+
     pub fn poll_event(&mut self) -> Option<Event> {
-        self.agent.poll_event()
+        while let Some(event) = self.agent.poll_event() {
+            let mut ct = if self.transactions.contains_key(&event.id) {
+                self.transactions.remove(&event.id).unwrap()
+            } else {
+                continue;
+            };
+
+            if ct.attempt >= self.settings.max_attempts || event.result.is_ok() {
+                return Some(event);
+            }
+
+            // Doing re-transmission.
+            ct.attempt += 1;
+
+            let raw = ct.raw.clone();
+            let timeout = ct.next_timeout(Instant::now());
+            let id = ct.id;
+
+            // Starting client transaction.
+            self.transactions.entry(ct.id).or_insert(ct);
+
+            // Starting agent transaction.
+            if self
+                .agent
+                .handle_event(ClientAgent::Start(id, timeout))
+                .is_err()
+            {
+                self.transactions.remove(&id);
+                return Some(event);
+            }
+
+            // Writing message to connection again.
+            self.transmits.push_back(Transmit {
+                now: Instant::now(),
+                remote: self.remote,
+                ecn: None,
+                local_ip: None,
+                payload: BytesMut::from(&raw[..]),
+            });
+        }
+
+        None
     }
 
     pub fn handle_read(&mut self, buf: &[u8]) -> Result<()> {
@@ -135,7 +191,7 @@ impl Client {
             return Err(Error::ErrClientClosed);
         }
 
-        let t = ClientTransaction {
+        let ct = ClientTransaction {
             id: m.transaction_id,
             attempt: 0,
             calls: 0,
@@ -143,10 +199,18 @@ impl Client {
             rto: self.settings.rto,
             raw: m.raw.clone(),
         };
-        let deadline = t.next_timeout(t.start);
-        self.insert(t)?;
+        let deadline = ct.next_timeout(ct.start);
+        self.transactions.entry(ct.id).or_insert(ct);
         self.agent
             .handle_event(ClientAgent::Start(m.transaction_id, deadline))?;
+
+        self.transmits.push_back(Transmit {
+            now: Instant::now(),
+            remote: self.remote,
+            ecn: None,
+            local_ip: None,
+            payload: BytesMut::from(&m.raw[..]),
+        });
 
         Ok(())
     }
@@ -158,92 +222,6 @@ impl Client {
     pub fn handle_timeout(&mut self, now: Instant) -> Result<()> {
         self.agent.handle_event(ClientAgent::Collect(now))
     }
-
-    fn insert(&mut self, ct: ClientTransaction) -> Result<()> {
-        if self.settings.closed {
-            return Err(Error::ErrClientClosed);
-        }
-
-        self.transactions.entry(ct.id).or_insert(ct);
-
-        Ok(())
-    }
-
-    fn remove(&mut self, id: TransactionId) -> Result<()> {
-        if self.settings.closed {
-            return Err(Error::ErrClientClosed);
-        }
-
-        self.transactions.remove(&id);
-
-        Ok(())
-    }
-
-    /*
-    fn start(
-        conn: Option<Arc<dyn Conn + Send + Sync>>,
-        mut handler_rx: mpsc::UnboundedReceiver<Event>,
-        client_agent_tx: Arc<mpsc::Sender<ClientAgent>>,
-        mut t: HashMap<TransactionId, ClientTransaction>,
-        max_attempts: u32,
-    ) {
-        tokio::spawn(async move {
-            while let Some(event) = handler_rx.recv().await {
-                match event.event_type {
-                    EventType::Callback(id) => {
-                        let mut ct = if t.contains_key(&id) {
-                            t.remove(&id).unwrap()
-                        } else {
-                            continue;
-                        };
-
-                        if ct.attempt >= max_attempts || event.event_body.is_ok() {
-                            if let Some(handler) = ct.handler {
-                                let _ = handler.send(event);
-                            }
-                            continue;
-                        }
-
-                        // Doing re-transmission.
-                        ct.attempt += 1;
-
-                        let raw = ct.raw.clone();
-                        let timeout = ct.next_timeout(Instant::now());
-                        let id = ct.id;
-
-                        // Starting client transaction.
-                        t.insert(ct.id, ct);
-
-                        // Starting agent transaction.
-                        if client_agent_tx
-                            .send(ClientAgent::Start(id, timeout))
-                            .await
-                            .is_err()
-                        {
-                            let ct = t.remove(&id).unwrap();
-                            if let Some(handler) = ct.handler {
-                                let _ = handler.send(event);
-                            }
-                            continue;
-                        }
-
-                        // Writing message to connection again.
-                        if let Some(c) = &conn {
-                            if c.send(&raw).await.is_err() {
-                                let _ = client_agent_tx.send(ClientAgent::Stop(id)).await;
-
-                                let ct = t.remove(&id).unwrap();
-                                if let Some(handler) = ct.handler {
-                                    let _ = handler.send(event);
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                };
-            }
-        });
-    }*/
 
     /// close stops internal connection and agent, returning CloseErr on error.
     pub fn close(&mut self) -> Result<()> {

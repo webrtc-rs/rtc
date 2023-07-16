@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod agent_test;
 
-use crate::client::ClientTransaction;
 use shared::error::*;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
@@ -24,33 +23,19 @@ pub struct Agent {
     events_queue: VecDeque<Event>,
 }
 
-#[derive(Debug, Clone)]
-pub enum EventType {
-    Callback(TransactionId),
-    Insert(ClientTransaction),
-    Remove(TransactionId),
-    Close,
-}
-
-impl Default for EventType {
-    fn default() -> Self {
-        EventType::Callback(TransactionId::default())
-    }
-}
-
 /// Event is passed to Handler describing the transaction event.
 /// Do not reuse outside Handler.
 #[derive(Debug)] //Clone
 pub struct Event {
-    pub event_type: EventType,
-    pub event_body: Result<Message>,
+    pub id: TransactionId,
+    pub result: Result<Message>,
 }
 
 impl Default for Event {
     fn default() -> Self {
         Event {
-            event_type: EventType::default(),
-            event_body: Ok(Message::default()),
+            id: TransactionId::default(),
+            result: Ok(Message::default()),
         }
     }
 }
@@ -120,8 +105,8 @@ impl Agent {
         self.transactions.remove(&message.transaction_id);
 
         self.events_queue.push_back(Event {
-            event_type: EventType::Callback(message.transaction_id),
-            event_body: Ok(message),
+            id: message.transaction_id,
+            result: Ok(message),
         });
 
         Ok(())
@@ -136,11 +121,11 @@ impl Agent {
 
         for id in self.transactions.keys() {
             self.events_queue.push_back(Event {
-                event_type: EventType::Callback(*id),
-                event_body: Err(Error::ErrAgentClosed),
+                id: *id,
+                result: Err(Error::ErrAgentClosed),
             });
         }
-        self.transactions = HashMap::new();
+        self.transactions.clear();
         self.closed = true;
 
         Ok(())
@@ -174,8 +159,8 @@ impl Agent {
         let v = self.transactions.remove(&id);
         if let Some(t) = v {
             self.events_queue.push_back(Event {
-                event_type: EventType::Callback(t.id),
-                event_body: Err(Error::ErrTransactionStopped),
+                id: t.id,
+                result: Err(Error::ErrTransactionStopped),
             });
             Ok(())
         } else {
@@ -214,8 +199,8 @@ impl Agent {
 
         for id in to_remove {
             self.events_queue.push_back(Event {
-                event_type: EventType::Callback(id),
-                event_body: Err(Error::ErrTransactionTimeOut),
+                id,
+                result: Err(Error::ErrTransactionTimeOut),
             });
         }
 
