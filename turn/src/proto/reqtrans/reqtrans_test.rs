@@ -1,4 +1,5 @@
 use super::*;
+use shared::error::Error;
 
 #[test]
 fn test_requested_transport_string() -> Result<()> {
@@ -51,7 +52,7 @@ fn test_requested_transport_add_to() -> Result<()> {
             let mut handle = RequestedTransport::default();
             if let Err(err) = handle.get_from(&m) {
                 assert_eq!(
-                    stun::Error::ErrAttributeNotFound,
+                    Error::ErrAttributeNotFound,
                     err,
                     "{err} should be not found"
                 );

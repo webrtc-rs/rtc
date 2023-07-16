@@ -1,29 +1,27 @@
 use std::ops::Add;
-
-use tokio::time::Duration;
+use std::time::Duration;
 
 use super::*;
-use crate::error::*;
+use shared::error::*;
 
-#[tokio::test]
-async fn test_agent_process_in_transaction() -> Result<()> {
+#[test]
+fn test_agent_process_in_transaction() -> Result<()> {
     let mut m = Message::new();
-    let (handler_tx, mut handler_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut a = Agent::new(Some(Arc::new(handler_tx)));
+    let mut a = Agent::new();
     m.transaction_id = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     a.start(m.transaction_id, Instant::now())?;
     a.process(m)?;
     a.close()?;
 
-    while let Some(e) = handler_rx.recv().await {
-        assert!(e.event_body.is_ok(), "got error: {:?}", e.event_body);
+    while let Some(e) = a.poll_event() {
+        assert!(e.result.is_ok(), "got error: {:?}", e.result);
 
         let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         assert_eq!(
-            e.event_body.as_ref().unwrap().transaction_id,
+            e.result.as_ref().unwrap().transaction_id,
             tid,
             "{:?} (got) != {:?} (expected)",
-            e.event_body.as_ref().unwrap().transaction_id,
+            e.result.as_ref().unwrap().transaction_id,
             tid
         );
     }
@@ -31,24 +29,23 @@ async fn test_agent_process_in_transaction() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_process() -> Result<()> {
+#[test]
+fn test_agent_process() -> Result<()> {
     let mut m = Message::new();
-    let (handler_tx, mut handler_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut a = Agent::new(Some(Arc::new(handler_tx)));
+    let mut a = Agent::new();
     m.transaction_id = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     a.process(m.clone())?;
     a.close()?;
 
-    while let Some(e) = handler_rx.recv().await {
-        assert!(e.event_body.is_ok(), "got error: {:?}", e.event_body);
+    while let Some(e) = a.poll_event() {
+        assert!(e.result.is_ok(), "got error: {:?}", e.result);
 
         let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         assert_eq!(
-            e.event_body.as_ref().unwrap().transaction_id,
+            e.result.as_ref().unwrap().transaction_id,
             tid,
             "{:?} (got) != {:?} (expected)",
-            e.event_body.as_ref().unwrap().transaction_id,
+            e.result.as_ref().unwrap().transaction_id,
             tid
         );
     }
@@ -71,7 +68,7 @@ async fn test_agent_process() -> Result<()> {
 
 #[test]
 fn test_agent_start() -> Result<()> {
-    let mut a = Agent::new(noop_handler());
+    let mut a = Agent::new();
     let id = TransactionId::new();
     let deadline = Instant::now().add(Duration::from_secs(3600));
     a.start(id, deadline)?;
@@ -104,26 +101,12 @@ fn test_agent_start() -> Result<()> {
         panic!("expected error, but got ok");
     }
 
-    let result = a.set_handler(noop_handler());
-    if let Err(err) = result {
-        assert_eq!(
-            err,
-            Error::ErrAgentClosed,
-            "SetHandler on closed agent should return <{}>, got <{}>",
-            Error::ErrAgentClosed,
-            err,
-        );
-    } else {
-        panic!("expected error, but got ok");
-    }
-
     Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_stop() -> Result<()> {
-    let (handler_tx, mut handler_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut a = Agent::new(Some(Arc::new(handler_tx)));
+#[test]
+fn test_agent_stop() -> Result<()> {
+    let mut a = Agent::new();
 
     let result = a.stop(TransactionId::default());
     if let Err(err) = result {
@@ -143,24 +126,16 @@ async fn test_agent_stop() -> Result<()> {
     a.start(id, deadline)?;
     a.stop(id)?;
 
-    let timeout = tokio::time::sleep(Duration::from_millis(400));
-    tokio::pin!(timeout);
-
-    tokio::select! {
-        evt = handler_rx.recv() => {
-            if let Err(err) = evt.unwrap().event_body{
-                assert_eq!(
-                    err,
-                    Error::ErrTransactionStopped,
-                    "unexpected error: {}, should be {}",
-                    err,
-                    Error::ErrTransactionStopped
-                );
-            }else{
-                panic!("expected error, got ok");
-            }
-        }
-     _ = timeout.as_mut() => panic!("timed out"),
+    if let Err(err) = a.poll_event().unwrap().result {
+        assert_eq!(
+            err,
+            Error::ErrTransactionStopped,
+            "unexpected error: {}, should be {}",
+            err,
+            Error::ErrTransactionStopped
+        );
+    } else {
+        panic!("expected error, got ok");
     }
 
     a.close()?;

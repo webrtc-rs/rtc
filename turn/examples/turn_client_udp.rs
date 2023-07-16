@@ -1,3 +1,4 @@
+/*
 use std::sync::Arc;
 
 use clap::{App, AppSettings, Arg};
@@ -195,3 +196,5 @@ async fn do_ping_test(
 
     Ok(())
 }
+*/
+fn main() {}

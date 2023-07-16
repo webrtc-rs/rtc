@@ -1,4 +1,5 @@
 use super::*;
+use shared::error::Error;
 
 #[test]
 fn test_lifetime_string() -> Result<()> {
@@ -30,7 +31,7 @@ fn test_lifetime_add_to() -> Result<()> {
             let mut n_handle = Lifetime::default();
             if let Err(err) = n_handle.get_from(&m) {
                 assert_eq!(
-                    stun::Error::ErrAttributeNotFound,
+                    Error::ErrAttributeNotFound,
                     err,
                     "{err} should be not found"
                 );

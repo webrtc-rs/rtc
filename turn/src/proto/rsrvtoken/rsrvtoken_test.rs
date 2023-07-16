@@ -1,4 +1,5 @@
 use super::*;
+use shared::error::Error;
 
 #[test]
 fn test_reservation_token() -> Result<()> {
@@ -37,7 +38,7 @@ fn test_reservation_token() -> Result<()> {
             let mut handle = ReservationToken::default();
             if let Err(err) = handle.get_from(&m) {
                 assert_eq!(
-                    stun::Error::ErrAttributeNotFound,
+                    Error::ErrAttributeNotFound,
                     err,
                     "{err} should be not found"
                 );

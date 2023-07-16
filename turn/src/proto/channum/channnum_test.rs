@@ -1,4 +1,5 @@
 use super::*;
+use shared::error::Error;
 
 #[test]
 fn test_channel_number_string() -> Result<()> {
@@ -56,7 +57,7 @@ fn test_channel_number_add_to() -> Result<()> {
             let mut n_handle = ChannelNumber::default();
             if let Err(err) = n_handle.get_from(&m) {
                 assert_eq!(
-                    stun::Error::ErrAttributeNotFound,
+                    Error::ErrAttributeNotFound,
                     err,
                     "{err} should be not found"
                 );

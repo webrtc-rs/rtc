@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
 #[test]
 fn test_addr_from_socket_addr() -> Result<()> {

@@ -12,7 +12,6 @@ stun = { path = "../stun", package = "stun" }
 
 util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn", "vnet"] }
 
-
 futures = "0.3.21"
 tokio = { version = "1.19", features = ["full"] }
 async-trait = "0.1.56"
@@ -38,7 +37,7 @@ metrics = []
 name = "bench"
 harness = false
 
-[[example]]
-name = "turn_client_udp"
-path = "examples/turn_client_udp.rs"
-bench = false
+#[[example]]
+#name = "turn_client_udp"
+#path = "examples/turn_client_udp.rs"
+#bench = false
