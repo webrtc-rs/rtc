@@ -3,6 +3,7 @@ members = [
     "rtc-datachannel",
     "rtc-dtls",
     "rtc",
+    "rtc-turn",
     "rtc-rtcp",
     "rtc-rtp",
     "rtc-sctp",
@@ -14,7 +15,6 @@ members = [
     "reserved/rtc-interceptor",
     "reserved/rtc-mdns",
     "reserved/rtc-media",
-    "reserved/rtc-turn",
 ]
 resolver = "2"
 
