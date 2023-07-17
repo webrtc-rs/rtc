@@ -129,7 +129,7 @@ impl Client {
     /// - a call was made to `handle_write`
     /// - a call was made to `handle_timeout`
     #[must_use]
-    pub fn poll_transmit(&mut self, _now: Instant) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
     }
 

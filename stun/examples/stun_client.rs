@@ -1,16 +1,12 @@
-/*
-use stun::agent::*;
 use stun::client::*;
 use stun::message::*;
 use stun::xoraddr::*;
-use stun::Error;
 
 use clap::{App, Arg};
-use std::sync::Arc;
-use tokio::net::UdpSocket;
+use shared::error::Error;
+use std::net::UdpSocket;
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     let mut app = App::new("STUN Client")
         .version("0.1.0")
         .author("Rain Liu <yliu@webrtc.rs>")
@@ -38,31 +34,33 @@ async fn main() -> Result<(), Error> {
 
     let server = matches.value_of("server").unwrap();
 
-    let (handler_tx, mut handler_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    let conn = UdpSocket::bind("0:0").await?;
+    let conn = UdpSocket::bind("0:0")?;
     println!("Local address: {}", conn.local_addr()?);
 
     println!("Connecting to: {server}");
-    conn.connect(server).await?;
+    conn.connect(server)?;
 
-    let mut client = ClientBuilder::new().with_conn(Arc::new(conn)).build()?;
+    let mut client = ClientBuilder::new().build(conn.peer_addr()?)?;
 
     let mut msg = Message::new();
     msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
+    client.handle_write(msg)?;
+    while let Some(transmit) = client.poll_transmit() {
+        conn.send(&transmit.payload)?;
+    }
 
-    client.send(&msg, Some(Arc::new(handler_tx))).await?;
+    let mut buf = vec![0u8; 1500];
+    let n = conn.recv(&mut buf)?;
+    client.handle_read(&buf[..n])?;
 
-    if let Some(event) = handler_rx.recv().await {
-        let msg = event.event_body?;
+    if let Some(event) = client.poll_event() {
+        let msg = event.result?;
         let mut xor_addr = XorMappedAddress::default();
         xor_addr.get_from(&msg)?;
         println!("Got response: {xor_addr}");
     }
 
-    client.close().await?;
+    client.handle_close()?;
 
     Ok(())
 }
-*/
-fn main() {}
