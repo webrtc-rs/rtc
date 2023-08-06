@@ -1,17 +1,10 @@
+use crc::{Crc, CRC_32_ISCSI};
 use std::fmt;
 use std::ops::Add;
-use std::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use async_trait::async_trait;
-use crc::{Crc, CRC_32_ISCSI};
-use tokio::sync::{broadcast, Mutex};
 
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
-use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
-use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::util::*;
 use shared::error::*;
 
@@ -24,29 +17,26 @@ pub struct CandidateBaseConfig {
     pub component: u16,
     pub priority: u32,
     pub foundation: String,
-    pub conn: Option<Arc<dyn util::Conn + Send + Sync>>,
-    pub initialized_ch: Option<broadcast::Receiver<()>>,
+    //todo: pub initialized_ch: Option<broadcast::Receiver<()>>,
 }
 
 pub struct CandidateBase {
     pub(crate) id: String,
-    pub(crate) network_type: AtomicU8,
+    pub(crate) network_type: u8,
     pub(crate) candidate_type: CandidateType,
 
-    pub(crate) component: AtomicU16,
+    pub(crate) component: u16,
     pub(crate) address: String,
     pub(crate) port: u16,
     pub(crate) related_address: Option<CandidateRelatedAddress>,
     pub(crate) tcp_type: TcpType,
 
-    pub(crate) resolved_addr: SyncMutex<SocketAddr>,
+    pub(crate) resolved_addr: SocketAddr,
 
-    pub(crate) last_sent: AtomicU64,
-    pub(crate) last_received: AtomicU64,
+    pub(crate) last_sent: u64,
+    pub(crate) last_received: u64,
 
-    pub(crate) conn: Option<Arc<dyn util::Conn + Send + Sync>>,
-    pub(crate) closed_ch: Arc<Mutex<Option<broadcast::Sender<()>>>>,
-
+    //todo: pub(crate) closed_ch: Arc<Mutex<Option<broadcast::Sender<()>>>>,
     pub(crate) foundation_override: String,
     pub(crate) priority_override: u32,
 
@@ -58,23 +48,21 @@ impl Default for CandidateBase {
     fn default() -> Self {
         Self {
             id: String::new(),
-            network_type: AtomicU8::new(0),
+            network_type: 0,
             candidate_type: CandidateType::default(),
 
-            component: AtomicU16::new(0),
+            component: 0,
             address: String::new(),
             port: 0,
             related_address: None,
             tcp_type: TcpType::default(),
 
-            resolved_addr: SyncMutex::new(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0)),
+            resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
 
-            last_sent: AtomicU64::new(0),
-            last_received: AtomicU64::new(0),
+            last_sent: 0,
+            last_received: 0,
 
-            conn: None,
-            closed_ch: Arc::new(Mutex::new(None)),
-
+            //todo: closed_ch: Arc::new(Mutex::new(None)),
             foundation_override: String::new(),
             priority_override: 0,
             network: String::new(),
@@ -108,7 +96,6 @@ impl fmt::Display for CandidateBase {
     }
 }
 
-#[async_trait]
 impl Candidate for CandidateBase {
     fn foundation(&self) -> String {
         if !self.foundation_override.is_empty() {
@@ -132,28 +119,26 @@ impl Candidate for CandidateBase {
 
     /// Returns candidate component.
     fn component(&self) -> u16 {
-        self.component.load(Ordering::SeqCst)
+        self.component
     }
 
-    fn set_component(&self, component: u16) {
-        self.component.store(component, Ordering::SeqCst);
+    fn set_component(&mut self, component: u16) {
+        self.component = component;
     }
 
     /// Returns a time indicating the last time this candidate was received.
     fn last_received(&self) -> SystemTime {
-        UNIX_EPOCH.add(Duration::from_nanos(
-            self.last_received.load(Ordering::SeqCst),
-        ))
+        UNIX_EPOCH.add(Duration::from_nanos(self.last_received))
     }
 
     /// Returns a time indicating the last time this candidate was sent.
     fn last_sent(&self) -> SystemTime {
-        UNIX_EPOCH.add(Duration::from_nanos(self.last_sent.load(Ordering::SeqCst)))
+        UNIX_EPOCH.add(Duration::from_nanos(self.last_sent))
     }
 
     /// Returns candidate NetworkType.
     fn network_type(&self) -> NetworkType {
-        NetworkType::from(self.network_type.load(Ordering::SeqCst))
+        NetworkType::from(self.network_type)
     }
 
     /// Returns Candidate Address.
@@ -226,27 +211,23 @@ impl Candidate for CandidateBase {
     }
 
     fn addr(&self) -> SocketAddr {
-        *self.resolved_addr.lock()
+        self.resolved_addr
     }
 
     /// Stops the recvLoop.
-    async fn close(&self) -> Result<()> {
-        {
+    fn close(&self) -> Result<()> {
+        /*TODO:{
             let mut closed_ch = self.closed_ch.lock().await;
             if closed_ch.is_none() {
                 return Err(Error::ErrClosed);
             }
             closed_ch.take();
-        }
-
-        if let Some(conn) = &self.conn {
-            let _ = conn.close().await;
-        }
+        }*/
 
         Ok(())
     }
 
-    fn seen(&self, outbound: bool) {
+    fn seen(&mut self, outbound: bool) {
         let d = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0));
@@ -258,11 +239,11 @@ impl Candidate for CandidateBase {
         }
     }
 
-    async fn write_to(&self, raw: &[u8], dst: &(dyn Candidate + Send + Sync)) -> Result<usize> {
-        let n = if let Some(conn) = &self.conn {
+    fn write_to(&mut self, _raw: &[u8], _dst: &dyn Candidate) -> Result<usize> {
+        let n = /*TODO: if let Some(conn) = &self.conn {
             let addr = dst.addr();
             conn.send_to(raw, addr).await?
-        } else {
+        } else */{
             0
         };
         self.seen(true);
@@ -279,37 +260,29 @@ impl Candidate for CandidateBase {
             && self.related_address() == other.related_address()
     }
 
-    fn set_ip(&self, ip: &IpAddr) -> Result<()> {
+    fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
         let network_type = determine_network_type(&self.network, ip)?;
 
-        self.network_type
-            .store(network_type as u8, Ordering::SeqCst);
+        self.network_type = network_type as u8;
 
         let addr = create_addr(network_type, *ip, self.port);
-        *self.resolved_addr.lock() = addr;
+        self.resolved_addr = addr;
 
         Ok(())
     }
 
-    fn get_conn(&self) -> Option<&Arc<dyn util::Conn + Send + Sync>> {
-        self.conn.as_ref()
-    }
-
-    fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>> {
+    /*TODO:fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>> {
         self.closed_ch.clone()
-    }
+    }*/
 }
 
 impl CandidateBase {
-    pub fn set_last_received(&self, d: Duration) {
-        #[allow(clippy::cast_possible_truncation)]
-        self.last_received
-            .store(d.as_nanos() as u64, Ordering::SeqCst);
+    pub fn set_last_received(&mut self, d: Duration) {
+        self.last_received = d.as_nanos() as u64;
     }
 
-    pub fn set_last_sent(&self, d: Duration) {
-        #[allow(clippy::cast_possible_truncation)]
-        self.last_sent.store(d.as_nanos() as u64, Ordering::SeqCst);
+    pub fn set_last_sent(&mut self, d: Duration) {
+        self.last_sent = d.as_nanos() as u64;
     }
 
     /// Returns the local preference for this candidate.
@@ -408,8 +381,8 @@ pub fn unmarshal_candidate(raw: &str) -> Result<impl Candidate> {
 
     let typ = split[7];
 
-    let mut rel_addr = String::new();
-    let mut rel_port = 0;
+    //let mut rel_addr = String::new();
+    //let mut rel_port = 0;
     let mut tcp_type = TcpType::Unspecified;
 
     if split.len() > 8 {
@@ -424,10 +397,10 @@ pub fn unmarshal_candidate(raw: &str) -> Result<impl Candidate> {
             }
 
             // RelatedAddress
-            rel_addr = split2[1].to_owned();
+            //rel_addr = split2[1].to_owned();
 
             // RelatedPort
-            rel_port = split2[3].parse()?;
+            //rel_port = split2[3].parse()?;
         } else if split2[0] == "tcptype" {
             if split2.len() < 2 {
                 return Err(Error::Other(format!(
@@ -455,39 +428,6 @@ pub fn unmarshal_candidate(raw: &str) -> Result<impl Candidate> {
                 tcp_type,
             };
             config.new_candidate_host()
-        }
-        "srflx" => {
-            let config = CandidateServerReflexiveConfig {
-                base_config: CandidateBaseConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateBaseConfig::default()
-                },
-                rel_addr,
-                rel_port,
-            };
-            config.new_candidate_server_reflexive()
-        }
-        "prflx" => {
-            let config = CandidatePeerReflexiveConfig {
-                base_config: CandidateBaseConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateBaseConfig::default()
-                },
-                rel_addr,
-                rel_port,
-            };
-
-            config.new_candidate_peer_reflexive()
         }
         _ => Err(Error::Other(format!(
             "{:?} ({})",

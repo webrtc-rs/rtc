@@ -1,13 +1,8 @@
-use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use arc_swap::ArcSwapOption;
-use async_trait::async_trait;
-
 use super::*;
-use shared::error::*;
+use std::rc::Rc;
 
 impl Agent {
+    /*
     /// Connects to the remote agent, acting as the controlling ice agent.
     /// The method blocks until at least one ice candidate pair has successfully connected.
     ///
@@ -78,42 +73,43 @@ impl Agent {
 
         Ok(agent_conn)
     }
+
+     */
 }
 
 pub(crate) struct AgentConn {
-    pub(crate) selected_pair: ArcSwapOption<CandidatePair>,
-    pub(crate) checklist: Mutex<Vec<Arc<CandidatePair>>>,
+    pub(crate) selected_pair: Option<Rc<CandidatePair>>,
+    pub(crate) checklist: Vec<Rc<CandidatePair>>,
 
-    pub(crate) buffer: Buffer,
-    pub(crate) bytes_received: AtomicUsize,
-    pub(crate) bytes_sent: AtomicUsize,
-    pub(crate) done: AtomicBool,
+    //pub(crate) buffer: Buffer,
+    pub(crate) bytes_received: usize,
+    pub(crate) bytes_sent: usize,
+    pub(crate) done: bool,
 }
 
 impl AgentConn {
     pub(crate) fn new() -> Self {
         Self {
-            selected_pair: ArcSwapOption::empty(),
-            checklist: Mutex::new(vec![]),
+            selected_pair: None,
+            checklist: vec![],
             // Make sure the buffer doesn't grow indefinitely.
             // NOTE: We actually won't get anywhere close to this limit.
             // SRTP will constantly read from the endpoint and drop packets if it's full.
-            buffer: Buffer::new(0, MAX_BUFFER_SIZE),
-            bytes_received: AtomicUsize::new(0),
-            bytes_sent: AtomicUsize::new(0),
-            done: AtomicBool::new(false),
+            //buffer: Buffer::new(0, MAX_BUFFER_SIZE),
+            bytes_received: 0,
+            bytes_sent: 0,
+            done: false,
         }
     }
-    pub(crate) fn get_selected_pair(&self) -> Option<Arc<CandidatePair>> {
-        self.selected_pair.load().clone()
+    pub(crate) fn get_selected_pair(&self) -> Option<Rc<CandidatePair>> {
+        self.selected_pair.clone()
     }
 
-    pub(crate) async fn get_best_available_candidate_pair(&self) -> Option<Arc<CandidatePair>> {
-        let mut best: Option<&Arc<CandidatePair>> = None;
+    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<Rc<CandidatePair>> {
+        let mut best: Option<&Rc<CandidatePair>> = None;
 
-        let checklist = self.checklist.lock().await;
-        for p in &*checklist {
-            if p.state.load(Ordering::SeqCst) == CandidatePairState::Failed as u8 {
+        for p in &self.checklist {
+            if p.state == CandidatePairState::Failed {
                 continue;
             }
 
@@ -129,12 +125,11 @@ impl AgentConn {
         best.cloned()
     }
 
-    pub(crate) async fn get_best_valid_candidate_pair(&self) -> Option<Arc<CandidatePair>> {
-        let mut best: Option<&Arc<CandidatePair>> = None;
+    pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<Rc<CandidatePair>> {
+        let mut best: Option<&Rc<CandidatePair>> = None;
 
-        let checklist = self.checklist.lock().await;
-        for p in &*checklist {
-            if p.state.load(Ordering::SeqCst) != CandidatePairState::Succeeded as u8 {
+        for p in &self.checklist {
+            if p.state != CandidatePairState::Succeeded {
                 continue;
             }
 
@@ -152,15 +147,16 @@ impl AgentConn {
 
     /// Returns the number of bytes sent.
     pub fn bytes_sent(&self) -> usize {
-        self.bytes_sent.load(Ordering::SeqCst)
+        self.bytes_sent
     }
 
     /// Returns the number of bytes received.
     pub fn bytes_received(&self) -> usize {
-        self.bytes_received.load(Ordering::SeqCst)
+        self.bytes_received
     }
 }
 
+/*
 #[async_trait]
 impl Conn for AgentConn {
     async fn connect(&self, _addr: SocketAddr) -> std::result::Result<(), util::Error> {
@@ -243,3 +239,4 @@ impl Conn for AgentConn {
         Ok(())
     }
 }
+*/

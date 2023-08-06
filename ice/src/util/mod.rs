@@ -1,21 +1,14 @@
 #[cfg(test)]
 mod util_test;
 
-use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 
-use stun::agent::*;
+use crate::network_type::*;
+use shared::error::*;
 use stun::attributes::*;
 use stun::integrity::*;
 use stun::message::*;
 use stun::textattrs::*;
-use stun::xoraddr::*;
-use tokio::time::Duration;
-
-use crate::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
-use crate::network_type::*;
-use shared::error::*;
 
 pub fn create_addr(_network: NetworkType, ip: IpAddr, port: u16) -> SocketAddr {
     /*if network.is_tcp(){
@@ -44,9 +37,10 @@ pub fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<(
 
 pub fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
     let message_integrity_attr = MessageIntegrity(key.to_vec());
-    Ok(message_integrity_attr.check(m)?)
+    message_integrity_attr.check(m)
 }
 
+/*
 /// Initiates a stun requests to `server_addr` using conn, reads the response and returns the
 /// `XORMappedAddress` returned by the stun server.
 /// Adapted from stun v0.2.
@@ -171,3 +165,4 @@ pub async fn listen_udp_in_port_range(
 
     Err(Error::ErrPort)
 }
+*/

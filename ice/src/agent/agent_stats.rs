@@ -1,6 +1,4 @@
-use std::sync::atomic::Ordering;
-
-use tokio::time::Instant;
+use std::time::Instant;
 
 use crate::agent::agent_internal::AgentInternal;
 use crate::candidate::{CandidatePairState, CandidateType};
@@ -214,16 +212,16 @@ impl Default for CandidateStats {
 
 impl AgentInternal {
     /// Returns a list of candidate pair stats.
-    pub(crate) async fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
-        let checklist = self.agent_conn.checklist.lock().await;
+    pub(crate) fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
+        let checklist = &self.agent_conn.checklist;
         let mut res = Vec::with_capacity(checklist.len());
-        for cp in &*checklist {
+        for cp in checklist {
             let stat = CandidatePairStats {
                 timestamp: Instant::now(),
                 local_candidate_id: cp.local.id(),
                 remote_candidate_id: cp.remote.id(),
-                state: cp.state.load(Ordering::SeqCst).into(),
-                nominated: cp.nominated.load(Ordering::SeqCst),
+                state: cp.state.into(),
+                nominated: cp.nominated,
                 ..CandidatePairStats::default()
             };
             res.push(stat);
@@ -232,10 +230,10 @@ impl AgentInternal {
     }
 
     /// Returns a list of local candidates stats.
-    pub(crate) async fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
-        let local_candidates = self.local_candidates.lock().await;
+    pub(crate) fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
+        let local_candidates = &self.local_candidates;
         let mut res = Vec::with_capacity(local_candidates.len());
-        for (network_type, local_candidates) in &*local_candidates {
+        for (network_type, local_candidates) in local_candidates {
             for c in local_candidates {
                 let stat = CandidateStats {
                     timestamp: Instant::now(),
@@ -257,10 +255,10 @@ impl AgentInternal {
     }
 
     /// Returns a list of remote candidates stats.
-    pub(crate) async fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
-        let remote_candidates = self.remote_candidates.lock().await;
+    pub(crate) fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
+        let remote_candidates = &self.remote_candidates;
         let mut res = Vec::with_capacity(remote_candidates.len());
-        for (network_type, remote_candidates) in &*remote_candidates {
+        for (network_type, remote_candidates) in remote_candidates {
             for c in remote_candidates {
                 let stat = CandidateStats {
                     timestamp: Instant::now(),

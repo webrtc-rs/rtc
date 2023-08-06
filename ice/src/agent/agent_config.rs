@@ -1,11 +1,8 @@
-use std::net::IpAddr;
 use std::time::Duration;
 
 use super::*;
 use crate::network_type::*;
-use crate::udp_network::UDPNetwork;
 use crate::url::*;
-use shared::error::*;
 
 /// The interval at which the agent performs candidate checks in the connecting phase.
 pub(crate) const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_millis(200);
@@ -48,18 +45,11 @@ pub(crate) fn default_candidate_types() -> Vec<CandidateType> {
     ]
 }
 
-pub type InterfaceFilterFn = Box<dyn (Fn(&str) -> bool) + Send + Sync>;
-pub type IpFilterFn = Box<dyn (Fn(IpAddr) -> bool) + Send + Sync>;
-
 /// Collects the arguments to `ice::Agent` construction into a single structure, for
 /// future-proofness of the interface.
 #[derive(Default)]
 pub struct AgentConfig {
     pub urls: Vec<Url>,
-
-    /// Controls how the UDP network stack works.
-    /// See [`UDPNetwork`]
-    pub udp_network: UDPNetwork,
 
     /// It is used to perform connectivity checks. The values MUST be unguessable, with at least
     /// 128 bits of random number generator output used to generate the password, and at least 24
@@ -89,7 +79,6 @@ pub struct AgentConfig {
     /// An optional configuration for disabling or enabling support for specific candidate types.
     pub candidate_types: Vec<CandidateType>,
 
-    //LoggerFactory logging.LoggerFactory
     /// Controls how often our internal task loop runs when in the connecting state.
     /// Only useful for testing.
     pub check_interval: Duration,
@@ -104,34 +93,8 @@ pub struct AgentConfig {
     /// lite agents do not perform connectivity check and only provide host candidates.
     pub lite: bool,
 
-    /// It is used along with nat1to1ips to specify which candidate type the 1:1 NAT IP addresses
-    /// should be mapped to. If unspecified or CandidateTypeHost, nat1to1ips are used to replace
-    /// host candidate IPs. If CandidateTypeServerReflexive, it will insert a srflx candidate (as
-    /// if it was dervied from a STUN server) with its port number being the one for the actual host
-    /// candidate.  Other values will result in an error.
-    pub nat_1to1_ip_candidate_type: CandidateType,
-
-    /// Contains a list of public IP addresses that are to be used as a host candidate or srflx
-    /// candidate. This is used typically for servers that are behind 1:1 D-NAT (e.g. AWS EC2
-    /// instances) and to eliminate the need of server reflexisive candidate gathering.
-    pub nat_1to1_ips: Vec<String>,
-
     /// Specify a minimum wait time before selecting host candidates.
     pub host_acceptance_min_wait: Option<Duration>,
-    /// Specify a minimum wait time before selecting srflx candidates.
-    pub srflx_acceptance_min_wait: Option<Duration>,
-    /// Specify a minimum wait time before selecting prflx candidates.
-    pub prflx_acceptance_min_wait: Option<Duration>,
-    /// Specify a minimum wait time before selecting relay candidates.
-    pub relay_acceptance_min_wait: Option<Duration>,
-
-    /// A function that you can use in order to whitelist or blacklist the interfaces which are
-    /// used to gather ICE candidates.
-    pub interface_filter: Arc<Option<InterfaceFilterFn>>,
-
-    /// A function that you can use in order to whitelist or blacklist
-    /// the ips which are used to gather ICE candidates.
-    pub ip_filter: Arc<Option<IpFilterFn>>,
 
     /// Controls if self-signed certificates are accepted when connecting to TURN servers via TLS or
     /// DTLS.
@@ -151,24 +114,6 @@ impl AgentConfig {
             a.host_acceptance_min_wait = host_acceptance_min_wait;
         } else {
             a.host_acceptance_min_wait = DEFAULT_HOST_ACCEPTANCE_MIN_WAIT;
-        }
-
-        if let Some(srflx_acceptance_min_wait) = self.srflx_acceptance_min_wait {
-            a.srflx_acceptance_min_wait = srflx_acceptance_min_wait;
-        } else {
-            a.srflx_acceptance_min_wait = DEFAULT_SRFLX_ACCEPTANCE_MIN_WAIT;
-        }
-
-        if let Some(prflx_acceptance_min_wait) = self.prflx_acceptance_min_wait {
-            a.prflx_acceptance_min_wait = prflx_acceptance_min_wait;
-        } else {
-            a.prflx_acceptance_min_wait = DEFAULT_PRFLX_ACCEPTANCE_MIN_WAIT;
-        }
-
-        if let Some(relay_acceptance_min_wait) = self.relay_acceptance_min_wait {
-            a.relay_acceptance_min_wait = relay_acceptance_min_wait;
-        } else {
-            a.relay_acceptance_min_wait = DEFAULT_RELAY_ACCEPTANCE_MIN_WAIT;
         }
 
         if let Some(disconnected_timeout) = self.disconnected_timeout {
@@ -193,43 +138,6 @@ impl AgentConfig {
             a.check_interval = DEFAULT_CHECK_INTERVAL;
         } else {
             a.check_interval = self.check_interval;
-        }
-    }
-
-    pub(crate) fn init_ext_ip_mapping(
-        &self,
-        candidate_types: &[CandidateType],
-    ) -> Result<Option<ExternalIpMapper>> {
-        if let Some(ext_ip_mapper) =
-            ExternalIpMapper::new(self.nat_1to1_ip_candidate_type, &self.nat_1to1_ips)?
-        {
-            if ext_ip_mapper.candidate_type == CandidateType::Host {
-                let mut candi_host_enabled = false;
-                for candi_type in candidate_types {
-                    if *candi_type == CandidateType::Host {
-                        candi_host_enabled = true;
-                        break;
-                    }
-                }
-                if !candi_host_enabled {
-                    return Err(Error::ErrIneffectiveNat1to1IpMappingHost);
-                }
-            } else if ext_ip_mapper.candidate_type == CandidateType::ServerReflexive {
-                let mut candi_srflx_enabled = false;
-                for candi_type in candidate_types {
-                    if *candi_type == CandidateType::ServerReflexive {
-                        candi_srflx_enabled = true;
-                        break;
-                    }
-                }
-                if !candi_srflx_enabled {
-                    return Err(Error::ErrIneffectiveNat1to1IpMappingSrflx);
-                }
-            }
-
-            Ok(Some(ext_ip_mapper))
-        } else {
-            Ok(None)
         }
     }
 }

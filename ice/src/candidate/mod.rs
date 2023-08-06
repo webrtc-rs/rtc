@@ -1,25 +1,15 @@
 #[cfg(test)]
-mod candidate_pair_test;
-#[cfg(test)]
-mod candidate_server_reflexive_test;
-#[cfg(test)]
 mod candidate_test;
 
 pub mod candidate_base;
 pub mod candidate_host;
-pub mod candidate_peer_reflexive;
-pub mod candidate_server_reflexive;
 
-use std::fmt;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
-use std::sync::Arc;
-use std::time::SystemTime;
-
-use async_trait::async_trait;
 use candidate_base::*;
 use serde::Serialize;
-use tokio::sync::{broadcast, Mutex};
+use std::fmt;
+use std::net::{IpAddr, SocketAddr};
+use std::rc::Rc;
+use std::time::SystemTime;
 
 use crate::network_type::*;
 use crate::tcp_type::*;
@@ -34,7 +24,6 @@ pub(crate) const COMPONENT_RTP: u16 = 1;
 pub(crate) const COMPONENT_RTCP: u16 = 0;
 
 /// Candidate represents an ICE candidate
-#[async_trait]
 pub trait Candidate: fmt::Display {
     /// An arbitrary string used in the freezing algorithm to
     /// group similar candidates.  It is the same for two candidates that
@@ -49,7 +38,7 @@ pub trait Candidate: fmt::Display {
     /// A component is a piece of a data stream.
     /// An example is one for RTP, and one for RTCP
     fn component(&self) -> u16;
-    fn set_component(&self, c: u16);
+    fn set_component(&mut self, c: u16);
 
     /// The last time this candidate received traffic
     fn last_received(&self) -> SystemTime;
@@ -74,14 +63,13 @@ pub trait Candidate: fmt::Display {
 
     fn addr(&self) -> SocketAddr;
 
-    async fn close(&self) -> Result<()>;
-    fn seen(&self, outbound: bool);
+    fn close(&self) -> Result<()>;
+    fn seen(&mut self, outbound: bool);
 
-    async fn write_to(&self, raw: &[u8], dst: &(dyn Candidate + Send + Sync)) -> Result<usize>;
+    fn write_to(&mut self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
     fn equal(&self, other: &dyn Candidate) -> bool;
-    fn set_ip(&self, ip: &IpAddr) -> Result<()>;
-    fn get_conn(&self) -> Option<&Arc<dyn util::Conn + Send + Sync>>;
-    fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>>;
+    fn set_ip(&mut self, ip: &IpAddr) -> Result<()>;
+    //TODO: fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>>;
 }
 
 /// Represents the type of candidate `CandidateType` enum.
@@ -224,23 +212,23 @@ impl fmt::Display for CandidatePairState {
 
 /// Represents a combination of a local and remote candidate.
 pub struct CandidatePair {
-    pub(crate) ice_role_controlling: AtomicBool,
-    pub remote: Arc<dyn Candidate + Send + Sync>,
-    pub local: Arc<dyn Candidate + Send + Sync>,
-    pub(crate) binding_request_count: AtomicU16,
-    pub(crate) state: AtomicU8, // convert it to CandidatePairState,
-    pub(crate) nominated: AtomicBool,
+    pub(crate) ice_role_controlling: bool,
+    pub remote: Rc<dyn Candidate>,
+    pub local: Rc<dyn Candidate>,
+    pub(crate) binding_request_count: u16,
+    pub(crate) state: CandidatePairState,
+    pub(crate) nominated: bool,
 }
 
 impl Default for CandidatePair {
     fn default() -> Self {
         Self {
-            ice_role_controlling: AtomicBool::new(false),
-            remote: Arc::new(CandidateBase::default()),
-            local: Arc::new(CandidateBase::default()),
-            state: AtomicU8::new(CandidatePairState::Waiting as u8),
-            binding_request_count: AtomicU16::new(0),
-            nominated: AtomicBool::new(false),
+            ice_role_controlling: false,
+            remote: Rc::new(CandidateBase::default()),
+            local: Rc::new(CandidateBase::default()),
+            state: CandidatePairState::Waiting,
+            binding_request_count: 0,
+            nominated: false,
         }
     }
 }
@@ -281,18 +269,14 @@ impl PartialEq for CandidatePair {
 
 impl CandidatePair {
     #[must_use]
-    pub fn new(
-        local: Arc<dyn Candidate + Send + Sync>,
-        remote: Arc<dyn Candidate + Send + Sync>,
-        controlling: bool,
-    ) -> Self {
+    pub fn new(local: Rc<dyn Candidate>, remote: Rc<dyn Candidate>, controlling: bool) -> Self {
         Self {
-            ice_role_controlling: AtomicBool::new(controlling),
+            ice_role_controlling: controlling,
             remote,
             local,
-            state: AtomicU8::new(CandidatePairState::Waiting as u8),
-            binding_request_count: AtomicU16::new(0),
-            nominated: AtomicBool::new(false),
+            state: CandidatePairState::Waiting,
+            binding_request_count: 0,
+            nominated: false,
         }
     }
 
@@ -302,7 +286,7 @@ impl CandidatePair {
     /// controlled agent.
     /// pair priority = 2^32*MIN(G,D) + 2*MAX(G,D) + (G>D?1:0)
     pub fn priority(&self) -> u64 {
-        let (g, d) = if self.ice_role_controlling.load(Ordering::SeqCst) {
+        let (g, d) = if self.ice_role_controlling {
             (self.local.priority(), self.remote.priority())
         } else {
             (self.remote.priority(), self.local.priority())
@@ -315,7 +299,7 @@ impl CandidatePair {
             + u64::from(g > d)
     }
 
-    pub async fn write(&self, b: &[u8]) -> Result<usize> {
-        self.local.write_to(b, &*self.remote).await
+    pub fn write(&mut self, b: &[u8]) -> Result<usize> {
+        self.local.write_to(b, &*self.remote)
     }
 }

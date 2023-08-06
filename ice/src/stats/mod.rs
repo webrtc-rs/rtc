@@ -1,4 +1,4 @@
-use tokio::time::Instant;
+use std::time::Instant;
 
 use crate::candidate::*;
 use crate::network_type::*;
