@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::udp_mux::UDPMux;
-use super::Error;
+use shared::error::*;
 
 #[derive(Default, Clone)]
 pub struct EphemeralUDP {
@@ -10,7 +10,7 @@ pub struct EphemeralUDP {
 }
 
 impl EphemeralUDP {
-    pub fn new(port_min: u16, port_max: u16) -> Result<Self, Error> {
+    pub fn new(port_min: u16, port_max: u16) -> Result<Self> {
         let mut s = Self::default();
         s.set_ports(port_min, port_max)?;
 
@@ -25,7 +25,7 @@ impl EphemeralUDP {
         self.port_max
     }
 
-    pub fn set_ports(&mut self, port_min: u16, port_max: u16) -> Result<(), Error> {
+    pub fn set_ports(&mut self, port_min: u16, port_max: u16) -> Result<()> {
         if port_max < port_min {
             return Err(Error::ErrPort);
         }

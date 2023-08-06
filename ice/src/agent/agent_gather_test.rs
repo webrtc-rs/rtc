@@ -4,7 +4,6 @@ use ipnet::IpNet;
 use tokio::net::UdpSocket;
 use util::vnet::*;
 
-use super::agent_vnet_test::*;
 use super::*;
 use crate::udp_mux::{UDPMuxDefault, UDPMuxParams};
 use crate::util::*;
@@ -398,7 +397,6 @@ async fn test_vnet_gather_turn_connection_leak() -> Result<()> {
     let cfg0 = AgentConfig {
         urls: vec![turn_server_url.clone()],
         network_types: supported_network_types(),
-        multicast_dns_mode: MulticastDnsMode::Disabled,
         nat_1to1_ips: vec![VNET_GLOBAL_IPA.to_owned()],
         net: Some(Arc::clone(&v.net0)),
         ..Default::default()

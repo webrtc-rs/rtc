@@ -4,8 +4,6 @@ mod agent_gather_test;
 mod agent_test;
 #[cfg(test)]
 mod agent_transport_test;
-#[cfg(test)]
-pub(crate) mod agent_vnet_test;
 
 pub mod agent_config;
 pub mod agent_gather;
@@ -33,12 +31,9 @@ use stun::message::*;
 use stun::xoraddr::*;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{Duration, Instant};
-use util::vnet::net::*;
-use util::Buffer;
 
 use crate::agent::agent_gather::GatherCandidatesInternalParams;
 use crate::candidate::*;
-use crate::error::*;
 use crate::external_ip_mapper::*;
 use crate::network_type::*;
 use crate::rand::*;
@@ -47,6 +42,7 @@ use crate::tcp_type::TcpType;
 use crate::udp_mux::UDPMux;
 use crate::udp_network::UDPNetwork;
 use crate::url::*;
+use shared::error::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BindingRequest {

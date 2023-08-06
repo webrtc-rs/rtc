@@ -1,7 +1,6 @@
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
-use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 
 pub(crate) fn host_candidate() -> Result<CandidateBase> {
@@ -41,19 +40,6 @@ pub(crate) fn srflx_candidate() -> Result<CandidateBase> {
         ..Default::default()
     }
     .new_candidate_server_reflexive()
-}
-
-pub(crate) fn relay_candidate() -> Result<CandidateBase> {
-    CandidateRelayConfig {
-        base_config: CandidateBaseConfig {
-            network: "udp".to_owned(),
-            address: "0.0.0.0".to_owned(),
-            component: COMPONENT_RTP,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-    .new_candidate_relay()
 }
 
 #[test]
@@ -106,22 +92,6 @@ fn test_candidate_pair_priority() -> Result<()> {
                 false,
             ),
             7277816996102668287,
-        ),
-        (
-            CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(relay_candidate()?),
-                true,
-            ),
-            72057593987596288,
-        ),
-        (
-            CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(relay_candidate()?),
-                false,
-            ),
-            72057593987596287,
         ),
     ];
 

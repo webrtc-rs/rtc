@@ -15,7 +15,6 @@ use crate::agent::agent_transport_test::pipe;
 use crate::candidate::candidate_base::*;
 use crate::candidate::candidate_host::*;
 use crate::candidate::candidate_peer_reflexive::*;
-use crate::candidate::candidate_relay::*;
 use crate::candidate::candidate_server_reflexive::*;
 use crate::control::AttrControlling;
 use crate::priority::PriorityAttr;
@@ -428,7 +427,6 @@ async fn test_connectivity_on_startup() -> Result<()> {
     let check_interval = Duration::from_secs(3600); //time.Hour
     let cfg0 = AgentConfig {
         network_types: supported_network_types(),
-        multicast_dns_mode: MulticastDnsMode::Disabled,
         net: Some(net0),
 
         keepalive_interval,
@@ -441,7 +439,6 @@ async fn test_connectivity_on_startup() -> Result<()> {
 
     let cfg1 = AgentConfig {
         network_types: supported_network_types(),
-        multicast_dns_mode: MulticastDnsMode::Disabled,
         net: Some(net1),
 
         keepalive_interval,
@@ -539,7 +536,6 @@ async fn test_connectivity_lite() -> Result<()> {
     let cfg0 = AgentConfig {
         urls: vec![stun_server_url],
         network_types: supported_network_types(),
-        multicast_dns_mode: MulticastDnsMode::Disabled,
         net: Some(Arc::clone(&v.net0)),
         ..Default::default()
     };
@@ -552,7 +548,6 @@ async fn test_connectivity_lite() -> Result<()> {
         lite: true,
         candidate_types: vec![CandidateType::Host],
         network_types: supported_network_types(),
-        multicast_dns_mode: MulticastDnsMode::Disabled,
         net: Some(Arc::clone(&v.net1)),
         ..Default::default()
     };
@@ -1511,7 +1506,6 @@ async fn test_init_ext_ip_mapping() -> Result<()> {
     if let Err(err) = Agent::new(AgentConfig {
         nat_1to1_ips: vec!["1.2.3.4".to_owned()],
         nat_1to1_ip_candidate_type: CandidateType::Host,
-        multicast_dns_mode: MulticastDnsMode::QueryAndGather,
         ..Default::default()
     })
     .await
@@ -2131,7 +2125,6 @@ async fn test_lite_lifecycle() -> Result<()> {
     let a_agent = Arc::new(
         Agent::new(AgentConfig {
             network_types: supported_network_types(),
-            multicast_dns_mode: MulticastDnsMode::Disabled,
             ..Default::default()
         })
         .await?,
@@ -2148,7 +2141,6 @@ async fn test_lite_lifecycle() -> Result<()> {
             lite: true,
             candidate_types: vec![CandidateType::Host],
             network_types: supported_network_types(),
-            multicast_dns_mode: MulticastDnsMode::Disabled,
             disconnected_timeout: Some(disconnected_duration),
             failed_timeout: Some(failed_duration),
             keepalive_interval: Some(keepalive_interval),

@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod candidate_pair_test;
 #[cfg(test)]
-mod candidate_relay_test;
-#[cfg(test)]
 mod candidate_server_reflexive_test;
 #[cfg(test)]
 mod candidate_test;
@@ -23,9 +21,9 @@ use candidate_base::*;
 use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
 
-use crate::error::Result;
 use crate::network_type::*;
 use crate::tcp_type::*;
+use shared::error::*;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;

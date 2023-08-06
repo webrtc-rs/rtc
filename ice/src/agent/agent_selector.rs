@@ -3,7 +3,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use stun::agent::*;
 use stun::attributes::*;
 use stun::fingerprint::*;
 use stun::integrity::*;

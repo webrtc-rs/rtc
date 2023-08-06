@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod use_candidate_test;
 
+use shared::error::*;
 use stun::attributes::ATTR_USE_CANDIDATE;
 use stun::message::*;
 
@@ -10,7 +11,7 @@ pub struct UseCandidateAttr;
 
 impl Setter for UseCandidateAttr {
     /// Adds USE-CANDIDATE attribute to message.
-    fn add_to(&self, m: &mut Message) -> Result<(), stun::Error> {
+    fn add_to(&self, m: &mut Message) -> Result<()> {
         m.add(ATTR_USE_CANDIDATE, &[]);
         Ok(())
     }

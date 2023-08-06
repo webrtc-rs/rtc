@@ -3,10 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use util::Conn;
 
 use super::*;
-use crate::error::*;
+use shared::error::*;
 
 impl Agent {
     /// Connects to the remote agent, acting as the controlling ice agent.

@@ -12,12 +12,10 @@ use stun::message::*;
 use stun::textattrs::*;
 use stun::xoraddr::*;
 use tokio::time::Duration;
-use util::vnet::net::*;
-use util::Conn;
 
 use crate::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
-use crate::error::*;
 use crate::network_type::*;
+use shared::error::*;
 
 pub fn create_addr(_network: NetworkType, ip: IpAddr, port: u16) -> SocketAddr {
     /*if network.is_tcp(){

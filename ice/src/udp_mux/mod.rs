@@ -5,8 +5,6 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use tokio::sync::{watch, Mutex};
-use util::sync::RwLock;
-use util::{Conn, Error};
 
 mod udp_mux_conn;
 pub use udp_mux_conn::{UDPMuxConn, UDPMuxConnParams, UDPMuxWriter};

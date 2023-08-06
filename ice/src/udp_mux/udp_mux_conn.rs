@@ -6,8 +6,6 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use tokio::sync::watch;
-use util::sync::Mutex;
-use util::{Buffer, Conn, Error};
 
 use super::socket_addr_ext::{SocketAddrExt, MAX_ADDR_SIZE};
 use super::{normalize_socket_addr, RECEIVE_MTU};

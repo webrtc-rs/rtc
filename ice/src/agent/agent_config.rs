@@ -1,13 +1,11 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use util::vnet::net::*;
-
 use super::*;
-use crate::error::*;
 use crate::network_type::*;
 use crate::udp_network::UDPNetwork;
 use crate::url::*;
+use shared::error::*;
 
 /// The interval at which the agent performs candidate checks in the connecting phase.
 pub(crate) const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_millis(200);
@@ -126,10 +124,6 @@ pub struct AgentConfig {
     pub prflx_acceptance_min_wait: Option<Duration>,
     /// Specify a minimum wait time before selecting relay candidates.
     pub relay_acceptance_min_wait: Option<Duration>,
-
-    /// Net is the our abstracted network interface for internal development purpose only
-    /// (see (github.com/pion/transport/vnet)[github.com/pion/transport/vnet]).
-    pub net: Option<Arc<Net>>,
 
     /// A function that you can use in order to whitelist or blacklist the interfaces which are
     /// used to gather ICE candidates.

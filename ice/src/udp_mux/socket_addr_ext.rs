@@ -1,19 +1,18 @@
+use shared::error::*;
 use std::array::TryFromSliceError;
 use std::convert::TryInto;
 use std::net::SocketAddr;
-
-use util::Error;
 
 pub(super) trait SocketAddrExt {
     ///Encode a representation of `self` into the buffer and return the length of this encoded
     ///version.
     ///
     /// The buffer needs to be at least 27 bytes in length.
-    fn encode(&self, buffer: &mut [u8]) -> Result<usize, Error>;
+    fn encode(&self, buffer: &mut [u8]) -> Result<usize>;
 
     /// Decode a `SocketAddr` from a buffer. The encoding should have previously been done with
     /// [`SocketAddrExt::encode`].
-    fn decode(buffer: &[u8]) -> Result<SocketAddr, Error>;
+    fn decode(buffer: &[u8]) -> Result<SocketAddr>;
 }
 
 const IPV4_MARKER: u8 = 4;

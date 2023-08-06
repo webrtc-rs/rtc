@@ -7,14 +7,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use crc::{Crc, CRC_32_ISCSI};
 use tokio::sync::{broadcast, Mutex};
-use util::sync::Mutex as SyncMutex;
 
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
-use crate::error::*;
 use crate::util::*;
+use shared::error::*;
 
 #[derive(Default)]
 pub struct CandidateBaseConfig {

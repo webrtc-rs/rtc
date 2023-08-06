@@ -1,8 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
-use util::vnet::net::*;
-use util::Conn;
 use waitgroup::WaitGroup;
 
 use super::*;
@@ -10,11 +8,11 @@ use crate::candidate::candidate_base::CandidateBaseConfig;
 use crate::candidate::candidate_host::CandidateHostConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::candidate::*;
-use crate::error::*;
 use crate::network_type::*;
 use crate::udp_network::UDPNetwork;
 use crate::url::Url;
 use crate::util::*;
+use shared::error::*;
 
 const STUN_GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 

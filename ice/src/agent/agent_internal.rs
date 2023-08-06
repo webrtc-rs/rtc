@@ -1,13 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
-use arc_swap::ArcSwapOption;
-use util::sync::Mutex as SyncMutex;
-
 use super::agent_transport::*;
 use super::*;
 use crate::candidate::candidate_base::CandidateBaseConfig;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::util::*;
+use arc_swap::ArcSwapOption;
 
 pub type ChanCandidateTx =
     Arc<Mutex<Option<mpsc::Sender<Option<Arc<dyn Candidate + Send + Sync>>>>>>;

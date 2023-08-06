@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use crate::candidate::*;
-use crate::error::*;
+use shared::error::*;
 
 pub(crate) fn validate_ip_string(ip_str: &str) -> Result<IpAddr> {
     match ip_str.parse() {
