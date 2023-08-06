@@ -12,7 +12,6 @@ use util::sync::Mutex as SyncMutex;
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
-use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::error::*;
 use crate::util::*;
@@ -54,8 +53,6 @@ pub struct CandidateBase {
 
     //CandidateHost
     pub(crate) network: String,
-    //CandidateRelay
-    pub(crate) relay_client: Option<Arc<turn::client::Client>>,
 }
 
 impl Default for CandidateBase {
@@ -82,7 +79,6 @@ impl Default for CandidateBase {
             foundation_override: String::new(),
             priority_override: 0,
             network: String::new(),
-            relay_client: None,
         }
     }
 }
@@ -242,10 +238,6 @@ impl Candidate for CandidateBase {
                 return Err(Error::ErrClosed);
             }
             closed_ch.take();
-        }
-
-        if let Some(relay_client) = &self.relay_client {
-            let _ = relay_client.close().await;
         }
 
         if let Some(conn) = &self.conn {
@@ -497,23 +489,6 @@ pub fn unmarshal_candidate(raw: &str) -> Result<impl Candidate> {
             };
 
             config.new_candidate_peer_reflexive()
-        }
-        "relay" => {
-            let config = CandidateRelayConfig {
-                base_config: CandidateBaseConfig {
-                    network,
-                    address,
-                    port,
-                    component,
-                    priority,
-                    foundation,
-                    ..CandidateBaseConfig::default()
-                },
-                rel_addr,
-                rel_port,
-                ..CandidateRelayConfig::default()
-            };
-            config.new_candidate_relay()
         }
         _ => Err(Error::Other(format!(
             "{:?} ({})",

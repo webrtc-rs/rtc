@@ -209,8 +209,6 @@ pub enum Error {
     Stun(#[from] stun::Error),
     #[error("{0}")]
     ParseUrl(#[from] url::ParseError),
-    #[error("{0}")]
-    Turn(#[from] turn::Error),
 
     #[error("{0}")]
     Other(String),

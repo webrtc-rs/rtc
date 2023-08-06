@@ -1,5 +1,4 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use util::vnet::net::*;
@@ -9,13 +8,12 @@ use waitgroup::WaitGroup;
 use super::*;
 use crate::candidate::candidate_base::CandidateBaseConfig;
 use crate::candidate::candidate_host::CandidateHostConfig;
-use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::candidate::*;
 use crate::error::*;
 use crate::network_type::*;
 use crate::udp_network::UDPNetwork;
-use crate::url::{ProtoType, SchemeType, Url};
+use crate::url::Url;
 use crate::util::*;
 
 const STUN_GATHER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -142,17 +140,6 @@ impl Agent {
                             });
                         }
                     }
-                }
-                CandidateType::Relay => {
-                    let urls = params.urls.clone();
-                    let net = Arc::clone(&params.net);
-                    let agent_internal = Arc::clone(&params.agent_internal);
-                    let w = wg.worker();
-                    tokio::spawn(async move {
-                        let _d = w;
-
-                        Self::gather_candidates_relay(urls, net, agent_internal).await;
-                    });
                 }
                 _ => {}
             }
@@ -682,178 +669,6 @@ impl Agent {
                     Result::<()>::Ok(())
                 });
             }
-        }
-
-        wg.wait().await;
-    }
-
-    pub(crate) async fn gather_candidates_relay(
-        urls: Vec<Url>,
-        net: Arc<Net>,
-        agent_internal: Arc<AgentInternal>,
-    ) {
-        let wg = WaitGroup::new();
-
-        for url in urls {
-            if url.scheme != SchemeType::Turn && url.scheme != SchemeType::Turns {
-                continue;
-            }
-            if url.username.is_empty() {
-                log::error!(
-                    "[{}]:Failed to gather relay candidates: {:?}",
-                    agent_internal.get_name(),
-                    Error::ErrUsernameEmpty
-                );
-                return;
-            }
-            if url.password.is_empty() {
-                log::error!(
-                    "[{}]: Failed to gather relay candidates: {:?}",
-                    agent_internal.get_name(),
-                    Error::ErrPasswordEmpty
-                );
-                return;
-            }
-
-            let network = NetworkType::Udp4.to_string();
-            let net2 = Arc::clone(&net);
-            let agent_internal2 = Arc::clone(&agent_internal);
-
-            let w = wg.worker();
-            tokio::spawn(async move {
-                let _d = w;
-
-                let turn_server_addr = format!("{}:{}", url.host, url.port);
-
-                let (loc_conn, rel_addr, rel_port) =
-                    if url.proto == ProtoType::Udp && url.scheme == SchemeType::Turn {
-                        let loc_conn = match net2.bind(SocketAddr::from_str("0.0.0.0:0")?).await {
-                            Ok(c) => c,
-                            Err(err) => {
-                                log::warn!(
-                                    "[{}]: Failed to listen due to error: {}",
-                                    agent_internal2.get_name(),
-                                    err
-                                );
-                                return Ok(());
-                            }
-                        };
-
-                        let local_addr = loc_conn.local_addr()?;
-                        let rel_addr = local_addr.ip().to_string();
-                        let rel_port = local_addr.port();
-                        (loc_conn, rel_addr, rel_port)
-                    /*TODO: case url.proto == ProtoType::UDP && url.scheme == SchemeType::TURNS{
-                    case a.proxyDialer != nil && url.Proto == ProtoTypeTCP && (url.Scheme == SchemeTypeTURN || url.Scheme == SchemeTypeTURNS):
-                    case url.Proto == ProtoTypeTCP && url.Scheme == SchemeTypeTURN:
-                    case url.Proto == ProtoTypeTCP && url.Scheme == SchemeTypeTURNS:*/
-                    } else {
-                        log::warn!(
-                            "[{}]: Unable to handle URL in gather_candidates_relay {}",
-                            agent_internal2.get_name(),
-                            url
-                        );
-                        return Ok(());
-                    };
-
-                let cfg = turn::client::ClientConfig {
-                    stun_serv_addr: String::new(),
-                    turn_serv_addr: turn_server_addr.clone(),
-                    username: url.username,
-                    password: url.password,
-                    realm: String::new(),
-                    software: String::new(),
-                    rto_in_ms: 0,
-                    conn: loc_conn,
-                    vnet: Some(Arc::clone(&net2)),
-                };
-                let client = match turn::client::Client::new(cfg).await {
-                    Ok(client) => Arc::new(client),
-                    Err(err) => {
-                        log::warn!(
-                            "[{}]: Failed to build new turn.Client {} {}\n",
-                            agent_internal2.get_name(),
-                            turn_server_addr,
-                            err
-                        );
-                        return Ok(());
-                    }
-                };
-                if let Err(err) = client.listen().await {
-                    let _ = client.close().await;
-                    log::warn!(
-                        "[{}]: Failed to listen on turn.Client {} {}",
-                        agent_internal2.get_name(),
-                        turn_server_addr,
-                        err
-                    );
-                    return Ok(());
-                }
-
-                let relay_conn = match client.allocate().await {
-                    Ok(conn) => conn,
-                    Err(err) => {
-                        let _ = client.close().await;
-                        log::warn!(
-                            "[{}]: Failed to allocate on turn.Client {} {}",
-                            agent_internal2.get_name(),
-                            turn_server_addr,
-                            err
-                        );
-                        return Ok(());
-                    }
-                };
-
-                let raddr = relay_conn.local_addr()?;
-                let relay_config = CandidateRelayConfig {
-                    base_config: CandidateBaseConfig {
-                        network: network.clone(),
-                        address: raddr.ip().to_string(),
-                        port: raddr.port(),
-                        component: COMPONENT_RTP,
-                        conn: Some(Arc::new(relay_conn)),
-                        ..CandidateBaseConfig::default()
-                    },
-                    rel_addr,
-                    rel_port,
-                    relay_client: Some(Arc::clone(&client)),
-                };
-
-                let candidate: Arc<dyn Candidate + Send + Sync> =
-                    match relay_config.new_candidate_relay() {
-                        Ok(candidate) => Arc::new(candidate),
-                        Err(err) => {
-                            let _ = client.close().await;
-                            log::warn!(
-                                "[{}]: Failed to create relay candidate: {} {}: {}",
-                                agent_internal2.get_name(),
-                                network,
-                                raddr,
-                                err
-                            );
-                            return Ok(());
-                        }
-                    };
-
-                {
-                    if let Err(err) = agent_internal2.add_candidate(&candidate).await {
-                        if let Err(close_err) = candidate.close().await {
-                            log::warn!(
-                                "[{}]: Failed to close candidate: {}",
-                                agent_internal2.get_name(),
-                                close_err
-                            );
-                        }
-                        log::warn!(
-                            "[{}]: Failed to append to localCandidates and run onCandidateHdlr: {}",
-                            agent_internal2.get_name(),
-                            err
-                        );
-                    }
-                }
-
-                Result::<()>::Ok(())
-            });
         }
 
         wg.wait().await;

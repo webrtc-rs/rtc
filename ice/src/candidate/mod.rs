@@ -10,7 +10,6 @@ mod candidate_test;
 pub mod candidate_base;
 pub mod candidate_host;
 pub mod candidate_peer_reflexive;
-pub mod candidate_relay;
 pub mod candidate_server_reflexive;
 
 use std::fmt;

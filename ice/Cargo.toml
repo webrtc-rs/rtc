@@ -11,7 +11,6 @@ shared = { path = "../shared", package = "shared", default-features = false, fea
 
 util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn", "vnet", "sync"] }
 stun = { version = "0.4.3"}
-turn = { version = "0.6.1"}
 
 arc-swap = "1.5"
 async-trait = "0.1.56"
