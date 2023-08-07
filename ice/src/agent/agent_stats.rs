@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::agent::agent_internal::AgentInternal;
@@ -220,8 +221,8 @@ impl AgentInternal {
                 timestamp: Instant::now(),
                 local_candidate_id: cp.local.id(),
                 remote_candidate_id: cp.remote.id(),
-                state: cp.state.into(),
-                nominated: cp.nominated,
+                state: cp.state.load(Ordering::SeqCst).into(),
+                nominated: cp.nominated.load(Ordering::SeqCst),
                 ..CandidatePairStats::default()
             };
             res.push(stat);

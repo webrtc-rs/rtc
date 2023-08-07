@@ -1,6 +1,7 @@
 use super::agent_transport::*;
 use super::*;
 use crate::util::*;
+use std::sync::atomic::Ordering;
 
 //pub type ChanCandidateTx =
 //    Arc<Mutex<Option<mpsc::Sender<Option<Arc<dyn Candidate + Send + Sync>>>>>>;
@@ -80,7 +81,7 @@ impl AgentInternal {
         let (force_candidate_contact_tx, force_candidate_contact_rx) = mpsc::channel(1);
         let (started_ch_tx, _) = broadcast::channel(1);*/
 
-        let ai = AgentInternal {
+        AgentInternal {
             /*on_connected_tx: Mutex::new(Some(on_connected_tx)),
             on_connected_rx: Mutex::new(Some(on_connected_rx)),
 
@@ -140,14 +141,14 @@ impl AgentInternal {
 
             // AgentConn
             agent_conn: AgentConn::new(),
-        };
+        } //;
 
         /*let chan_receivers = ChanReceivers {
             chan_state_rx,
             chan_candidate_rx,
             chan_candidate_pair_rx,
         };*/
-        ai //, chan_receivers)
+        //, chan_receivers)
     }
     pub(crate) fn start_connectivity_checks(
         &mut self,
@@ -208,7 +209,7 @@ impl AgentInternal {
 
     fn connectivity_checks(&mut self) {
         const ZERO_DURATION: Duration = Duration::from_secs(0);
-        let mut last_connection_state = ConnectionState::Unspecified;
+        /*TODO: let mut last_connection_state = ConnectionState::Unspecified;
         let mut checking_duration = Instant::now();
         let (check_interval, keepalive_interval, disconnected_timeout, failed_timeout) = (
             self.check_interval,
@@ -217,7 +218,7 @@ impl AgentInternal {
             self.failed_timeout,
         );
 
-        /*TODO:
+
         let done_and_force_candidate_contact_rx = {
             let mut done_and_force_candidate_contact_rx =
                 self.done_and_force_candidate_contact_rx.lock().await;
@@ -306,7 +307,7 @@ impl AgentInternal {
         );
 
         if let Some(p) = p {
-            p.nominated = true;
+            p.nominated.store(true, Ordering::SeqCst);
             self.agent_conn.selected_pair = Some(p);
 
             self.update_connection_state(ConnectionState::Connected);
@@ -344,22 +345,24 @@ impl AgentInternal {
             );
             }
             for p in checklist {
-                let p_state = p.state;
-                if p_state == CandidatePairState::Waiting {
-                    p.state = CandidatePairState::InProgress;
-                } else if p_state != CandidatePairState::InProgress {
+                let p_state = p.state.load(Ordering::SeqCst);
+                if p_state == CandidatePairState::Waiting as u8 {
+                    p.state
+                        .store(CandidatePairState::InProgress as u8, Ordering::SeqCst);
+                } else if p_state != CandidatePairState::InProgress as u8 {
                     continue;
                 }
 
-                if p.binding_request_count > self.max_binding_requests {
+                if p.binding_request_count.load(Ordering::SeqCst) > self.max_binding_requests {
                     log::trace!(
                         "[{}]: max requests reached for pair {}, marking it as failed",
                         name,
                         p
                     );
-                    p.state = CandidatePairState::Failed;
+                    p.state
+                        .store(CandidatePairState::Failed as u8, Ordering::SeqCst);
                 } else {
-                    p.binding_request_count += 1;
+                    p.binding_request_count.fetch_add(1, Ordering::SeqCst);
                     let local = p.local.clone();
                     let remote = p.remote.clone();
                     pairs.push((local, remote));
@@ -474,7 +477,7 @@ impl AgentInternal {
         let network_type = c.network_type();
 
         {
-            let mut remote_candidates = &mut self.remote_candidates;
+            let remote_candidates = &mut self.remote_candidates;
             if let Some(cands) = remote_candidates.get(&network_type) {
                 for cand in cands {
                     if cand.equal(&**c) {
@@ -515,7 +518,7 @@ impl AgentInternal {
 
         let network_type = c.network_type();
         {
-            let mut local_candidates = &mut self.local_candidates;
+            let local_candidates = &mut self.local_candidates;
             if let Some(cands) = local_candidates.get(&network_type) {
                 for cand in cands {
                     if cand.equal(&**c) {
@@ -733,7 +736,7 @@ impl AgentInternal {
     }
 
     /// Processes STUN traffic from a remote candidate.
-    pub(crate) async fn handle_inbound(
+    pub(crate) fn handle_inbound(
         &mut self,
         m: &mut Message,
         local: &Rc<dyn Candidate>,
@@ -881,7 +884,7 @@ impl AgentInternal {
         }
 
         if let Some(rc) = remote_candidate {
-            //TODO: rc.seen(false);
+            rc.seen(false);
         }
     }
 
@@ -919,9 +922,9 @@ impl AgentInternal {
 
     pub(crate) fn send_stun(
         &self,
-        msg: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        _msg: &Message,
+        _local: &Rc<dyn Candidate>,
+        _remote: &Rc<dyn Candidate>,
     ) {
         /*TODO:
         if let Err(err) = local.write_to(&msg.raw, &**remote) {
@@ -1065,7 +1068,7 @@ impl AgentInternal {
         Ok(())
     }
 
-    async fn handle_inbound_candidate_msg(
+    fn handle_inbound_candidate_msg(
         &mut self,
         c: &Rc<dyn Candidate>,
         buf: &[u8],

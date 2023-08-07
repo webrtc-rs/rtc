@@ -9,6 +9,7 @@ use serde::Serialize;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8};
 use std::time::SystemTime;
 
 use crate::network_type::*;
@@ -64,9 +65,9 @@ pub trait Candidate: fmt::Display {
     fn addr(&self) -> SocketAddr;
 
     fn close(&self) -> Result<()>;
-    fn seen(&mut self, outbound: bool);
+    fn seen(&self, outbound: bool);
 
-    fn write_to(&mut self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
+    fn write_to(&self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
     fn equal(&self, other: &dyn Candidate) -> bool;
     fn set_ip(&mut self, ip: &IpAddr) -> Result<()>;
     //TODO: fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>>;
@@ -215,9 +216,9 @@ pub struct CandidatePair {
     pub(crate) ice_role_controlling: bool,
     pub remote: Rc<dyn Candidate>,
     pub local: Rc<dyn Candidate>,
-    pub(crate) binding_request_count: u16,
-    pub(crate) state: CandidatePairState,
-    pub(crate) nominated: bool,
+    pub(crate) binding_request_count: AtomicU16, //u16,
+    pub(crate) state: AtomicU8,                  //CandidatePairState,
+    pub(crate) nominated: AtomicBool,
 }
 
 impl Default for CandidatePair {
@@ -226,9 +227,9 @@ impl Default for CandidatePair {
             ice_role_controlling: false,
             remote: Rc::new(CandidateBase::default()),
             local: Rc::new(CandidateBase::default()),
-            state: CandidatePairState::Waiting,
-            binding_request_count: 0,
-            nominated: false,
+            state: AtomicU8::new(CandidatePairState::Waiting as u8),
+            binding_request_count: AtomicU16::new(0),
+            nominated: AtomicBool::new(false),
         }
     }
 }
@@ -274,9 +275,9 @@ impl CandidatePair {
             ice_role_controlling: controlling,
             remote,
             local,
-            state: CandidatePairState::Waiting,
-            binding_request_count: 0,
-            nominated: false,
+            state: AtomicU8::new(CandidatePairState::Waiting as u8),
+            binding_request_count: AtomicU16::new(0),
+            nominated: AtomicBool::new(false),
         }
     }
 
@@ -299,7 +300,7 @@ impl CandidatePair {
             + u64::from(g > d)
     }
 
-    pub fn write(&mut self, b: &[u8]) -> Result<usize> {
+    pub fn write(&self, b: &[u8]) -> Result<usize> {
         self.local.write_to(b, &*self.remote)
     }
 }

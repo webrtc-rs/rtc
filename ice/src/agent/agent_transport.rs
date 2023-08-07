@@ -1,5 +1,6 @@
 use super::*;
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 
 impl Agent {
     /*
@@ -109,7 +110,7 @@ impl AgentConn {
         let mut best: Option<&Rc<CandidatePair>> = None;
 
         for p in &self.checklist {
-            if p.state == CandidatePairState::Failed {
+            if p.state.load(Ordering::SeqCst) == CandidatePairState::Failed as u8 {
                 continue;
             }
 
@@ -129,7 +130,7 @@ impl AgentConn {
         let mut best: Option<&Rc<CandidatePair>> = None;
 
         for p in &self.checklist {
-            if p.state != CandidatePairState::Succeeded {
+            if p.state.load(Ordering::SeqCst) != CandidatePairState::Succeeded as u8 {
                 continue;
             }
 
