@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use shared::error::{Error, Result};
 
 #[test]
 fn test_priority_get_from() -> Result<()> {
@@ -7,7 +7,7 @@ fn test_priority_get_from() -> Result<()> {
     let mut p = PriorityAttr::default();
     let result = p.get_from(&m);
     if let Err(err) = result {
-        assert_eq!(err, stun::Error::ErrAttributeNotFound, "unexpected error");
+        assert_eq!(err, Error::ErrAttributeNotFound, "unexpected error");
     } else {
         panic!("expected error, but got ok");
     }

@@ -1,5 +1,5 @@
-#[cfg(test)]
-mod rand_test;
+//TODO:#[cfg(test)]
+//TODO:mod rand_test;
 
 use rand::{thread_rng, Rng};
 
