@@ -9,10 +9,8 @@ use stun::integrity::*;
 use stun::message::*;
 use stun::textattrs::*;
 
+use crate::attributes::{control::*, priority::*, use_candidate::*};
 use crate::candidate::*;
-use crate::control::*;
-use crate::priority::*;
-use crate::use_candidate::*;
 
 trait ControllingSelector {
     fn start(&mut self);

@@ -3,30 +3,23 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 impl Agent {
-    /*
     /// Connects to the remote agent, acting as the controlling ice agent.
-    /// The method blocks until at least one ice candidate pair has successfully connected.
-    ///
-    /// The operation will be cancelled if `cancel_rx` either receives a message or its channel
-    /// closes.
-    pub async fn dial(
-        &self,
-        mut cancel_rx: mpsc::Receiver<()>,
+    pub fn connect(
+        &mut self,
+        //mut cancel_rx: mpsc::Receiver<()>,
         remote_ufrag: String,
         remote_pwd: String,
-    ) -> Result<Arc<impl Conn>> {
-        let (on_connected_rx, agent_conn) = {
-            self.internal
-                .start_connectivity_checks(true, remote_ufrag, remote_pwd)
-                .await?;
+    ) -> Result<() /*Arc<impl Conn>*/> {
+        //let (on_connected_rx, agent_conn) = {
+        self.start_connectivity_checks(true, remote_ufrag, remote_pwd)?;
 
-            let mut on_connected_rx = self.internal.on_connected_rx.lock().await;
-            (
-                on_connected_rx.take(),
-                Arc::clone(&self.internal.agent_conn),
-            )
-        };
-
+        /*let mut on_connected_rx = self.internal.on_connected_rx.lock().await;
+        (
+            on_connected_rx.take(),
+            Arc::clone(&self.internal.agent_conn),
+        )*/
+        //};
+        /*
         if let Some(mut on_connected_rx) = on_connected_rx {
             // block until pair selected
             tokio::select! {
@@ -36,26 +29,21 @@ impl Agent {
                 }
             }
         }
-        Ok(agent_conn)
+        Ok(agent_conn)*/
+        Ok(())
     }
 
     /// Connects to the remote agent, acting as the controlled ice agent.
-    /// The method blocks until at least one ice candidate pair has successfully connected.
-    ///
-    /// The operation will be cancelled if `cancel_rx` either receives a message or its channel
-    /// closes.
-    pub async fn accept(
-        &self,
-        mut cancel_rx: mpsc::Receiver<()>,
+    pub fn accept(
+        &mut self,
+        //mut cancel_rx: mpsc::Receiver<()>,
         remote_ufrag: String,
         remote_pwd: String,
-    ) -> Result<Arc<impl Conn>> {
-        let (on_connected_rx, agent_conn) = {
-            self.internal
-                .start_connectivity_checks(false, remote_ufrag, remote_pwd)
-                .await?;
+    ) -> Result<() /*Arc<impl Conn>*/> {
+        //let (on_connected_rx, agent_conn) = {
+        self.start_connectivity_checks(false, remote_ufrag, remote_pwd)?;
 
-            let mut on_connected_rx = self.internal.on_connected_rx.lock().await;
+        /*   let mut on_connected_rx = self.internal.on_connected_rx.lock().await;
             (
                 on_connected_rx.take(),
                 Arc::clone(&self.internal.agent_conn),
@@ -72,10 +60,9 @@ impl Agent {
             }
         }
 
-        Ok(agent_conn)
+        Ok(agent_conn)*/
+        Ok(())
     }
-
-     */
 }
 
 pub(crate) struct AgentConn {

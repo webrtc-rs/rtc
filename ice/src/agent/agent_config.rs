@@ -40,8 +40,8 @@ pub(crate) const MAX_BINDING_REQUEST_TIMEOUT: Duration = Duration::from_millis(4
 pub(crate) fn default_candidate_types() -> Vec<CandidateType> {
     vec![
         CandidateType::Host,
-        CandidateType::ServerReflexive,
-        CandidateType::Relay,
+        //CandidateType::ServerReflexive,
+        //CandidateType::Relay,
     ]
 }
 

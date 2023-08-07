@@ -6,7 +6,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
-use crate::util::*;
 use shared::error::*;
 
 #[derive(Default)]
@@ -265,11 +264,8 @@ impl Candidate for CandidateBase {
 
     fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
         let network_type = determine_network_type(&self.network, ip)?;
-
         self.network_type = network_type as u8;
-
-        let addr = create_addr(network_type, *ip, self.port);
-        self.resolved_addr = addr;
+        self.resolved_addr = SocketAddr::new(*ip, self.port);
 
         Ok(())
     }

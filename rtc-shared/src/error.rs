@@ -608,6 +608,10 @@ pub enum Error {
     #[error("lite agents must only use host candidates")]
     ErrLiteUsingNonHostCandidates,
 
+    /// Indicates that current ice agent supports Lite only
+    #[error("lite support only")]
+    ErrLiteSupportOnly,
+
     /// Indicates that one or more URL was provided to the agent but no host candidate required them.
     #[error("agent does not need URL with selected candidate types")]
     ErrUselessUrlsProvided,

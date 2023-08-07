@@ -20,16 +20,16 @@ use stun::attributes::*;
 use stun::fingerprint::*;
 use stun::integrity::*;
 use stun::message::*;
+use stun::textattrs::Username;
 use stun::xoraddr::*;
 
 use crate::agent::agent_transport::*;
 use crate::candidate::*;
+use crate::connection_state::*;
 use crate::network_type::*;
 use crate::rand::*;
-use crate::state::*;
 use crate::tcp_type::TcpType;
 use crate::url::*;
-use crate::util::{assert_inbound_message_integrity, assert_inbound_username};
 use shared::error::*;
 
 #[derive(Debug, Clone)]
@@ -57,6 +57,27 @@ pub(crate) struct UfragPwd {
     pub(crate) local_pwd: String,
     pub(crate) remote_ufrag: String,
     pub(crate) remote_pwd: String,
+}
+
+fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
+    let mut username = Username::new(ATTR_USERNAME, String::new());
+    username.get_from(m)?;
+
+    if username.to_string() != expected_username {
+        return Err(Error::Other(format!(
+            "{:?} expected({}) actual({})",
+            Error::ErrMismatchUsername,
+            expected_username,
+            username,
+        )));
+    }
+
+    Ok(())
+}
+
+fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
+    let message_integrity_attr = MessageIntegrity(key.to_vec());
+    message_integrity_attr.check(m)
 }
 
 /// Represents the ICE agent.
@@ -97,7 +118,6 @@ pub struct Agent {
     // How often should we run our internal taskLoop to check for state changes when connecting
     pub(crate) check_interval: Duration,
 
-    pub(crate) gathering_state: GatheringState,
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
     pub(crate) network_types: Vec<NetworkType>,
@@ -115,6 +135,9 @@ impl Agent {
         if config.lite && (candidate_types.len() != 1 || candidate_types[0] != CandidateType::Host)
         {
             return Err(Error::ErrLiteUsingNonHostCandidates);
+        }
+        if !config.lite {
+            return Err(Error::ErrLiteSupportOnly);
         }
 
         if !config.urls.is_empty()
@@ -194,17 +217,10 @@ impl Agent {
             // AgentConn
             agent_conn: AgentConn::new(),
 
-            gathering_state: GatheringState::New,
             candidate_types,
             urls: config.urls.clone(),
             network_types: config.network_types.clone(),
         };
-
-        /*agent.internal.start_on_connection_state_change_routine(
-            chan_state_rx,
-            chan_candidate_rx,
-            chan_candidate_pair_rx,
-        );*/
 
         // Restart is also used to initialize the agent for the first time
         if let Err(err) = agent.restart(config.local_ufrag, config.local_pwd) {
@@ -215,39 +231,77 @@ impl Agent {
         Ok(agent)
     }
 
+    /// Gets bytes received
     pub fn get_bytes_received(&self) -> usize {
         self.agent_conn.bytes_received()
     }
 
+    /// Gets bytes sent
     pub fn get_bytes_sent(&self) -> usize {
         self.agent_conn.bytes_sent()
     }
 
-    /*
-    /// Sets a handler that is fired when the connection state changes.
-    pub fn on_connection_state_change(&self, f: OnConnectionStateChangeHdlrFn) {
-        self.internal
-            .on_connection_state_change_hdlr
-            .store(Some(Arc::new(Mutex::new(f))))
-    }
+    /// Adds a new local candidate.
+    pub fn add_local_candidate(&mut self, c: &Rc<dyn Candidate>) -> Result<()> {
+        /*todo:let initialized_ch = {
+            let started_ch_tx = self.started_ch_tx.lock().await;
+            (*started_ch_tx).as_ref().map(|tx| tx.subscribe())
+        };*/
 
-    /// Sets a handler that is fired when the final candidate pair is selected.
-    pub fn on_selected_candidate_pair_change(&self, f: OnSelectedCandidatePairChangeHdlrFn) {
-        self.internal
-            .on_selected_candidate_pair_change_hdlr
-            .store(Some(Arc::new(Mutex::new(f))))
-    }
+        self.start_candidate(c /*, initialized_ch*/);
 
-    /// Sets a handler that is fired when new candidates gathered. When the gathering process
-    /// complete the last candidate is nil.
-    pub fn on_candidate(&self, f: OnCandidateHdlrFn) {
-        self.internal
-            .on_candidate_hdlr
-            .store(Some(Arc::new(Mutex::new(f))));
-    }*/
+        let network_type = c.network_type();
+        {
+            let local_candidates = &mut self.local_candidates;
+            if let Some(cands) = local_candidates.get(&network_type) {
+                for cand in cands {
+                    if cand.equal(&**c) {
+                        if let Err(err) = c.close() {
+                            log::warn!(
+                                "[{}]: Failed to close duplicate candidate: {}",
+                                self.get_name(),
+                                err
+                            );
+                        }
+                        //TODO: why return?
+                        return Ok(());
+                    }
+                }
+            }
+
+            if let Some(cands) = local_candidates.get_mut(&network_type) {
+                cands.push(c.clone());
+            } else {
+                local_candidates.insert(network_type, vec![c.clone()]);
+            }
+        }
+
+        let mut remote_cands = vec![];
+        {
+            let remote_candidates = &self.remote_candidates;
+            if let Some(cands) = remote_candidates.get(&network_type) {
+                remote_cands = cands.clone();
+            }
+        }
+
+        for remote_cand in remote_cands {
+            self.add_pair(c.clone(), remote_cand);
+        }
+
+        self.request_connectivity_check();
+        /*TODO:
+        {
+            let chan_candidate_tx = &self.chan_candidate_tx.lock().await;
+            if let Some(tx) = &*chan_candidate_tx {
+                let _ = tx.send(Some(c.clone())).await;
+            }
+        }*/
+
+        Ok(())
+    }
 
     /// Adds a new remote candidate.
-    pub fn add_remote_candidate(&self, c: &Rc<dyn Candidate>) -> Result<()> {
+    pub fn add_remote_candidate(&mut self, c: &Rc<dyn Candidate>) -> Result<()> {
         // cannot check for network yet because it might not be applied
         // when mDNS hostame is used.
         if c.tcp_type() == TcpType::Active {
@@ -264,43 +318,57 @@ impl Agent {
                 c.address()
             );
             return Err(Error::ErrMulticastDnsNotSupported);
-        } else {
-            /*TODO: let ai = Arc::clone(&self.internal);
-            let candidate = Arc::clone(c);
-            tokio::spawn(move {
-                ai.add_remote_candidate_internal(&candidate);
-            });*/
         }
+
+        let network_type = c.network_type();
+        {
+            let remote_candidates = &mut self.remote_candidates;
+            if let Some(cands) = remote_candidates.get(&network_type) {
+                for cand in cands {
+                    if cand.equal(&**c) {
+                        return Ok(());
+                    }
+                }
+            }
+
+            if let Some(cands) = remote_candidates.get_mut(&network_type) {
+                cands.push(c.clone());
+            } else {
+                remote_candidates.insert(network_type, vec![c.clone()]);
+            }
+        }
+
+        let mut local_cands = vec![];
+        {
+            let local_candidates = &self.local_candidates;
+            if let Some(cands) = local_candidates.get(&network_type) {
+                local_cands = cands.clone();
+            }
+        }
+
+        for local_cand in local_cands {
+            self.add_pair(local_cand, c.clone());
+        }
+
+        self.request_connectivity_check();
 
         Ok(())
     }
 
-    /// Returns the local candidates.
-    pub fn get_local_candidates(&self) -> Result<Vec<Rc<dyn Candidate>>> {
-        let mut res = vec![];
-
-        {
-            let local_candidates = &self.local_candidates;
-            for candidates in local_candidates.values() {
-                for candidate in candidates {
-                    res.push(Rc::clone(candidate));
-                }
-            }
-        }
-
-        Ok(res)
-    }
-
     /// Returns the local user credentials.
     pub fn get_local_user_credentials(&self) -> (String, String) {
-        let ufrag_pwd = &self.ufrag_pwd;
-        (ufrag_pwd.local_ufrag.clone(), ufrag_pwd.local_pwd.clone())
+        (
+            self.ufrag_pwd.local_ufrag.clone(),
+            self.ufrag_pwd.local_pwd.clone(),
+        )
     }
 
     /// Returns the remote user credentials.
     pub fn get_remote_user_credentials(&self) -> (String, String) {
-        let ufrag_pwd = &self.ufrag_pwd;
-        (ufrag_pwd.remote_ufrag.clone(), ufrag_pwd.remote_pwd.clone())
+        (
+            self.ufrag_pwd.remote_ufrag.clone(),
+            self.ufrag_pwd.remote_pwd.clone(),
+        )
     }
 
     /// Cleans up the Agent.
@@ -320,11 +388,26 @@ impl Agent {
         self.agent_conn.get_selected_pair()
     }
 
+    /// Sets the credentials of the remote agent.
+    pub fn set_remote_credentials(
+        &mut self,
+        remote_ufrag: String,
+        remote_pwd: String,
+    ) -> Result<()> {
+        if remote_ufrag.is_empty() {
+            return Err(Error::ErrRemoteUfragEmpty);
+        } else if remote_pwd.is_empty() {
+            return Err(Error::ErrRemotePwdEmpty);
+        }
+
+        let mut ufrag_pwd = &mut self.ufrag_pwd;
+        ufrag_pwd.remote_ufrag = remote_ufrag;
+        ufrag_pwd.remote_pwd = remote_pwd;
+        Ok(())
+    }
+
     /// Restarts the ICE Agent with the provided ufrag/pwd
     /// If no ufrag/pwd is provided the Agent will generate one itself.
-    ///
-    /// Restart must only be called when `GatheringState` is `GatheringStateComplete`
-    /// a user must then call `GatherCandidates` explicitly to start generating new ones.
     pub fn restart(&mut self, mut ufrag: String, mut pwd: String) -> Result<()> {
         if ufrag.is_empty() {
             ufrag = generate_ufrag();
@@ -339,11 +422,6 @@ impl Agent {
         if pwd.len() * 8 < 128 {
             return Err(Error::ErrLocalPwdInsufficientBits);
         }
-
-        if self.gathering_state == GatheringState::Gathering {
-            return Err(Error::ErrRestartWhenGathering);
-        }
-        self.gathering_state = GatheringState::New;
 
         // Clear all agent needed to take back to fresh state
         {
@@ -371,35 +449,20 @@ impl Agent {
         Ok(())
     }
 
-    /// Initiates the trickle based gathering process.
-    pub fn gather_candidates(&self) -> Result<()> {
-        if self.gathering_state != GatheringState::New {
-            return Err(Error::ErrMultipleGatherAttempted);
+    // Returns the local candidates.
+    pub(crate) fn get_local_candidates(&self) -> Result<Vec<Rc<dyn Candidate>>> {
+        let mut res = vec![];
+
+        {
+            let local_candidates = &self.local_candidates;
+            for candidates in local_candidates.values() {
+                for candidate in candidates {
+                    res.push(Rc::clone(candidate));
+                }
+            }
         }
 
-        /*if self.internal.on_candidate_hdlr.load().is_none() {
-            return Err(Error::ErrNoOnCandidateHandler);
-        }
-
-
-        let params = GatherCandidatesInternalParams {
-            udp_network: self.udp_network.clone(),
-            candidate_types: self.candidate_types.clone(),
-            urls: self.urls.clone(),
-            network_types: self.network_types.clone(),
-            net: Arc::clone(&self.net),
-            interface_filter: self.interface_filter.clone(),
-            ip_filter: self.ip_filter.clone(),
-            ext_ip_mapper: Arc::clone(&self.ext_ip_mapper),
-            agent_internal: Arc::clone(&self.internal),
-            gathering_state: Arc::clone(&self.gathering_state),
-            chan_candidate_tx: Arc::clone(&self.internal.chan_candidate_tx),
-        };
-        tokio::spawn(move {
-            Self::gather_candidates_internal(params);
-        });*/
-
-        Ok(())
+        Ok(res)
     }
 
     pub(crate) fn start_connectivity_checks(
@@ -724,100 +787,6 @@ impl Agent {
         //TODO: let _ = self.force_candidate_contact_tx.try_send(true);
     }
 
-    /// Assumes you are holding the lock (must be execute using a.run).
-    pub(crate) fn add_remote_candidate_internal(&mut self, c: &Rc<dyn Candidate>) {
-        let network_type = c.network_type();
-
-        {
-            let remote_candidates = &mut self.remote_candidates;
-            if let Some(cands) = remote_candidates.get(&network_type) {
-                for cand in cands {
-                    if cand.equal(&**c) {
-                        return;
-                    }
-                }
-            }
-
-            if let Some(cands) = remote_candidates.get_mut(&network_type) {
-                cands.push(c.clone());
-            } else {
-                remote_candidates.insert(network_type, vec![c.clone()]);
-            }
-        }
-
-        let mut local_cands = vec![];
-        {
-            let local_candidates = &self.local_candidates;
-            if let Some(cands) = local_candidates.get(&network_type) {
-                local_cands = cands.clone();
-            }
-        }
-
-        for cand in local_cands {
-            self.add_pair(cand, c.clone());
-        }
-
-        self.request_connectivity_check();
-    }
-
-    pub(crate) fn add_candidate(&mut self, c: &Rc<dyn Candidate>) -> Result<()> {
-        /*todo:let initialized_ch = {
-            let started_ch_tx = self.started_ch_tx.lock().await;
-            (*started_ch_tx).as_ref().map(|tx| tx.subscribe())
-        };*/
-
-        self.start_candidate(c /*, initialized_ch*/);
-
-        let network_type = c.network_type();
-        {
-            let local_candidates = &mut self.local_candidates;
-            if let Some(cands) = local_candidates.get(&network_type) {
-                for cand in cands {
-                    if cand.equal(&**c) {
-                        if let Err(err) = c.close() {
-                            log::warn!(
-                                "[{}]: Failed to close duplicate candidate: {}",
-                                self.get_name(),
-                                err
-                            );
-                        }
-                        //TODO: why return?
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(cands) = local_candidates.get_mut(&network_type) {
-                cands.push(c.clone());
-            } else {
-                local_candidates.insert(network_type, vec![c.clone()]);
-            }
-        }
-
-        let mut remote_cands = vec![];
-        {
-            let remote_candidates = &self.remote_candidates;
-            if let Some(cands) = remote_candidates.get(&network_type) {
-                remote_cands = cands.clone();
-            }
-        }
-
-        for cand in remote_cands {
-            self.add_pair(c.clone(), cand);
-        }
-
-        self.request_connectivity_check();
-        /*TODO:
-        {
-            let chan_candidate_tx = &self.chan_candidate_tx.lock().await;
-            if let Some(tx) = &*chan_candidate_tx {
-                let _ = tx.send(Some(c.clone())).await;
-            }
-        }*/
-
-        Ok(())
-    }
-
     /// Remove all candidates.
     /// This closes any listening sockets and removes both the local and remote candidate lists.
     ///
@@ -1130,8 +1099,8 @@ impl Agent {
         }
     }
 
-    /// Processes non STUN traffic from a remote candidate, and returns true if it is an actual
-    /// remote candidate.
+    // Processes non STUN traffic from a remote candidate, and returns true if it is an actual
+    // remote candidate.
     pub(crate) fn validate_non_stun_traffic(
         &self,
         local: &Rc<dyn Candidate>,
@@ -1142,24 +1111,6 @@ impl Agent {
                 remote_candidate.seen(false);
                 true
             })
-    }
-
-    /// Sets the credentials of the remote agent.
-    pub fn set_remote_credentials(
-        &mut self,
-        remote_ufrag: String,
-        remote_pwd: String,
-    ) -> Result<()> {
-        if remote_ufrag.is_empty() {
-            return Err(Error::ErrRemoteUfragEmpty);
-        } else if remote_pwd.is_empty() {
-            return Err(Error::ErrRemotePwdEmpty);
-        }
-
-        let mut ufrag_pwd = &mut self.ufrag_pwd;
-        ufrag_pwd.remote_ufrag = remote_ufrag;
-        ufrag_pwd.remote_pwd = remote_pwd;
-        Ok(())
     }
 
     pub(crate) fn send_stun(
