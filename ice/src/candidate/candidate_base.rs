@@ -1,8 +1,7 @@
 use crc::{Crc, CRC_32_ISCSI};
 use std::fmt;
-use std::ops::Add;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
@@ -32,6 +31,7 @@ pub struct CandidateBase {
 
     pub(crate) resolved_addr: SocketAddr,
 
+    pub(crate) baseline_time: Instant,
     pub(crate) last_sent: AtomicU64,
     pub(crate) last_received: AtomicU64,
 
@@ -57,6 +57,7 @@ impl Default for CandidateBase {
 
             resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
 
+            baseline_time: Instant::now(),
             last_sent: AtomicU64::new(0),
             last_received: AtomicU64::new(0),
 
@@ -122,15 +123,13 @@ impl Candidate for CandidateBase {
     }
 
     /// Returns a time indicating the last time this candidate was received.
-    fn last_received(&self) -> SystemTime {
-        UNIX_EPOCH.add(Duration::from_nanos(
-            self.last_received.load(Ordering::SeqCst),
-        ))
+    fn last_received(&self) -> Instant {
+        self.baseline_time + Duration::from_nanos(self.last_received.load(Ordering::SeqCst))
     }
 
     /// Returns a time indicating the last time this candidate was sent.
-    fn last_sent(&self) -> SystemTime {
-        UNIX_EPOCH.add(Duration::from_nanos(self.last_sent.load(Ordering::SeqCst)))
+    fn last_sent(&self) -> Instant {
+        self.baseline_time + Duration::from_nanos(self.last_sent.load(Ordering::SeqCst))
     }
 
     /// Returns Candidate Address.
@@ -211,9 +210,7 @@ impl Candidate for CandidateBase {
     }
 
     fn seen(&self, outbound: bool) {
-        let d = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| Duration::from_secs(0));
+        let d = Instant::now().duration_since(self.baseline_time);
 
         if outbound {
             self.set_last_sent(d);

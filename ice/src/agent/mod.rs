@@ -8,12 +8,10 @@ pub mod agent_selector;
 pub mod agent_stats;
 pub mod agent_transport;
 
+use agent_config::*;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::time::SystemTime;
-
-use agent_config::*;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
 use stun::fingerprint::*;
@@ -658,9 +656,8 @@ impl Agent {
             (*selected_pair).as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |selected_pair| {
-                    let disconnected_time = SystemTime::now()
-                        .duration_since(selected_pair.remote.last_received())
-                        .unwrap_or_else(|_| Duration::from_secs(0));
+                    let disconnected_time =
+                        Instant::now().duration_since(selected_pair.remote.last_received());
                     (true, disconnected_time)
                 },
             )
@@ -705,13 +702,9 @@ impl Agent {
         };
 
         if let (Some(local), Some(remote)) = (local, remote) {
-            let last_sent = SystemTime::now()
-                .duration_since(local.last_sent())
-                .unwrap_or_else(|_| Duration::from_secs(0));
+            let last_sent = Instant::now().duration_since(local.last_sent());
 
-            let last_received = SystemTime::now()
-                .duration_since(remote.last_received())
-                .unwrap_or_else(|_| Duration::from_secs(0));
+            let last_received = Instant::now().duration_since(remote.last_received());
 
             if (self.keepalive_interval != Duration::from_secs(0))
                 && ((last_sent > self.keepalive_interval)

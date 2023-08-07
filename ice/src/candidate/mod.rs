@@ -11,7 +11,7 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8};
-use std::time::SystemTime;
+use std::time::Instant;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
@@ -39,10 +39,10 @@ pub trait Candidate: fmt::Display {
     fn set_component(&mut self, c: u16);
 
     /// The last time this candidate received traffic
-    fn last_received(&self) -> SystemTime;
+    fn last_received(&self) -> Instant;
 
     /// The last time this candidate sent traffic
-    fn last_sent(&self) -> SystemTime;
+    fn last_sent(&self) -> Instant;
 
     fn address(&self) -> String;
     fn port(&self) -> u16;
