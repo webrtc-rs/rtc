@@ -1,3 +1,4 @@
+use crate::agent::Agent;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
@@ -8,7 +9,6 @@ use stun::integrity::*;
 use stun::message::*;
 use stun::textattrs::*;
 
-use crate::agent::agent_internal::*;
 use crate::candidate::*;
 use crate::control::*;
 use crate::priority::*;
@@ -52,7 +52,7 @@ trait ControlledSelector {
     );
 }
 
-impl AgentInternal {
+impl Agent {
     fn is_nominatable(&self, c: &Rc<dyn Candidate>) -> bool {
         let start_time = self.start_time;
         match c.candidate_type() {
@@ -176,7 +176,7 @@ impl AgentInternal {
     }
 }
 
-impl ControllingSelector for AgentInternal {
+impl ControllingSelector for Agent {
     fn start(&mut self) {
         self.nominated_pair = None;
         self.start_time = Instant::now();
@@ -348,7 +348,7 @@ impl ControllingSelector for AgentInternal {
     }
 }
 
-impl ControlledSelector for AgentInternal {
+impl ControlledSelector for Agent {
     fn start(&mut self) {}
 
     fn contact_candidates(&mut self) {

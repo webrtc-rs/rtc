@@ -1,7 +1,7 @@
+use crate::agent::Agent;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use crate::agent::agent_internal::AgentInternal;
 use crate::candidate::{CandidatePairState, CandidateType};
 use crate::network_type::NetworkType;
 
@@ -211,9 +211,9 @@ impl Default for CandidateStats {
     }
 }
 
-impl AgentInternal {
+impl Agent {
     /// Returns a list of candidate pair stats.
-    pub(crate) fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
+    pub fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
         let checklist = &self.agent_conn.checklist;
         let mut res = Vec::with_capacity(checklist.len());
         for cp in checklist {
@@ -231,7 +231,7 @@ impl AgentInternal {
     }
 
     /// Returns a list of local candidates stats.
-    pub(crate) fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
+    pub fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
         let local_candidates = &self.local_candidates;
         let mut res = Vec::with_capacity(local_candidates.len());
         for (network_type, local_candidates) in local_candidates {
@@ -256,7 +256,7 @@ impl AgentInternal {
     }
 
     /// Returns a list of remote candidates stats.
-    pub(crate) fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
+    pub fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
         let remote_candidates = &self.remote_candidates;
         let mut res = Vec::with_capacity(remote_candidates.len());
         for (network_type, remote_candidates) in remote_candidates {
