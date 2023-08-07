@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use super::*;
-use crate::network_type::*;
 use crate::url::*;
 
 /// The interval at which the agent performs candidate checks in the connecting phase.
@@ -72,9 +71,6 @@ pub struct AgentConfig {
     /// above) when this is nil, it defaults to 10 seconds.
     /// A keepalive interval of 0 means we never send keepalive packets
     pub keepalive_interval: Option<Duration>,
-
-    /// An optional configuration for disabling or enabling support for specific network types.
-    pub network_types: Vec<NetworkType>,
 
     /// An optional configuration for disabling or enabling support for specific candidate types.
     pub candidate_types: Vec<CandidateType>,

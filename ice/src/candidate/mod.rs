@@ -6,15 +6,12 @@ pub mod candidate_host;
 
 use candidate_base::*;
 use serde::Serialize;
+use shared::error::*;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8};
 use std::time::SystemTime;
-
-use crate::network_type::*;
-use crate::tcp_type::*;
-use shared::error::*;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
@@ -47,7 +44,6 @@ pub trait Candidate: fmt::Display {
     /// The last time this candidate sent traffic
     fn last_sent(&self) -> SystemTime;
 
-    fn network_type(&self) -> NetworkType;
     fn address(&self) -> String;
     fn port(&self) -> u16;
 
@@ -58,7 +54,6 @@ pub trait Candidate: fmt::Display {
     fn related_address(&self) -> Option<CandidateRelatedAddress>;
 
     fn candidate_type(&self) -> CandidateType;
-    fn tcp_type(&self) -> TcpType;
 
     fn marshal(&self) -> String;
 

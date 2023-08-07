@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use crate::candidate::*;
-use crate::network_type::*;
 
 // CandidatePairStats contains ICE candidate pair statistics
 #[derive(Debug, Clone)]
@@ -133,18 +132,6 @@ pub struct CandidateStats {
 
     // id is the candidate id
     pub id: String,
-
-    // network_type represents the type of network interface used by the base of a
-    // local candidate (the address the ICE agent sends from). Only present for
-    // local candidates; it's not possible to know what type of network interface
-    // a remote candidate is using.
-    //
-    // Note:
-    // This stat only tells you about the network interface used by the first "hop";
-    // it's possible that a connection will be bottlenecked by another type of network.
-    // For example, when using Wi-Fi tethering, the networkType of the relevant candidate
-    // would be "wifi", even when the next hop is over a cellular connection.
-    pub network_type: NetworkType,
 
     // ip is the ip address of the candidate, allowing for IPv4 addresses and
     // IPv6 addresses, but fully qualified domain names (FQDNs) are not allowed.

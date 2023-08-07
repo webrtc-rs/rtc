@@ -3,7 +3,6 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::candidate::{CandidatePairState, CandidateType};
-use crate::network_type::NetworkType;
 
 /// Contains ICE candidate pair statistics.
 pub struct CandidatePairStats {
@@ -155,16 +154,6 @@ pub struct CandidateStats {
     /// The candidate id.
     pub id: String,
 
-    /// The type of network interface used by the base of a local candidate (the address the ICE
-    /// agent sends from). Only present for local candidates; it's not possible to know what type of
-    /// network interface a remote candidate is using.
-    ///
-    /// Note: This stat only tells you about the network interface used by the first "hop"; it's
-    /// possible that a connection will be bottlenecked by another type of network.  For example,
-    /// when using Wi-Fi tethering, the networkType of the relevant candidate would be "wifi", even
-    /// when the next hop is over a cellular connection.
-    pub network_type: NetworkType,
-
     /// The IP address of the candidate, allowing for IPv4 addresses and IPv6 addresses, but fully
     /// qualified domain names (FQDNs) are not allowed.
     pub ip: String,
@@ -199,7 +188,6 @@ impl Default for CandidateStats {
         Self {
             timestamp: Instant::now(),
             id: String::new(),
-            network_type: NetworkType::default(),
             ip: String::new(),
             port: 0,
             candidate_type: CandidateType::default(),
@@ -232,50 +220,42 @@ impl Agent {
 
     /// Returns a list of local candidates stats.
     pub fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
-        let local_candidates = &self.local_candidates;
-        let mut res = Vec::with_capacity(local_candidates.len());
-        for (network_type, local_candidates) in local_candidates {
-            for c in local_candidates {
-                let stat = CandidateStats {
-                    timestamp: Instant::now(),
-                    id: c.id(),
-                    network_type: *network_type,
-                    ip: c.address(),
-                    port: c.port(),
-                    candidate_type: c.candidate_type(),
-                    priority: c.priority(),
-                    // URL string
-                    relay_protocol: "udp".to_owned(),
-                    // Deleted bool
-                    ..CandidateStats::default()
-                };
-                res.push(stat);
-            }
+        let mut res = Vec::with_capacity(self.local_candidates.len());
+        for c in &self.local_candidates {
+            let stat = CandidateStats {
+                timestamp: Instant::now(),
+                id: c.id(),
+                ip: c.address(),
+                port: c.port(),
+                candidate_type: c.candidate_type(),
+                priority: c.priority(),
+                // URL string
+                relay_protocol: "udp".to_owned(),
+                // Deleted bool
+                ..CandidateStats::default()
+            };
+            res.push(stat);
         }
         res
     }
 
     /// Returns a list of remote candidates stats.
     pub fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
-        let remote_candidates = &self.remote_candidates;
-        let mut res = Vec::with_capacity(remote_candidates.len());
-        for (network_type, remote_candidates) in remote_candidates {
-            for c in remote_candidates {
-                let stat = CandidateStats {
-                    timestamp: Instant::now(),
-                    id: c.id(),
-                    network_type: *network_type,
-                    ip: c.address(),
-                    port: c.port(),
-                    candidate_type: c.candidate_type(),
-                    priority: c.priority(),
-                    // URL string
-                    relay_protocol: "udp".to_owned(),
-                    // Deleted bool
-                    ..CandidateStats::default()
-                };
-                res.push(stat);
-            }
+        let mut res = Vec::with_capacity(self.remote_candidates.len());
+        for c in &self.remote_candidates {
+            let stat = CandidateStats {
+                timestamp: Instant::now(),
+                id: c.id(),
+                ip: c.address(),
+                port: c.port(),
+                candidate_type: c.candidate_type(),
+                priority: c.priority(),
+                // URL string
+                relay_protocol: "udp".to_owned(),
+                // Deleted bool
+                ..CandidateStats::default()
+            };
+            res.push(stat);
         }
         res
     }

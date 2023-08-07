@@ -8,7 +8,6 @@ pub mod agent_selector;
 pub mod agent_stats;
 pub mod agent_transport;
 
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
@@ -26,9 +25,7 @@ use stun::xoraddr::*;
 use crate::agent::agent_transport::*;
 use crate::candidate::*;
 use crate::connection_state::*;
-use crate::network_type::*;
 use crate::rand::*;
-use crate::tcp_type::TcpType;
 use crate::url::*;
 use shared::error::*;
 
@@ -94,8 +91,8 @@ pub struct Agent {
     //pub(crate) started_ch_tx: Mutex<Option<broadcast::Sender<()>>>,
     pub(crate) ufrag_pwd: UfragPwd,
 
-    pub(crate) local_candidates: HashMap<NetworkType, Vec<Rc<dyn Candidate>>>,
-    pub(crate) remote_candidates: HashMap<NetworkType, Vec<Rc<dyn Candidate>>>,
+    pub(crate) local_candidates: Vec<Rc<dyn Candidate>>,
+    pub(crate) remote_candidates: Vec<Rc<dyn Candidate>>,
 
     // LRU of outbound Binding request Transaction IDs
     pub(crate) pending_binding_requests: Vec<BindingRequest>,
@@ -120,7 +117,6 @@ pub struct Agent {
 
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
-    pub(crate) network_types: Vec<NetworkType>,
 }
 
 impl Agent {
@@ -208,8 +204,8 @@ impl Agent {
 
             ufrag_pwd: UfragPwd::default(),
 
-            local_candidates: HashMap::new(),
-            remote_candidates: HashMap::new(),
+            local_candidates: vec![],
+            remote_candidates: vec![],
 
             // LRU of outbound Binding request Transaction IDs
             pending_binding_requests: vec![],
@@ -219,7 +215,6 @@ impl Agent {
 
             candidate_types,
             urls: config.urls.clone(),
-            network_types: config.network_types.clone(),
         };
 
         // Restart is also used to initialize the agent for the first time
@@ -250,41 +245,23 @@ impl Agent {
 
         self.start_candidate(c /*, initialized_ch*/);
 
-        let network_type = c.network_type();
-        {
-            let local_candidates = &mut self.local_candidates;
-            if let Some(cands) = local_candidates.get(&network_type) {
-                for cand in cands {
-                    if cand.equal(&**c) {
-                        if let Err(err) = c.close() {
-                            log::warn!(
-                                "[{}]: Failed to close duplicate candidate: {}",
-                                self.get_name(),
-                                err
-                            );
-                        }
-                        //TODO: why return?
-                        return Ok(());
-                    }
+        for cand in &self.local_candidates {
+            if cand.equal(&**c) {
+                if let Err(err) = c.close() {
+                    log::warn!(
+                        "[{}]: Failed to close duplicate candidate: {}",
+                        self.get_name(),
+                        err
+                    );
                 }
-            }
-
-            if let Some(cands) = local_candidates.get_mut(&network_type) {
-                cands.push(c.clone());
-            } else {
-                local_candidates.insert(network_type, vec![c.clone()]);
+                //TODO: why return?
+                return Ok(());
             }
         }
 
-        let mut remote_cands = vec![];
-        {
-            let remote_candidates = &self.remote_candidates;
-            if let Some(cands) = remote_candidates.get(&network_type) {
-                remote_cands = cands.clone();
-            }
-        }
+        self.local_candidates.push(c.clone());
 
-        for remote_cand in remote_cands {
+        for remote_cand in self.remote_candidates.clone() {
             self.add_pair(c.clone(), remote_cand);
         }
 
@@ -302,15 +279,6 @@ impl Agent {
 
     /// Adds a new remote candidate.
     pub fn add_remote_candidate(&mut self, c: &Rc<dyn Candidate>) -> Result<()> {
-        // cannot check for network yet because it might not be applied
-        // when mDNS hostame is used.
-        if c.tcp_type() == TcpType::Active {
-            // TCP Candidates with tcptype active will probe server passive ones, so
-            // no need to do anything with them.
-            log::info!("Ignoring remote candidate with tcpType active: {}", c);
-            return Ok(());
-        }
-
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
             log::warn!(
@@ -320,33 +288,15 @@ impl Agent {
             return Err(Error::ErrMulticastDnsNotSupported);
         }
 
-        let network_type = c.network_type();
-        {
-            let remote_candidates = &mut self.remote_candidates;
-            if let Some(cands) = remote_candidates.get(&network_type) {
-                for cand in cands {
-                    if cand.equal(&**c) {
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(cands) = remote_candidates.get_mut(&network_type) {
-                cands.push(c.clone());
-            } else {
-                remote_candidates.insert(network_type, vec![c.clone()]);
+        for cand in &self.remote_candidates {
+            if cand.equal(&**c) {
+                return Ok(());
             }
         }
 
-        let mut local_cands = vec![];
-        {
-            let local_candidates = &self.local_candidates;
-            if let Some(cands) = local_candidates.get(&network_type) {
-                local_cands = cands.clone();
-            }
-        }
+        self.remote_candidates.push(c.clone());
 
-        for local_cand in local_cands {
+        for local_cand in self.local_candidates.clone() {
             self.add_pair(local_cand, c.clone());
         }
 
@@ -373,11 +323,7 @@ impl Agent {
 
     /// Cleans up the Agent.
     pub fn close(&mut self) -> Result<()> {
-        //FIXME: deadlock here
         self.delete_all_candidates();
-
-        //TODO: self.agent_conn.buffer.close().await;
-
         self.update_connection_state(ConnectionState::Closed);
 
         Ok(())
@@ -453,13 +399,8 @@ impl Agent {
     pub(crate) fn get_local_candidates(&self) -> Result<Vec<Rc<dyn Candidate>>> {
         let mut res = vec![];
 
-        {
-            let local_candidates = &self.local_candidates;
-            for candidates in local_candidates.values() {
-                for candidate in candidates {
-                    res.push(Rc::clone(candidate));
-                }
-            }
+        for candidate in &self.local_candidates {
+            res.push(Rc::clone(candidate));
         }
 
         Ok(res)
@@ -792,46 +733,28 @@ impl Agent {
     ///
     /// This is used for restarts, failures and on close.
     pub(crate) fn delete_all_candidates(&mut self) {
-        {
-            let name = self.get_name().to_string();
-            let local_candidates = &mut self.local_candidates;
-            for cs in local_candidates.values_mut() {
-                for c in cs {
-                    if let Err(err) = c.close() {
-                        log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
-                    }
-                }
-            }
-            local_candidates.clear();
-        }
+        let name = self.get_name().to_string();
 
-        {
-            let name = self.get_name().to_string();
-            let remote_candidates = &mut self.remote_candidates;
-            for cs in remote_candidates.values_mut() {
-                for c in cs {
-                    if let Err(err) = c.close() {
-                        log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
-                    }
-                }
+        for c in &self.local_candidates {
+            if let Err(err) = c.close() {
+                log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
             }
-            remote_candidates.clear();
         }
+        self.local_candidates.clear();
+
+        for c in &self.remote_candidates {
+            if let Err(err) = c.close() {
+                log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
+            }
+        }
+        self.remote_candidates.clear();
     }
 
-    pub(crate) fn find_remote_candidate(
-        &self,
-        network_type: NetworkType,
-        addr: SocketAddr,
-    ) -> Option<Rc<dyn Candidate>> {
+    pub(crate) fn find_remote_candidate(&self, addr: SocketAddr) -> Option<Rc<dyn Candidate>> {
         let (ip, port) = (addr.ip(), addr.port());
-
-        let remote_candidates = &self.remote_candidates;
-        if let Some(cands) = remote_candidates.get(&network_type) {
-            for c in cands {
-                if c.address() == ip.to_string() && c.port() == port {
-                    return Some(c.clone());
-                }
+        for c in &self.remote_candidates {
+            if c.address() == ip.to_string() && c.port() == port {
+                return Some(c.clone());
             }
         }
         None
@@ -991,7 +914,7 @@ impl Agent {
             return;
         }
 
-        let remote_candidate = self.find_remote_candidate(local.network_type(), remote);
+        let remote_candidate = self.find_remote_candidate(remote);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
             {
                 let ufrag_pwd = &self.ufrag_pwd;
@@ -1101,12 +1024,8 @@ impl Agent {
 
     // Processes non STUN traffic from a remote candidate, and returns true if it is an actual
     // remote candidate.
-    pub(crate) fn validate_non_stun_traffic(
-        &self,
-        local: &Rc<dyn Candidate>,
-        remote: SocketAddr,
-    ) -> bool {
-        self.find_remote_candidate(local.network_type(), remote)
+    pub(crate) fn validate_non_stun_traffic(&self, remote: SocketAddr) -> bool {
+        self.find_remote_candidate(remote)
             .map_or(false, |remote_candidate| {
                 remote_candidate.seen(false);
                 true
@@ -1115,18 +1034,17 @@ impl Agent {
 
     pub(crate) fn send_stun(
         &self,
-        _msg: &Message,
-        _local: &Rc<dyn Candidate>,
-        _remote: &Rc<dyn Candidate>,
+        msg: &Message,
+        local: &Rc<dyn Candidate>,
+        remote: &Rc<dyn Candidate>,
     ) {
-        /*TODO:
         if let Err(err) = local.write_to(&msg.raw, &**remote) {
             log::trace!(
                 "[{}]: failed to send STUN message: {}",
                 self.get_name(),
                 err
             );
-        }*/
+        }
     }
 
     /// Runs the candidate using the provided connection.
@@ -1287,7 +1205,7 @@ impl Agent {
             } else {
                 self.handle_inbound(&mut m, c, src_addr);
             }
-        } else if !self.validate_non_stun_traffic(c, src_addr) {
+        } else if !self.validate_non_stun_traffic(src_addr) {
             log::warn!(
                 "[{}]: Discarded message, not a valid remote candidate",
                 self.get_name(),
