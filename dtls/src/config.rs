@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Config is used to configure a DTLS client or server.
@@ -334,13 +333,11 @@ impl ConfigBuilder {
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
             roots_cas: self.roots_cas,
-            client_cert_verifier: if self.client_auth as u8
-                >= ClientAuthType::VerifyClientCertIfGiven as u8
-            {
-                Some(rustls::AllowAnyAuthenticatedClient::new(self.client_cas))
-            } else {
-                None
-            },
+            server_cert_verifier: Rc::new(rustls::client::WebPkiVerifier::new(
+                rustls::RootCertStore::empty(),
+                None,
+            )),
+            client_cert_verifier: None,
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
@@ -369,8 +366,8 @@ pub struct HandshakeConfig {
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Rc<dyn rustls::ServerCertVerifier>,
-    pub(crate) client_cert_verifier: Option<Arc<dyn rustls::ClientCertVerifier>>,
+    pub(crate) server_cert_verifier: Rc<dyn rustls::client::ServerCertVerifier>,
+    pub(crate) client_cert_verifier: Option<Rc<dyn rustls::server::ClientCertVerifier>>,
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
@@ -420,7 +417,10 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: Rc::new(rustls::WebPKIVerifier::new()),
+            server_cert_verifier: Rc::new(rustls::client::WebPkiVerifier::new(
+                rustls::RootCertStore::empty(),
+                None,
+            )),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,

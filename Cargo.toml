@@ -13,6 +13,7 @@ members = [
     "stun",
     "turn",
 ]
+resolver = "2"
 
 [profile.dev]
 opt-level = 0

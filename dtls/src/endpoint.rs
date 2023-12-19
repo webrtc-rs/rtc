@@ -101,8 +101,8 @@ impl Endpoint {
     /// Process an incoming UDP datagram
     pub fn read(
         &mut self,
-        remote: SocketAddr,
         now: Instant,
+        remote: SocketAddr,
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,

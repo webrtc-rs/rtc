@@ -110,6 +110,7 @@ pub const ATTR_PRIORITY: AttrType = AttrType(0x0024); // PRIORITY
 pub const ATTR_USE_CANDIDATE: AttrType = AttrType(0x0025); // USE-CANDIDATE
 pub const ATTR_ICE_CONTROLLED: AttrType = AttrType(0x8029); // ICE-CONTROLLED
 pub const ATTR_ICE_CONTROLLING: AttrType = AttrType(0x802A); // ICE-CONTROLLING
+pub const ATTR_NETWORK_COST: AttrType = AttrType(0xC057); // NETWORK-COST
 
 /// Attributes from RFC 5766 TURN.
 pub const ATTR_CHANNEL_NUMBER: AttrType = AttrType(0x000C); // CHANNEL-NUMBER

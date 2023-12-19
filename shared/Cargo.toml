@@ -15,9 +15,9 @@ replay = []
 [dependencies]
 thiserror = "~1.0.2"
 bytes = "1.4.0"
-aes-gcm = { version = "0.10.1", features = ["std"] }
+aes-gcm = { version = "0.10", features = ["std"] }
 url = "2.2"
-rcgen = "0.10.0"
-sec1 = { version = "0.3.0", features = [ "std" ] }
-p256 = { version = "0.11.1", features = ["default", "ecdh", "ecdsa"] }
-block-modes = "0.7.0"
+rcgen = "0.11"
+sec1 = { version = "0.7", features = [ "std" ] }
+p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
+aes = "0.8"

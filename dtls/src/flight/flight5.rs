@@ -712,7 +712,6 @@ fn initalize_cipher_suite(
             chains = match verify_server_cert(
                 &state.peer_certificates,
                 &cfg.server_cert_verifier,
-                &cfg.roots_cas,
                 &cfg.server_name,
             ) {
                 Ok(chains) => chains,

@@ -1,12 +1,11 @@
-use super::crypto_ccm::*;
-use super::*;
-
-use crate::content::ContentType;
-use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
-
 use std::io::Cursor;
 
 use x509_parser::pem::Pem;
+
+use super::crypto_ccm::*;
+use super::*;
+use crate::content::ContentType;
+use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
 
 const RAW_PRIVATE_KEY: &str = "
 -----BEGIN RSA PRIVATE KEY-----
@@ -90,7 +89,8 @@ fn test_generate_key_signature() -> Result<()> {
         NamedCurve::X25519,
         &CryptoPrivateKey {
             kind: CryptoPrivateKeyKind::Rsa256(
-                RsaKeyPair::from_der(&pem.contents).map_err(|e| Error::Other(e.to_string()))?,
+                ring::rsa::KeyPair::from_der(&pem.contents)
+                    .map_err(|e| Error::Other(e.to_string()))?,
             ),
             serialized_der: pem.contents.clone(),
         }, //hashAlgorithmSHA256,

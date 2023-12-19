@@ -23,6 +23,7 @@ use crate::param::param_reconfig_response::ParamReconfigResponse;
 use assert_matches::assert_matches;
 use lazy_static::lazy_static;
 use log::{info, trace};
+use std::collections::VecDeque;
 use std::net::Ipv6Addr;
 use std::ops::RangeFrom;
 use std::str::FromStr;
@@ -136,10 +137,6 @@ impl TestEndpoint {
             }
         }
 
-        while let Some(x) = self.poll_transmit() {
-            self.outbound.extend(split_transmit(x));
-        }
-
         let mut endpoint_events: Vec<(AssociationHandle, EndpointEvent)> = vec![];
         for (ch, conn) in self.associations.iter_mut() {
             if self.timeout.map_or(false, |x| x <= now) {
@@ -164,11 +161,7 @@ impl TestEndpoint {
         }
 
         for (ch, event) in endpoint_events {
-            if let Some(event) = self.handle_event(ch, event) {
-                if let Some(conn) = self.associations.get_mut(&ch) {
-                    conn.handle_event(event);
-                }
-            }
+            self.handle_event(ch, event);
         }
     }
 

@@ -2,7 +2,7 @@
 mod endpoint_test;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
@@ -34,7 +34,6 @@ use thiserror::Error;
 /// `handle_event`.
 pub struct Endpoint {
     rng: StdRng,
-    transmits: VecDeque<Transmit>,
     /// Identifies associations based on the INIT Dst AID the peer utilized
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
@@ -58,7 +57,6 @@ impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
             .field("rng", &self.rng)
-            .field("transmits", &self.transmits)
             .field("association_ids_initial", &self.association_ids_init)
             .field("association_ids", &self.association_ids)
             .field("associations", &self.associations)
@@ -76,7 +74,6 @@ impl Endpoint {
     pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig>>) -> Self {
         Self {
             rng: StdRng::from_entropy(),
-            transmits: VecDeque::new(),
             association_ids_init: HashMap::default(),
             association_ids: FxHashMap::default(),
             associations: Slab::new(),
@@ -87,25 +84,13 @@ impl Endpoint {
         }
     }
 
-    /// Get the next packet to transmit
-    #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        self.transmits.pop_front()
-    }
-
     /// Replace the server configuration, affecting new incoming associations only
     pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
         self.server_config = server_config;
     }
 
     /// Process `EndpointEvent`s emitted from related `Association`s
-    ///
-    /// In turn, processing this event may return a `AssociationEvent` for the same `Association`.
-    pub fn handle_event(
-        &mut self,
-        ch: AssociationHandle,
-        event: EndpointEvent,
-    ) -> Option<AssociationEvent> {
+    pub fn handle_event(&mut self, ch: AssociationHandle, event: EndpointEvent) {
         match event.0 {
             EndpointEventInner::Drained => {
                 let conn = self.associations.remove(ch.0);
@@ -115,7 +100,6 @@ impl Endpoint {
                 }
             }
         }
-        None
     }
 
     /// Process an incoming UDP datagram

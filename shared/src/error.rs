@@ -909,6 +909,8 @@ pub enum Error {
     ErrStreamClosed,
     #[error("Stream not existed")]
     ErrStreamNotExisted,
+    #[error("Association not existed")]
+    ErrAssociationNotExisted,
     #[error("Io EOF")]
     ErrEof,
     #[error("Invalid SystemTime")]
@@ -937,6 +939,9 @@ pub enum Error {
     Utf8(#[from] FromUtf8Error),
     #[error("{0}")]
     Std(#[source] StdError),
+
+    #[error("{0}")]
+    Aes(#[from] aes::cipher::InvalidLength),
 
     #[error("{0}")]
     Other(String),
@@ -1019,17 +1024,6 @@ impl PartialEq for P256Error {
 impl From<p256::elliptic_curve::Error> for Error {
     fn from(e: p256::elliptic_curve::Error) -> Self {
         Error::P256(P256Error(e))
-    }
-}
-
-impl From<block_modes::InvalidKeyIvLength> for Error {
-    fn from(e: block_modes::InvalidKeyIvLength) -> Self {
-        Error::Other(e.to_string())
-    }
-}
-impl From<block_modes::BlockModeError> for Error {
-    fn from(e: block_modes::BlockModeError) -> Self {
-        Error::Other(e.to_string())
     }
 }
 

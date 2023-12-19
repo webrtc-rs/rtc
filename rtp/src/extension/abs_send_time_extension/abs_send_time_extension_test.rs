@@ -35,7 +35,7 @@ fn test_ntp_conversion() -> Result<()> {
 
     for (t, n) in &tests {
         let st = UNIX_EPOCH
-            .checked_add(Duration::from_nanos(t.timestamp_nanos() as u64))
+            .checked_add(Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64))
             .unwrap_or(UNIX_EPOCH);
         let ntp = unix2ntp(st);
 
@@ -54,7 +54,7 @@ fn test_ntp_conversion() -> Result<()> {
     for (t, n) in &tests {
         let output = ntp2unix(*n);
         let input = UNIX_EPOCH
-            .checked_add(Duration::from_nanos(t.timestamp_nanos() as u64))
+            .checked_add(Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64))
             .unwrap_or(UNIX_EPOCH);
         let diff = input.duration_since(output).unwrap().as_nanos() as i128;
         if !(-ABS_SEND_TIME_RESOLUTION..=ABS_SEND_TIME_RESOLUTION).contains(&diff) {

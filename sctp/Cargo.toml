@@ -9,6 +9,7 @@ license = "MIT/Apache-2.0"
 [dependencies]
 shared = { path = "../shared", package = "shared", default-features = false, features = [] }
 
+retty = "0.24.0"
 bytes = "1.4.0"
 fxhash = "0.2.1"
 rand = "0.8.5"

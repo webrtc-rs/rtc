@@ -17,6 +17,7 @@
 #![allow(clippy::bool_to_int_with_if)]
 
 use bytes::Bytes;
+use retty::transport::EcnCodepoint;
 use std::time::Instant;
 use std::{
     fmt,
@@ -46,7 +47,7 @@ pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoi
 mod packet;
 
 mod shared;
-pub use crate::shared::{AssociationEvent, AssociationId, EcnCodepoint, EndpointEvent};
+pub use crate::shared::{AssociationEvent, AssociationId, EndpointEvent};
 
 pub(crate) mod param;
 

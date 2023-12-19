@@ -98,8 +98,8 @@ impl InboundHandler for DtlsEndpointInboundHandler {
         let try_dtls_read = || -> Result<Vec<BytesMut>> {
             let mut endpoint = self.endpoint.borrow_mut();
             let messages = endpoint.read(
-                msg.transport.peer_addr,
                 msg.now,
+                msg.transport.peer_addr,
                 Some(msg.transport.local_addr.ip()),
                 msg.transport.ecn,
                 msg.message,
