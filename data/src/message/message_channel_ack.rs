@@ -1,6 +1,5 @@
 use super::*;
-
-type Result<T> = std::result::Result<T, shared::error::Error>;
+use shared::error::Result;
 
 /// The data-part of an data-channel ACK message without the message type.
 ///

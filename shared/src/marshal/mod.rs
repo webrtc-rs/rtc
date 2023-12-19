@@ -1,4 +1,4 @@
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BytesMut};
 
 use crate::error::{Error, Result};
 
@@ -9,7 +9,7 @@ pub trait MarshalSize {
 pub trait Marshal: MarshalSize {
     fn marshal_to(&self, buf: &mut [u8]) -> Result<usize>;
 
-    fn marshal(&self) -> Result<Bytes> {
+    fn marshal(&self) -> Result<BytesMut> {
         let l = self.marshal_size();
         let mut buf = BytesMut::with_capacity(l);
         buf.resize(l, 0);
@@ -19,7 +19,7 @@ pub trait Marshal: MarshalSize {
                 "marshal_to output size {n}, but expect {l}"
             )))
         } else {
-            Ok(buf.freeze())
+            Ok(buf)
         }
     }
 }
