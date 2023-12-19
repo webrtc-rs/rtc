@@ -1,7 +1,7 @@
 use bytes::{Bytes, BytesMut};
 
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
 #[test]
 fn test_message_unmarshal_open_success() {

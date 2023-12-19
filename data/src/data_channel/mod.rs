@@ -14,13 +14,13 @@ use bytes::{Buf, Bytes};
 use sctp::association::Association;
 use sctp::chunk::chunk_payload_data::PayloadProtocolIdentifier;
 use sctp::stream::*;
+use shared::marshal::*;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use util::marshal::*;
 
-use crate::error::{Error, Result};
 use crate::message::message_channel_ack::*;
 use crate::message::message_channel_open::*;
 use crate::message::*;
+use shared::error::{Error, Result};
 
 const RECEIVE_MTU: usize = 8192;
 

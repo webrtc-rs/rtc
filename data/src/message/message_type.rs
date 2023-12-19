@@ -1,12 +1,10 @@
 use super::*;
-use crate::error::Error;
+use shared::error::{Error, Result};
 
 // The first byte in a `Message` that specifies its type:
 pub(crate) const MESSAGE_TYPE_ACK: u8 = 0x02;
 pub(crate) const MESSAGE_TYPE_OPEN: u8 = 0x03;
 pub(crate) const MESSAGE_TYPE_LEN: usize = 1;
-
-type Result<T> = std::result::Result<T, util::Error>;
 
 // A parsed DataChannel message
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -44,8 +42,7 @@ impl Unmarshal for MessageType {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining(),
-            }
-            .into());
+            });
         }
 
         let b = buf.get_u8();
@@ -53,7 +50,7 @@ impl Unmarshal for MessageType {
         match b {
             MESSAGE_TYPE_ACK => Ok(Self::DataChannelAck),
             MESSAGE_TYPE_OPEN => Ok(Self::DataChannelOpen),
-            _ => Err(Error::InvalidMessageType(b).into()),
+            _ => Err(Error::InvalidMessageType(b)),
         }
     }
 }
@@ -89,7 +86,7 @@ mod tests {
         match MessageType::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::InvalidMessageType(0x01)) = err.downcast_ref::<Error>() {
+                if Error::InvalidMessageType(0x01) == err {
                     return Ok(());
                 }
                 panic!(

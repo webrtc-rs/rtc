@@ -1,7 +1,5 @@
 use super::*;
-use crate::error::Error;
-
-type Result<T> = std::result::Result<T, util::Error>;
+use shared::error::{Error, Result};
 
 const CHANNEL_TYPE_RELIABLE: u8 = 0x00;
 const CHANNEL_TYPE_RELIABLE_UNORDERED: u8 = 0x80;
@@ -65,8 +63,7 @@ impl Marshal for ChannelType {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining_mut(),
-            }
-            .into());
+            });
         }
 
         let byte = match self {
@@ -95,8 +92,7 @@ impl Unmarshal for ChannelType {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining(),
-            }
-            .into());
+            });
         }
 
         let b0 = buf.get_u8();
@@ -112,7 +108,7 @@ impl Unmarshal for ChannelType {
             CHANNEL_TYPE_PARTIAL_RELIABLE_TIMED_UNORDERED => {
                 Ok(Self::PartialReliableTimedUnordered)
             }
-            _ => Err(Error::InvalidChannelType(b0).into()),
+            _ => Err(Error::InvalidChannelType(b0)),
         }
     }
 }
@@ -167,8 +163,7 @@ impl Marshal for DataChannelOpen {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining_mut(),
-            }
-            .into());
+            });
         }
 
         let n = self.channel_type.marshal_to(buf)?;
@@ -193,8 +188,7 @@ impl Unmarshal for DataChannelOpen {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining(),
-            }
-            .into());
+            });
         }
 
         let channel_type = ChannelType::unmarshal(buf)?;
@@ -208,8 +202,7 @@ impl Unmarshal for DataChannelOpen {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: required_len,
                 actual: buf.remaining(),
-            }
-            .into());
+            });
         }
 
         let mut label = vec![0; label_len];
@@ -249,7 +242,7 @@ mod tests {
         match ChannelType::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::InvalidChannelType(0x11)) = err.downcast_ref::<Error>() {
+                if Error::InvalidChannelType(0x11) == err {
                     return Ok(());
                 }
                 panic!(
@@ -267,10 +260,10 @@ mod tests {
         match ChannelType::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::UnexpectedEndOfBuffer {
+                if (Error::UnexpectedEndOfBuffer {
                     expected: 1,
                     actual: 0,
-                }) = err.downcast_ref::<Error>()
+                }) == err
                 {
                     return Ok(());
                 }
@@ -341,7 +334,7 @@ mod tests {
         match DataChannelOpen::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::InvalidChannelType(0x11)) = err.downcast_ref::<Error>() {
+                if Error::InvalidChannelType(0x11) == err {
                     return Ok(());
                 }
                 panic!(
@@ -359,10 +352,10 @@ mod tests {
         match DataChannelOpen::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::UnexpectedEndOfBuffer {
+                if (Error::UnexpectedEndOfBuffer {
                     expected: 11,
                     actual: 5,
-                }) = err.downcast_ref::<Error>()
+                }) == err
                 {
                     return Ok(());
                 }
@@ -387,10 +380,10 @@ mod tests {
         match DataChannelOpen::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if let Some(&Error::UnexpectedEndOfBuffer {
+                if (Error::UnexpectedEndOfBuffer {
                     expected: 13,
                     actual: 0,
-                }) = err.downcast_ref::<Error>()
+                }) == err
                 {
                     return Ok(());
                 }

@@ -9,9 +9,8 @@ use bytes::{Buf, BufMut};
 use message_channel_ack::*;
 use message_channel_open::*;
 use message_type::*;
-use util::marshal::*;
-
-use crate::error::Error;
+use shared::error::{Error, Result};
+use shared::marshal::*;
 
 /// A parsed DataChannel message
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -30,7 +29,7 @@ impl MarshalSize for Message {
 }
 
 impl Marshal for Message {
-    fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize, util::Error> {
+    fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
         let mut bytes_written = 0;
         let n = self.message_type().marshal_to(buf)?;
         buf = &mut buf[n..];
@@ -44,7 +43,7 @@ impl Marshal for Message {
 }
 
 impl Unmarshal for Message {
-    fn unmarshal<B>(buf: &mut B) -> Result<Self, util::Error>
+    fn unmarshal<B>(buf: &mut B) -> Result<Self>
     where
         Self: Sized,
         B: Buf,
@@ -53,8 +52,7 @@ impl Unmarshal for Message {
             return Err(Error::UnexpectedEndOfBuffer {
                 expected: MESSAGE_TYPE_LEN,
                 actual: buf.remaining(),
-            }
-            .into());
+            });
         }
 
         match MessageType::unmarshal(buf)? {

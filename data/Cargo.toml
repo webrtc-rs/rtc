@@ -7,8 +7,8 @@ description = "DataChannel in Rust"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-util = { version = "0.7.0", package = "webrtc-util", default-features = false, features = ["conn", "marshal"]  }
-sctp = { version = "0.8.0", package = "webrtc-sctp" }
+shared = { path = "../shared", package = "shared", default-features = false, features = ["marshal"] }
+sctp = { path = "../sctp", package = "sctp" }
 
 tokio = { version = "1.19", features = ["full"] }
 bytes = "1"

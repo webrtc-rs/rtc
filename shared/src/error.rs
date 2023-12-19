@@ -920,6 +920,18 @@ pub enum Error {
     #[error("Max Data Channel ID")]
     ErrMaxDataChannelID,
 
+    //Data
+    #[error(
+    "DataChannel message is not long enough to determine type: (expected: {expected}, actual: {actual})"
+    )]
+    UnexpectedEndOfBuffer { expected: usize, actual: usize },
+    #[error("Unknown MessageType {0}")]
+    InvalidMessageType(u8),
+    #[error("Unknown ChannelType {0}")]
+    InvalidChannelType(u8),
+    #[error("Unknown PayloadProtocolIdentifier {0}")]
+    InvalidPayloadProtocolIdentifier(u8),
+
     //#[error("mpsc send: {0}")]
     //MpscSend(String),
     #[error("aes gcm: {0}")]
