@@ -931,6 +931,8 @@ pub enum Error {
     InvalidChannelType(u8),
     #[error("Unknown PayloadProtocolIdentifier {0}")]
     InvalidPayloadProtocolIdentifier(u8),
+    #[error("Unknow Protocol")]
+    UnknownProtocol,
 
     //#[error("mpsc send: {0}")]
     //MpscSend(String),

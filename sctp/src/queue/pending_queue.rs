@@ -34,19 +34,19 @@ impl PendingQueue {
     pub(crate) fn peek(&self) -> Option<&ChunkPayloadData> {
         if self.selected {
             if self.unordered_is_selected {
-                return self.unordered_queue.get(0);
+                return self.unordered_queue.front();
             } else {
-                return self.ordered_queue.get(0);
+                return self.ordered_queue.front();
             }
         }
 
-        let c = self.unordered_queue.get(0);
+        let c = self.unordered_queue.front();
 
         if c.is_some() {
             return c;
         }
 
-        self.ordered_queue.get(0)
+        self.ordered_queue.front()
     }
 
     pub(crate) fn pop(

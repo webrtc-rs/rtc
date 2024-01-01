@@ -7,3 +7,5 @@ pub mod header;
 pub mod packet;
 pub mod packetizer;
 pub mod sequence;
+
+pub use packet::Packet;

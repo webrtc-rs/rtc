@@ -1141,12 +1141,14 @@ impl Association {
     }
 
     fn handle_data(&mut self, d: &ChunkPayloadData) -> Result<Vec<Packet>> {
-        trace!(
-            "[{}] DATA: tsn={} immediateSack={} len={}",
+        debug!(
+            "[{}] DATA: tsn={} peer_last_tsn={} immediateSack={} len={}, unordered={}",
             self.side,
             d.tsn,
+            self.peer_last_tsn,
             d.immediate_sack,
-            d.user_data.len()
+            d.user_data.len(),
+            d.unordered,
         );
         self.stats.inc_datas();
 
@@ -1186,11 +1188,10 @@ impl Association {
         if stream_handle_data {
             if let Some(s) = self.streams.get_mut(&d.stream_identifier) {
                 self.events.push_back(Event::DatagramReceived);
-                s.handle_data(d);
-                if s.reassembly_queue.is_readable() {
+                if s.handle_data(d) && s.reassembly_queue.is_readable() {
                     self.events.push_back(Event::Stream(StreamEvent::Readable {
-                        id: d.stream_identifier,
-                    }))
+                        id: s.stream_identifier,
+                    }));
                 }
             }
         }
@@ -1403,6 +1404,11 @@ impl Association {
         for forwarded in &c.streams {
             if let Some(s) = self.streams.get_mut(&forwarded.identifier) {
                 s.handle_forward_tsn_for_ordered(forwarded.sequence);
+                if s.reassembly_queue.is_readable() {
+                    self.events.push_back(Event::Stream(StreamEvent::Readable {
+                        id: s.stream_identifier,
+                    }));
+                }
             }
         }
 
@@ -1413,6 +1419,11 @@ impl Association {
         // See https://github.com/pion/sctp/issues/106
         for s in self.streams.values_mut() {
             s.handle_forward_tsn_for_unordered(c.new_cumulative_tsn);
+            if s.reassembly_queue.is_readable() {
+                self.events.push_back(Event::Stream(StreamEvent::Readable {
+                    id: s.stream_identifier,
+                }));
+            }
         }
 
         self.handle_peer_last_tsn_and_acknowledgement(false)

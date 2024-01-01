@@ -13,7 +13,7 @@ use shared::{
 };
 
 use crate::extended_report::ExtendedReport;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::any::Any;
 use std::fmt;
 
@@ -41,13 +41,13 @@ impl Clone for Box<dyn Packet + Send + Sync> {
 }
 
 /// marshal takes an array of Packets and serializes them to a single buffer
-pub fn marshal(packets: &[Box<dyn Packet + Send + Sync>]) -> Result<Bytes> {
+pub fn marshal(packets: &[Box<dyn Packet + Send + Sync>]) -> Result<BytesMut> {
     let mut out = BytesMut::new();
     for p in packets {
         let data = p.marshal()?;
         out.put(data);
     }
-    Ok(out.freeze())
+    Ok(out)
 }
 
 /// Unmarshal takes an entire udp datagram (which may consist of multiple RTCP packets) and

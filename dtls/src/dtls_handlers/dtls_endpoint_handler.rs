@@ -6,9 +6,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::config::HandshakeConfig;
-use crate::endpoint::Endpoint;
+use crate::endpoint::{Endpoint, EndpointEvent};
 use crate::state::State;
-use bytes::BytesMut;
 use shared::error::{Error, Result};
 
 struct DtlsEndpointInboundHandler {
@@ -95,7 +94,7 @@ impl InboundHandler for DtlsEndpointInboundHandler {
     }
 
     fn read(&mut self, ctx: &InboundContext<Self::Rin, Self::Rout>, msg: Self::Rin) {
-        let try_dtls_read = || -> Result<Vec<BytesMut>> {
+        let try_dtls_read = || -> Result<Vec<EndpointEvent>> {
             let mut endpoint = self.endpoint.borrow_mut();
             let messages = endpoint.read(
                 msg.now,
@@ -109,11 +108,16 @@ impl InboundHandler for DtlsEndpointInboundHandler {
         match try_dtls_read() {
             Ok(messages) => {
                 for message in messages {
-                    ctx.fire_read(TaggedBytesMut {
-                        now: msg.now,
-                        transport: msg.transport,
-                        message,
-                    })
+                    match message {
+                        EndpointEvent::HandshakeComplete => {}
+                        EndpointEvent::ApplicationData(message) => {
+                            ctx.fire_read(TaggedBytesMut {
+                                now: msg.now,
+                                transport: msg.transport,
+                                message,
+                            });
+                        }
+                    }
                 }
             }
             Err(err) => ctx.fire_read_exception(Box::new(err)),

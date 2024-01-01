@@ -5,6 +5,7 @@ use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};
 use std::cmp::Ordering;
+use std::time::Instant;
 
 fn sort_chunks_by_tsn(c: &mut [ChunkPayloadData]) {
     c.sort_by(|a, b| {
@@ -34,7 +35,7 @@ pub struct Chunk {
 }
 
 /// Chunks is a set of chunks that share the same SSN
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Chunks {
     /// used only with the ordered chunks
     pub(crate) ssn: u16,
@@ -42,6 +43,7 @@ pub struct Chunks {
     pub chunks: Vec<ChunkPayloadData>,
     offset: usize,
     index: usize,
+    timestamp: Instant,
 }
 
 impl Chunks {
@@ -111,6 +113,7 @@ impl Chunks {
             chunks,
             offset: 0,
             index: 0,
+            timestamp: Instant::now(),
         }
     }
 
@@ -306,7 +309,7 @@ impl ReassemblyQueue {
     pub(crate) fn is_readable(&self) -> bool {
         // Check unordered first
         if !self.unordered.is_empty() {
-            // The chunk sets in r.unordered should all be complete.
+            // The chunk sets in self.unordered should all be complete.
             return true;
         }
 
@@ -320,25 +323,58 @@ impl ReassemblyQueue {
         false
     }
 
-    pub(crate) fn read(&mut self) -> Option<Chunks> {
-        // Check unordered first
-        let chunks = if !self.unordered.is_empty() {
-            self.unordered.remove(0)
-        } else if !self.ordered.is_empty() {
-            // Now, check ordered
-            let chunks = &self.ordered[0];
+    fn readable_unordered_chunks(&self) -> Option<&Chunks> {
+        self.unordered.first()
+    }
+
+    fn readable_ordered_chunks(&self) -> Option<&Chunks> {
+        let ordered = self.ordered.first();
+        if let Some(chunks) = ordered {
             if !chunks.is_complete() {
                 return None;
             }
             if sna16gt(chunks.ssn, self.next_ssn) {
                 return None;
             }
-            if chunks.ssn == self.next_ssn {
-                self.next_ssn += 1;
-            }
-            self.ordered.remove(0)
+            Some(chunks)
         } else {
-            return None;
+            None
+        }
+    }
+
+    pub(crate) fn read(&mut self) -> Option<Chunks> {
+        let chunks = if let (Some(unordered_chunks), Some(ordered_chunks)) = (
+            self.readable_unordered_chunks(),
+            self.readable_ordered_chunks(),
+        ) {
+            if unordered_chunks.timestamp < ordered_chunks.timestamp {
+                self.unordered.remove(0)
+            } else {
+                if ordered_chunks.ssn == self.next_ssn {
+                    self.next_ssn += 1;
+                }
+                self.ordered.remove(0)
+            }
+        } else {
+            // Check unordered first
+            if !self.unordered.is_empty() {
+                self.unordered.remove(0)
+            } else if !self.ordered.is_empty() {
+                // Now, check ordered
+                let chunks = &self.ordered[0];
+                if !chunks.is_complete() {
+                    return None;
+                }
+                if sna16gt(chunks.ssn, self.next_ssn) {
+                    return None;
+                }
+                if chunks.ssn == self.next_ssn {
+                    self.next_ssn += 1;
+                }
+                self.ordered.remove(0)
+            } else {
+                return None;
+            }
         };
 
         self.subtract_num_bytes(chunks.len());

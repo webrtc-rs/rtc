@@ -11,6 +11,11 @@ use std::collections::{hash_map::Entry::Vacant, HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
+pub enum EndpointEvent {
+    HandshakeComplete,
+    ApplicationData(BytesMut),
+}
+
 /// The main entry point to the library
 ///
 /// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
@@ -48,6 +53,15 @@ impl Endpoint {
     /// Get keys of Connections
     pub fn get_connections_keys(&self) -> Keys<'_, SocketAddr, DTLSConn> {
         self.connections.keys()
+    }
+
+    /// Get Connection State
+    pub fn get_connection_state(&self, remote: SocketAddr) -> Option<&State> {
+        if let Some(conn) = self.connections.get(&remote) {
+            Some(conn.connection_state())
+        } else {
+            None
+        }
     }
 
     /// Initiate an Association
@@ -106,7 +120,7 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) -> Result<Vec<BytesMut>> {
+    ) -> Result<Vec<EndpointEvent>> {
         if let Vacant(e) = self.connections.entry(remote) {
             if let Some(server_config) = &self.server_config {
                 let handshake_config = server_config.clone();
@@ -120,13 +134,17 @@ impl Endpoint {
         // Handle packet on existing association, if any
         let mut messages = vec![];
         if let Some(conn) = self.connections.get_mut(&remote) {
+            let is_handshake_completed_before = conn.is_handshake_completed();
             conn.read(&data)?;
             if !conn.is_handshake_completed() {
                 conn.handshake()?;
                 conn.handle_incoming_queued_packets()?;
             }
+            if !is_handshake_completed_before && conn.is_handshake_completed() {
+                messages.push(EndpointEvent::HandshakeComplete)
+            }
             while let Some(message) = conn.incoming_application_data() {
-                messages.push(message);
+                messages.push(EndpointEvent::ApplicationData(message));
             }
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(Transmit {

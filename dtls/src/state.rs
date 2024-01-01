@@ -223,6 +223,10 @@ impl State {
 
         Ok(())
     }
+
+    pub fn srtp_protection_profile(&self) -> SrtpProtectionProfile {
+        self.srtp_protection_profile
+    }
 }
 
 impl KeyingMaterialExporter for State {

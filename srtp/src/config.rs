@@ -37,7 +37,7 @@ impl Config {
     /// https://tools.ietf.org/html/rfc5764
     pub fn extract_session_keys_from_dtls(
         &mut self,
-        exporter: impl KeyingMaterialExporter,
+        exporter: &impl KeyingMaterialExporter,
         is_client: bool,
     ) -> Result<()> {
         let key_len = self.profile.key_len();

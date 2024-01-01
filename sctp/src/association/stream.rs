@@ -373,8 +373,8 @@ impl StreamState {
         }
     }
 
-    pub(crate) fn handle_data(&mut self, pd: &ChunkPayloadData) {
-        self.reassembly_queue.push(pd.clone());
+    pub(crate) fn handle_data(&mut self, pd: &ChunkPayloadData) -> bool {
+        self.reassembly_queue.push(pd.clone())
     }
 
     pub(crate) fn handle_forward_tsn_for_ordered(&mut self, ssn: u16) {

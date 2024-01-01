@@ -119,6 +119,11 @@ impl DataChannel {
         Ok(data_channel)
     }
 
+    /// Returns packets to transmit
+    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+        self.transmits.pop_front()
+    }
+
     /// Read reads a packet of len(p) bytes as binary data.
     pub fn read(&mut self, ppi: PayloadProtocolIdentifier, buf: &[u8]) -> Result<BytesMut> {
         self.read_data_channel(ppi, buf).map(|(b, _)| b)
