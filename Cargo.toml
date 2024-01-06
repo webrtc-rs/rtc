@@ -1,9 +1,10 @@
 [workspace]
 members = [
+    "crates/ice",
+    "crates/rtc",
+    "crates/turn",
     "data",
     "dtls",
-    "ice",
-    "rtc",
     "rtcp",
     "rtp",
     "sctp",
@@ -11,7 +12,6 @@ members = [
     "shared",
     "srtp",
     "stun",
-    "turn",
 ]
 resolver = "2"
 
