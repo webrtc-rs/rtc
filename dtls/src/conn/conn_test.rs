@@ -307,7 +307,7 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
         handshake_completed: false,
         connection_closed_by_user: false,
         closed: AtomicBool::new(false),
-        current_flight: Box::new(Flight0 {}) as Box<dyn Flight + Send + Sync>,
+        current_flight: Box::new(Flight0 {}) as Box<dyn Flight>,
         flights: None,
         cfg: HandshakeConfig::default(),
         retransmit: false,
@@ -2230,7 +2230,7 @@ async fn test_multiple_hello_verify_request() -> Result<()> {
 
 async fn send_client_hello(
     cookie: Vec<u8>,
-    ca: &Arc<dyn Conn + Send + Sync>,
+    ca: &Arc<dyn Conn>,
     sequence_number: u64,
     send_renegotiation_info: bool,
 ) -> Result<()> {
@@ -2294,7 +2294,7 @@ async fn test_renegotation_info() -> Result<()> {
 
         tokio::time::sleep(Duration::from_millis(5)).await;
 
-        let ca: Arc<dyn Conn + Send + Sync> = Arc::new(ca);
+        let ca: Arc<dyn Conn> = Arc::new(ca);
         send_client_hello(vec![], &ca, 0, send_renegotiation_info).await?;
 
         let n = ca
