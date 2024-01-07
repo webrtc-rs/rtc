@@ -964,7 +964,7 @@ pub enum Error {
 impl Error {
     pub fn from_std<T>(error: T) -> Self
     where
-        T: std::error::Error + 'static,
+        T: std::error::Error + Send + Sync + 'static,
     {
         Error::Std(StdError(Box::new(error)))
     }
@@ -1005,7 +1005,7 @@ impl From<io::Error> for Error {
 /// By using `util::Error::from_std` we can preserve the underlying error (and stack trace!).
 #[derive(Debug, Error)]
 #[error("{0}")]
-pub struct StdError(pub Box<dyn std::error::Error>);
+pub struct StdError(pub Box<dyn std::error::Error + Send + Sync>);
 
 impl PartialEq for StdError {
     fn eq(&self, _: &Self) -> bool {
