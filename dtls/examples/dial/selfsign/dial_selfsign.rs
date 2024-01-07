@@ -67,8 +67,7 @@ async fn main() -> Result<(), Error> {
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };
-    let dtls_conn: Arc<dyn Conn + Send + Sync> =
-        Arc::new(DTLSConn::new(conn, config, true, None).await?);
+    let dtls_conn: Arc<dyn Conn> = Arc::new(DTLSConn::new(conn, config, true, None).await?);
 
     println!("Connected; type 'exit' to shutdown gracefully");
     let _ = hub::utilities::chat(Arc::clone(&dtls_conn)).await;

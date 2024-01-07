@@ -14,7 +14,7 @@ const MAX_SPATIAL_LAYERS: u8 = 5;
 const MAX_VP9REF_PICS: usize = 3;
 
 /// InitialPictureIDFn is a function that returns random initial picture ID.
-pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync>;
+pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16)>;
 
 /// Vp9Payloader payloads VP9 packets
 #[derive(Default, Clone)]
@@ -134,7 +134,7 @@ impl Payloader for Vp9Payloader {
         Ok(payloads)
     }
 
-    fn clone_to(&self) -> Box<dyn Payloader + Send + Sync> {
+    fn clone_to(&self) -> Box<dyn Payloader> {
         Box::new(self.clone())
     }
 }

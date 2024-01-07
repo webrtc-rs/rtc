@@ -81,8 +81,7 @@ pub struct EndpointConfig {
     /// AID generator factory
     ///
     /// Create a aid generator for local aid in Endpoint struct
-    pub(crate) aid_generator_factory:
-        Arc<dyn Fn() -> Box<dyn AssociationIdGenerator> + Send + Sync>,
+    pub(crate) aid_generator_factory: Arc<dyn Fn() -> Box<dyn AssociationIdGenerator>>,
 }
 
 impl Default for EndpointConfig {
@@ -112,7 +111,7 @@ impl EndpointConfig {
     /// `EndpointConfig::new()` applies a default random AID generator factory. This functions
     /// accepts any customized AID generator to reset AID generator factory that implements
     /// the `AssociationIdGenerator` trait.
-    pub fn aid_generator<F: Fn() -> Box<dyn AssociationIdGenerator> + Send + Sync + 'static>(
+    pub fn aid_generator<F: Fn() -> Box<dyn AssociationIdGenerator> + 'static>(
         &mut self,
         factory: F,
     ) -> &mut Self {

@@ -54,18 +54,18 @@ impl Packet for RapidResynchronizationRequest {
         HEADER_LENGTH + RRR_HEADER_LENGTH
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet + Send + Sync)) -> bool {
+    fn equal(&self, other: &(dyn Packet)) -> bool {
         other
             .as_any()
             .downcast_ref::<RapidResynchronizationRequest>()
             .map_or(false, |a| self == a)
     }
 
-    fn cloned(&self) -> Box<dyn Packet + Send + Sync> {
+    fn cloned(&self) -> Box<dyn Packet> {
         Box::new(self.clone())
     }
 }

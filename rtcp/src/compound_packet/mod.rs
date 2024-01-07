@@ -26,7 +26,7 @@ use std::fmt;
 ///
 /// Other RTCP packet types may follow in any order. Packet types may appear more than once.
 #[derive(Debug, Default, PartialEq, Clone)]
-pub struct CompoundPacket(pub Vec<Box<dyn Packet + Send + Sync>>);
+pub struct CompoundPacket(pub Vec<Box<dyn Packet>>);
 
 impl fmt::Display for CompoundPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,18 +57,18 @@ impl Packet for CompoundPacket {
         l
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet + Send + Sync)) -> bool {
+    fn equal(&self, other: &(dyn Packet)) -> bool {
         other
             .as_any()
             .downcast_ref::<CompoundPacket>()
             .map_or(false, |a| self == a)
     }
 
-    fn cloned(&self) -> Box<dyn Packet + Send + Sync> {
+    fn cloned(&self) -> Box<dyn Packet> {
         Box::new(self.clone())
     }
 }

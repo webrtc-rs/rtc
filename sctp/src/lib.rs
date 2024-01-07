@@ -123,22 +123,3 @@ pub struct Transmit {
     /// Payload of the datagram
     pub payload: Payload,
 }
-
-#[cfg(test)]
-mod test {
-    use std::sync::Arc;
-
-    use super::*;
-
-    #[test]
-    fn ensure_send_sync() {
-        fn is_send_sync(_a: impl Send + Sync) {}
-
-        let c = EndpointConfig::new();
-        let e = Endpoint::new(Arc::new(c), None);
-        is_send_sync(e);
-
-        let a = Association::default();
-        is_send_sync(a);
-    }
-}

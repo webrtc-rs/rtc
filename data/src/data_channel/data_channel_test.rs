@@ -20,8 +20,8 @@ async fn bridge_process_at_least_one(br: &Arc<Bridge>) {
 
 async fn create_new_association_pair(
     br: &Arc<Bridge>,
-    ca: Arc<dyn Conn + Send + Sync>,
-    cb: Arc<dyn Conn + Send + Sync>,
+    ca: Arc<dyn Conn>,
+    cb: Arc<dyn Conn>,
 ) -> Result<(Arc<Association>, Arc<Association>)> {
     let (handshake0ch_tx, mut handshake0ch_rx) = mpsc::channel(1);
     let (handshake1ch_tx, mut handshake1ch_rx) = mpsc::channel(1);

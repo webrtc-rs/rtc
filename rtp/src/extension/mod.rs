@@ -21,7 +21,7 @@ pub enum HeaderExtension {
     /// A custom extension
     Custom {
         uri: Cow<'static, str>,
-        extension: Box<dyn Marshal + Send + Sync + 'static>,
+        extension: Box<dyn Marshal + 'static>,
     },
 }
 

@@ -47,7 +47,7 @@ impl Flight for Flight4 {
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
-    ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
+    ) -> Result<Box<dyn Flight>, (Option<Alert>, Option<Error>)> {
         let (seq, msgs) = match cache.full_pull_map(
             state.handshake_recv_sequence,
             &[
@@ -484,11 +484,11 @@ impl Flight for Flight4 {
                 }
             }
             ClientAuthType::NoClientCert | ClientAuthType::RequestClientCert => {
-                return Ok(Box::new(Flight6 {}) as Box<dyn Flight + Send + Sync>);
+                return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
             }
         }
 
-        Ok(Box::new(Flight6 {}) as Box<dyn Flight + Send + Sync>)
+        Ok(Box::new(Flight6 {}) as Box<dyn Flight>)
     }
 
     fn generate(

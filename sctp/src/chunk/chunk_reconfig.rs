@@ -23,8 +23,8 @@ use std::fmt;
 ///+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Default, Debug)]
 pub(crate) struct ChunkReconfig {
-    pub(crate) param_a: Option<Box<dyn Param + Send + Sync>>,
-    pub(crate) param_b: Option<Box<dyn Param + Send + Sync>>,
+    pub(crate) param_a: Option<Box<dyn Param>>,
+    pub(crate) param_b: Option<Box<dyn Param>>,
 }
 
 impl Clone for ChunkReconfig {
@@ -123,7 +123,7 @@ impl Chunk for ChunkReconfig {
         l
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 }

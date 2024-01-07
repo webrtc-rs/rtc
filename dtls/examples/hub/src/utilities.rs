@@ -38,7 +38,7 @@ impl From<io::Error> for Error {
 }
 
 /// chat simulates a simple text chat session over the connection
-pub async fn chat(conn: Arc<dyn Conn + Send + Sync>) -> Result<(), Error> {
+pub async fn chat(conn: Arc<dyn Conn>) -> Result<(), Error> {
     let conn_rx = Arc::clone(&conn);
     tokio::spawn(async move {
         let mut b = vec![0u8; BUF_SIZE];

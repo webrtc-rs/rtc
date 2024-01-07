@@ -99,7 +99,7 @@ impl Chunk for ChunkHeader {
         self.value_length as usize
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 }

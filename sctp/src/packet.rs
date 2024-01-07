@@ -135,7 +135,7 @@ impl PartialDecode {
             }
 
             let ct = ChunkType(self.remaining[offset]);
-            let c: Box<dyn Chunk + Send + Sync> = match ct {
+            let c: Box<dyn Chunk> = match ct {
                 CT_INIT => Box::new(ChunkInit::unmarshal(&self.remaining.slice(offset..))?),
                 CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&self.remaining.slice(offset..))?),
                 CT_ABORT => Box::new(ChunkAbort::unmarshal(&self.remaining.slice(offset..))?),
@@ -184,7 +184,7 @@ impl PartialDecode {
 #[derive(Default, Debug)]
 pub(crate) struct Packet {
     pub(crate) common_header: CommonHeader,
-    pub(crate) chunks: Vec<Box<dyn Chunk + Send + Sync>>,
+    pub(crate) chunks: Vec<Box<dyn Chunk>>,
 }
 
 /// makes packet printable
@@ -236,7 +236,7 @@ impl Packet {
             }
 
             let ct = ChunkType(raw[offset]);
-            let c: Box<dyn Chunk + Send + Sync> = match ct {
+            let c: Box<dyn Chunk> = match ct {
                 CT_INIT => Box::new(ChunkInit::unmarshal(&raw.slice(offset..))?),
                 CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&raw.slice(offset..))?),
                 CT_ABORT => Box::new(ChunkAbort::unmarshal(&raw.slice(offset..))?),

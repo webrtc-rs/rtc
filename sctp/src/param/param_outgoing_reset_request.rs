@@ -111,11 +111,11 @@ impl Param for ParamOutgoingResetRequest {
         PARAM_OUTGOING_RESET_REQUEST_STREAM_IDENTIFIERS_OFFSET + self.stream_identifiers.len() * 2
     }
 
-    fn clone_to(&self) -> Box<dyn Param + Send + Sync> {
+    fn clone_to(&self) -> Box<dyn Param> {
         Box::new(self.clone())
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 }

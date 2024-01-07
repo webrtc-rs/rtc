@@ -156,7 +156,7 @@ impl Unmarshal for XRHeader {
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct ExtendedReport {
     pub sender_ssrc: u32,
-    pub reports: Vec<Box<dyn Packet + Send + Sync>>,
+    pub reports: Vec<Box<dyn Packet>>,
 }
 
 impl fmt::Display for ExtendedReport {
@@ -193,18 +193,18 @@ impl Packet for ExtendedReport {
         HEADER_LENGTH + SSRC_LENGTH + reps_length
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet + Send + Sync)) -> bool {
+    fn equal(&self, other: &(dyn Packet)) -> bool {
         other
             .as_any()
             .downcast_ref::<ExtendedReport>()
             .map_or(false, |a| self == a)
     }
 
-    fn cloned(&self) -> Box<dyn Packet + Send + Sync> {
+    fn cloned(&self) -> Box<dyn Packet> {
         Box::new(self.clone())
     }
 }
@@ -270,7 +270,7 @@ impl Unmarshal for ExtendedReport {
             }
 
             let block_type: BlockType = raw_packet.chunk()[0].into();
-            let report: Box<dyn Packet + Send + Sync> = match block_type {
+            let report: Box<dyn Packet> = match block_type {
                 BlockType::LossRLE => Box::new(LossRLEReportBlock::unmarshal(raw_packet)?),
                 BlockType::DuplicateRLE => {
                     Box::new(DuplicateRLEReportBlock::unmarshal(raw_packet)?)

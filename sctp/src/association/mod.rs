@@ -812,12 +812,7 @@ impl Association {
     }
 
     #[allow(clippy::borrowed_box)]
-    fn handle_chunk(
-        &mut self,
-        p: &Packet,
-        chunk: &Box<dyn Chunk + Send + Sync>,
-        now: Instant,
-    ) -> Result<()> {
+    fn handle_chunk(&mut self, p: &Packet, chunk: &Box<dyn Chunk>, now: Instant) -> Result<()> {
         chunk.check()?;
         let chunk_any = chunk.as_any();
         let packets = if let Some(c) = chunk_any.downcast_ref::<ChunkInit>() {
@@ -1533,7 +1528,7 @@ impl Association {
     #[allow(clippy::borrowed_box)]
     fn handle_reconfig_param(
         &mut self,
-        raw: &Box<dyn Param + Send + Sync>,
+        raw: &Box<dyn Param>,
         reply: &mut Vec<Packet>,
     ) -> Result<()> {
         if let Some(p) = raw.as_any().downcast_ref::<ParamOutgoingResetRequest>() {
@@ -1925,7 +1920,7 @@ impl Association {
 
     /// create_packet wraps chunks in a packet.
     /// The caller should hold the read lock.
-    pub(crate) fn create_packet(&self, chunks: Vec<Box<dyn Chunk + Send + Sync>>) -> Packet {
+    pub(crate) fn create_packet(&self, chunks: Vec<Box<dyn Chunk>>) -> Packet {
         Packet {
             common_header: CommonHeader {
                 verification_tag: self.peer_verification_tag,
@@ -2145,7 +2140,7 @@ impl Association {
         if self.will_retransmit_fast {
             self.will_retransmit_fast = false;
 
-            let mut to_fast_retrans: Vec<Box<dyn Chunk + Send + Sync>> = vec![];
+            let mut to_fast_retrans: Vec<Box<dyn Chunk>> = vec![];
             let mut fast_retrans_size = COMMON_HEADER_SIZE;
 
             let mut i = 0;

@@ -43,7 +43,7 @@ impl Flight for Flight3 {
         state: &mut State,
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
-    ) -> Result<Box<dyn Flight + Send + Sync>, (Option<Alert>, Option<Error>)> {
+    ) -> Result<Box<dyn Flight>, (Option<Alert>, Option<Error>)> {
         // Clients may receive multiple HelloVerifyRequest messages with different cookies.
         // Clients SHOULD handle this by sending a new ClientHello with a cookie in response
         // to the new HelloVerifyRequest. RFC 6347 Section 4.2.1
@@ -86,7 +86,7 @@ impl Flight for Flight3 {
 
                 state.cookie = h.cookie.clone();
                 state.handshake_recv_sequence = seq;
-                return Ok(Box::new(Flight3 {}) as Box<dyn Flight + Send + Sync>);
+                return Ok(Box::new(Flight3 {}) as Box<dyn Flight>);
             }
         }
 
@@ -330,7 +330,7 @@ impl Flight for Flight3 {
             state.remote_requested_certificate = true;
         }
 
-        Ok(Box::new(Flight5 {}) as Box<dyn Flight + Send + Sync>)
+        Ok(Box::new(Flight5 {}) as Box<dyn Flight>)
     }
 
     fn generate(

@@ -16,7 +16,7 @@ const BUF_SIZE: usize = 8192;
 /// Hub is a helper to handle one to many chat
 #[derive(Default)]
 pub struct Hub {
-    conns: Arc<Mutex<HashMap<String, Arc<dyn Conn + Send + Sync>>>>,
+    conns: Arc<Mutex<HashMap<String, Arc<dyn Conn>>>>,
 }
 
 impl Hub {
@@ -28,7 +28,7 @@ impl Hub {
     }
 
     /// register adds a new conn to the Hub
-    pub async fn register(&self, conn: Arc<dyn Conn + Send + Sync>) {
+    pub async fn register(&self, conn: Arc<dyn Conn>) {
         println!("Connected to {}", conn.remote_addr().unwrap());
 
         if let Some(remote_addr) = conn.remote_addr() {
@@ -43,8 +43,8 @@ impl Hub {
     }
 
     async fn read_loop(
-        conns: Arc<Mutex<HashMap<String, Arc<dyn Conn + Send + Sync>>>>,
-        conn: Arc<dyn Conn + Send + Sync>,
+        conns: Arc<Mutex<HashMap<String, Arc<dyn Conn>>>>,
+        conn: Arc<dyn Conn>,
     ) -> Result<(), Error> {
         let mut b = vec![0u8; BUF_SIZE];
 
@@ -57,8 +57,8 @@ impl Hub {
     }
 
     async fn unregister(
-        conns: Arc<Mutex<HashMap<String, Arc<dyn Conn + Send + Sync>>>>,
-        conn: Arc<dyn Conn + Send + Sync>,
+        conns: Arc<Mutex<HashMap<String, Arc<dyn Conn>>>>,
+        conn: Arc<dyn Conn>,
     ) -> Result<(), Error> {
         if let Some(remote_addr) = conn.remote_addr() {
             {

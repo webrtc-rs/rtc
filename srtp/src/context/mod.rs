@@ -28,7 +28,7 @@ pub(crate) struct SrtpSsrcState {
     rollover_counter: u32,
     rollover_has_processed: bool,
     last_sequence_number: u16,
-    replay_detector: Option<Box<dyn ReplayDetector + Send + 'static>>,
+    replay_detector: Option<Box<dyn ReplayDetector>>,
 }
 
 /// Encrypt/Decrypt state for a single SRTCP SSRC
@@ -36,7 +36,7 @@ pub(crate) struct SrtpSsrcState {
 pub(crate) struct SrtcpSsrcState {
     srtcp_index: usize,
     ssrc: u32,
-    replay_detector: Option<Box<dyn ReplayDetector + Send + 'static>>,
+    replay_detector: Option<Box<dyn ReplayDetector>>,
 }
 
 impl SrtpSsrcState {
@@ -102,7 +102,7 @@ impl SrtpSsrcState {
 /// Context can only be used for one-way operations
 /// it must either used ONLY for encryption or ONLY for decryption
 pub struct Context {
-    cipher: Box<dyn Cipher + Send>,
+    cipher: Box<dyn Cipher>,
 
     srtp_ssrc_states: HashMap<u32, SrtpSsrcState>,
     srtcp_ssrc_states: HashMap<u32, SrtcpSsrcState>,
@@ -129,7 +129,7 @@ impl Context {
             return Err(Error::SrtpSaltLength(salt_len, master_salt.len()));
         }
 
-        let cipher: Box<dyn Cipher + Send> = match profile {
+        let cipher: Box<dyn Cipher> = match profile {
             ProtectionProfile::Aes128CmHmacSha1_80 => {
                 Box::new(CipherAesCmHmacSha1::new(master_key, master_salt)?)
             }

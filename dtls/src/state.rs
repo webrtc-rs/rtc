@@ -9,7 +9,6 @@ use shared::error::*;
 use serde::{Deserialize, Serialize};
 use shared::crypto::KeyingMaterialExporter;
 use std::io::{BufWriter, Cursor};
-use std::marker::{Send, Sync};
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 pub struct State {
@@ -19,7 +18,7 @@ pub struct State {
     pub(crate) local_random: HandshakeRandom,
     pub(crate) remote_random: HandshakeRandom,
     pub(crate) master_secret: Vec<u8>,
-    pub(crate) cipher_suite: Option<Box<dyn CipherSuite + Send + Sync>>, // nil if a cipher_suite hasn't been chosen
+    pub(crate) cipher_suite: Option<Box<dyn CipherSuite>>, // nil if a cipher_suite hasn't been chosen
 
     pub(crate) srtp_protection_profile: SrtpProtectionProfile, // Negotiated srtp_protection_profile
     pub peer_certificates: Vec<Vec<u8>>,

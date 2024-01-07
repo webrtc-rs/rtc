@@ -71,7 +71,7 @@ pub(crate) struct ChunkInit {
     pub(crate) num_outbound_streams: u16,
     pub(crate) num_inbound_streams: u16,
     pub(crate) initial_tsn: u32,
-    pub(crate) params: Vec<Box<dyn Param + Send + Sync>>,
+    pub(crate) params: Vec<Box<dyn Param>>,
 }
 
 pub(crate) type ChunkInitAck = ChunkInit;
@@ -269,7 +269,7 @@ impl Chunk for ChunkInit {
         l
     }
 
-    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+    fn as_any(&self) -> &(dyn Any) {
         self
     }
 }

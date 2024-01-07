@@ -27,7 +27,6 @@ use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
 use std::io::{BufReader, BufWriter};
-use std::marker::{Send, Sync};
 use std::time::{Duration, Instant};
 
 pub(crate) const INITIAL_TICKER_INTERVAL: Duration = Duration::from_secs(1);
@@ -49,7 +48,7 @@ pub struct DTLSConn {
     is_client: bool,
     maximum_transmission_unit: usize,
     replay_protection_window: usize,
-    replay_detector: Vec<Box<dyn ReplayDetector + Send>>,
+    replay_detector: Vec<Box<dyn ReplayDetector>>,
     incoming_decrypted_packets: VecDeque<BytesMut>, // Decrypted Application Data or error, pull by calling `Read`
     incoming_encrypted_packets: VecDeque<Vec<u8>>,
     fragment_buffer: FragmentBuffer,
@@ -79,7 +78,7 @@ pub struct DTLSConn {
     pub(crate) current_handshake_state: HandshakeState,
     pub(crate) current_retransmit_timer: Option<Instant>,
 
-    pub(crate) current_flight: Box<dyn Flight + Send + Sync>,
+    pub(crate) current_flight: Box<dyn Flight>,
     pub(crate) flights: Option<Vec<Packet>>,
     pub(crate) cfg: HandshakeConfig,
     pub(crate) retransmit: bool,
@@ -94,17 +93,17 @@ impl DTLSConn {
     ) -> Self {
         let (state, flight, initial_fsm_state) = if let Some(state) = initial_state {
             let flight = if is_client {
-                Box::new(Flight5 {}) as Box<dyn Flight + Send + Sync>
+                Box::new(Flight5 {}) as Box<dyn Flight>
             } else {
-                Box::new(Flight6 {}) as Box<dyn Flight + Send + Sync>
+                Box::new(Flight6 {}) as Box<dyn Flight>
             };
 
             (state, flight, HandshakeState::Finished)
         } else {
             let flight = if is_client {
-                Box::new(Flight1 {}) as Box<dyn Flight + Send + Sync>
+                Box::new(Flight1 {}) as Box<dyn Flight>
             } else {
-                Box::new(Flight0 {}) as Box<dyn Flight + Send + Sync>
+                Box::new(Flight0 {}) as Box<dyn Flight>
             };
 
             (
