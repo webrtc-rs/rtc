@@ -209,7 +209,7 @@ struct Pair {
 }
 
 impl Pair {
-    pub fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
+    pub fn new(endpoint_config: EndpointConfig, server_config: ServerConfig) -> Self {
         let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
         let client = Endpoint::new(endpoint_config, None);
 
@@ -364,7 +364,7 @@ fn create_association_pair(
     recv_buf_size: u32,
 ) -> Result<(Pair, AssociationHandle, AssociationHandle)> {
     let mut pair = Pair::new(
-        Arc::new(EndpointConfig::default()),
+        EndpointConfig::default(),
         ServerConfig {
             transport: Arc::new(if recv_buf_size > 0 {
                 TransportConfig::default().with_max_receive_buffer_size(recv_buf_size)

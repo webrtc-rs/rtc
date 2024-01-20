@@ -45,7 +45,7 @@ pub struct Endpoint {
 
     associations: Slab<AssociationMeta>,
     local_cid_generator: Box<dyn AssociationIdGenerator>,
-    config: Arc<EndpointConfig>,
+    endpoint_config: EndpointConfig,
     server_config: Option<Arc<ServerConfig>>,
     /// Whether incoming associations should be unconditionally rejected by a server
     ///
@@ -60,7 +60,7 @@ impl fmt::Debug for Endpoint {
             .field("association_ids_initial", &self.association_ids_init)
             .field("association_ids", &self.association_ids)
             .field("associations", &self.associations)
-            .field("config", &self.config)
+            .field("config", &self.endpoint_config)
             .field("server_config", &self.server_config)
             .field("reject_new_associations", &self.reject_new_associations)
             .finish()
@@ -71,15 +71,15 @@ impl Endpoint {
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig>>) -> Self {
+    pub fn new(endpoint_config: EndpointConfig, server_config: Option<Arc<ServerConfig>>) -> Self {
         Self {
             rng: StdRng::from_entropy(),
             association_ids_init: HashMap::default(),
             association_ids: FxHashMap::default(),
             associations: Slab::new(),
-            local_cid_generator: (config.aid_generator_factory.as_ref())(),
+            local_cid_generator: (endpoint_config.aid_generator_factory.as_ref())(),
             reject_new_associations: false,
-            config,
+            endpoint_config,
             server_config,
         }
     }
@@ -266,7 +266,7 @@ impl Endpoint {
         let conn = Association::new(
             server_config,
             transport_config,
-            self.config.get_max_payload_size(),
+            self.endpoint_config.get_max_payload_size(),
             local_aid,
             remote_addr,
             local_ip,
@@ -293,7 +293,7 @@ impl Endpoint {
 
     /// Access the configuration used by this endpoint
     pub fn config(&self) -> &EndpointConfig {
-        &self.config
+        &self.endpoint_config
     }
 
     /// Whether we've used up 3/4 of the available AID space
