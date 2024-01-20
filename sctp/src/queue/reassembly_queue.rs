@@ -38,7 +38,7 @@ pub struct Chunk {
 #[derive(Debug, Clone)]
 pub struct Chunks {
     /// used only with the ordered chunks
-    pub(crate) ssn: u16,
+    pub ssn: u16,
     pub ppi: PayloadProtocolIdentifier,
     pub chunks: Vec<ChunkPayloadData>,
     offset: usize,
