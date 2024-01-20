@@ -292,7 +292,7 @@ impl Endpoint {
     }
 
     /// Access the configuration used by this endpoint
-    pub fn config(&self) -> &EndpointConfig {
+    pub fn endpoint_config(&self) -> &EndpointConfig {
         &self.endpoint_config
     }
 
