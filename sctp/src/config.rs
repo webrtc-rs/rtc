@@ -55,19 +55,19 @@ impl TransportConfig {
         self
     }
 
-    pub(crate) fn max_receive_buffer_size(&self) -> u32 {
+    pub fn max_receive_buffer_size(&self) -> u32 {
         self.max_receive_buffer_size
     }
 
-    pub(crate) fn max_message_size(&self) -> u32 {
+    pub fn max_message_size(&self) -> u32 {
         self.max_message_size
     }
 
-    pub(crate) fn max_num_outbound_streams(&self) -> u16 {
+    pub fn max_num_outbound_streams(&self) -> u16 {
         self.max_num_outbound_streams
     }
 
-    pub(crate) fn max_num_inbound_streams(&self) -> u16 {
+    pub fn max_num_inbound_streams(&self) -> u16 {
         self.max_num_inbound_streams
     }
 }
