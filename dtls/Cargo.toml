@@ -50,21 +50,21 @@ futures = "0.3.28"
 [features]
 pem = ["dep:pem"]
 
-[[example]]
-name = "dtls_chat_server"
-path = "examples/dtls_chat_server.rs"
+#[[example]]
+#name = "dtls_chat_server"
+#path = "examples/dtls_chat_server.rs"
 
-[[example]]
-name = "dtls_echo_server"
-path = "examples/dtls_echo_server.rs"
+#[[example]]
+#name = "dtls_echo_server"
+#path = "examples/dtls_echo_server.rs"
 
-[[example]]
-name = "dtls_client"
-path = "examples/dtls_client.rs"
+#[[example]]
+#name = "dtls_client"
+#path = "examples/dtls_client.rs"
 
-[[example]]
-name = "dtls_client_selfsign"
-path = "examples/dtls_client_selfsign.rs"
+#[[example]]
+#name = "dtls_client_selfsign"
+#path = "examples/dtls_client_selfsign.rs"
 
 #[[example]]
 #name = "dial_psk"
