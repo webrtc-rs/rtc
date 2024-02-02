@@ -1691,7 +1691,8 @@ impl Association {
             self.timers.stop(Timer::T3RTX);
         } else {
             trace!("[{}] T3-rtx timer start (pt2)", self.side);
-            self.timers.start(Timer::T3RTX, now, self.rto_mgr.get_rto());
+            self.timers
+                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
         }
 
         // Update congestion control parameters
@@ -1831,7 +1832,8 @@ impl Association {
         if !self.inflight_queue.is_empty() {
             // Start timer. (noop if already started)
             trace!("[{}] T3-rtx timer start (pt3)", self.side);
-            self.timers.start(Timer::T3RTX, now, self.rto_mgr.get_rto());
+            self.timers
+                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
         } else if state == AssociationState::ShutdownPending {
             // No more outstanding, send shutdown.
             should_awake_write_loop = true;
@@ -2058,7 +2060,8 @@ impl Association {
         if !chunks.is_empty() {
             // Start timer. (noop if already started)
             trace!("[{}] T3-rtx timer start (pt1)", self.side);
-            self.timers.start(Timer::T3RTX, now, self.rto_mgr.get_rto());
+            self.timers
+                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
 
             for p in &self.bundle_data_chunks_into_packets(chunks) {
                 if let Ok(raw) = p.marshal() {

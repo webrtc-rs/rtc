@@ -2205,6 +2205,76 @@ fn test_association_handle_packet_before_init() -> Result<()> {
     Ok(())
 }
 
+// This test reproduces an issue related to having regular messages (regular acks) which keep
+// rescheduling the T3RTX timer before it can ever fire.
+#[test]
+fn test_old_rtx_on_regular_acks() -> Result<()> {
+    let si: u16 = 6;
+    let mut sbuf = vec![0u8; 1000];
+    for i in 0..sbuf.len() {
+        sbuf[i] = (i & 0xff) as u8;
+    }
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, 0)?;
+    pair.latency = Duration::from_millis(500);
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    // Send 20 packet at a regular interval that is < RTO
+    for i in 0..20u32 {
+        println!("sending packet {}", i);
+        sbuf[0..4].copy_from_slice(&i.to_be_bytes());
+        let n = pair.client_stream(client_ch, si)?.write_sctp(
+            &Bytes::from(sbuf.clone()),
+            PayloadProtocolIdentifier::Binary,
+        )?;
+        assert_eq!(sbuf.len(), n, "unexpected length of received data");
+        pair.client.drive(pair.time, pair.server.addr);
+
+        // drop a few transmits
+        if i >= 5 && i < 10 {
+            pair.client.outbound.clear();
+        }
+
+        pair.drive_client();
+        pair.drive_server();
+        pair.time += Duration::from_millis(500);
+    }
+
+    pair.drive_client();
+    pair.drive_server();
+
+    let mut buf = vec![0u8; 3000];
+
+    // All packets must readable correctly
+    for i in 0..20 {
+        {
+            let q = &pair
+                .server_conn_mut(server_ch)
+                .streams
+                .get(&si)
+                .unwrap()
+                .reassembly_queue;
+            println!("q.is_readable()={}", q.is_readable());
+            assert!(q.is_readable(), "should be readable at {}", i);
+        }
+
+        let chunks = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+        let (n, ppi) = (chunks.len(), chunks.ppi);
+        chunks.read(&mut buf)?;
+        assert_eq!(n, sbuf.len(), "unexpected length of received data");
+        assert_eq!(ppi, PayloadProtocolIdentifier::Binary, "unexpected ppi");
+        assert_eq!(
+            u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            i,
+            "unexpected received data"
+        );
+    }
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
 /*
 TODO: The following tests will be moved to sctp-async tests:
 struct FakeEchoConn {
