@@ -11,12 +11,13 @@ pub(crate) const INITIAL_MTU: u32 = 1228;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;
-pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 65536;
+pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
 
 /// Config collects the arguments to create_association construction into
 /// a single structure
 #[derive(Debug)]
 pub struct TransportConfig {
+    sctp_port: u16,
     max_receive_buffer_size: u32,
     max_message_size: u32,
     max_num_outbound_streams: u16,
@@ -26,6 +27,7 @@ pub struct TransportConfig {
 impl Default for TransportConfig {
     fn default() -> Self {
         TransportConfig {
+            sctp_port: 5000,
             max_receive_buffer_size: INITIAL_RECV_BUF_SIZE,
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             max_num_outbound_streams: u16::MAX,
@@ -35,6 +37,11 @@ impl Default for TransportConfig {
 }
 
 impl TransportConfig {
+    pub fn with_sctp_port(mut self, value: u16) -> Self {
+        self.sctp_port = value;
+        self
+    }
+
     pub fn with_max_receive_buffer_size(mut self, value: u32) -> Self {
         self.max_receive_buffer_size = value;
         self
@@ -53,6 +60,10 @@ impl TransportConfig {
     pub fn with_max_num_inbound_streams(mut self, value: u16) -> Self {
         self.max_num_inbound_streams = value;
         self
+    }
+
+    pub fn sctp_port(&self) -> u16 {
+        self.sctp_port
     }
 
     pub fn max_receive_buffer_size(&self) -> u32 {
