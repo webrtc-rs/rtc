@@ -157,7 +157,7 @@ pub enum Error {
     #[error("too many sources")]
     TooManySources,
     /// Packet received is too short.
-    #[error("Packet status chunk must be 2 bytes")]
+    #[error("Packet too short to be read")]
     PacketTooShort,
     /// Buffer is too short.
     #[error("Buffer too short to be written")]
