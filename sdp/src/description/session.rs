@@ -356,10 +356,10 @@ impl SessionDescription {
     }
 
     /// Attribute returns the value of an attribute and if it exists
-    pub fn attribute(&self, key: &str) -> Option<&String> {
+    pub fn attribute(&self, key: &str) -> Option<&str> {
         for a in &self.attributes {
             if a.key == key {
-                return a.value.as_ref();
+                return a.value.as_ref().map(|x| x.as_str());
             }
         }
         None

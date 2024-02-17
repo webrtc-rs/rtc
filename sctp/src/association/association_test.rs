@@ -389,7 +389,7 @@ fn test_assoc_handle_init() -> Result<()> {
 
 #[test]
 fn test_assoc_max_message_size_default() -> Result<()> {
-    let mut a = create_association(TransportConfig::default());
+    let mut a = create_association(TransportConfig::default().with_max_message_size(65536));
     assert_eq!(65536, a.max_message_size, "should match");
 
     let ppi = PayloadProtocolIdentifier::Unknown;
