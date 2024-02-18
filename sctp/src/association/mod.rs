@@ -46,7 +46,7 @@ use thiserror::Error;
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
-mod timer;
+pub(crate) mod timer;
 
 #[cfg(test)]
 mod association_test;
@@ -329,7 +329,7 @@ impl Association {
             max_payload_size,
 
             rto_mgr: RtoManager::new(),
-            timers: TimerTable::new(),
+            timers: TimerTable::new(config.timer_config()),
 
             mtu,
             cwnd,

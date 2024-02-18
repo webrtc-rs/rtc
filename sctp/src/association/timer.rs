@@ -6,6 +6,29 @@ const PATH_MAX_RETRANS: usize = 5;
 const NO_MAX_RETRANS: usize = usize::MAX;
 const TIMER_COUNT: usize = 6;
 
+#[derive(Debug, Copy, Clone)]
+pub struct TimerConfig {
+    pub max_t1_init_retrans: usize,
+    pub max_t1_cookie_retrans: usize,
+    pub max_t2_shutdown_retrans: usize,
+    pub max_t3_rtx_retrans: usize,
+    pub max_reconfig_retrans: usize,
+    pub max_ack_retrans: usize,
+}
+
+impl Default for TimerConfig {
+    fn default() -> Self {
+        Self {
+            max_t1_init_retrans: MAX_INIT_RETRANS,
+            max_t1_cookie_retrans: MAX_INIT_RETRANS,
+            max_t2_shutdown_retrans: NO_MAX_RETRANS,
+            max_t3_rtx_retrans: PATH_MAX_RETRANS,
+            max_reconfig_retrans: PATH_MAX_RETRANS,
+            max_ack_retrans: PATH_MAX_RETRANS,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum Timer {
     T1Init = 0,
@@ -36,15 +59,15 @@ pub(crate) struct TimerTable {
 }
 
 impl TimerTable {
-    pub fn new() -> Self {
+    pub fn new(time_config: TimerConfig) -> Self {
         TimerTable {
             max_retrans: [
-                MAX_INIT_RETRANS, //T1Init
-                MAX_INIT_RETRANS, //T1Cookie
-                NO_MAX_RETRANS,   //T2Shutdown
-                NO_MAX_RETRANS,   //T3RTX
-                NO_MAX_RETRANS,   //Reconfig
-                NO_MAX_RETRANS,   //Ack
+                time_config.max_t1_init_retrans,     //T1Init
+                time_config.max_t1_cookie_retrans,   //T1Cookie
+                time_config.max_t2_shutdown_retrans, //T2Shutdown
+                time_config.max_t3_rtx_retrans,      //T3RTX
+                time_config.max_reconfig_retrans,    //Reconfig
+                time_config.max_ack_retrans,         //Ack
             ],
             ..Default::default()
         }

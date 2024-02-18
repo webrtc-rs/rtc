@@ -1,5 +1,6 @@
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
+use crate::TimerConfig;
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ pub struct TransportConfig {
     max_message_size: u32,
     max_num_outbound_streams: u16,
     max_num_inbound_streams: u16,
+    timer_config: TimerConfig,
 }
 
 impl Default for TransportConfig {
@@ -32,6 +34,7 @@ impl Default for TransportConfig {
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             max_num_outbound_streams: u16::MAX,
             max_num_inbound_streams: u16::MAX,
+            timer_config: TimerConfig::default(),
         }
     }
 }
@@ -62,6 +65,11 @@ impl TransportConfig {
         self
     }
 
+    pub fn with_timer_config(mut self, value: TimerConfig) -> Self {
+        self.timer_config = value;
+        self
+    }
+
     pub fn sctp_port(&self) -> u16 {
         self.sctp_port
     }
@@ -80,6 +88,10 @@ impl TransportConfig {
 
     pub fn max_num_inbound_streams(&self) -> u16 {
         self.max_num_inbound_streams
+    }
+
+    pub fn timer_config(&self) -> TimerConfig {
+        self.timer_config
     }
 }
 

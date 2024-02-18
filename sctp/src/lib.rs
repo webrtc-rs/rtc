@@ -29,6 +29,7 @@ mod association;
 pub use crate::association::{
     stats::AssociationStats,
     stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState},
+    timer::TimerConfig,
     Association, AssociationError, Event,
 };
 
