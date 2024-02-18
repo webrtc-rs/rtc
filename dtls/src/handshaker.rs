@@ -114,6 +114,7 @@ impl DTLSConn {
         self.flights = None;
 
         // Prepare flights
+        self.current_retransmit_count = 0;
         self.retransmit = self.current_flight.has_retransmit();
 
         let result = self
@@ -253,10 +254,21 @@ impl DTLSConn {
                 srv_cli_str(self.state.is_client),
                 self.current_flight.to_string()
             );
+            debug!(
+                "[handshake:{}] {} current_retransmit_count {} vs maximum_retransmit_number {}",
+                srv_cli_str(self.state.is_client),
+                self.current_flight.to_string(),
+                self.current_retransmit_count,
+                self.maximum_retransmit_number,
+            );
             if self.retransmit {
-                Some(HandshakeState::Sending)
+                self.current_retransmit_count += 1;
+                if self.current_retransmit_count > self.maximum_retransmit_number {
+                    Some(HandshakeState::Errored)
+                } else {
+                    Some(HandshakeState::Sending)
+                }
             } else {
-                //TODO: what's max retransmit?
                 self.current_retransmit_timer = Some(Instant::now() + self.cfg.retransmit_interval);
                 Some(HandshakeState::Waiting)
             }

@@ -47,6 +47,7 @@ pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
 pub struct DTLSConn {
     is_client: bool,
     maximum_transmission_unit: usize,
+    pub(crate) maximum_retransmit_number: usize,
     replay_protection_window: usize,
     replay_detector: Vec<Box<dyn ReplayDetector>>,
     incoming_decrypted_packets: VecDeque<BytesMut>, // Decrypted Application Data or error, pull by calling `Read`
@@ -77,6 +78,7 @@ pub struct DTLSConn {
     */
     pub(crate) current_handshake_state: HandshakeState,
     pub(crate) current_retransmit_timer: Option<Instant>,
+    pub(crate) current_retransmit_count: usize,
 
     pub(crate) current_flight: Box<dyn Flight>,
     pub(crate) flights: Option<Vec<Packet>>,
@@ -119,6 +121,7 @@ impl DTLSConn {
         Self {
             is_client,
             maximum_transmission_unit: handshake_config.maximum_transmission_unit,
+            maximum_retransmit_number: handshake_config.maximum_retransmit_number,
             replay_protection_window: handshake_config.replay_protection_window,
             replay_detector: vec![],
             incoming_decrypted_packets: VecDeque::new(),
@@ -136,6 +139,7 @@ impl DTLSConn {
 
             current_handshake_state: initial_fsm_state,
             current_retransmit_timer: None,
+            current_retransmit_count: 0,
 
             current_flight: flight,
             flights: None,

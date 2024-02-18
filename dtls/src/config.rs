@@ -371,6 +371,7 @@ pub struct HandshakeConfig {
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
+    pub(crate) maximum_retransmit_number: usize,
     pub(crate) replay_protection_window: usize,
 }
 
@@ -395,6 +396,7 @@ impl fmt::Debug for HandshakeConfig {
             .field("retransmit_interval", &self.retransmit_interval)
             .field("initial_epoch", &self.initial_epoch)
             .field("maximum_transmission_unit", &self.maximum_transmission_unit)
+            .field("maximum_retransmit_number", &self.maximum_retransmit_number)
             .field("replay_protection_window", &self.replay_protection_window)
             .finish()
     }
@@ -425,6 +427,7 @@ impl Default for HandshakeConfig {
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
             maximum_transmission_unit: DEFAULT_MTU,
+            maximum_retransmit_number: 7,
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
     }
