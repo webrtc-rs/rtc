@@ -359,7 +359,7 @@ impl SessionDescription {
     pub fn attribute(&self, key: &str) -> Option<&str> {
         for a in &self.attributes {
             if a.key == key {
-                return a.value.as_ref().map(|x| x.as_str());
+                return a.value.as_deref();
             }
         }
         None

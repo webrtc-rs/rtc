@@ -27,6 +27,7 @@ use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
 use std::io::{BufReader, BufWriter};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) const INITIAL_TICKER_INTERVAL: Duration = Duration::from_secs(1);
@@ -82,14 +83,14 @@ pub struct DTLSConn {
 
     pub(crate) current_flight: Box<dyn Flight>,
     pub(crate) flights: Option<Vec<Packet>>,
-    pub(crate) cfg: HandshakeConfig,
+    pub(crate) handshake_config: Arc<HandshakeConfig>,
     pub(crate) retransmit: bool,
     pub(crate) handshake_rx: Option<()>,
 }
 
 impl DTLSConn {
     pub fn new(
-        handshake_config: HandshakeConfig,
+        handshake_config: Arc<HandshakeConfig>,
         is_client: bool,
         initial_state: Option<State>,
     ) -> Self {
@@ -143,7 +144,7 @@ impl DTLSConn {
 
             current_flight: flight,
             flights: None,
-            cfg: handshake_config,
+            handshake_config,
             retransmit: false,
             handshake_rx: None,
         }

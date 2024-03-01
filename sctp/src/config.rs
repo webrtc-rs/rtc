@@ -2,7 +2,6 @@ use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
 use crate::TimerConfig;
 use std::fmt;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// MTU for inbound packet (from DTLS)
@@ -105,7 +104,8 @@ pub struct EndpointConfig {
     /// AID generator factory
     ///
     /// Create a aid generator for local aid in Endpoint struct
-    pub(crate) aid_generator_factory: Rc<dyn Fn() -> Box<dyn AssociationIdGenerator>>,
+    pub(crate) aid_generator_factory:
+        Arc<dyn (Fn() -> Box<dyn AssociationIdGenerator + Send>) + Send + Sync>,
 }
 
 impl Default for EndpointConfig {
@@ -117,11 +117,11 @@ impl Default for EndpointConfig {
 impl EndpointConfig {
     /// Create a default config
     pub fn new() -> Self {
-        let aid_factory: fn() -> Box<dyn AssociationIdGenerator> =
+        let aid_factory: fn() -> Box<dyn AssociationIdGenerator + Send> =
             || Box::<RandomAssociationIdGenerator>::default();
         Self {
             max_payload_size: INITIAL_MTU - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE),
-            aid_generator_factory: Rc::new(aid_factory),
+            aid_generator_factory: Arc::new(aid_factory),
         }
     }
 
@@ -135,11 +135,13 @@ impl EndpointConfig {
     /// `EndpointConfig::new()` applies a default random AID generator factory. This functions
     /// accepts any customized AID generator to reset AID generator factory that implements
     /// the `AssociationIdGenerator` trait.
-    pub fn aid_generator<F: Fn() -> Box<dyn AssociationIdGenerator> + 'static>(
+    pub fn aid_generator<
+        F: Fn() -> Box<dyn AssociationIdGenerator + Send> + Send + Sync + 'static,
+    >(
         &mut self,
         factory: F,
     ) -> &mut Self {
-        self.aid_generator_factory = Rc::new(factory);
+        self.aid_generator_factory = Arc::new(factory);
         self
     }
 

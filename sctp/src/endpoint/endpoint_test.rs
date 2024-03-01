@@ -210,7 +210,8 @@ struct Pair {
 
 impl Pair {
     pub fn new(endpoint_config: EndpointConfig, server_config: ServerConfig) -> Self {
-        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
+        let endpoint_config = Arc::new(endpoint_config);
+        let server = Endpoint::new(Arc::clone(&endpoint_config), Some(Arc::new(server_config)));
         let client = Endpoint::new(endpoint_config, None);
 
         Pair::new_from_endpoint(client, server)

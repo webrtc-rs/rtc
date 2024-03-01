@@ -45,7 +45,7 @@ pub struct Endpoint {
 
     associations: Slab<AssociationMeta>,
     local_cid_generator: Box<dyn AssociationIdGenerator>,
-    endpoint_config: EndpointConfig,
+    endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     /// Whether incoming associations should be unconditionally rejected by a server
     ///
@@ -71,7 +71,10 @@ impl Endpoint {
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(endpoint_config: EndpointConfig, server_config: Option<Arc<ServerConfig>>) -> Self {
+    pub fn new(
+        endpoint_config: Arc<EndpointConfig>,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Self {
         Self {
             rng: StdRng::from_entropy(),
             association_ids_init: HashMap::default(),

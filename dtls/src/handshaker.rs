@@ -117,9 +117,9 @@ impl DTLSConn {
         self.current_retransmit_count = 0;
         self.retransmit = self.current_flight.has_retransmit();
 
-        let result = self
-            .current_flight
-            .generate(&mut self.state, &self.cache, &self.cfg);
+        let result =
+            self.current_flight
+                .generate(&mut self.state, &self.cache, &self.handshake_config);
 
         match result {
             Err((a, err)) => {
@@ -133,7 +133,7 @@ impl DTLSConn {
             Ok(pkts) => self.flights = Some(pkts),
         };
 
-        let epoch = self.cfg.initial_epoch;
+        let epoch = self.handshake_config.initial_epoch;
         let mut next_epoch = epoch;
         if let Some(pkts) = &mut self.flights {
             for p in pkts {
@@ -167,7 +167,8 @@ impl DTLSConn {
         if self.current_flight.is_last_send_flight() {
             Ok(HandshakeState::Finished)
         } else {
-            self.current_retransmit_timer = Some(Instant::now() + self.cfg.retransmit_interval);
+            self.current_retransmit_timer =
+                Some(Instant::now() + self.handshake_config.retransmit_interval);
             Ok(HandshakeState::Waiting)
         }
     }
@@ -182,7 +183,7 @@ impl DTLSConn {
             let result = self.current_flight.parse(
                 /*&mut self.handle_queue_tx,*/ &mut self.state,
                 &self.cache,
-                &self.cfg,
+                &self.handshake_config,
             );
             match result {
                 Err((alert, err)) => {
@@ -232,7 +233,7 @@ impl DTLSConn {
             let result = self.current_flight.parse(
                 /*&mut self.handle_queue_tx,*/ &mut self.state,
                 &self.cache,
-                &self.cfg,
+                &self.handshake_config,
             );
             if let Err((alert, err)) = result {
                 if let Some(alert) = alert {
@@ -269,7 +270,8 @@ impl DTLSConn {
                     Some(HandshakeState::Sending)
                 }
             } else {
-                self.current_retransmit_timer = Some(Instant::now() + self.cfg.retransmit_interval);
+                self.current_retransmit_timer =
+                    Some(Instant::now() + self.handshake_config.retransmit_interval);
                 Some(HandshakeState::Waiting)
             }
         } else if self.current_handshake_state == HandshakeState::Finished {

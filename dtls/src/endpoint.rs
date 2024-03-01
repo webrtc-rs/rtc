@@ -9,6 +9,7 @@ use bytes::BytesMut;
 use std::collections::hash_map::Keys;
 use std::collections::{hash_map::Entry::Vacant, HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub enum EndpointEvent {
@@ -24,14 +25,14 @@ pub enum EndpointEvent {
 pub struct Endpoint {
     transmits: VecDeque<Transmit>,
     connections: HashMap<SocketAddr, DTLSConn>,
-    server_config: Option<HandshakeConfig>,
+    server_config: Option<Arc<HandshakeConfig>>,
 }
 
 impl Endpoint {
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(server_config: Option<HandshakeConfig>) -> Self {
+    pub fn new(server_config: Option<Arc<HandshakeConfig>>) -> Self {
         Self {
             transmits: VecDeque::new(),
             connections: HashMap::new(),
@@ -40,7 +41,7 @@ impl Endpoint {
     }
 
     /// Replace the server configuration, affecting new incoming associations only
-    pub fn set_server_config(&mut self, server_config: Option<HandshakeConfig>) {
+    pub fn set_server_config(&mut self, server_config: Option<Arc<HandshakeConfig>>) {
         self.server_config = server_config;
     }
 
@@ -68,7 +69,7 @@ impl Endpoint {
     pub fn connect(
         &mut self,
         remote: SocketAddr,
-        client_config: HandshakeConfig,
+        client_config: Arc<HandshakeConfig>,
         initial_state: Option<State>,
     ) -> Result<()> {
         if remote.port() == 0 {

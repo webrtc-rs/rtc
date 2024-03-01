@@ -9,7 +9,7 @@ use shared::error::*;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Config is used to configure a DTLS client or server.
@@ -221,7 +221,7 @@ pub(crate) const DEFAULT_MTU: usize = 1228; // bytes
 
 /// PSKCallback is called once we have the remote's psk_identity_hint.
 /// If the remote provided none it will be nil
-pub(crate) type PskCallback = Rc<dyn (Fn(&[u8]) -> Result<Vec<u8>>)>;
+pub(crate) type PskCallback = Arc<dyn (Fn(&[u8]) -> Result<Vec<u8>>) + Send + Sync>;
 
 /// ClientAuthType declares the policy the server will follow for
 /// TLS Client Authentication.
@@ -333,7 +333,7 @@ impl ConfigBuilder {
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
             roots_cas: self.roots_cas,
-            server_cert_verifier: Rc::new(rustls::client::WebPkiVerifier::new(
+            server_cert_verifier: Arc::new(rustls::client::WebPkiVerifier::new(
                 rustls::RootCertStore::empty(),
                 None,
             )),
@@ -348,7 +348,7 @@ impl ConfigBuilder {
 }
 
 pub(crate) type VerifyPeerCertificateFn =
-    Rc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>)>;
+    Arc<dyn (Fn(&[Vec<u8>], &[rustls::Certificate]) -> Result<()>) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct HandshakeConfig {
@@ -366,8 +366,8 @@ pub struct HandshakeConfig {
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Rc<dyn rustls::client::ServerCertVerifier>,
-    pub(crate) client_cert_verifier: Option<Rc<dyn rustls::server::ClientCertVerifier>>,
+    pub(crate) server_cert_verifier: Arc<dyn rustls::client::ServerCertVerifier>,
+    pub(crate) client_cert_verifier: Option<Arc<dyn rustls::server::ClientCertVerifier>>,
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
@@ -419,7 +419,7 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: Rc::new(rustls::client::WebPkiVerifier::new(
+            server_cert_verifier: Arc::new(rustls::client::WebPkiVerifier::new(
                 rustls::RootCertStore::empty(),
                 None,
             )),

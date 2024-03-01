@@ -6,7 +6,7 @@ pub mod crypto_ccm;
 pub mod crypto_gcm;
 
 use std::convert::TryFrom;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use der_parser::oid;
 use der_parser::oid::Oid;
@@ -442,7 +442,7 @@ pub(crate) fn load_certs(raw_certificates: &[Vec<u8>]) -> Result<Vec<rustls::Cer
 
 pub(crate) fn verify_client_cert(
     raw_certificates: &[Vec<u8>],
-    cert_verifier: &Rc<dyn rustls::server::ClientCertVerifier>,
+    cert_verifier: &Arc<dyn rustls::server::ClientCertVerifier>,
 ) -> Result<Vec<rustls::Certificate>> {
     let chains = load_certs(raw_certificates)?;
 
@@ -461,7 +461,7 @@ pub(crate) fn verify_client_cert(
 
 pub(crate) fn verify_server_cert(
     raw_certificates: &[Vec<u8>],
-    cert_verifier: &Rc<dyn rustls::client::ServerCertVerifier>,
+    cert_verifier: &Arc<dyn rustls::client::ServerCertVerifier>,
     server_name: &str,
 ) -> Result<Vec<rustls::Certificate>> {
     let chains = load_certs(raw_certificates)?;
