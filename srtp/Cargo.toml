@@ -11,18 +11,18 @@ shared = { path = "../shared", package = "shared", default-features = false, fea
 rtp = { path = "../rtp", package = "rtp" }
 rtcp = { path = "../rtcp", package = "rtcp" }
 
-retty = "0.24.0"
+retty = "0.24"
 byteorder = "1"
 bytes = "1"
 thiserror = "1.0"
-hmac = { version = "0.12.1", features = ["std", "reset"] }
-sha1 = "0.10.5"
-ctr = "0.8.0"
-aes = "0.7.5"
+hmac = { version = "0.12", features = ["std", "reset"] }
+sha1 = "0.10"
+ctr = "0.9"
+aes = "0.8"
 subtle = "2.4"
-log = "0.4.16"
-aead = { version = "0.4.3", features = ["std"] }
-aes-gcm = { version = "0.10.1", features = ["std"] }
+log = "0.4"
+aead = { version = "0.5", features = ["std"] }
+aes-gcm = { version = "0.10", features = ["std"] }
 
 [dev-dependencies]
-lazy_static = "1.4.0"
+lazy_static = "1.4"

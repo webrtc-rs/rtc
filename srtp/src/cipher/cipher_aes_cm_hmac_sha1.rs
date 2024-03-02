@@ -6,9 +6,11 @@ use shared::{
 };
 
 use aes::cipher::generic_array::GenericArray;
+use aes::cipher::KeyIvInit;
+use aes::cipher::StreamCipher;
+use aes::cipher::StreamCipherSeek;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use bytes::{BufMut, BytesMut};
-use ctr::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use std::io::BufWriter;
