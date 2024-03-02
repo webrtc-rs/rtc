@@ -12,17 +12,17 @@ bench = []
 
 [dependencies]
 shared = { path = "../shared", package = "shared", default-features = false, features = [] }
-retty = "0.24.0"
-bytes = "1.4.0"
+retty = "0.24"
+bytes = "1.4"
 
 lazy_static = "1.4"
 url = "2.2"
-rand = "0.8.5"
-base64 = "0.13.0"
+rand = "0.8"
+base64 = "0.22"
 subtle = "2.4"
 crc = "3.0"
-ring = "0.16.20"
-md-5 = "0.10.1"
+ring = "0.16"
+md-5 = "0.10"
 thiserror = "1.0"
 
 [dev-dependencies]

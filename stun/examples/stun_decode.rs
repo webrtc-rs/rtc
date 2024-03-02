@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use clap::Parser;
 
 use stun::message::Message;
@@ -17,7 +18,7 @@ fn main() {
     let cli = Cli::parse();
 
     let encoded_data = cli.data;
-    let decoded_data = match base64::decode(encoded_data) {
+    let decoded_data = match BASE64_STANDARD.decode(encoded_data) {
         Ok(d) => d,
         Err(e) => panic!("Unable to decode base64 value: {e}"),
     };
