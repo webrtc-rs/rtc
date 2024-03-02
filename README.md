@@ -1,5 +1,5 @@
 <h1 align="center">
- <a href="https://webrtc.rs"><img src="https://raw.githubusercontent.com/webrtc-rs/rtc/master/webrtc.rs.png" alt="WebRTC.rs"></a>
+ <a href="https://webrtc.rs"><img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/webrtc.rs.png" alt="WebRTC.rs"></a>
  <br>
 </h1>
 <p align="center">
@@ -51,7 +51,7 @@
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">Shared<a href="https://crates.io/crates/rtc-shared"><img src="https://img.shields.io/crates/v/rtc-shared.svg"></a>
 </p>
 <p align="center">
- <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/webrtc_crates_dep_graph.png" alt="RTC Crates Dependency Graph">
+ <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/rtc_crates_dep_graph.png" alt="RTC Crates Dependency Graph">
 </p>
 <p align="center">
  <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/webrtc_stack.png" alt="RTC Protocols Stack">
