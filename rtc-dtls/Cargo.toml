@@ -43,7 +43,7 @@ pem = { version = "3", optional = true }
 [dev-dependencies]
 local-sync = "0.1"
 core_affinity = "0.8"
-chrono = "0.4"
+chrono = "0.4.34"
 env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
