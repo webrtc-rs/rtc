@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "data",
+    "rtc-datachannel",
     "rtc-dtls",
     "rtc",
     "rtc-rtcp",
