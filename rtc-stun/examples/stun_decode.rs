@@ -1,7 +1,7 @@
 use base64::prelude::*;
 use clap::Parser;
 
-use stun::message::Message;
+use rtc_stun::message::Message;
 
 #[derive(Parser)]
 #[command(name = "STUN decode")]

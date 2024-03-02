@@ -1,6 +1,6 @@
-use stun::client::*;
-use stun::message::*;
-use stun::xoraddr::*;
+use rtc_stun::client::*;
+use rtc_stun::message::*;
+use rtc_stun::xoraddr::*;
 
 use clap::Parser;
 use shared::error::Error;
