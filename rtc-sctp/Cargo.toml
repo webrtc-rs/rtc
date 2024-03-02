@@ -1,0 +1,26 @@
+[package]
+name = "rtc-sctp"
+version = "0.1.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
+edition = "2021"
+description = "RTC SCTP in Rust"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-sctp"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
+
+[dependencies]
+shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+
+retty = "0.24"
+bytes = "1"
+fxhash = "0.2"
+rand = "0.8"
+slab = "0.4"
+thiserror = "1"
+log = "0.4"
+crc = "3"
+
+[dev-dependencies]
+assert_matches = "1"
+lazy_static = "1"
