@@ -2,37 +2,24 @@ use stun::client::*;
 use stun::message::*;
 use stun::xoraddr::*;
 
-use clap::{App, Arg};
+use clap::Parser;
 use shared::error::Error;
 use std::net::UdpSocket;
 
+#[derive(Parser)]
+#[command(name = "STUN Client")]
+#[command(author = "Rusty Rain <y@ngr.tc>")]
+#[command(version = "0.1.0")]
+#[command(about = "An example of STUN Client", long_about = None)]
+struct Cli {
+    #[arg(long, default_value_t = format!("stun.l.google.com:19302"))]
+    server: String,
+}
+
 fn main() -> Result<(), Error> {
-    let mut app = App::new("STUN Client")
-        .version("0.1.0")
-        .author("Rain Liu <yliu@webrtc.rs>")
-        .about("An example of STUN Client")
-        .arg(
-            Arg::with_name("FULLHELP")
-                .help("Prints more detailed help information")
-                .long("fullhelp"),
-        )
-        .arg(
-            Arg::with_name("server")
-                .required_unless("FULLHELP")
-                .takes_value(true)
-                .default_value("stun.l.google.com:19302")
-                .long("server")
-                .help("STUN Server"),
-        );
+    let cli = Cli::parse();
 
-    let matches = app.clone().get_matches();
-
-    if matches.is_present("FULLHELP") {
-        app.print_long_help().unwrap();
-        std::process::exit(0);
-    }
-
-    let server = matches.value_of("server").unwrap();
+    let server = cli.server;
 
     let conn = UdpSocket::bind("0:0")?;
     println!("Local address: {}", conn.local_addr()?);
