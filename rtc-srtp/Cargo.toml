@@ -1,0 +1,31 @@
+[package]
+name = "rtc-srtp"
+version = "0.1.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
+edition = "2021"
+description = "RTC SRTP in Rust"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-srtp"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
+
+[dependencies]
+shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
+rtp = { version = "0.1", path = "../rtc-rtp", package = "rtc-rtp" }
+rtcp = { version = "0.1", path = "../rtc-rtcp", package = "rtc-rtcp" }
+
+retty = "0.24"
+byteorder = "1"
+bytes = "1"
+thiserror = "1"
+hmac = { version = "0.12", features = ["std", "reset"] }
+sha1 = "0.10"
+ctr = "0.9"
+aes = "0.8"
+subtle = "2"
+log = "0.4"
+aead = { version = "0.5", features = ["std"] }
+aes-gcm = { version = "0.10", features = ["std"] }
+
+[dev-dependencies]
+lazy_static = "1"

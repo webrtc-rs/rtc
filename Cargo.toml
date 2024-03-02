@@ -8,7 +8,7 @@ members = [
     "sctp",
     "rtc-sdp",
     "rtc-shared",
-    "srtp",
+    "rtc-srtp",
     "rtc-stun",
 ]
 resolver = "2"
