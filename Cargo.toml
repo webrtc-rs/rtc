@@ -9,7 +9,7 @@ members = [
     "rtc-sdp",
     "rtc-shared",
     "srtp",
-    "stun",
+    "rtc-stun",
 ]
 resolver = "2"
 

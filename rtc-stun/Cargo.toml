@@ -1,17 +1,20 @@
 [package]
 name = "stun"
-version = "0.0.0"
+version = "0.1.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
-description = "STUN in Rust"
+description = "RTC STUN in Rust"
 license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-stun"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
 
 [features]
 default = []
 bench = []
 
 [dependencies]
-shared = { path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
 retty = "0.24"
 bytes = "1.4"
 
