@@ -8,7 +8,7 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 shared = { path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
-rtp = { path = "../rtp", package = "rtp" }
+rtp = { path = "../rtc-rtp", package = "rtc-rtp" }
 rtcp = { path = "../rtcp", package = "rtcp" }
 
 retty = "0.24"

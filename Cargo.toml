@@ -4,7 +4,7 @@ members = [
     "rtc-dtls",
     "rtc",
     "rtcp",
-    "rtp",
+    "rtc-rtp",
     "sctp",
     "rtc-sdp",
     "rtc-shared",
