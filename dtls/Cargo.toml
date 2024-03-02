@@ -17,11 +17,11 @@ p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
 p384 = "0.13"
 rand = "0.8"
 hmac = "0.12"
-sec1 = { version = "0.7", features = [ "std" ] }
+sec1 = { version = "0.7", features = ["std"] }
 sha1 = "0.10"
 sha2 = "0.10"
 aes = "0.8"
-cbc = { version = "0.1", features = [ "block-padding", "alloc"] }
+cbc = { version = "0.1", features = ["block-padding", "alloc"] }
 aes-gcm = "0.10"
 ccm = "0.5"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
@@ -29,7 +29,7 @@ x509-parser = "0.15"
 der-parser = "8.1"
 rcgen = "0.11"
 ring = "0.17"
-rustls = { version = "0.21", features = ["dangerous_configuration"]}
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
 bincode = "1"
 serde = { version = "1", features = ["derive"] }
 subtle = "2"
@@ -41,7 +41,7 @@ pem = { version = "3", optional = true }
 local-sync = "0.1.0"
 core_affinity = "0.8.0"
 chrono = "0.4.23"
-env_logger = "0.10.0"
+env_logger = "0.11"
 clap = { version = "4.2.2", features = ["derive"] }
 anyhow = "1.0.70"
 ctrlc = "3.2.5"

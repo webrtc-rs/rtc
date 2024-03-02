@@ -3,10 +3,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::io::Cursor;
 use std::net::Ipv4Addr;
-use std::ops::{Add, Sub};
-use std::time::Duration;
 use stun::addr::{AlternateServer, MappedAddress};
-use stun::agent::{noop_handler, Agent, TransactionId};
 use stun::attributes::{
     ATTR_CHANNEL_NUMBER, ATTR_DONT_FRAGMENT, ATTR_ERROR_CODE, ATTR_MESSAGE_INTEGRITY, ATTR_NONCE,
     ATTR_REALM, ATTR_SOFTWARE, ATTR_USERNAME, ATTR_XORMAPPED_ADDRESS,
@@ -14,6 +11,7 @@ use stun::attributes::{
 use stun::error_code::{ErrorCode, ErrorCodeAttribute, CODE_STALE_NONCE};
 use stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
 use stun::integrity::MessageIntegrity;
+use stun::message::TransactionId;
 use stun::message::{
     is_message, Getter, Message, MessageType, Setter, ATTRIBUTE_HEADER_SIZE, BINDING_REQUEST,
     CLASS_REQUEST, MESSAGE_HEADER_SIZE, METHOD_BINDING,
@@ -21,11 +19,10 @@ use stun::message::{
 use stun::textattrs::{Nonce, Realm, Software, Username};
 use stun::uattrs::UnknownAttributes;
 use stun::xoraddr::{xor_bytes, XorMappedAddress};
-use tokio::time::Instant;
 
 // AGENT_COLLECT_CAP is initial capacity for Agent.Collect slices,
 // sufficient to make function zero-alloc in most cases.
-const AGENT_COLLECT_CAP: usize = 100;
+// const AGENT_COLLECT_CAP: usize = 100;
 
 fn benchmark_addr(c: &mut Criterion) {
     let mut m = Message::new();
@@ -53,6 +50,7 @@ fn benchmark_addr(c: &mut Criterion) {
     });
 }
 
+/*
 fn benchmark_agent(c: &mut Criterion) {
     let deadline = Instant::now().add(Duration::from_secs(60 * 60 * 24));
     let gc_deadline = deadline.sub(Duration::from_secs(1));
@@ -89,6 +87,7 @@ fn benchmark_agent(c: &mut Criterion) {
         a.close().unwrap();
     }
 }
+*/
 
 fn benchmark_attributes(c: &mut Criterion) {
     {
@@ -640,7 +639,7 @@ fn benchmark_xoraddr(c: &mut Criterion) {
 criterion_group!(
     benches,
     benchmark_addr,
-    benchmark_agent,
+    //TODO: benchmark_agent,
     benchmark_attributes,
     //TODO: benchmark_client,
     benchmark_error_code,

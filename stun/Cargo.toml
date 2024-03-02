@@ -27,7 +27,7 @@ thiserror = "1.0"
 
 [dev-dependencies]
 clap = "3.2.6"
-criterion = "0.4.0"
+criterion = "0.5"
 
 [[bench]]
 name = "bench"
