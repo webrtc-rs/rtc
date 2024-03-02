@@ -13,11 +13,11 @@ marshal = []
 replay = []
 
 [dependencies]
-thiserror = "~1.0.2"
-bytes = "1.4.0"
+thiserror = "1"
+bytes = "1.4"
 aes-gcm = { version = "0.10", features = ["std"] }
 url = "2.2"
-rcgen = "0.11"
-sec1 = { version = "0.7", features = [ "std" ] }
+rcgen = "0.12"
+sec1 = { version = "0.7", features = ["std"] }
 p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
 aes = "0.8"

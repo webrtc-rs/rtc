@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use rcgen::RcgenError;
 use std::io;
 use std::net;
 use std::net::SocketAddr;
@@ -677,7 +676,7 @@ pub enum Error {
     #[error("{0}")]
     P256(#[source] P256Error),
     #[error("{0}")]
-    RcGen(#[from] RcgenError),
+    RcGen(#[from] rcgen::Error),
 
     /// Error parsing a given PEM string.
     #[error("invalid PEM: {0}")]
