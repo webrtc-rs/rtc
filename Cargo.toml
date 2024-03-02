@@ -3,7 +3,7 @@ members = [
     "data",
     "rtc-dtls",
     "rtc",
-    "rtcp",
+    "rtc-rtcp",
     "rtc-rtp",
     "sctp",
     "rtc-sdp",
