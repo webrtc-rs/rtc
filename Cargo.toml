@@ -7,7 +7,7 @@ members = [
     "rtp",
     "sctp",
     "sdp",
-    "shared",
+    "rtc-shared",
     "srtp",
     "stun",
 ]

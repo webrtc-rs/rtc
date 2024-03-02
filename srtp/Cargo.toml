@@ -7,7 +7,7 @@ description = "SRTP in Rust"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto", "marshal", "replay"] }
+shared = { path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
 rtp = { path = "../rtp", package = "rtp" }
 rtcp = { path = "../rtcp", package = "rtcp" }
 

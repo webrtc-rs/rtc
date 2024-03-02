@@ -1,10 +1,13 @@
 [package]
-name = "shared"
-version = "0.0.0"
+name = "rtc-shared"
+version = "0.1.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
-description = "Shared in Rust"
+description = "RTC Shared in Rust"
 license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-shared"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
 
 [features]
 default = ["crypto", "marshal", "replay"]

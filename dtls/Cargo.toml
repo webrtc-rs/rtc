@@ -7,7 +7,7 @@ description = "DTLS in Rust"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-shared = { path = "../shared", package = "shared", default-features = false, features = ["crypto", "replay"] }
+shared = { path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
 retty = "0.24"
 bytes = "1.4"
 byteorder = "1"
