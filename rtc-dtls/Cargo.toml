@@ -1,13 +1,16 @@
 [package]
-name = "dtls"
-version = "0.0.0"
+name = "rtc-dtls"
+version = "0.1.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
-description = "DTLS in Rust"
+description = "RTC DTLS in Rust"
 license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-dtls"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
-shared = { path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
+shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
 retty = "0.24"
 bytes = "1.4"
 byteorder = "1"
@@ -38,14 +41,14 @@ thiserror = "1"
 pem = { version = "3", optional = true }
 
 [dev-dependencies]
-local-sync = "0.1.0"
-core_affinity = "0.8.0"
-chrono = "0.4.23"
+local-sync = "0.1"
+core_affinity = "0.8"
+chrono = "0.4"
 env_logger = "0.11"
-clap = { version = "4.2.2", features = ["derive"] }
-anyhow = "1.0.70"
-ctrlc = "3.2.5"
-futures = "0.3.28"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+ctrlc = "3"
+futures = "0.3"
 
 [features]
 pem = ["dep:pem"]
