@@ -1,6 +1,6 @@
 [package]
 name = "rtc-shared"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC Shared in Rust"
@@ -24,3 +24,4 @@ rcgen = "0.12"
 sec1 = { version = "0.7", features = ["std"] }
 p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
 aes = "0.8"
+retty = "0.27.0"

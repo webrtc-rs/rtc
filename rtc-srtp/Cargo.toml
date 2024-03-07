@@ -14,7 +14,6 @@ shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", defa
 rtp = { version = "0.1", path = "../rtc-rtp", package = "rtc-rtp" }
 rtcp = { version = "0.1", path = "../rtc-rtcp", package = "rtc-rtcp" }
 
-retty = "0.24"
 byteorder = "1"
 bytes = "1"
 thiserror = "1"

@@ -26,7 +26,7 @@ pub mod state;
 use bytes::BytesMut;
 use cipher_suite::*;
 use extension::extension_use_srtp::SrtpProtectionProfile;
-use retty::transport::EcnCodepoint;
+use shared::EcnCodepoint;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 

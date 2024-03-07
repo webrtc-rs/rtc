@@ -5,7 +5,7 @@
 extern crate lazy_static;
 
 use bytes::BytesMut;
-use retty::transport::EcnCodepoint;
+use shared::EcnCodepoint;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 

@@ -16,8 +16,8 @@
 #![allow(dead_code)]
 #![allow(clippy::bool_to_int_with_if)]
 
+use ::shared::EcnCodepoint;
 use bytes::Bytes;
-use retty::transport::EcnCodepoint;
 use std::time::Instant;
 use std::{
     fmt,

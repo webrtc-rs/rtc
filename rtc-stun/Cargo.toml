@@ -15,9 +15,8 @@ bench = []
 
 [dependencies]
 shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
-retty = "0.24"
-bytes = "1.4"
 
+bytes = "1.4"
 lazy_static = "1.4"
 url = "2.2"
 rand = "0.8"

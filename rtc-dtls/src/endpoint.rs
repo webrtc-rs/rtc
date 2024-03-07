@@ -1,7 +1,7 @@
 use crate::conn::DTLSConn;
-use crate::{EcnCodepoint, Transmit};
-
+use crate::Transmit;
 use shared::error::{Error, Result};
+use shared::EcnCodepoint;
 
 use crate::config::HandshakeConfig;
 use crate::state::State;

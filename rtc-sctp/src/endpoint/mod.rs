@@ -18,7 +18,8 @@ use crate::shared::{
     AssociationEvent, AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner,
 };
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
-use crate::{EcnCodepoint, Payload, Transmit};
+use crate::{Payload, Transmit};
+use shared::EcnCodepoint;
 
 use bytes::Bytes;
 use fxhash::FxHashMap;

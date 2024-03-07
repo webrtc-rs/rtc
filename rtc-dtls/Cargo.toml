@@ -11,7 +11,7 @@ repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
 shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
-retty = "0.24"
+
 bytes = "1.4"
 byteorder = "1"
 rand_core = "0.6"
