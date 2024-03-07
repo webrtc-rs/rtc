@@ -1,6 +1,6 @@
 [package]
 name = "rtc-stun"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC STUN in Rust"
@@ -14,7 +14,7 @@ default = []
 bench = []
 
 [dependencies]
-shared = { version = "0.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { version = "0.1.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
 
 bytes = "1.4"
 lazy_static = "1.4"
