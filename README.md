@@ -54,5 +54,5 @@
  <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/rtc_crates_dep_graph.png" alt="RTC Crates Dependency Graph">
 </p>
 <p align="center">
- <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/webrtc_stack.png" alt="RTC Protocols Stack">
+ <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/rtc_stack.png" alt="RTC Protocols Stack">
 </p>
