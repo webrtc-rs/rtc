@@ -1,5 +1,5 @@
-//TODO: #[cfg(test)]
-//TODO: mod url_test;
+#[cfg(test)]
+mod url_test;
 
 use std::borrow::Cow;
 use std::convert::From;

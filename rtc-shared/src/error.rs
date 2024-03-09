@@ -547,7 +547,7 @@ pub enum Error {
     ErrInvalidQuery,
 
     /// Indicates malformed port is provided.
-    #[error("invalid port number")]
+    #[error("url parse: invalid port number")]
     ErrPort,
 
     /// Indicates local username fragment insufficient bits are provided.
@@ -707,7 +707,7 @@ pub enum Error {
     ErrMismatchUsername,
     #[error("the ICE conn can't write STUN messages")]
     ErrIceWriteStunMessage,
-    #[error("relative URL without a base")]
+    #[error("url parse: relative URL without a base")]
     ErrUrlParse,
     #[error("Candidate IP could not be found")]
     ErrCandidateIpNotFound,

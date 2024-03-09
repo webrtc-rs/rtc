@@ -14,10 +14,10 @@ shared = { version = "0.1.1", path = "../rtc-shared", package = "rtc-shared", de
 stun = { version = "0.1.1", path = "../rtc-stun", package = "rtc-stun" }
 
 crc = "3.0"
-log = "0.4.16"
+log = "0.4.21"
 rand = "0.8.5"
-serde = { version = "1.0.102", features = ["derive"] }
-url = "2.2"
+serde = { version = "1.0.197", features = ["derive"] }
+url = "2.5"
 
 [dev-dependencies]
 regex = "1"
