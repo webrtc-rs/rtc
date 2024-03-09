@@ -1,12 +1,9 @@
 //TODO:#[cfg(test)]
 //TODO:mod agent_test;
-//TODO:#[cfg(test)]
-//TODO:mod agent_transport_test;
 
 pub mod agent_config;
 pub mod agent_selector;
 pub mod agent_stats;
-pub mod agent_transport;
 
 use agent_config::*;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -18,7 +15,6 @@ use stun::message::*;
 use stun::textattrs::Username;
 use stun::xoraddr::*;
 
-use crate::agent::agent_transport::*;
 use crate::candidate::candidate_pair::{CandidatePair, CandidatePairState};
 use crate::candidate::*;
 use crate::rand::*;
@@ -81,7 +77,10 @@ pub struct Agent {
     pub(crate) lite: bool,
 
     pub(crate) start_time: Instant,
-    pub(crate) nominated_pair: Option<CandidatePair>,
+
+    pub(crate) nominated_pair: Option<usize>,
+    pub(crate) selected_pair: Option<usize>,
+    pub(crate) checklist: Vec<CandidatePair>,
 
     pub(crate) connection_state: ConnectionState,
 
@@ -93,8 +92,6 @@ pub struct Agent {
 
     // LRU of outbound Binding request Transaction IDs
     pub(crate) pending_binding_requests: Vec<BindingRequest>,
-
-    pub(crate) agent_conn: AgentConn,
 
     // the following variables won't be changed after init_with_defaults()
     pub(crate) insecure_skip_verify: bool,
@@ -146,7 +143,10 @@ impl Agent {
             lite: config.lite,
 
             start_time: Instant::now(),
+
             nominated_pair: None,
+            selected_pair: None,
+            checklist: vec![],
 
             connection_state: ConnectionState::New,
 
@@ -206,9 +206,6 @@ impl Agent {
 
             // LRU of outbound Binding request Transaction IDs
             pending_binding_requests: vec![],
-
-            // AgentConn
-            agent_conn: AgentConn::new(),
 
             candidate_types,
             urls: config.urls.clone(),
@@ -297,7 +294,7 @@ impl Agent {
     /// Returns the selected pair or none if there is none
     pub fn get_selected_candidate_pair(&self) -> Option<usize> {
         //TODO:
-        self.agent_conn.get_selected_pair()
+        self.get_selected_pair()
     }
 
     /// Sets the credentials of the remote agent.
@@ -342,7 +339,7 @@ impl Agent {
 
         self.pending_binding_requests = vec![];
 
-        self.agent_conn.checklist = vec![];
+        self.checklist = vec![];
 
         self.set_selected_pair(None);
         self.delete_all_candidates();
@@ -516,12 +513,12 @@ impl Agent {
             log::trace!(
                 "[{}]: Set selected candidate pair: {:?}",
                 self.get_name(),
-                self.agent_conn.checklist[index]
+                self.checklist[index]
             );
 
-            let p = &mut self.agent_conn.checklist[index];
+            let p = &mut self.checklist[index];
             p.nominated = true;
-            self.agent_conn.selected_pair = Some(index);
+            self.selected_pair = Some(index);
 
             self.update_connection_state(ConnectionState::Connected);
 
@@ -539,7 +536,7 @@ impl Agent {
                 on_connected_tx.take();
             }*/
         } else {
-            self.agent_conn.selected_pair = None;
+            self.selected_pair = None;
         }
     }
 
@@ -550,7 +547,7 @@ impl Agent {
 
         {
             let name = self.get_name().to_string();
-            let checklist = &mut self.agent_conn.checklist;
+            let checklist = &mut self.checklist;
             if checklist.is_empty() {
                 log::warn!(
                 "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
@@ -593,11 +590,11 @@ impl Agent {
             self.remote_candidates[remote].priority(),
             self.is_controlling,
         );
-        self.agent_conn.checklist.push(p);
+        self.checklist.push(p);
     }
 
     pub(crate) fn find_pair(&self, local: usize, remote: usize) -> Option<usize> {
-        let checklist = &self.agent_conn.checklist;
+        let checklist = &self.checklist;
         for (index, p) in checklist.iter().enumerate() {
             if p.local == local && p.remote == remote {
                 return Some(index);
@@ -610,10 +607,10 @@ impl Agent {
     /// Note: the caller should hold the agent lock.
     pub(crate) fn validate_selected_pair(&mut self) -> bool {
         let (valid, disconnected_time) = {
-            self.agent_conn.selected_pair.as_ref().map_or_else(
+            self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |selected_pair| {
-                    let remote = self.agent_conn.checklist[*selected_pair].remote;
+                    let remote = self.checklist[*selected_pair].remote;
 
                     let disconnected_time = Instant::now()
                         .duration_since(self.remote_candidates[remote].last_received());
@@ -649,11 +646,10 @@ impl Agent {
     /// Note: the caller should hold the agent lock.
     pub(crate) fn check_keepalive(&mut self) {
         let (local, remote) = {
-            self.agent_conn
-                .selected_pair
+            self.selected_pair
                 .as_ref()
                 .map_or((None, None), |selected_pair| {
-                    let p = &self.agent_conn.checklist[*selected_pair];
+                    let p = &self.checklist[*selected_pair];
                     (Some(p.local), Some(p.remote))
                 })
         };
@@ -1148,7 +1144,7 @@ impl Agent {
                 self.get_name(),
                 //c.addr().await //from {}
             );
-        } /*TODO: else if let Err(err) = self.agent_conn.buffer.write(buf).await {
+        } /*TODO: else if let Err(err) = self.buffer.write(buf).await {
               // NOTE This will return packetio.ErrFull if the buffer ever manages to fill up.
               log::warn!("[{}]: failed to write packet: {}", self.get_name(), err);
           }*/
