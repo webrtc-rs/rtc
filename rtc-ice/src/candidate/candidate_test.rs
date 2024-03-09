@@ -1,5 +1,3 @@
-use std::time::UNIX_EPOCH;
-
 use super::*;
 
 #[test]
@@ -8,7 +6,7 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::Host,
-                component: AtomicU16::new(COMPONENT_RTP),
+                component: COMPONENT_RTP,
                 ..Default::default()
             },
             2130706431,
@@ -16,8 +14,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::Host,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp4 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp4,
                 tcp_type: TcpType::Active,
                 ..Default::default()
             },
@@ -26,8 +24,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::Host,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp4 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp4,
                 tcp_type: TcpType::Passive,
                 ..Default::default()
             },
@@ -36,8 +34,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::Host,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp4 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp4,
                 tcp_type: TcpType::SimultaneousOpen,
                 ..Default::default()
             },
@@ -46,7 +44,7 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::PeerReflexive,
-                component: AtomicU16::new(COMPONENT_RTP),
+                component: COMPONENT_RTP,
                 ..Default::default()
             },
             1862270975,
@@ -54,8 +52,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::PeerReflexive,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp6 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp6,
                 tcp_type: TcpType::SimultaneousOpen,
                 ..Default::default()
             },
@@ -64,8 +62,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::PeerReflexive,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp6 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp6,
                 tcp_type: TcpType::Active,
                 ..Default::default()
             },
@@ -74,8 +72,8 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::PeerReflexive,
-                component: AtomicU16::new(COMPONENT_RTP),
-                network_type: AtomicU8::new(NetworkType::Tcp6 as u8),
+                component: COMPONENT_RTP,
+                network_type: NetworkType::Tcp6,
                 tcp_type: TcpType::Passive,
                 ..Default::default()
             },
@@ -84,7 +82,7 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::ServerReflexive,
-                component: AtomicU16::new(COMPONENT_RTP),
+                component: COMPONENT_RTP,
                 ..Default::default()
             },
             1694498815,
@@ -92,7 +90,7 @@ fn test_candidate_priority() -> Result<()> {
         (
             CandidateBase {
                 candidate_type: CandidateType::Relay,
-                component: AtomicU16::new(COMPONENT_RTP),
+                component: COMPONENT_RTP,
                 ..Default::default()
             },
             16777215,
@@ -112,12 +110,10 @@ fn test_candidate_priority() -> Result<()> {
 
 #[test]
 fn test_candidate_last_sent() -> Result<()> {
-    let candidate = CandidateBase::default();
-    assert_eq!(candidate.last_sent(), UNIX_EPOCH);
+    let mut candidate = CandidateBase::default();
 
-    let now = SystemTime::now();
-    let d = now.duration_since(UNIX_EPOCH)?;
-    candidate.set_last_sent(d);
+    let now = Instant::now();
+    candidate.set_last_sent(now);
     assert_eq!(candidate.last_sent(), now);
 
     Ok(())
@@ -125,12 +121,10 @@ fn test_candidate_last_sent() -> Result<()> {
 
 #[test]
 fn test_candidate_last_received() -> Result<()> {
-    let candidate = CandidateBase::default();
-    assert_eq!(candidate.last_received(), UNIX_EPOCH);
+    let mut candidate = CandidateBase::default();
 
-    let now = SystemTime::now();
-    let d = now.duration_since(UNIX_EPOCH)?;
-    candidate.set_last_received(d);
+    let now = Instant::now();
+    candidate.set_last_received(now);
     assert_eq!(candidate.last_received(), now);
 
     Ok(())
@@ -142,14 +136,14 @@ fn test_candidate_foundation() -> Result<()> {
     assert_eq!(
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
@@ -160,14 +154,14 @@ fn test_candidate_foundation() -> Result<()> {
     assert_ne!(
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "B".to_owned(),
             ..Default::default()
         })
@@ -178,14 +172,14 @@ fn test_candidate_foundation() -> Result<()> {
     assert_ne!(
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp6 as u8),
+            network_type: NetworkType::Udp6,
             address: "A".to_owned(),
             ..Default::default()
         })
@@ -196,14 +190,14 @@ fn test_candidate_foundation() -> Result<()> {
     assert_ne!(
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
         (CandidateBase {
             candidate_type: CandidateType::PeerReflexive,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
@@ -214,7 +208,7 @@ fn test_candidate_foundation() -> Result<()> {
     assert_eq!(
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             port: 8080,
             ..Default::default()
@@ -222,7 +216,7 @@ fn test_candidate_foundation() -> Result<()> {
         .foundation(),
         (CandidateBase {
             candidate_type: CandidateType::Host,
-            network_type: AtomicU8::new(NetworkType::Udp4 as u8),
+            network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             port: 80,
             ..Default::default()
@@ -304,7 +298,7 @@ fn test_candidate_marshal() -> Result<()> {
     let tests = vec![
        (
             Some(CandidateBase{
-                    network_type:       AtomicU8::new(NetworkType::Udp6 as u8),
+                    network_type:       NetworkType::Udp6,
                     candidate_type:      CandidateType::Host,
                     address:            "fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a".to_owned(),
                     port:               53987,
@@ -316,7 +310,7 @@ fn test_candidate_marshal() -> Result<()> {
         ),
         (
             Some(CandidateBase{
-                    network_type:   AtomicU8::new(NetworkType::Udp4 as u8),
+                    network_type:   NetworkType::Udp4,
                     candidate_type: CandidateType::Host,
                     address:       "10.0.75.1".to_owned(),
                     port:          53634,
@@ -326,7 +320,7 @@ fn test_candidate_marshal() -> Result<()> {
         ),
         (
             Some(CandidateBase{
-                    network_type:    AtomicU8::new(NetworkType::Udp4 as u8),
+                    network_type:    NetworkType::Udp4,
                     candidate_type:  CandidateType::ServerReflexive,
                     address:        "191.228.238.68".to_owned(),
                     port:           53991,
@@ -340,7 +334,7 @@ fn test_candidate_marshal() -> Result<()> {
         ),
         (
             Some(CandidateBase{
-                    network_type:   AtomicU8::new(NetworkType::Udp4 as u8),
+                    network_type:   NetworkType::Udp4,
                     candidate_type:  CandidateType::Relay,
                     address:        "50.0.0.1".to_owned(),
                     port:           5000,
@@ -355,7 +349,7 @@ fn test_candidate_marshal() -> Result<()> {
         ),
         (
             Some(CandidateBase{
-                    network_type:   AtomicU8::new(NetworkType::Tcp4 as u8),
+                    network_type:   NetworkType::Tcp4,
                     candidate_type: CandidateType::Host,
                     address:       "192.168.0.196".to_owned(),
                     port:          0,
@@ -366,7 +360,7 @@ fn test_candidate_marshal() -> Result<()> {
         ),
         (
             Some(CandidateBase{
-                    network_type:   AtomicU8::new(NetworkType::Udp4 as u8),
+                    network_type:   NetworkType::Udp4,
                     candidate_type: CandidateType::Host,
                     address:       "e2494022-4d9a-4c1e-a750-cc48d4f8d6ee.local".to_owned(),
                     port:          60542,

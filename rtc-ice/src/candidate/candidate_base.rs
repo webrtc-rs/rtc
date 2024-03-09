@@ -1,7 +1,6 @@
 use crc::{Crc, CRC_32_ISCSI};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::*;
 use crate::candidate::candidate_host::CandidateHostConfig;
@@ -36,9 +35,8 @@ pub struct CandidateBase {
 
     pub(crate) resolved_addr: SocketAddr,
 
-    pub(crate) baseline_time: Instant,
-    pub(crate) last_sent: AtomicU64,
-    pub(crate) last_received: AtomicU64,
+    pub(crate) last_sent: Instant,
+    pub(crate) last_received: Instant,
 
     //todo: pub(crate) closed_ch: Arc<Mutex<Option<broadcast::Sender<()>>>>,
     pub(crate) foundation_override: String,
@@ -65,9 +63,8 @@ impl Default for CandidateBase {
 
             resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
 
-            baseline_time: Instant::now(),
-            last_sent: AtomicU64::new(0),
-            last_received: AtomicU64::new(0),
+            last_sent: Instant::now(),
+            last_received: Instant::now(),
 
             //todo: closed_ch: Arc::new(Mutex::new(None)),
             foundation_override: String::new(),
@@ -136,12 +133,12 @@ impl Candidate for CandidateBase {
 
     /// Returns a time indicating the last time this candidate was received.
     fn last_received(&self) -> Instant {
-        self.baseline_time + Duration::from_nanos(self.last_received.load(Ordering::SeqCst))
+        self.last_received
     }
 
     /// Returns a time indicating the last time this candidate was sent.
     fn last_sent(&self) -> Instant {
-        self.baseline_time + Duration::from_nanos(self.last_sent.load(Ordering::SeqCst))
+        self.last_sent
     }
 
     /// Returns candidate NetworkType.
@@ -235,17 +232,17 @@ impl Candidate for CandidateBase {
         Ok(())
     }
 
-    fn seen(&self, outbound: bool) {
-        let d = Instant::now().duration_since(self.baseline_time);
+    fn seen(&mut self, outbound: bool) {
+        let now = Instant::now();
 
         if outbound {
-            self.set_last_sent(d);
+            self.set_last_sent(now);
         } else {
-            self.set_last_received(d);
+            self.set_last_received(now);
         }
     }
 
-    fn write_to(&self, _raw: &[u8], _dst: &dyn Candidate) -> Result<usize> {
+    fn write_to(&mut self, _raw: &[u8], _dst: &dyn Candidate) -> Result<usize> {
         let n = /*TODO: if let Some(conn) = &self.conn {
             let addr = dst.addr();
             conn.send_to(raw, addr).await?
@@ -280,13 +277,12 @@ impl Candidate for CandidateBase {
 }
 
 impl CandidateBase {
-    pub fn set_last_received(&self, d: Duration) {
-        self.last_received
-            .store(d.as_nanos() as u64, Ordering::SeqCst);
+    pub fn set_last_received(&mut self, now: Instant) {
+        self.last_received = now;
     }
 
-    pub fn set_last_sent(&self, d: Duration) {
-        self.last_sent.store(d.as_nanos() as u64, Ordering::SeqCst);
+    pub fn set_last_sent(&mut self, now: Instant) {
+        self.last_sent = now;
     }
 
     /// Returns the local preference for this candidate.

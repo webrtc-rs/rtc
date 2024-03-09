@@ -61,64 +61,64 @@ fn test_candidate_pair_priority() -> Result<()> {
     let tests = vec![
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(host_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(host_candidate()?),
                 false,
             ),
             9151314440652587007,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(host_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(host_candidate()?),
                 true,
             ),
             9151314440652587007,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(prflx_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(prflx_candidate()?),
                 true,
             ),
             7998392936314175488,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(prflx_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(prflx_candidate()?),
                 false,
             ),
             7998392936314175487,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(srflx_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(srflx_candidate()?),
                 true,
             ),
             7277816996102668288,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(srflx_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(srflx_candidate()?),
                 false,
             ),
             7277816996102668287,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(relay_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(relay_candidate()?),
                 true,
             ),
             72057593987596288,
         ),
         (
             CandidatePair::new(
-                Arc::new(host_candidate()?),
-                Arc::new(relay_candidate()?),
+                Box::new(host_candidate()?),
+                Box::new(relay_candidate()?),
                 false,
             ),
             72057593987596287,
@@ -139,13 +139,13 @@ fn test_candidate_pair_priority() -> Result<()> {
 #[test]
 fn test_candidate_pair_equality() -> Result<()> {
     let pair_a = CandidatePair::new(
-        Arc::new(host_candidate()?),
-        Arc::new(srflx_candidate()?),
+        Box::new(host_candidate()?),
+        Box::new(srflx_candidate()?),
         true,
     );
     let pair_b = CandidatePair::new(
-        Arc::new(host_candidate()?),
-        Arc::new(srflx_candidate()?),
+        Box::new(host_candidate()?),
+        Box::new(srflx_candidate()?),
         false,
     );
 

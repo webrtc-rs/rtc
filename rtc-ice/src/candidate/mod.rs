@@ -1,11 +1,13 @@
-/*TODO #[cfg(test)]
+#[cfg(test)]
 mod candidate_pair_test;
 #[cfg(test)]
-mod candidate_relay_test;
-#[cfg(test)]
+mod candidate_test;
+
+//TODO: #[cfg(test)]
+//TODO: mod candidate_relay_test;
+/*#[cfg(test)]
 mod candidate_server_reflexive_test;
-#[cfg(test)]
-mod candidate_test;*/
+*/
 
 pub mod candidate_base;
 pub mod candidate_host;
@@ -20,7 +22,6 @@ use serde::Serialize;
 use shared::error::*;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
-use std::rc::Rc;
 use std::time::Instant;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
@@ -72,9 +73,9 @@ pub trait Candidate: fmt::Display {
     fn addr(&self) -> SocketAddr;
 
     fn close(&self) -> Result<()>;
-    fn seen(&self, outbound: bool);
+    fn seen(&mut self, outbound: bool);
 
-    fn write_to(&self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
+    fn write_to(&mut self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
     fn equal(&self, other: &dyn Candidate) -> bool;
     fn set_ip(&mut self, ip: &IpAddr) -> Result<()>;
 }
@@ -220,8 +221,8 @@ impl fmt::Display for CandidatePairState {
 /// Represents a combination of a local and remote candidate.
 pub struct CandidatePair {
     pub(crate) ice_role_controlling: bool,
-    pub remote: Rc<dyn Candidate>,
-    pub local: Rc<dyn Candidate>,
+    pub remote: Box<dyn Candidate>,
+    pub local: Box<dyn Candidate>,
     pub(crate) binding_request_count: u16,
     pub(crate) state: CandidatePairState,
     pub(crate) nominated: bool,
@@ -231,8 +232,8 @@ impl Default for CandidatePair {
     fn default() -> Self {
         Self {
             ice_role_controlling: false,
-            remote: Rc::new(CandidateBase::default()),
-            local: Rc::new(CandidateBase::default()),
+            remote: Box::new(CandidateBase::default()),
+            local: Box::new(CandidateBase::default()),
             state: CandidatePairState::Waiting,
             binding_request_count: 0,
             nominated: false,
@@ -276,7 +277,7 @@ impl PartialEq for CandidatePair {
 
 impl CandidatePair {
     #[must_use]
-    pub fn new(local: Rc<dyn Candidate>, remote: Rc<dyn Candidate>, controlling: bool) -> Self {
+    pub fn new(local: Box<dyn Candidate>, remote: Box<dyn Candidate>, controlling: bool) -> Self {
         Self {
             ice_role_controlling: controlling,
             remote,
@@ -306,7 +307,7 @@ impl CandidatePair {
             + u64::from(g > d)
     }
 
-    pub fn write(&self, b: &[u8]) -> Result<usize> {
+    pub fn write(&mut self, b: &[u8]) -> Result<usize> {
         self.local.write_to(b, &*self.remote)
     }
 }
