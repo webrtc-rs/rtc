@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
 #[test]
 fn test_connected_state_string() -> Result<()> {
