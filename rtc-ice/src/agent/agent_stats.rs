@@ -205,8 +205,8 @@ impl Agent {
         for cp in &self.candidate_pairs {
             let stat = CandidatePairStats {
                 timestamp: Instant::now(),
-                local_candidate_id: self.local_candidates[cp.local].id(),
-                remote_candidate_id: self.remote_candidates[cp.remote].id(),
+                local_candidate_id: self.local_candidates[cp.local_index].id(),
+                remote_candidate_id: self.remote_candidates[cp.remote_index].id(),
                 state: cp.state,
                 nominated: cp.nominated,
                 ..CandidatePairStats::default()

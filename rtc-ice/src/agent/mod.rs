@@ -572,8 +572,8 @@ impl Agent {
                     p.state = CandidatePairState::Failed;
                 } else {
                     p.binding_request_count += 1;
-                    let local = p.local;
-                    let remote = p.remote;
+                    let local = p.local_index;
+                    let remote = p.remote_index;
                     pairs.push((local, remote));
                 }
             }
@@ -584,20 +584,20 @@ impl Agent {
         }
     }
 
-    pub(crate) fn add_pair(&mut self, local: usize, remote: usize) {
+    pub(crate) fn add_pair(&mut self, local_index: usize, remote_index: usize) {
         let p = CandidatePair::new(
-            local,
-            remote,
-            self.local_candidates[local].priority(),
-            self.remote_candidates[remote].priority(),
+            local_index,
+            remote_index,
+            self.local_candidates[local_index].priority(),
+            self.remote_candidates[remote_index].priority(),
             self.is_controlling,
         );
         self.candidate_pairs.push(p);
     }
 
-    pub(crate) fn find_pair(&self, local: usize, remote: usize) -> Option<usize> {
+    pub(crate) fn find_pair(&self, local_index: usize, remote_index: usize) -> Option<usize> {
         for (index, p) in self.candidate_pairs.iter().enumerate() {
-            if p.local == local && p.remote == remote {
+            if p.local_index == local_index && p.remote_index == remote_index {
                 return Some(index);
             }
         }
@@ -611,10 +611,10 @@ impl Agent {
             self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |&pair_index| {
-                    let remote = self.candidate_pairs[pair_index].remote;
+                    let remote_index = self.candidate_pairs[pair_index].remote_index;
 
                     let disconnected_time = Instant::now()
-                        .duration_since(self.remote_candidates[remote].last_received());
+                        .duration_since(self.remote_candidates[remote_index].last_received());
                     (true, disconnected_time)
                 },
             )
@@ -646,20 +646,21 @@ impl Agent {
     /// if no packet has been sent on that pair in the last keepaliveInterval.
     /// Note: the caller should hold the agent lock.
     pub(crate) fn check_keepalive(&mut self) {
-        let (local, remote) = {
+        let (local_index, remote_index) = {
             self.selected_pair
                 .as_ref()
                 .map_or((None, None), |&pair_index| {
                     let p = &self.candidate_pairs[pair_index];
-                    (Some(p.local), Some(p.remote))
+                    (Some(p.local_index), Some(p.remote_index))
                 })
         };
 
-        if let (Some(local), Some(remote)) = (local, remote) {
-            let last_sent = Instant::now().duration_since(self.local_candidates[local].last_sent());
+        if let (Some(local_index), Some(remote_index)) = (local_index, remote_index) {
+            let last_sent =
+                Instant::now().duration_since(self.local_candidates[local_index].last_sent());
 
             let last_received =
-                Instant::now().duration_since(self.remote_candidates[remote].last_received());
+                Instant::now().duration_since(self.remote_candidates[remote_index].last_received());
 
             if (self.keepalive_interval != Duration::from_secs(0))
                 && ((last_sent > self.keepalive_interval)
@@ -667,7 +668,7 @@ impl Agent {
             {
                 // we use binding request instead of indication to support refresh consent schemas
                 // see https://tools.ietf.org/html/rfc7675
-                self.ping_candidate(local, remote);
+                self.ping_candidate(local_index, remote_index);
             }
         }
     }
@@ -710,12 +711,17 @@ impl Agent {
         None
     }
 
-    pub(crate) fn send_binding_request(&mut self, m: &Message, local: usize, remote: usize) {
+    pub(crate) fn send_binding_request(
+        &mut self,
+        m: &Message,
+        local_index: usize,
+        remote_index: usize,
+    ) {
         log::trace!(
             "[{}]: ping STUN from {} to {}",
             self.get_name(),
-            local,
-            remote
+            local_index,
+            remote_index
         );
 
         self.invalidate_pending_binding_requests(Instant::now());
@@ -723,16 +729,21 @@ impl Agent {
             self.pending_binding_requests.push(BindingRequest {
                 timestamp: Instant::now(),
                 transaction_id: m.transaction_id,
-                destination: self.remote_candidates[remote].addr(),
+                destination: self.remote_candidates[remote_index].addr(),
                 is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
             });
         }
 
-        self.send_stun(m, local, remote);
+        self.send_stun(m, local_index, remote_index);
     }
 
-    pub(crate) fn send_binding_success(&mut self, m: &Message, local: usize, remote: usize) {
-        let addr = self.remote_candidates[remote].addr();
+    pub(crate) fn send_binding_success(
+        &mut self,
+        m: &Message,
+        local_index: usize,
+        remote_index: usize,
+    ) {
+        let addr = self.remote_candidates[remote_index].addr();
         let (ip, port) = (addr.ip(), addr.port());
         let local_pwd = self.ufrag_pwd.local_pwd.clone();
 
@@ -752,12 +763,12 @@ impl Agent {
             log::warn!(
                 "[{}]: Failed to handle inbound ICE from: {} to: {} error: {}",
                 self.get_name(),
-                local,
-                remote,
+                local_index,
+                remote_index,
                 err
             );
         } else {
-            self.send_stun(&out, local, remote);
+            self.send_stun(&out, local_index, remote_index);
         }
     }
 
@@ -813,7 +824,7 @@ impl Agent {
     pub(crate) fn handle_inbound(
         &mut self,
         m: &mut Message,
-        local: usize,
+        local_index: usize,
         remote_addr: SocketAddr,
     ) {
         if m.typ.method != METHOD_BINDING
@@ -825,7 +836,7 @@ impl Agent {
                 "[{}]: unhandled STUN from {} to {} class({}) method({})",
                 self.get_name(),
                 remote_addr,
-                local,
+                local_index,
                 m.typ.class,
                 m.typ.method
             );
@@ -871,8 +882,8 @@ impl Agent {
                 }
             }
 
-            if let Some(remote) = &remote_candidate_index {
-                self.handle_success_response(m, local, *remote, remote_addr);
+            if let Some(remote_index) = &remote_candidate_index {
+                self.handle_success_response(m, local_index, *remote_index, remote_addr);
             } else {
                 log::warn!(
                     "[{}]: discard success message from ({}), no such remote",
@@ -949,16 +960,16 @@ impl Agent {
                 "[{}]: inbound STUN (Request) from {} to {}",
                 self.get_name(),
                 remote_addr,
-                local
+                local_index
             );
 
-            if let Some(remote) = &remote_candidate_index {
-                self.handle_binding_request(m, local, *remote);
+            if let Some(remote_index) = &remote_candidate_index {
+                self.handle_binding_request(m, local_index, *remote_index);
             }
         }
 
-        if let Some(remote) = remote_candidate_index {
-            self.remote_candidates[remote].seen(false);
+        if let Some(remote_index) = remote_candidate_index {
+            self.remote_candidates[remote_index].seen(false);
         }
     }
 
@@ -966,15 +977,15 @@ impl Agent {
     // remote candidate.
     pub(crate) fn validate_non_stun_traffic(&mut self, remote_addr: SocketAddr) -> bool {
         self.find_remote_candidate(remote_addr)
-            .map_or(false, |remote| {
-                self.remote_candidates[remote].seen(false);
+            .map_or(false, |remote_index| {
+                self.remote_candidates[remote_index].seen(false);
                 true
             })
     }
 
-    pub(crate) fn send_stun(&mut self, msg: &Message, local: usize, remote: usize) {
-        let remote_addr = self.remote_candidates[remote].addr();
-        if let Err(err) = self.local_candidates[local].write(&msg.raw, remote_addr) {
+    pub(crate) fn send_stun(&mut self, msg: &Message, local_index: usize, remote_index: usize) {
+        let remote_addr = self.remote_candidates[remote_index].addr();
+        if let Err(err) = self.local_candidates[local_index].write(&msg.raw, remote_addr) {
             log::trace!(
                 "[{}]: failed to send STUN message: {}",
                 self.get_name(),
@@ -1117,7 +1128,7 @@ impl Agent {
 
     fn handle_inbound_candidate_msg(
         &mut self,
-        local: usize,
+        local_index: usize,
         buf: &[u8],
         src_addr: SocketAddr,
         addr: SocketAddr,
@@ -1139,7 +1150,7 @@ impl Agent {
                     err
                 );
             } else {
-                self.handle_inbound(&mut m, local, src_addr);
+                self.handle_inbound(&mut m, local_index, src_addr);
             }
         } else if !self.validate_non_stun_traffic(src_addr) {
             log::warn!(

@@ -241,6 +241,7 @@ impl Candidate {
         self.component
     }
 
+    /// Sets candidate component.
     pub fn set_component(&mut self, component: u16) {
         self.component = component;
     }

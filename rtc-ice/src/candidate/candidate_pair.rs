@@ -60,11 +60,11 @@ impl fmt::Display for CandidatePairState {
 /// Represents a combination of a local and remote candidate.
 #[derive(Clone, Copy)]
 pub struct CandidatePair {
-    pub(crate) ice_role_controlling: bool,
-    pub remote: usize,
-    pub local: usize,
-    pub remote_priority: u32,
+    pub local_index: usize,
+    pub remote_index: usize,
     pub local_priority: u32,
+    pub remote_priority: u32,
+    pub(crate) ice_role_controlling: bool,
     pub(crate) binding_request_count: u16,
     pub(crate) state: CandidatePairState,
     pub(crate) nominated: bool,
@@ -77,8 +77,8 @@ impl fmt::Debug for CandidatePair {
             "prio {} (local, prio {}) {} <-> {} (remote, prio {})",
             self.priority(),
             self.local_priority,
-            self.local,
-            self.remote,
+            self.local_index,
+            self.remote_index,
             self.remote_priority,
         )
     }
@@ -91,8 +91,8 @@ impl fmt::Display for CandidatePair {
             "prio {} (local, prio {}) {} <-> {} (remote, prio {})",
             self.priority(),
             self.local_priority,
-            self.local,
-            self.remote,
+            self.local_index,
+            self.remote_index,
             self.remote_priority,
         )
     }
@@ -100,25 +100,25 @@ impl fmt::Display for CandidatePair {
 
 impl PartialEq for CandidatePair {
     fn eq(&self, other: &Self) -> bool {
-        self.local == other.local && self.remote == other.remote
+        self.local_index == other.local_index && self.remote_index == other.remote_index
     }
 }
 
 impl CandidatePair {
     #[must_use]
     pub fn new(
-        local: usize,
-        remote: usize,
+        local_index: usize,
+        remote_index: usize,
         local_priority: u32,
         remote_priority: u32,
-        controlling: bool,
+        ice_role_controlling: bool,
     ) -> Self {
         Self {
-            ice_role_controlling: controlling,
-            remote,
-            local,
-            remote_priority,
+            local_index,
+            remote_index,
             local_priority,
+            remote_priority,
+            ice_role_controlling,
             state: CandidatePairState::Waiting,
             binding_request_count: 0,
             nominated: false,
