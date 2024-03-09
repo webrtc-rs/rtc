@@ -1,4 +1,6 @@
+use bytes::BytesMut;
 use crc::{Crc, CRC_32_ISCSI};
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::Instant;
 
@@ -9,6 +11,7 @@ use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::network_type::determine_network_type;
 use shared::error::*;
+use stun::Transmit;
 
 #[derive(Default)]
 pub struct CandidateBaseConfig {
@@ -34,6 +37,7 @@ pub struct CandidateBase {
     pub(crate) tcp_type: TcpType,
 
     pub(crate) resolved_addr: SocketAddr,
+    pub(crate) transmits: VecDeque<Transmit>,
 
     pub(crate) last_sent: Instant,
     pub(crate) last_received: Instant,
@@ -62,11 +66,11 @@ impl Default for CandidateBase {
             tcp_type: TcpType::default(),
 
             resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
+            transmits: VecDeque::new(),
 
             last_sent: Instant::now(),
             last_received: Instant::now(),
 
-            //todo: closed_ch: Arc::new(Mutex::new(None)),
             foundation_override: String::new(),
             priority_override: 0,
             network: String::new(),
@@ -242,15 +246,22 @@ impl Candidate for CandidateBase {
         }
     }
 
-    fn write_to(&mut self, _raw: &[u8], _dst: &dyn Candidate) -> Result<usize> {
-        let n = /*TODO: if let Some(conn) = &self.conn {
-            let addr = dst.addr();
-            conn.send_to(raw, addr).await?
-        } else */{
-            0
-        };
+    fn write(&mut self, raw: &[u8], remote: SocketAddr) -> Result<usize> {
+        let n = raw.len();
+        self.transmits.push_back(Transmit {
+            now: Instant::now(),
+            remote,
+            ecn: None,
+            local_ip: Some(self.resolved_addr.ip()),
+            payload: BytesMut::from(raw),
+        });
+
         self.seen(true);
         Ok(n)
+    }
+
+    fn poll_transmit(&mut self) -> Option<Transmit> {
+        self.transmits.pop_front()
     }
 
     /// Used to compare two candidateBases.

@@ -23,6 +23,7 @@ use shared::error::*;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
+use stun::Transmit;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
@@ -75,7 +76,9 @@ pub trait Candidate: fmt::Display {
     fn close(&self) -> Result<()>;
     fn seen(&mut self, outbound: bool);
 
-    fn write_to(&mut self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
+    fn write(&mut self, raw: &[u8], remote_addr: SocketAddr) -> Result<usize>;
+    fn poll_transmit(&mut self) -> Option<Transmit>;
+
     fn equal(&self, other: &dyn Candidate) -> bool;
     fn set_ip(&mut self, ip: &IpAddr) -> Result<()>;
 }

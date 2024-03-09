@@ -296,6 +296,7 @@ impl Agent {
 
     /// Returns the selected pair or none if there is none
     pub fn get_selected_candidate_pair(&self) -> Option<usize> {
+        //TODO:
         self.agent_conn.get_selected_pair()
     }
 
@@ -973,9 +974,8 @@ impl Agent {
     }
 
     pub(crate) fn send_stun(&mut self, msg: &Message, local: usize, remote: usize) {
-        if let Err(err) =
-            self.local_candidates[local].write_to(&msg.raw, &*self.remote_candidates[remote])
-        {
+        let remote_addr = self.remote_candidates[remote].addr();
+        if let Err(err) = self.local_candidates[local].write(&msg.raw, remote_addr) {
             log::trace!(
                 "[{}]: failed to send STUN message: {}",
                 self.get_name(),
