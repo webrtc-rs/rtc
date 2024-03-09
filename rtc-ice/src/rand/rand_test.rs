@@ -1,13 +1,8 @@
-use std::sync::Arc;
-
-use tokio::sync::Mutex;
-use waitgroup::WaitGroup;
-
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
-#[tokio::test]
-async fn test_random_generator_collision() -> Result<()> {
+#[test]
+fn test_random_generator_collision() -> Result<()> {
     let test_cases = vec![
         (
             "CandidateID",
@@ -32,33 +27,20 @@ async fn test_random_generator_collision() -> Result<()> {
 
     for (name, test_case) in test_cases {
         for _ in 0..ITERATION {
-            let rands = Arc::new(Mutex::new(vec![]));
-
-            // Create a new wait group.
-            let wg = WaitGroup::new();
+            let mut rs = vec![];
 
             for _ in 0..N {
-                let w = wg.worker();
-                let rs = Arc::clone(&rands);
+                let s = if test_case == 0 {
+                    generate_cand_id()
+                } else if test_case == 1 {
+                    generate_pwd()
+                } else {
+                    generate_ufrag()
+                };
 
-                tokio::spawn(async move {
-                    let _d = w;
-
-                    let s = if test_case == 0 {
-                        generate_cand_id()
-                    } else if test_case == 1 {
-                        generate_pwd()
-                    } else {
-                        generate_ufrag()
-                    };
-
-                    let mut r = rs.lock().await;
-                    r.push(s);
-                });
+                rs.push(s);
             }
-            wg.wait().await;
 
-            let rs = rands.lock().await;
             assert_eq!(rs.len(), N, "{name} Failed to generate randoms");
 
             for i in 0..N {
