@@ -212,7 +212,7 @@ impl Agent {
         };
 
         // Restart is also used to initialize the agent for the first time
-        if let Err(err) = agent.restart(config.local_ufrag, config.local_pwd) {
+        if let Err(err) = agent.restart(config.local_ufrag, config.local_pwd, false) {
             let _ = agent.close();
             return Err(err);
         }
@@ -285,7 +285,7 @@ impl Agent {
 
     /// Cleans up the Agent.
     pub fn close(&mut self) -> Result<()> {
-        self.delete_all_candidates();
+        self.delete_all_candidates(false);
         self.update_connection_state(ConnectionState::Closed);
 
         Ok(())
@@ -316,7 +316,12 @@ impl Agent {
 
     /// Restarts the ICE Agent with the provided ufrag/pwd
     /// If no ufrag/pwd is provided the Agent will generate one itself.
-    pub fn restart(&mut self, mut ufrag: String, mut pwd: String) -> Result<()> {
+    pub fn restart(
+        &mut self,
+        mut ufrag: String,
+        mut pwd: String,
+        keep_local_candidates: bool,
+    ) -> Result<()> {
         if ufrag.is_empty() {
             ufrag = generate_ufrag();
         }
@@ -342,7 +347,7 @@ impl Agent {
         self.checklist = vec![];
 
         self.set_selected_pair(None);
-        self.delete_all_candidates();
+        self.delete_all_candidates(keep_local_candidates);
         self.start();
 
         // Restart is used by NewAgent. Accept/Connect should be used to move to checking
@@ -487,7 +492,7 @@ impl Agent {
         if self.connection_state != new_state {
             // Connection has gone to failed, release all gathered candidates
             if new_state == ConnectionState::Failed {
-                self.delete_all_candidates();
+                self.delete_all_candidates(false);
             }
 
             log::info!(
@@ -679,15 +684,17 @@ impl Agent {
     /// This closes any listening sockets and removes both the local and remote candidate lists.
     ///
     /// This is used for restarts, failures and on close.
-    pub(crate) fn delete_all_candidates(&mut self) {
+    pub(crate) fn delete_all_candidates(&mut self, keep_local_candidates: bool) {
         let name = self.get_name().to_string();
 
-        for c in &self.local_candidates {
-            if let Err(err) = c.close() {
-                log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
+        if !keep_local_candidates {
+            for c in &self.local_candidates {
+                if let Err(err) = c.close() {
+                    log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
+                }
             }
+            self.local_candidates.clear();
         }
-        self.local_candidates.clear();
 
         for c in &self.remote_candidates {
             if let Err(err) = c.close() {
