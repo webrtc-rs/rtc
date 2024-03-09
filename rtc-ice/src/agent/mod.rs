@@ -512,16 +512,16 @@ impl Agent {
     }
 
     pub(crate) fn set_selected_pair(&mut self, selected_pair: Option<usize>) {
-        if let Some(index) = selected_pair {
+        if let Some(pair_index) = selected_pair {
             log::trace!(
                 "[{}]: Set selected candidate pair: {:?}",
                 self.get_name(),
-                self.candidate_pairs[index]
+                self.candidate_pairs[pair_index]
             );
 
-            let p = &mut self.candidate_pairs[index];
+            let p = &mut self.candidate_pairs[pair_index];
             p.nominated = true;
-            self.selected_pair = Some(index);
+            self.selected_pair = Some(pair_index);
 
             self.update_connection_state(ConnectionState::Connected);
 
@@ -550,14 +550,13 @@ impl Agent {
 
         {
             let name = self.get_name().to_string();
-            let checklist = &mut self.candidate_pairs;
-            if checklist.is_empty() {
+            if self.candidate_pairs.is_empty() {
                 log::warn!(
                 "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
                 name,
             );
             }
-            for p in checklist {
+            for p in &mut self.candidate_pairs {
                 if p.state == CandidatePairState::Waiting {
                     p.state = CandidatePairState::InProgress;
                 } else if p.state != CandidatePairState::InProgress {
@@ -597,8 +596,7 @@ impl Agent {
     }
 
     pub(crate) fn find_pair(&self, local: usize, remote: usize) -> Option<usize> {
-        let checklist = &self.candidate_pairs;
-        for (index, p) in checklist.iter().enumerate() {
+        for (index, p) in self.candidate_pairs.iter().enumerate() {
             if p.local == local && p.remote == remote {
                 return Some(index);
             }
@@ -612,8 +610,8 @@ impl Agent {
         let (valid, disconnected_time) = {
             self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
-                |selected_pair| {
-                    let remote = self.candidate_pairs[*selected_pair].remote;
+                |&pair_index| {
+                    let remote = self.candidate_pairs[pair_index].remote;
 
                     let disconnected_time = Instant::now()
                         .duration_since(self.remote_candidates[remote].last_received());
@@ -651,8 +649,8 @@ impl Agent {
         let (local, remote) = {
             self.selected_pair
                 .as_ref()
-                .map_or((None, None), |selected_pair| {
-                    let p = &self.candidate_pairs[*selected_pair];
+                .map_or((None, None), |&pair_index| {
+                    let p = &self.candidate_pairs[pair_index];
                     (Some(p.local), Some(p.remote))
                 })
         };
@@ -1168,44 +1166,44 @@ impl Agent {
     }
 
     pub(crate) fn get_best_available_candidate_pair(&self) -> Option<usize> {
-        let mut best: Option<usize> = None;
+        let mut best_pair_index: Option<usize> = None;
 
         for (index, p) in self.candidate_pairs.iter().enumerate() {
             if p.state == CandidatePairState::Failed {
                 continue;
             }
 
-            if let Some(best_index) = &mut best {
-                let b = &self.candidate_pairs[*best_index];
+            if let Some(pair_index) = &mut best_pair_index {
+                let b = &self.candidate_pairs[*pair_index];
                 if b.priority() < p.priority() {
-                    *best_index = index;
+                    *pair_index = index;
                 }
             } else {
-                best = Some(index);
+                best_pair_index = Some(index);
             }
         }
 
-        best
+        best_pair_index
     }
 
     pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<usize> {
-        let mut best: Option<usize> = None;
+        let mut best_pair_index: Option<usize> = None;
 
         for (index, p) in self.candidate_pairs.iter().enumerate() {
             if p.state != CandidatePairState::Succeeded {
                 continue;
             }
 
-            if let Some(best_index) = &mut best {
-                let b = &self.candidate_pairs[*best_index];
+            if let Some(pair_index) = &mut best_pair_index {
+                let b = &self.candidate_pairs[*pair_index];
                 if b.priority() < p.priority() {
-                    *best_index = index;
+                    *pair_index = index;
                 }
             } else {
-                best = Some(index);
+                best_pair_index = Some(index);
             }
         }
 
-        best
+        best_pair_index
     }
 }

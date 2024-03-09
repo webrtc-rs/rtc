@@ -66,8 +66,8 @@ impl Agent {
 
     fn nominate_pair(&mut self) {
         let result = {
-            if let Some(index) = &self.nominated_pair {
-                let pair = &self.candidate_pairs[*index];
+            if let Some(pair_index) = &self.nominated_pair {
+                let pair = &self.candidate_pairs[*pair_index];
                 // The controlling agent MUST include the USE-CANDIDATE attribute in
                 // order to nominate a candidate pair (Section 8.1.1).  The controlled
                 // agent MUST NOT include the USE-CANDIDATE attribute in a Binding
@@ -186,23 +186,24 @@ impl ControllingSelector for Agent {
         } else if nominated_pair_is_some {
             self.nominate_pair();
         } else {
-            let has_nominated_pair = if let Some(index) = self.get_best_valid_candidate_pair() {
-                let p = self.candidate_pairs[index];
+            let has_nominated_pair = if let Some(pair_index) = self.get_best_valid_candidate_pair()
+            {
+                let p = self.candidate_pairs[pair_index];
                 self.is_nominatable(p.local, true) && self.is_nominatable(p.remote, false)
             } else {
                 false
             };
 
             if has_nominated_pair {
-                if let Some(index) = self.get_best_valid_candidate_pair() {
-                    let p = &mut self.candidate_pairs[index];
+                if let Some(pair_index) = self.get_best_valid_candidate_pair() {
+                    let p = &mut self.candidate_pairs[pair_index];
                     log::trace!(
                         "Nominatable pair found, nominating ({}, {})",
                         self.local_candidates[p.local],
                         self.remote_candidates[p.remote],
                     );
                     p.nominated = true;
-                    self.nominated_pair = Some(index);
+                    self.nominated_pair = Some(pair_index);
                 }
 
                 self.nominate_pair();
@@ -262,8 +263,8 @@ impl ControllingSelector for Agent {
             );
             let selected_pair_is_none = self.get_selected_pair().is_none();
 
-            if let Some(index) = self.find_pair(local, remote) {
-                let p = &mut self.candidate_pairs[index];
+            if let Some(pair_index) = self.find_pair(local, remote) {
+                let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
                 log::trace!(
                     "Found valid candidate pair: {}, p.state: {}, isUseCandidate: {}, {}",
@@ -273,7 +274,7 @@ impl ControllingSelector for Agent {
                     selected_pair_is_none
                 );
                 if pending_request.is_use_candidate && selected_pair_is_none {
-                    self.set_selected_pair(Some(index));
+                    self.set_selected_pair(Some(pair_index));
                 }
             } else {
                 // This shouldn't happen
@@ -292,8 +293,8 @@ impl ControllingSelector for Agent {
         self.send_binding_success(m, local, remote);
         log::trace!("controllingSelector: sendBindingSuccess");
 
-        if let Some(index) = self.find_pair(local, remote) {
-            let p = &self.candidate_pairs[index];
+        if let Some(pair_index) = self.find_pair(local, remote) {
+            let p = &self.candidate_pairs[pair_index];
             let nominated_pair_is_none = self.nominated_pair.is_none();
 
             log::trace!(
@@ -307,18 +308,18 @@ impl ControllingSelector for Agent {
                 && nominated_pair_is_none
                 && self.get_selected_pair().is_none()
             {
-                if let Some(best_pair) = self.get_best_available_candidate_pair() {
+                if let Some(best_pair_index) = self.get_best_available_candidate_pair() {
                     log::trace!(
                         "controllingSelector: getBestAvailableCandidatePair {}",
-                        best_pair
+                        best_pair_index
                     );
-                    if best_pair == index
+                    if best_pair_index == pair_index
                         && self.is_nominatable(p.local, true)
                         && self.is_nominatable(p.remote, false)
                     {
                         log::trace!("The candidate ({}, {}) is the best candidate available, marking it as nominated",
                             p.local, p.remote);
-                        self.nominated_pair = Some(index);
+                        self.nominated_pair = Some(pair_index);
                         self.nominate_pair();
                     }
                 } else {
@@ -404,8 +405,8 @@ impl ControlledSelector for Agent {
                 local
             );
 
-            if let Some(index) = self.find_pair(local, remote) {
-                let p = &mut self.candidate_pairs[index];
+            if let Some(pair_index) = self.find_pair(local, remote) {
+                let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
                 log::trace!("Found valid candidate pair: {}", *p);
             } else {
@@ -426,8 +427,8 @@ impl ControlledSelector for Agent {
             self.add_pair(local, remote);
         }
 
-        if let Some(index) = self.find_pair(local, remote) {
-            let p = &self.candidate_pairs[index];
+        if let Some(pair_index) = self.find_pair(local, remote) {
+            let p = &self.candidate_pairs[pair_index];
             let use_candidate = m.contains(ATTR_USE_CANDIDATE);
             if use_candidate {
                 // https://tools.ietf.org/html/rfc8445#section-7.3.1.5
@@ -438,7 +439,7 @@ impl ControlledSelector for Agent {
                     // generated a valid pair (Section 7.2.5.3.2).  The agent sets the
                     // nominated flag value of the valid pair to true.
                     if self.get_selected_pair().is_none() {
-                        self.set_selected_pair(Some(index));
+                        self.set_selected_pair(Some(pair_index));
                     }
                     self.send_binding_success(m, local, remote);
                 } else {
