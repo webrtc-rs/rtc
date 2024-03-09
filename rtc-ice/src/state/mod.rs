@@ -66,3 +66,47 @@ impl From<u8> for ConnectionState {
         }
     }
 }
+
+/// Describes the state of the candidate gathering process.
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum GatheringState {
+    Unspecified,
+
+    /// Indicates candidate gathering is not yet started.
+    New,
+
+    /// Indicates candidate gathering is ongoing.
+    Gathering,
+
+    /// Indicates candidate gathering has been completed.
+    Complete,
+}
+
+impl From<u8> for GatheringState {
+    fn from(v: u8) -> Self {
+        match v {
+            1 => Self::New,
+            2 => Self::Gathering,
+            3 => Self::Complete,
+            _ => Self::Unspecified,
+        }
+    }
+}
+
+impl Default for GatheringState {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
+
+impl fmt::Display for GatheringState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match *self {
+            Self::New => "new",
+            Self::Gathering => "gathering",
+            Self::Complete => "complete",
+            Self::Unspecified => "unspecified",
+        };
+        write!(f, "{s}")
+    }
+}
