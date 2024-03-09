@@ -1,24 +1,23 @@
-use super::candidate_base::*;
 use super::*;
 use crate::rand::generate_cand_id;
 
 /// The config required to create a new `CandidateHost`.
 #[derive(Default)]
 pub struct CandidateHostConfig {
-    pub base_config: CandidateBaseConfig,
+    pub base_config: CandidateConfig,
 
     pub tcp_type: TcpType,
 }
 
 impl CandidateHostConfig {
     /// Creates a new host candidate.
-    pub fn new_candidate_host(self) -> Result<CandidateBase> {
+    pub fn new_candidate_host(self) -> Result<Candidate> {
         let mut candidate_id = self.base_config.candidate_id;
         if candidate_id.is_empty() {
             candidate_id = generate_cand_id();
         }
 
-        let mut c = CandidateBase {
+        let mut c = Candidate {
             id: candidate_id,
             address: self.base_config.address.clone(),
             candidate_type: CandidateType::Host,
@@ -30,7 +29,7 @@ impl CandidateHostConfig {
             network: self.base_config.network,
             network_type: NetworkType::Udp4,
             //conn: self.base_config.conn,
-            ..CandidateBase::default()
+            ..Candidate::default()
         };
 
         if !self.base_config.address.ends_with(".local") {

@@ -1,12 +1,13 @@
 use super::*;
-use crate::candidate::candidate_base::{unmarshal_candidate, CandidateBase};
 use crate::candidate::candidate_pair::CandidatePairState;
+use crate::candidate::{unmarshal_candidate, Candidate};
+use std::time::Instant;
 
 #[test]
 fn test_candidate_priority() -> Result<()> {
     let tests = vec![
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::Host,
                 component: COMPONENT_RTP,
                 ..Default::default()
@@ -14,7 +15,7 @@ fn test_candidate_priority() -> Result<()> {
             2130706431,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::Host,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp4,
@@ -24,7 +25,7 @@ fn test_candidate_priority() -> Result<()> {
             2128609279,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::Host,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp4,
@@ -34,7 +35,7 @@ fn test_candidate_priority() -> Result<()> {
             2124414975,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::Host,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp4,
@@ -44,7 +45,7 @@ fn test_candidate_priority() -> Result<()> {
             2120220671,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::PeerReflexive,
                 component: COMPONENT_RTP,
                 ..Default::default()
@@ -52,7 +53,7 @@ fn test_candidate_priority() -> Result<()> {
             1862270975,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::PeerReflexive,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp6,
@@ -62,7 +63,7 @@ fn test_candidate_priority() -> Result<()> {
             1860173823,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::PeerReflexive,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp6,
@@ -72,7 +73,7 @@ fn test_candidate_priority() -> Result<()> {
             1855979519,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::PeerReflexive,
                 component: COMPONENT_RTP,
                 network_type: NetworkType::Tcp6,
@@ -82,7 +83,7 @@ fn test_candidate_priority() -> Result<()> {
             1851785215,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::ServerReflexive,
                 component: COMPONENT_RTP,
                 ..Default::default()
@@ -90,7 +91,7 @@ fn test_candidate_priority() -> Result<()> {
             1694498815,
         ),
         (
-            CandidateBase {
+            Candidate {
                 candidate_type: CandidateType::Relay,
                 component: COMPONENT_RTP,
                 ..Default::default()
@@ -112,7 +113,7 @@ fn test_candidate_priority() -> Result<()> {
 
 #[test]
 fn test_candidate_last_sent() -> Result<()> {
-    let mut candidate = CandidateBase::default();
+    let mut candidate = Candidate::default();
 
     let now = Instant::now();
     candidate.set_last_sent(now);
@@ -123,7 +124,7 @@ fn test_candidate_last_sent() -> Result<()> {
 
 #[test]
 fn test_candidate_last_received() -> Result<()> {
-    let mut candidate = CandidateBase::default();
+    let mut candidate = Candidate::default();
 
     let now = Instant::now();
     candidate.set_last_received(now);
@@ -136,14 +137,14 @@ fn test_candidate_last_received() -> Result<()> {
 fn test_candidate_foundation() -> Result<()> {
     // All fields are the same
     assert_eq!(
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
@@ -154,14 +155,14 @@ fn test_candidate_foundation() -> Result<()> {
 
     // Different Address
     assert_ne!(
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "B".to_owned(),
@@ -172,14 +173,14 @@ fn test_candidate_foundation() -> Result<()> {
 
     // Different networkType
     assert_ne!(
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp6,
             address: "A".to_owned(),
@@ -190,14 +191,14 @@ fn test_candidate_foundation() -> Result<()> {
 
     // Different candidateType
     assert_ne!(
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
             ..Default::default()
         })
         .foundation(),
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::PeerReflexive,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
@@ -208,7 +209,7 @@ fn test_candidate_foundation() -> Result<()> {
 
     // Port has no effect
     assert_eq!(
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
@@ -216,7 +217,7 @@ fn test_candidate_foundation() -> Result<()> {
             ..Default::default()
         })
         .foundation(),
-        (CandidateBase {
+        (Candidate {
             candidate_type: CandidateType::Host,
             network_type: NetworkType::Udp4,
             address: "A".to_owned(),
@@ -299,7 +300,7 @@ fn test_candidate_type_to_string() {
 fn test_candidate_marshal() -> Result<()> {
     let tests = vec![
        (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:       NetworkType::Udp6,
                     candidate_type:      CandidateType::Host,
                     address:            "fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a".to_owned(),
@@ -311,7 +312,7 @@ fn test_candidate_marshal() -> Result<()> {
             "750 1 udp 500 fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a 53987 typ host",
         ),
         (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:   NetworkType::Udp4,
                     candidate_type: CandidateType::Host,
                     address:       "10.0.75.1".to_owned(),
@@ -321,7 +322,7 @@ fn test_candidate_marshal() -> Result<()> {
             "4273957277 1 udp 2130706431 10.0.75.1 53634 typ host",
         ),
         (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:    NetworkType::Udp4,
                     candidate_type:  CandidateType::ServerReflexive,
                     address:        "191.228.238.68".to_owned(),
@@ -335,7 +336,7 @@ fn test_candidate_marshal() -> Result<()> {
             "647372371 1 udp 1694498815 191.228.238.68 53991 typ srflx raddr 192.168.0.274 rport 53991",
         ),
         (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:   NetworkType::Udp4,
                     candidate_type:  CandidateType::Relay,
                     address:        "50.0.0.1".to_owned(),
@@ -350,7 +351,7 @@ fn test_candidate_marshal() -> Result<()> {
             "848194626 1 udp 16777215 50.0.0.1 5000 typ relay raddr 192.168.0.1 rport 5001",
         ),
         (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:   NetworkType::Tcp4,
                     candidate_type: CandidateType::Host,
                     address:       "192.168.0.196".to_owned(),
@@ -361,7 +362,7 @@ fn test_candidate_marshal() -> Result<()> {
             "1052353102 1 tcp 2128609279 192.168.0.196 0 typ host tcptype active",
         ),
         (
-            Some(CandidateBase{
+            Some(Candidate{
                     network_type:   NetworkType::Udp4,
                     candidate_type: CandidateType::Host,
                     address:       "e2494022-4d9a-4c1e-a750-cc48d4f8d6ee.local".to_owned(),

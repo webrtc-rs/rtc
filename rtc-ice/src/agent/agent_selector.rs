@@ -67,7 +67,7 @@ impl Agent {
     fn nominate_pair(&mut self) {
         let result = {
             if let Some(index) = &self.nominated_pair {
-                let pair = &self.checklist[*index];
+                let pair = &self.candidate_pairs[*index];
                 // The controlling agent MUST include the USE-CANDIDATE attribute in
                 // order to nominate a candidate pair (Section 8.1.1).  The controlled
                 // agent MUST NOT include the USE-CANDIDATE attribute in a Binding
@@ -114,52 +114,6 @@ impl Agent {
         if let Some((msg, local, remote)) = result {
             self.send_binding_request(&msg, local, remote);
         }
-    }
-
-    pub(crate) fn get_selected_pair(&self) -> Option<usize> {
-        self.selected_pair
-    }
-
-    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<usize> {
-        let mut best: Option<usize> = None;
-
-        for (index, p) in self.checklist.iter().enumerate() {
-            if p.state == CandidatePairState::Failed {
-                continue;
-            }
-
-            if let Some(best_index) = &mut best {
-                let b = &self.checklist[*best_index];
-                if b.priority() < p.priority() {
-                    *best_index = index;
-                }
-            } else {
-                best = Some(index);
-            }
-        }
-
-        best
-    }
-
-    pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<usize> {
-        let mut best: Option<usize> = None;
-
-        for (index, p) in self.checklist.iter().enumerate() {
-            if p.state != CandidatePairState::Succeeded {
-                continue;
-            }
-
-            if let Some(best_index) = &mut best {
-                let b = &self.checklist[*best_index];
-                if b.priority() < p.priority() {
-                    *best_index = index;
-                }
-            } else {
-                best = Some(index);
-            }
-        }
-
-        best
     }
 
     pub(crate) fn start(&mut self) {
@@ -233,7 +187,7 @@ impl ControllingSelector for Agent {
             self.nominate_pair();
         } else {
             let has_nominated_pair = if let Some(index) = self.get_best_valid_candidate_pair() {
-                let p = self.checklist[index];
+                let p = self.candidate_pairs[index];
                 self.is_nominatable(p.local, true) && self.is_nominatable(p.remote, false)
             } else {
                 false
@@ -241,7 +195,7 @@ impl ControllingSelector for Agent {
 
             if has_nominated_pair {
                 if let Some(index) = self.get_best_valid_candidate_pair() {
-                    let p = &mut self.checklist[index];
+                    let p = &mut self.candidate_pairs[index];
                     log::trace!(
                         "Nominatable pair found, nominating ({}, {})",
                         self.local_candidates[p.local],
@@ -309,7 +263,7 @@ impl ControllingSelector for Agent {
             let selected_pair_is_none = self.get_selected_pair().is_none();
 
             if let Some(index) = self.find_pair(local, remote) {
-                let p = &mut self.checklist[index];
+                let p = &mut self.candidate_pairs[index];
                 p.state = CandidatePairState::Succeeded;
                 log::trace!(
                     "Found valid candidate pair: {}, p.state: {}, isUseCandidate: {}, {}",
@@ -339,7 +293,7 @@ impl ControllingSelector for Agent {
         log::trace!("controllingSelector: sendBindingSuccess");
 
         if let Some(index) = self.find_pair(local, remote) {
-            let p = &self.checklist[index];
+            let p = &self.candidate_pairs[index];
             let nominated_pair_is_none = self.nominated_pair.is_none();
 
             log::trace!(
@@ -451,7 +405,7 @@ impl ControlledSelector for Agent {
             );
 
             if let Some(index) = self.find_pair(local, remote) {
-                let p = &mut self.checklist[index];
+                let p = &mut self.candidate_pairs[index];
                 p.state = CandidatePairState::Succeeded;
                 log::trace!("Found valid candidate pair: {}", *p);
             } else {
@@ -473,7 +427,7 @@ impl ControlledSelector for Agent {
         }
 
         if let Some(index) = self.find_pair(local, remote) {
-            let p = &self.checklist[index];
+            let p = &self.candidate_pairs[index];
             let use_candidate = m.contains(ATTR_USE_CANDIDATE);
             if use_candidate {
                 // https://tools.ietf.org/html/rfc8445#section-7.3.1.5

@@ -1,14 +1,14 @@
 use super::*;
-use crate::candidate::candidate_base::{CandidateBase, CandidateBaseConfig};
 use crate::candidate::candidate_host::CandidateHostConfig;
 use crate::candidate::candidate_pair::CandidatePair;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
+use crate::candidate::{Candidate, CandidateConfig};
 
-pub(crate) fn host_candidate() -> Result<CandidateBase> {
+pub(crate) fn host_candidate() -> Result<Candidate> {
     CandidateHostConfig {
-        base_config: CandidateBaseConfig {
+        base_config: CandidateConfig {
             network: "udp".to_owned(),
             address: "0.0.0.0".to_owned(),
             component: COMPONENT_RTP,
@@ -19,9 +19,9 @@ pub(crate) fn host_candidate() -> Result<CandidateBase> {
     .new_candidate_host()
 }
 
-pub(crate) fn prflx_candidate() -> Result<CandidateBase> {
+pub(crate) fn prflx_candidate() -> Result<Candidate> {
     CandidatePeerReflexiveConfig {
-        base_config: CandidateBaseConfig {
+        base_config: CandidateConfig {
             network: "udp".to_owned(),
             address: "0.0.0.0".to_owned(),
             component: COMPONENT_RTP,
@@ -32,9 +32,9 @@ pub(crate) fn prflx_candidate() -> Result<CandidateBase> {
     .new_candidate_peer_reflexive()
 }
 
-pub(crate) fn srflx_candidate() -> Result<CandidateBase> {
+pub(crate) fn srflx_candidate() -> Result<Candidate> {
     CandidateServerReflexiveConfig {
-        base_config: CandidateBaseConfig {
+        base_config: CandidateConfig {
             network: "udp".to_owned(),
             address: "0.0.0.0".to_owned(),
             component: COMPONENT_RTP,
@@ -45,9 +45,9 @@ pub(crate) fn srflx_candidate() -> Result<CandidateBase> {
     .new_candidate_server_reflexive()
 }
 
-pub(crate) fn relay_candidate() -> Result<CandidateBase> {
+pub(crate) fn relay_candidate() -> Result<Candidate> {
     CandidateRelayConfig {
-        base_config: CandidateBaseConfig {
+        base_config: CandidateConfig {
             network: "udp".to_owned(),
             address: "0.0.0.0".to_owned(),
             component: COMPONENT_RTP,

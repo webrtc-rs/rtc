@@ -1,4 +1,3 @@
-use super::candidate_base::*;
 use super::*;
 use crate::network_type::determine_network_type;
 use crate::rand::generate_cand_id;
@@ -7,7 +6,7 @@ use shared::error::*;
 /// The config required to create a new `CandidateRelay`.
 #[derive(Default)]
 pub struct CandidateRelayConfig {
-    pub base_config: CandidateBaseConfig,
+    pub base_config: CandidateConfig,
 
     pub rel_addr: String,
     pub rel_port: u16,
@@ -16,7 +15,7 @@ pub struct CandidateRelayConfig {
 
 impl CandidateRelayConfig {
     /// Creates a new relay candidate.
-    pub fn new_candidate_relay(self) -> Result<CandidateBase> {
+    pub fn new_candidate_relay(self) -> Result<Candidate> {
         let mut candidate_id = self.base_config.candidate_id;
         if candidate_id.is_empty() {
             candidate_id = generate_cand_id();
@@ -28,7 +27,7 @@ impl CandidateRelayConfig {
         };
         let network_type = determine_network_type(&self.base_config.network, &ip)?;
 
-        let c = CandidateBase {
+        let c = Candidate {
             id: candidate_id,
             network_type,
             candidate_type: CandidateType::Relay,
@@ -44,7 +43,7 @@ impl CandidateRelayConfig {
             }),
             //TODO:conn: self.base_config.conn,
             //TODO: relay_client: self.relay_client.clone(),
-            ..CandidateBase::default()
+            ..Candidate::default()
         };
 
         Ok(c)

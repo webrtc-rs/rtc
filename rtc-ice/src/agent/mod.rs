@@ -12,11 +12,10 @@ use stun::attributes::*;
 use stun::fingerprint::*;
 use stun::integrity::*;
 use stun::message::*;
-use stun::textattrs::Username;
+use stun::textattrs::*;
 use stun::xoraddr::*;
 
-use crate::candidate::candidate_pair::{CandidatePair, CandidatePairState};
-use crate::candidate::*;
+use crate::candidate::{candidate_pair::*, *};
 use crate::rand::*;
 use crate::state::*;
 use crate::url::*;
@@ -78,17 +77,16 @@ pub struct Agent {
 
     pub(crate) start_time: Instant,
 
-    pub(crate) nominated_pair: Option<usize>,
-    pub(crate) selected_pair: Option<usize>,
-    pub(crate) checklist: Vec<CandidatePair>,
-
     pub(crate) connection_state: ConnectionState,
 
     //pub(crate) started_ch_tx: Mutex<Option<broadcast::Sender<()>>>,
     pub(crate) ufrag_pwd: UfragPwd,
 
-    pub(crate) local_candidates: Vec<Box<dyn Candidate>>,
-    pub(crate) remote_candidates: Vec<Box<dyn Candidate>>,
+    pub(crate) local_candidates: Vec<Candidate>,
+    pub(crate) remote_candidates: Vec<Candidate>,
+    pub(crate) candidate_pairs: Vec<CandidatePair>,
+    pub(crate) nominated_pair: Option<usize>,
+    pub(crate) selected_pair: Option<usize>,
 
     // LRU of outbound Binding request Transaction IDs
     pub(crate) pending_binding_requests: Vec<BindingRequest>,
@@ -146,7 +144,7 @@ impl Agent {
 
             nominated_pair: None,
             selected_pair: None,
-            checklist: vec![],
+            candidate_pairs: vec![],
 
             connection_state: ConnectionState::New,
 
@@ -221,9 +219,9 @@ impl Agent {
     }
 
     /// Adds a new local candidate.
-    pub fn add_local_candidate(&mut self, c: Box<dyn Candidate>) -> Result<()> {
+    pub fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
         for cand in &self.local_candidates {
-            if cand.equal(&*c) {
+            if cand.equal(&c) {
                 return Ok(());
             }
         }
@@ -240,7 +238,7 @@ impl Agent {
     }
 
     /// Adds a new remote candidate.
-    pub fn add_remote_candidate(&mut self, c: Box<dyn Candidate>) -> Result<()> {
+    pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<()> {
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
             log::warn!(
@@ -251,7 +249,7 @@ impl Agent {
         }
 
         for cand in &self.remote_candidates {
-            if cand.equal(&*c) {
+            if cand.equal(&c) {
                 return Ok(());
             }
         }
@@ -344,7 +342,7 @@ impl Agent {
 
         self.pending_binding_requests = vec![];
 
-        self.checklist = vec![];
+        self.candidate_pairs = vec![];
 
         self.set_selected_pair(None);
         self.delete_all_candidates(keep_local_candidates);
@@ -360,7 +358,7 @@ impl Agent {
     }
 
     // Returns the local candidates.
-    pub(crate) fn get_local_candidates(&self) -> &[Box<dyn Candidate>] {
+    pub(crate) fn get_local_candidates(&self) -> &[Candidate] {
         &self.local_candidates
     }
 
@@ -518,10 +516,10 @@ impl Agent {
             log::trace!(
                 "[{}]: Set selected candidate pair: {:?}",
                 self.get_name(),
-                self.checklist[index]
+                self.candidate_pairs[index]
             );
 
-            let p = &mut self.checklist[index];
+            let p = &mut self.candidate_pairs[index];
             p.nominated = true;
             self.selected_pair = Some(index);
 
@@ -552,7 +550,7 @@ impl Agent {
 
         {
             let name = self.get_name().to_string();
-            let checklist = &mut self.checklist;
+            let checklist = &mut self.candidate_pairs;
             if checklist.is_empty() {
                 log::warn!(
                 "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
@@ -595,11 +593,11 @@ impl Agent {
             self.remote_candidates[remote].priority(),
             self.is_controlling,
         );
-        self.checklist.push(p);
+        self.candidate_pairs.push(p);
     }
 
     pub(crate) fn find_pair(&self, local: usize, remote: usize) -> Option<usize> {
-        let checklist = &self.checklist;
+        let checklist = &self.candidate_pairs;
         for (index, p) in checklist.iter().enumerate() {
             if p.local == local && p.remote == remote {
                 return Some(index);
@@ -615,7 +613,7 @@ impl Agent {
             self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |selected_pair| {
-                    let remote = self.checklist[*selected_pair].remote;
+                    let remote = self.candidate_pairs[*selected_pair].remote;
 
                     let disconnected_time = Instant::now()
                         .duration_since(self.remote_candidates[remote].last_received());
@@ -654,7 +652,7 @@ impl Agent {
             self.selected_pair
                 .as_ref()
                 .map_or((None, None), |selected_pair| {
-                    let p = &self.checklist[*selected_pair];
+                    let p = &self.candidate_pairs[*selected_pair];
                     (Some(p.local), Some(p.remote))
                 })
         };
@@ -1163,5 +1161,51 @@ impl Agent {
         } else {
             "controlled"
         }
+    }
+
+    pub(crate) fn get_selected_pair(&self) -> Option<usize> {
+        self.selected_pair
+    }
+
+    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<usize> {
+        let mut best: Option<usize> = None;
+
+        for (index, p) in self.candidate_pairs.iter().enumerate() {
+            if p.state == CandidatePairState::Failed {
+                continue;
+            }
+
+            if let Some(best_index) = &mut best {
+                let b = &self.candidate_pairs[*best_index];
+                if b.priority() < p.priority() {
+                    *best_index = index;
+                }
+            } else {
+                best = Some(index);
+            }
+        }
+
+        best
+    }
+
+    pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<usize> {
+        let mut best: Option<usize> = None;
+
+        for (index, p) in self.candidate_pairs.iter().enumerate() {
+            if p.state != CandidatePairState::Succeeded {
+                continue;
+            }
+
+            if let Some(best_index) = &mut best {
+                let b = &self.candidate_pairs[*best_index];
+                if b.priority() < p.priority() {
+                    *best_index = index;
+                }
+            } else {
+                best = Some(index);
+            }
+        }
+
+        best
     }
 }

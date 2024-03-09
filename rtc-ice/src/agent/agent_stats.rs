@@ -201,8 +201,8 @@ impl Default for CandidateStats {
 impl Agent {
     /// Returns a list of candidate pair stats.
     pub fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
-        let mut res = Vec::with_capacity(self.checklist.len());
-        for cp in &self.checklist {
+        let mut res = Vec::with_capacity(self.candidate_pairs.len());
+        for cp in &self.candidate_pairs {
             let stat = CandidatePairStats {
                 timestamp: Instant::now(),
                 local_candidate_id: self.local_candidates[cp.local].id(),
