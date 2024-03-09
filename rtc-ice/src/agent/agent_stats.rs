@@ -1,8 +1,7 @@
 use crate::agent::Agent;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use crate::candidate::{CandidatePairState, CandidateType};
+use crate::candidate::{candidate_pair::CandidatePairState, CandidateType};
 
 /// Contains ICE candidate pair statistics.
 pub struct CandidatePairStats {
@@ -207,10 +206,10 @@ impl Agent {
         for cp in checklist {
             let stat = CandidatePairStats {
                 timestamp: Instant::now(),
-                local_candidate_id: cp.local.id(),
-                remote_candidate_id: cp.remote.id(),
-                state: cp.state.load(Ordering::SeqCst).into(),
-                nominated: cp.nominated.load(Ordering::SeqCst),
+                local_candidate_id: self.local_candidates[cp.local].id(),
+                remote_candidate_id: self.remote_candidates[cp.remote].id(),
+                state: cp.state,
+                nominated: cp.nominated,
                 ..CandidatePairStats::default()
             };
             res.push(stat);

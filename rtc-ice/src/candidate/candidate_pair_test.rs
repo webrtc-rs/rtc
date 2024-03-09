@@ -1,5 +1,7 @@
 use super::*;
+use crate::candidate::candidate_base::{CandidateBase, CandidateBaseConfig};
 use crate::candidate::candidate_host::CandidateHostConfig;
+use crate::candidate::candidate_pair::CandidatePair;
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
@@ -58,67 +60,95 @@ pub(crate) fn relay_candidate() -> Result<CandidateBase> {
 
 #[test]
 fn test_candidate_pair_priority() -> Result<()> {
+    const HOST_INDEX: usize = 0;
+    const PRFLX_INDEX: usize = 1;
+    const SRFLX_INDEX: usize = 2;
+    const RELAY_INDEX: usize = 3;
+
+    let candidates = vec![
+        host_candidate()?,
+        prflx_candidate()?,
+        srflx_candidate()?,
+        relay_candidate()?,
+    ];
+
     let tests = vec![
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(host_candidate()?),
+                HOST_INDEX,
+                HOST_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[HOST_INDEX].priority(),
                 false,
             ),
             9151314440652587007,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(host_candidate()?),
+                HOST_INDEX,
+                HOST_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[HOST_INDEX].priority(),
                 true,
             ),
             9151314440652587007,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(prflx_candidate()?),
+                HOST_INDEX,
+                PRFLX_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[PRFLX_INDEX].priority(),
                 true,
             ),
             7998392936314175488,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(prflx_candidate()?),
+                HOST_INDEX,
+                PRFLX_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[PRFLX_INDEX].priority(),
                 false,
             ),
             7998392936314175487,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(srflx_candidate()?),
+                HOST_INDEX,
+                SRFLX_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[SRFLX_INDEX].priority(),
                 true,
             ),
             7277816996102668288,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(srflx_candidate()?),
+                HOST_INDEX,
+                SRFLX_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[SRFLX_INDEX].priority(),
                 false,
             ),
             7277816996102668287,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(relay_candidate()?),
+                HOST_INDEX,
+                RELAY_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[RELAY_INDEX].priority(),
                 true,
             ),
             72057593987596288,
         ),
         (
             CandidatePair::new(
-                Box::new(host_candidate()?),
-                Box::new(relay_candidate()?),
+                HOST_INDEX,
+                RELAY_INDEX,
+                candidates[HOST_INDEX].priority(),
+                candidates[RELAY_INDEX].priority(),
                 false,
             ),
             72057593987596287,
@@ -138,14 +168,30 @@ fn test_candidate_pair_priority() -> Result<()> {
 
 #[test]
 fn test_candidate_pair_equality() -> Result<()> {
+    const HOST_INDEX: usize = 0;
+    const PRFLX_INDEX: usize = 1;
+    const SRFLX_INDEX: usize = 2;
+    const RELAY_INDEX: usize = 3;
+
+    let candidates = vec![
+        host_candidate()?,
+        prflx_candidate()?,
+        srflx_candidate()?,
+        relay_candidate()?,
+    ];
+
     let pair_a = CandidatePair::new(
-        Box::new(host_candidate()?),
-        Box::new(srflx_candidate()?),
+        HOST_INDEX,
+        SRFLX_INDEX,
+        candidates[HOST_INDEX].priority(),
+        candidates[SRFLX_INDEX].priority(),
         true,
     );
     let pair_b = CandidatePair::new(
-        Box::new(host_candidate()?),
-        Box::new(srflx_candidate()?),
+        HOST_INDEX,
+        SRFLX_INDEX,
+        candidates[HOST_INDEX].priority(),
+        candidates[SRFLX_INDEX].priority(),
         false,
     );
 

@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::candidate::candidate_pair::CandidatePairState;
 use crate::candidate::*;
 
 // CandidatePairStats contains ICE candidate pair statistics

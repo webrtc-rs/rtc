@@ -1,7 +1,5 @@
 use crate::agent::Agent;
 use std::net::SocketAddr;
-use std::rc::Rc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
 use stun::fingerprint::*;
@@ -10,49 +8,44 @@ use stun::message::*;
 use stun::textattrs::*;
 
 use crate::attributes::{control::*, priority::*, use_candidate::*};
-use crate::candidate::*;
+use crate::candidate::{candidate_pair::*, *};
 
 trait ControllingSelector {
     fn start(&mut self);
     fn contact_candidates(&mut self);
-    fn ping_candidate(&mut self, local: &Rc<dyn Candidate>, remote: &Rc<dyn Candidate>);
+    fn ping_candidate(&mut self, local: usize, remote: usize);
     fn handle_success_response(
         &mut self,
         m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        local: usize,
+        remote: usize,
         remote_addr: SocketAddr,
     );
-    fn handle_binding_request(
-        &mut self,
-        m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
-    );
+    fn handle_binding_request(&mut self, m: &Message, local: usize, remote: usize);
 }
 
 trait ControlledSelector {
     fn start(&mut self);
     fn contact_candidates(&mut self);
-    fn ping_candidate(&mut self, local: &Rc<dyn Candidate>, remote: &Rc<dyn Candidate>);
+    fn ping_candidate(&mut self, local: usize, remote: usize);
     fn handle_success_response(
         &mut self,
         m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        local: usize,
+        remote: usize,
         remote_addr: SocketAddr,
     );
-    fn handle_binding_request(
-        &mut self,
-        m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
-    );
+    fn handle_binding_request(&mut self, m: &Message, local: usize, remote: usize);
 }
 
 impl Agent {
-    fn is_nominatable(&self, c: &Rc<dyn Candidate>) -> bool {
+    fn is_nominatable(&self, index: usize, is_local: bool) -> bool {
         let start_time = self.start_time;
+        let c = if is_local {
+            &self.local_candidates[index]
+        } else {
+            &self.remote_candidates[index]
+        };
         match c.candidate_type() {
             CandidateType::Host => {
                 Instant::now()
@@ -90,7 +83,7 @@ impl Agent {
                         Box::new(Username::new(ATTR_USERNAME, username)),
                         Box::<UseCandidateAttr>::default(),
                         Box::new(AttrControlling(self.tie_breaker)),
-                        Box::new(PriorityAttr(pair.local.priority())),
+                        Box::new(PriorityAttr(pair.local_priority)),
                         Box::new(MessageIntegrity::new_short_term_integrity(
                             ufrag_pwd.remote_pwd.clone(),
                         )),
@@ -105,11 +98,11 @@ impl Agent {
                 } else {
                     log::trace!(
                         "ping STUN (nominate candidate pair from {} to {}",
-                        pair.local,
-                        pair.remote
+                        self.local_candidates[pair.local],
+                        self.remote_candidates[pair.remote],
                     );
-                    let local = pair.local.clone();
-                    let remote = pair.remote.clone();
+                    let local = pair.local;
+                    let remote = pair.remote;
                     Some((msg, local, remote))
                 }
             } else {
@@ -118,7 +111,7 @@ impl Agent {
         };
 
         if let Some((msg, local, remote)) = result {
-            self.send_binding_request(&msg, &local, &remote);
+            self.send_binding_request(&msg, local, remote);
         }
     }
 
@@ -138,7 +131,7 @@ impl Agent {
         }
     }
 
-    pub(crate) fn ping_candidate(&mut self, local: &Rc<dyn Candidate>, remote: &Rc<dyn Candidate>) {
+    pub(crate) fn ping_candidate(&mut self, local: usize, remote: usize) {
         if self.is_controlling {
             ControllingSelector::ping_candidate(self, local, remote);
         } else {
@@ -149,8 +142,8 @@ impl Agent {
     pub(crate) fn handle_success_response(
         &mut self,
         m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        local: usize,
+        remote: usize,
         remote_addr: SocketAddr,
     ) {
         if self.is_controlling {
@@ -160,12 +153,7 @@ impl Agent {
         }
     }
 
-    pub(crate) fn handle_binding_request(
-        &mut self,
-        m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
-    ) {
+    pub(crate) fn handle_binding_request(&mut self, m: &Message, local: usize, remote: usize) {
         if self.is_controlling {
             ControllingSelector::handle_binding_request(self, m, local, remote);
         } else {
@@ -198,21 +186,23 @@ impl ControllingSelector for Agent {
             self.nominate_pair();
         } else {
             let has_nominated_pair =
-                if let Some(p) = self.agent_conn.get_best_valid_candidate_pair() {
-                    self.is_nominatable(&p.local) && self.is_nominatable(&p.remote)
+                if let Some(index) = self.agent_conn.get_best_valid_candidate_pair() {
+                    let p = self.agent_conn.checklist[index];
+                    self.is_nominatable(p.local, true) && self.is_nominatable(p.remote, false)
                 } else {
                     false
                 };
 
             if has_nominated_pair {
-                if let Some(p) = self.agent_conn.get_best_valid_candidate_pair() {
+                if let Some(index) = self.agent_conn.get_best_valid_candidate_pair() {
+                    let p = &mut self.agent_conn.checklist[index];
                     log::trace!(
                         "Nominatable pair found, nominating ({}, {})",
-                        p.local.to_string(),
-                        p.remote.to_string()
+                        self.local_candidates[p.local],
+                        self.remote_candidates[p.remote],
                     );
-                    p.nominated.store(true, Ordering::SeqCst);
-                    self.nominated_pair = Some(p);
+                    p.nominated = true;
+                    self.nominated_pair = Some(*p);
                 }
 
                 self.nominate_pair();
@@ -222,7 +212,7 @@ impl ControllingSelector for Agent {
         }
     }
 
-    fn ping_candidate(&mut self, local: &Rc<dyn Candidate>, remote: &Rc<dyn Candidate>) {
+    fn ping_candidate(&mut self, local: usize, remote: usize) {
         let (msg, result) = {
             let ufrag_pwd = &self.ufrag_pwd;
             let username = ufrag_pwd.remote_ufrag.clone() + ":" + ufrag_pwd.local_ufrag.as_str();
@@ -232,7 +222,7 @@ impl ControllingSelector for Agent {
                 Box::new(TransactionId::new()),
                 Box::new(Username::new(ATTR_USERNAME, username)),
                 Box::new(AttrControlling(self.tie_breaker)),
-                Box::new(PriorityAttr(local.priority())),
+                Box::new(PriorityAttr(self.local_candidates[local].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity(
                     ufrag_pwd.remote_pwd.clone(),
                 )),
@@ -251,8 +241,8 @@ impl ControllingSelector for Agent {
     fn handle_success_response(
         &mut self,
         m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        local: usize,
+        remote: usize,
         remote_addr: SocketAddr,
     ) {
         if let Some(pending_request) = self.handle_inbound_binding_success(m.transaction_id) {
@@ -272,18 +262,18 @@ impl ControllingSelector for Agent {
             );
             let selected_pair_is_none = self.agent_conn.get_selected_pair().is_none();
 
-            if let Some(p) = self.find_pair(local, remote) {
-                p.state
-                    .store(CandidatePairState::Succeeded as u8, Ordering::SeqCst);
+            if let Some(index) = self.find_pair(local, remote) {
+                let p = &mut self.agent_conn.checklist[index];
+                p.state = CandidatePairState::Succeeded;
                 log::trace!(
                     "Found valid candidate pair: {}, p.state: {}, isUseCandidate: {}, {}",
-                    p,
-                    p.state.load(Ordering::SeqCst),
+                    *p,
+                    p.state,
                     pending_request.is_use_candidate,
                     selected_pair_is_none
                 );
                 if pending_request.is_use_candidate && selected_pair_is_none {
-                    self.set_selected_pair(Some(Rc::clone(&p)));
+                    self.set_selected_pair(Some(index));
                 }
             } else {
                 // This shouldn't happen
@@ -298,26 +288,22 @@ impl ControllingSelector for Agent {
         }
     }
 
-    fn handle_binding_request(
-        &mut self,
-        m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
-    ) {
+    fn handle_binding_request(&mut self, m: &Message, local: usize, remote: usize) {
         self.send_binding_success(m, local, remote);
         log::trace!("controllingSelector: sendBindingSuccess");
 
-        if let Some(p) = self.find_pair(local, remote) {
+        if let Some(index) = self.find_pair(local, remote) {
+            let p = &self.agent_conn.checklist[index];
             let nominated_pair_is_none = self.nominated_pair.is_none();
 
             log::trace!(
                 "controllingSelector: after findPair {}, p.state: {}, {}",
                 p,
-                p.state.load(Ordering::SeqCst),
+                p.state,
                 nominated_pair_is_none,
                 //self.agent_conn.get_selected_pair().await.is_none() //, {}
             );
-            if p.state.load(Ordering::SeqCst) == CandidatePairState::Succeeded as u8
+            if p.state == CandidatePairState::Succeeded
                 && nominated_pair_is_none
                 && self.agent_conn.get_selected_pair().is_none()
             {
@@ -326,13 +312,13 @@ impl ControllingSelector for Agent {
                         "controllingSelector: getBestAvailableCandidatePair {}",
                         best_pair
                     );
-                    if best_pair == p
-                        && self.is_nominatable(&p.local)
-                        && self.is_nominatable(&p.remote)
+                    if best_pair == index
+                        && self.is_nominatable(p.local, true)
+                        && self.is_nominatable(p.remote, false)
                     {
                         log::trace!("The candidate ({}, {}) is the best candidate available, marking it as nominated",
                             p.local, p.remote);
-                        self.nominated_pair = Some(p);
+                        self.nominated_pair = Some(*p);
                         self.nominate_pair();
                     }
                 } else {
@@ -341,7 +327,7 @@ impl ControllingSelector for Agent {
             }
         } else {
             log::trace!("controllingSelector: addPair");
-            self.add_pair(local.clone(), remote.clone());
+            self.add_pair(local, remote);
         }
     }
 }
@@ -363,7 +349,7 @@ impl ControlledSelector for Agent {
         }
     }
 
-    fn ping_candidate(&mut self, local: &Rc<dyn Candidate>, remote: &Rc<dyn Candidate>) {
+    fn ping_candidate(&mut self, local: usize, remote: usize) {
         let (msg, result) = {
             let ufrag_pwd = &self.ufrag_pwd;
             let username = ufrag_pwd.remote_ufrag.clone() + ":" + ufrag_pwd.local_ufrag.as_str();
@@ -373,7 +359,7 @@ impl ControlledSelector for Agent {
                 Box::new(TransactionId::new()),
                 Box::new(Username::new(ATTR_USERNAME, username)),
                 Box::new(AttrControlled(self.tie_breaker)),
-                Box::new(PriorityAttr(local.priority())),
+                Box::new(PriorityAttr(self.local_candidates[local].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity(
                     ufrag_pwd.remote_pwd.clone(),
                 )),
@@ -392,8 +378,8 @@ impl ControlledSelector for Agent {
     fn handle_success_response(
         &mut self,
         m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
+        local: usize,
+        remote: usize,
         remote_addr: SocketAddr,
     ) {
         // https://tools.ietf.org/html/rfc8445#section-7.3.1.5
@@ -418,10 +404,10 @@ impl ControlledSelector for Agent {
                 local
             );
 
-            if let Some(p) = self.find_pair(local, remote) {
-                p.state
-                    .store(CandidatePairState::Succeeded as u8, Ordering::SeqCst);
-                log::trace!("Found valid candidate pair: {}", p);
+            if let Some(index) = self.find_pair(local, remote) {
+                let p = &mut self.agent_conn.checklist[index];
+                p.state = CandidatePairState::Succeeded;
+                log::trace!("Found valid candidate pair: {}", *p);
             } else {
                 // This shouldn't happen
                 log::error!("Success response from invalid candidate pair");
@@ -435,28 +421,24 @@ impl ControlledSelector for Agent {
         }
     }
 
-    fn handle_binding_request(
-        &mut self,
-        m: &Message,
-        local: &Rc<dyn Candidate>,
-        remote: &Rc<dyn Candidate>,
-    ) {
+    fn handle_binding_request(&mut self, m: &Message, local: usize, remote: usize) {
         if self.find_pair(local, remote).is_none() {
-            self.add_pair(local.clone(), remote.clone());
+            self.add_pair(local, remote);
         }
 
-        if let Some(p) = self.find_pair(local, remote) {
+        if let Some(index) = self.find_pair(local, remote) {
+            let p = &self.agent_conn.checklist[index];
             let use_candidate = m.contains(ATTR_USE_CANDIDATE);
             if use_candidate {
                 // https://tools.ietf.org/html/rfc8445#section-7.3.1.5
 
-                if p.state.load(Ordering::SeqCst) == CandidatePairState::Succeeded as u8 {
+                if p.state == CandidatePairState::Succeeded {
                     // If the state of this pair is Succeeded, it means that the check
                     // previously sent by this pair produced a successful response and
                     // generated a valid pair (Section 7.2.5.3.2).  The agent sets the
                     // nominated flag value of the valid pair to true.
                     if self.agent_conn.get_selected_pair().is_none() {
-                        self.set_selected_pair(Some(Rc::clone(&p)));
+                        self.set_selected_pair(Some(index));
                     }
                     self.send_binding_success(m, local, remote);
                 } else {

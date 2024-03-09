@@ -1,4 +1,6 @@
 use super::*;
+use crate::candidate::candidate_base::{unmarshal_candidate, CandidateBase};
+use crate::candidate::candidate_pair::CandidatePairState;
 
 #[test]
 fn test_candidate_priority() -> Result<()> {

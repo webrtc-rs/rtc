@@ -1,6 +1,5 @@
 use super::*;
-use std::rc::Rc;
-use std::sync::atomic::Ordering;
+use crate::candidate::candidate_pair::{CandidatePair, CandidatePairState};
 
 impl Agent {
     /// Connects to the remote agent, acting as the controlling ice agent.
@@ -66,12 +65,8 @@ impl Agent {
 }
 
 pub(crate) struct AgentConn {
-    pub(crate) selected_pair: Option<Rc<CandidatePair>>,
-    pub(crate) checklist: Vec<Rc<CandidatePair>>,
-
-    //pub(crate) buffer: Buffer,
-    pub(crate) bytes_received: usize,
-    pub(crate) bytes_sent: usize,
+    pub(crate) selected_pair: Option<usize>,
+    pub(crate) checklist: Vec<CandidatePair>,
     pub(crate) done: bool,
 }
 
@@ -80,67 +75,53 @@ impl AgentConn {
         Self {
             selected_pair: None,
             checklist: vec![],
-            // Make sure the buffer doesn't grow indefinitely.
-            // NOTE: We actually won't get anywhere close to this limit.
-            // SRTP will constantly read from the endpoint and drop packets if it's full.
-            //buffer: Buffer::new(0, MAX_BUFFER_SIZE),
-            bytes_received: 0,
-            bytes_sent: 0,
             done: false,
         }
     }
-    pub(crate) fn get_selected_pair(&self) -> Option<Rc<CandidatePair>> {
-        self.selected_pair.clone()
+    pub(crate) fn get_selected_pair(&self) -> Option<usize> {
+        self.selected_pair
     }
 
-    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<Rc<CandidatePair>> {
-        let mut best: Option<&Rc<CandidatePair>> = None;
+    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<usize> {
+        let mut best: Option<usize> = None;
 
-        for p in &self.checklist {
-            if p.state.load(Ordering::SeqCst) == CandidatePairState::Failed as u8 {
+        for (index, p) in self.checklist.iter().enumerate() {
+            if p.state == CandidatePairState::Failed {
                 continue;
             }
 
-            if let Some(b) = &mut best {
+            if let Some(best_index) = &mut best {
+                let b = &self.checklist[*best_index];
                 if b.priority() < p.priority() {
-                    *b = p;
+                    *best_index = index;
                 }
             } else {
-                best = Some(p);
+                best = Some(index);
             }
         }
 
-        best.cloned()
+        best
     }
 
-    pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<Rc<CandidatePair>> {
-        let mut best: Option<&Rc<CandidatePair>> = None;
+    pub(crate) fn get_best_valid_candidate_pair(&self) -> Option<usize> {
+        let mut best: Option<usize> = None;
 
-        for p in &self.checklist {
-            if p.state.load(Ordering::SeqCst) != CandidatePairState::Succeeded as u8 {
+        for (index, p) in self.checklist.iter().enumerate() {
+            if p.state != CandidatePairState::Succeeded {
                 continue;
             }
 
-            if let Some(b) = &mut best {
+            if let Some(best_index) = &mut best {
+                let b = &self.checklist[*best_index];
                 if b.priority() < p.priority() {
-                    *b = p;
+                    *best_index = index;
                 }
             } else {
-                best = Some(p);
+                best = Some(index);
             }
         }
 
-        best.cloned()
-    }
-
-    /// Returns the number of bytes sent.
-    pub fn bytes_sent(&self) -> usize {
-        self.bytes_sent
-    }
-
-    /// Returns the number of bytes received.
-    pub fn bytes_received(&self) -> usize {
-        self.bytes_received
+        best
     }
 }
 
