@@ -11,7 +11,7 @@ members = [
     "rtc-shared",
     "rtc-srtp",
     "rtc-stun",
-    "reserved/rtc-ice",
+    "ice",
     "reserved/rtc-interceptor",
     "reserved/rtc-mdns",
     "reserved/rtc-media",
