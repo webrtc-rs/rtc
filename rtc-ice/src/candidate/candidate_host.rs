@@ -6,6 +6,8 @@ use crate::rand::generate_cand_id;
 #[derive(Default)]
 pub struct CandidateHostConfig {
     pub base_config: CandidateBaseConfig,
+
+    pub tcp_type: TcpType,
 }
 
 impl CandidateHostConfig {
@@ -16,22 +18,24 @@ impl CandidateHostConfig {
             candidate_id = generate_cand_id();
         }
 
-        let c = CandidateBase {
+        let mut c = CandidateBase {
             id: candidate_id,
             address: self.base_config.address.clone(),
             candidate_type: CandidateType::Host,
             component: self.base_config.component,
             port: self.base_config.port,
+            tcp_type: self.tcp_type,
             foundation_override: self.base_config.foundation,
             priority_override: self.base_config.priority,
             network: self.base_config.network,
+            network_type: NetworkType::Udp4,
             //conn: self.base_config.conn,
             ..CandidateBase::default()
         };
 
         if !self.base_config.address.ends_with(".local") {
-            //TODO: let ip = self.base_config.address.parse()?;
-            //TODO: c.set_ip(&ip)?;
+            let ip = self.base_config.address.parse()?;
+            c.set_ip(&ip)?;
         };
 
         Ok(c)

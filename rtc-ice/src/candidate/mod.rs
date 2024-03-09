@@ -1,16 +1,26 @@
-//TODO: #[cfg(test)]
-//TODO: mod candidate_test;
+/*TODO #[cfg(test)]
+mod candidate_pair_test;
+#[cfg(test)]
+mod candidate_relay_test;
+#[cfg(test)]
+mod candidate_server_reflexive_test;
+#[cfg(test)]
+mod candidate_test;*/
 
 pub mod candidate_base;
 pub mod candidate_host;
+pub mod candidate_peer_reflexive;
+pub mod candidate_relay;
+pub mod candidate_server_reflexive;
 
+use crate::network_type::NetworkType;
+use crate::tcp_type::TcpType;
 use candidate_base::*;
 use serde::Serialize;
 use shared::error::*;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8};
 use std::time::Instant;
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
@@ -44,6 +54,7 @@ pub trait Candidate: fmt::Display {
     /// The last time this candidate sent traffic
     fn last_sent(&self) -> Instant;
 
+    fn network_type(&self) -> NetworkType;
     fn address(&self) -> String;
     fn port(&self) -> u16;
 
@@ -54,6 +65,7 @@ pub trait Candidate: fmt::Display {
     fn related_address(&self) -> Option<CandidateRelatedAddress>;
 
     fn candidate_type(&self) -> CandidateType;
+    fn tcp_type(&self) -> TcpType;
 
     fn marshal(&self) -> String;
 
@@ -65,7 +77,6 @@ pub trait Candidate: fmt::Display {
     fn write_to(&self, raw: &[u8], dst: &dyn Candidate) -> Result<usize>;
     fn equal(&self, other: &dyn Candidate) -> bool;
     fn set_ip(&mut self, ip: &IpAddr) -> Result<()>;
-    //TODO: fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>>;
 }
 
 /// Represents the type of candidate `CandidateType` enum.
@@ -211,9 +222,9 @@ pub struct CandidatePair {
     pub(crate) ice_role_controlling: bool,
     pub remote: Rc<dyn Candidate>,
     pub local: Rc<dyn Candidate>,
-    pub(crate) binding_request_count: AtomicU16, //u16,
-    pub(crate) state: AtomicU8,                  //CandidatePairState,
-    pub(crate) nominated: AtomicBool,
+    pub(crate) binding_request_count: u16,
+    pub(crate) state: CandidatePairState,
+    pub(crate) nominated: bool,
 }
 
 impl Default for CandidatePair {
@@ -222,9 +233,9 @@ impl Default for CandidatePair {
             ice_role_controlling: false,
             remote: Rc::new(CandidateBase::default()),
             local: Rc::new(CandidateBase::default()),
-            state: AtomicU8::new(CandidatePairState::Waiting as u8),
-            binding_request_count: AtomicU16::new(0),
-            nominated: AtomicBool::new(false),
+            state: CandidatePairState::Waiting,
+            binding_request_count: 0,
+            nominated: false,
         }
     }
 }
@@ -270,9 +281,9 @@ impl CandidatePair {
             ice_role_controlling: controlling,
             remote,
             local,
-            state: AtomicU8::new(CandidatePairState::Waiting as u8),
-            binding_request_count: AtomicU16::new(0),
-            nominated: AtomicBool::new(false),
+            state: CandidatePairState::Waiting,
+            binding_request_count: 0,
+            nominated: false,
         }
     }
 
