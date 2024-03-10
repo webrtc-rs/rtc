@@ -1,5 +1,5 @@
-//TODO:#[cfg(test)]
-//TODO:mod agent_test;
+#[cfg(test)]
+mod agent_test;
 
 pub mod agent_config;
 pub mod agent_selector;
@@ -48,12 +48,16 @@ impl Default for BindingRequest {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
+pub struct Credentials {
+    pub ufrag: String,
+    pub pwd: String,
+}
+
+#[derive(Default, Clone)]
 pub(crate) struct UfragPwd {
-    pub(crate) local_ufrag: String,
-    pub(crate) local_pwd: String,
-    pub(crate) remote_ufrag: String,
-    pub(crate) remote_pwd: String,
+    pub(crate) local_credentials: Credentials,
+    pub(crate) remote_credentials: Option<Credentials>,
 }
 
 fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
@@ -79,7 +83,7 @@ fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
 
 pub enum Event {
     ConnectionStateChange(ConnectionState),
-    SelectedCandidatePairChange(Candidate, Candidate),
+    SelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
 }
 
 /// Represents the ICE agent.
@@ -141,9 +145,6 @@ impl Agent {
         if config.lite && (candidate_types.len() != 1 || candidate_types[0] != CandidateType::Host)
         {
             return Err(Error::ErrLiteUsingNonHostCandidates);
-        }
-        if !config.lite {
-            return Err(Error::ErrLiteSupportOnly);
         }
 
         if !config.urls.is_empty()
@@ -288,20 +289,34 @@ impl Agent {
         Ok(())
     }
 
-    /// Returns the local user credentials.
-    pub fn get_local_user_credentials(&self) -> (String, String) {
-        (
-            self.ufrag_pwd.local_ufrag.clone(),
-            self.ufrag_pwd.local_pwd.clone(),
-        )
+    /// Sets the credentials of the remote agent.
+    pub fn set_remote_credentials(
+        &mut self,
+        remote_ufrag: String,
+        remote_pwd: String,
+    ) -> Result<()> {
+        if remote_ufrag.is_empty() {
+            return Err(Error::ErrRemoteUfragEmpty);
+        } else if remote_pwd.is_empty() {
+            return Err(Error::ErrRemotePwdEmpty);
+        }
+
+        self.ufrag_pwd.remote_credentials = Some(Credentials {
+            ufrag: remote_ufrag,
+            pwd: remote_pwd,
+        });
+
+        Ok(())
     }
 
-    /// Returns the remote user credentials.
-    pub fn get_remote_user_credentials(&self) -> (String, String) {
-        (
-            self.ufrag_pwd.remote_ufrag.clone(),
-            self.ufrag_pwd.remote_pwd.clone(),
-        )
+    /// Returns the remote credentials.
+    pub async fn get_remote_credentials(&self) -> Option<&Credentials> {
+        self.ufrag_pwd.remote_credentials.as_ref()
+    }
+
+    /// Returns the local credentials.
+    pub fn get_local_credentials(&self) -> &Credentials {
+        &self.ufrag_pwd.local_credentials
     }
 
     pub fn handle_read(&mut self, msg: Transmit<BytesMut>) -> Result<()> {
@@ -330,15 +345,19 @@ impl Agent {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
-        let interval = self.get_timeout_interval();
-        if self.last_checking_time + interval <= now {
-            self.contact();
-            self.last_checking_time = now;
+        if self.ufrag_pwd.remote_credentials.is_some()
+            && self.last_checking_time + self.get_timeout_interval() <= now
+        {
+            self.contact(now);
         }
     }
 
     pub fn poll_timeout(&self) -> Option<Instant> {
-        Some(self.last_checking_time + self.get_timeout_interval())
+        if self.ufrag_pwd.remote_credentials.is_some() {
+            Some(self.last_checking_time + self.get_timeout_interval())
+        } else {
+            None
+        }
     }
 
     pub fn poll_event(&mut self) -> Option<Event> {
@@ -397,23 +416,6 @@ impl Agent {
         }
     }
 
-    /// Sets the credentials of the remote agent.
-    pub fn set_remote_credentials(
-        &mut self,
-        remote_ufrag: String,
-        remote_pwd: String,
-    ) -> Result<()> {
-        if remote_ufrag.is_empty() {
-            return Err(Error::ErrRemoteUfragEmpty);
-        } else if remote_pwd.is_empty() {
-            return Err(Error::ErrRemotePwdEmpty);
-        }
-
-        self.ufrag_pwd.remote_ufrag = remote_ufrag;
-        self.ufrag_pwd.remote_pwd = remote_pwd;
-        Ok(())
-    }
-
     /// Restarts the ICE Agent with the provided ufrag/pwd
     /// If no ufrag/pwd is provided the Agent will generate one itself.
     pub fn restart(
@@ -437,10 +439,9 @@ impl Agent {
         }
 
         // Clear all agent needed to take back to fresh state
-        self.ufrag_pwd.local_ufrag = ufrag;
-        self.ufrag_pwd.local_pwd = pwd;
-        self.ufrag_pwd.remote_ufrag = String::new();
-        self.ufrag_pwd.remote_pwd = String::new();
+        self.ufrag_pwd.local_credentials.ufrag = ufrag;
+        self.ufrag_pwd.local_credentials.pwd = pwd;
+        self.ufrag_pwd.remote_credentials = None;
 
         self.pending_binding_requests = vec![];
 
@@ -484,7 +485,7 @@ impl Agent {
         Ok(())
     }
 
-    fn contact(&mut self) {
+    fn contact(&mut self, now: Instant) {
         if self.connection_state == ConnectionState::Failed {
             // The connection is currently failed so don't send any checks
             // In the future it may be restarted though
@@ -494,11 +495,11 @@ impl Agent {
         if self.connection_state == ConnectionState::Checking {
             // We have just entered checking for the first time so update our checking timer
             if self.last_connection_state != self.connection_state {
-                self.last_checking_time = Instant::now();
+                self.last_checking_time = now;
             }
 
             // We have been in checking longer then Disconnect+Failed timeout, set the connection to Failed
-            if Instant::now()
+            if now
                 .checked_duration_since(self.last_checking_time)
                 .unwrap_or_else(|| Duration::from_secs(0))
                 > self.disconnected_timeout + self.failed_timeout
@@ -512,6 +513,7 @@ impl Agent {
         self.contact_candidates();
 
         self.last_connection_state = self.connection_state;
+        self.last_checking_time = now;
     }
 
     pub(crate) fn update_connection_state(&mut self, new_state: ConnectionState) {
@@ -548,8 +550,8 @@ impl Agent {
             // Notify when the selected pair changes
             let candidate_pair = &self.candidate_pairs[pair_index];
             self.events.push_back(Event::SelectedCandidatePairChange(
-                self.local_candidates[candidate_pair.local_index].clone(),
-                self.remote_candidates[candidate_pair.remote_index].clone(),
+                Box::new(self.local_candidates[candidate_pair.local_index].clone()),
+                Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
             ));
         } else {
             self.selected_pair = None;
@@ -686,8 +688,10 @@ impl Agent {
         }
     }
 
-    fn request_connectivity_check(&self) {
-        //TODO: force_candidate_contact now???
+    fn request_connectivity_check(&mut self) {
+        if self.ufrag_pwd.remote_credentials.is_some() {
+            self.contact(Instant::now());
+        }
     }
 
     /// Remove all candidates.
@@ -738,14 +742,13 @@ impl Agent {
         );
 
         self.invalidate_pending_binding_requests(Instant::now());
-        {
-            self.pending_binding_requests.push(BindingRequest {
-                timestamp: Instant::now(),
-                transaction_id: m.transaction_id,
-                destination: self.remote_candidates[remote_index].addr(),
-                is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
-            });
-        }
+
+        self.pending_binding_requests.push(BindingRequest {
+            timestamp: Instant::now(),
+            transaction_id: m.transaction_id,
+            destination: self.remote_candidates[remote_index].addr(),
+            is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
+        });
 
         self.send_stun(m, local_index, remote_index);
     }
@@ -758,7 +761,7 @@ impl Agent {
     ) {
         let addr = self.remote_candidates[remote_index].addr();
         let (ip, port) = (addr.ip(), addr.port());
-        let local_pwd = self.ufrag_pwd.local_pwd.clone();
+        let local_pwd = self.ufrag_pwd.local_credentials.pwd.clone();
 
         let (out, result) = {
             let mut out = Message::new();
@@ -839,7 +842,7 @@ impl Agent {
         m: &mut Message,
         local_index: usize,
         remote_addr: SocketAddr,
-    ) {
+    ) -> Result<()> {
         if m.typ.method != METHOD_BINDING
             || !(m.typ.class == CLASS_SUCCESS_RESPONSE
                 || m.typ.class == CLASS_REQUEST
@@ -853,7 +856,7 @@ impl Agent {
                 m.typ.class,
                 m.typ.method
             );
-            return;
+            return Err(Error::ErrUnhandledStunpacket);
         }
 
         if self.is_controlling {
@@ -862,37 +865,41 @@ impl Agent {
                     "[{}]: inbound isControlling && a.isControlling == true",
                     self.get_name(),
                 );
-                return;
+                return Err(Error::ErrUnexpectedStunrequestMessage);
             } else if m.contains(ATTR_USE_CANDIDATE) {
                 debug!(
                     "[{}]: useCandidate && a.isControlling == true",
                     self.get_name(),
                 );
-                return;
+                return Err(Error::ErrUnexpectedStunrequestMessage);
             }
         } else if m.contains(ATTR_ICE_CONTROLLED) {
             debug!(
                 "[{}]: inbound isControlled && a.isControlling == false",
                 self.get_name(),
             );
-            return;
+            return Err(Error::ErrUnexpectedStunrequestMessage);
         }
+
+        let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+            debug!(
+                "[{}]: ufrag_pwd.remote_credentials.is_none",
+                self.get_name(),
+            );
+            return Err(Error::ErrPasswordEmpty);
+        };
 
         let mut remote_candidate_index = self.find_remote_candidate(remote_addr);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
+            if let Err(err) = assert_inbound_message_integrity(m, remote_credentials.pwd.as_bytes())
             {
-                let ufrag_pwd = &self.ufrag_pwd;
-                if let Err(err) =
-                    assert_inbound_message_integrity(m, ufrag_pwd.remote_pwd.as_bytes())
-                {
-                    warn!(
-                        "[{}]: discard message from ({}), {}",
-                        self.get_name(),
-                        remote_addr,
-                        err
-                    );
-                    return;
-                }
+                warn!(
+                    "[{}]: discard message from ({}), {}",
+                    self.get_name(),
+                    remote_addr,
+                    err
+                );
+                return Err(err);
             }
 
             if let Some(remote_index) = &remote_candidate_index {
@@ -903,13 +910,13 @@ impl Agent {
                     self.get_name(),
                     remote_addr
                 );
-                return;
+                return Err(Error::ErrUnhandledStunpacket);
             }
         } else if m.typ.class == CLASS_REQUEST {
             {
-                let ufrag_pwd = &self.ufrag_pwd;
-                let username =
-                    ufrag_pwd.local_ufrag.clone() + ":" + ufrag_pwd.remote_ufrag.as_str();
+                let username = self.ufrag_pwd.local_credentials.ufrag.clone()
+                    + ":"
+                    + remote_credentials.ufrag.as_str();
                 if let Err(err) = assert_inbound_username(m, &username) {
                     warn!(
                         "[{}]: discard message from ({}), {}",
@@ -917,17 +924,18 @@ impl Agent {
                         remote_addr,
                         err
                     );
-                    return;
-                } else if let Err(err) =
-                    assert_inbound_message_integrity(m, ufrag_pwd.local_pwd.as_bytes())
-                {
+                    return Err(err);
+                } else if let Err(err) = assert_inbound_message_integrity(
+                    m,
+                    self.ufrag_pwd.local_credentials.pwd.as_bytes(),
+                ) {
                     warn!(
                         "[{}]: discard message from ({}), {}",
                         self.get_name(),
                         remote_addr,
                         err
                     );
-                    return;
+                    return Err(err);
                 }
             }
 
@@ -958,7 +966,7 @@ impl Agent {
                             self.get_name(),
                             err
                         );
-                        return;
+                        return Err(err);
                     }
                 };
 
@@ -984,6 +992,8 @@ impl Agent {
         if let Some(remote_index) = remote_candidate_index {
             self.remote_candidates[remote_index].seen(false);
         }
+
+        Ok(())
     }
 
     // Processes non STUN traffic from a remote candidate, and returns true if it is an actual
@@ -1044,8 +1054,7 @@ impl Agent {
                 );
                 Err(err)
             } else {
-                self.handle_inbound(&mut m, local_index, remote_addr);
-                Ok(())
+                self.handle_inbound(&mut m, local_index, remote_addr)
             }
         } else {
             if !self.validate_non_stun_traffic(remote_addr) {

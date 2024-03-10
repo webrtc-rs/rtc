@@ -67,6 +67,10 @@ impl Agent {
 
     fn nominate_pair(&mut self) {
         let result = {
+            let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+                error!("ufrag_pwd.remote_credentials is none");
+                return;
+            };
             if let Some(pair_index) = &self.nominated_pair {
                 let pair = &self.candidate_pairs[*pair_index];
                 // The controlling agent MUST include the USE-CANDIDATE attribute in
@@ -75,9 +79,9 @@ impl Agent {
                 // request.
 
                 let (msg, result) = {
-                    let ufrag_pwd = &self.ufrag_pwd;
-                    let username =
-                        ufrag_pwd.remote_ufrag.clone() + ":" + ufrag_pwd.local_ufrag.as_str();
+                    let username = remote_credentials.ufrag.clone()
+                        + ":"
+                        + self.ufrag_pwd.local_credentials.ufrag.as_str();
                     let mut msg = Message::new();
                     let result = msg.build(&[
                         Box::new(BINDING_REQUEST),
@@ -87,7 +91,7 @@ impl Agent {
                         Box::new(AttrControlling(self.tie_breaker)),
                         Box::new(PriorityAttr(pair.local_priority)),
                         Box::new(MessageIntegrity::new_short_term_integrity(
-                            ufrag_pwd.remote_pwd.clone(),
+                            remote_credentials.pwd.clone(),
                         )),
                         Box::new(FINGERPRINT),
                     ]);
@@ -234,8 +238,14 @@ impl ControllingSelector for Agent {
 
     fn ping_candidate(&mut self, local_index: usize, remote_index: usize) {
         let (msg, result) = {
-            let ufrag_pwd = &self.ufrag_pwd;
-            let username = ufrag_pwd.remote_ufrag.clone() + ":" + ufrag_pwd.local_ufrag.as_str();
+            let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+                error!("ufrag_pwd.remote_credentials is none");
+                return;
+            };
+
+            let username = remote_credentials.ufrag.clone()
+                + ":"
+                + self.ufrag_pwd.local_credentials.ufrag.as_str();
             let mut msg = Message::new();
             let result = msg.build(&[
                 Box::new(BINDING_REQUEST),
@@ -244,7 +254,7 @@ impl ControllingSelector for Agent {
                 Box::new(AttrControlling(self.tie_breaker)),
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity(
-                    ufrag_pwd.remote_pwd.clone(),
+                    remote_credentials.pwd.clone(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -370,8 +380,14 @@ impl ControlledSelector for Agent {
 
     fn ping_candidate(&mut self, local_index: usize, remote_index: usize) {
         let (msg, result) = {
-            let ufrag_pwd = &self.ufrag_pwd;
-            let username = ufrag_pwd.remote_ufrag.clone() + ":" + ufrag_pwd.local_ufrag.as_str();
+            let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {
+                error!("ufrag_pwd.remote_credentials is none");
+                return;
+            };
+
+            let username = remote_credentials.ufrag.clone()
+                + ":"
+                + self.ufrag_pwd.local_credentials.ufrag.as_str();
             let mut msg = Message::new();
             let result = msg.build(&[
                 Box::new(BINDING_REQUEST),
@@ -380,7 +396,7 @@ impl ControlledSelector for Agent {
                 Box::new(AttrControlled(self.tie_breaker)),
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity(
-                    ufrag_pwd.remote_pwd.clone(),
+                    remote_credentials.pwd.clone(),
                 )),
                 Box::new(FINGERPRINT),
             ]);

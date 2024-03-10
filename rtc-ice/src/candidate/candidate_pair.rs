@@ -2,8 +2,9 @@ use serde::Serialize;
 use std::fmt;
 
 /// Represent the ICE candidate pair state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum CandidatePairState {
+    #[default]
     #[serde(rename = "unspecified")]
     Unspecified = 0,
 
@@ -34,12 +35,6 @@ impl From<u8> for CandidatePairState {
             4 => Self::Succeeded,
             _ => Self::Unspecified,
         }
-    }
-}
-
-impl Default for CandidatePairState {
-    fn default() -> Self {
-        Self::Unspecified
     }
 }
 
