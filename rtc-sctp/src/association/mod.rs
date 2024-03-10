@@ -295,6 +295,7 @@ impl Default for Association {
 }
 
 impl Association {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,

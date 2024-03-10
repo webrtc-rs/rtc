@@ -21,9 +21,9 @@ pub struct Config {
     pub protocol: String,
 }
 
-/// Transmit is used to data sent over over SCTP
+/// DataChannelMessage is used to data sent over SCTP
 #[derive(Debug, Default, Clone)]
-pub struct Transmit {
+pub struct DataChannelMessage {
     pub association_handle: usize,
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
@@ -38,7 +38,7 @@ pub struct DataChannel {
     config: Config,
     association_handle: usize,
     stream_id: u16,
-    transmits: VecDeque<Transmit>,
+    messages: VecDeque<DataChannelMessage>,
 
     // stats
     messages_sent: usize,
@@ -53,7 +53,7 @@ impl DataChannel {
             config,
             association_handle,
             stream_id,
-            transmits: VecDeque::new(),
+            messages: VecDeque::new(),
             ..Default::default()
         }
     }
@@ -74,7 +74,7 @@ impl DataChannel {
 
             let (unordered, reliability_type) = data_channel.get_reliability_params();
 
-            data_channel.transmits.push_back(Transmit {
+            data_channel.messages.push_back(DataChannelMessage {
                 association_handle,
                 stream_id,
                 ppi: PayloadProtocolIdentifier::Dcep,
@@ -120,8 +120,8 @@ impl DataChannel {
     }
 
     /// Returns packets to transmit
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        self.transmits.pop_front()
+    pub fn poll_transmit(&mut self) -> Option<DataChannelMessage> {
+        self.messages.pop_front()
     }
 
     /// Read reads a packet of len(p) bytes as binary data.
@@ -245,7 +245,7 @@ impl DataChannel {
         let (unordered, reliability_type) = self.get_reliability_params();
 
         let n = if data_len == 0 {
-            self.transmits.push_back(Transmit {
+            self.messages.push_back(DataChannelMessage {
                 association_handle: self.association_handle,
                 stream_id: self.stream_id,
                 ppi,
@@ -256,7 +256,7 @@ impl DataChannel {
 
             0
         } else {
-            self.transmits.push_back(Transmit {
+            self.messages.push_back(DataChannelMessage {
                 association_handle: self.association_handle,
                 stream_id: self.stream_id,
                 ppi,
@@ -276,7 +276,7 @@ impl DataChannel {
     fn write_data_channel_ack(&mut self) -> Result<()> {
         let ack = Message::DataChannelAck(DataChannelAck {}).marshal()?;
         let (unordered, reliability_type) = self.get_reliability_params();
-        self.transmits.push_back(Transmit {
+        self.messages.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
