@@ -441,7 +441,7 @@ impl Association {
                     ecn: None,
                     protocol: Default::default(),
                 },
-                payload: Payload::RawEncode(contents),
+                message: Payload::RawEncode(contents),
             })
         }
     }
@@ -492,7 +492,7 @@ impl Association {
                     return;
                 }*/
 
-                if let Payload::PartialDecode(partial_decode) = transmit.payload {
+                if let Payload::PartialDecode(partial_decode) = transmit.message {
                     debug!(
                         "[{}] recving {} bytes",
                         self.side,

@@ -371,7 +371,7 @@ impl Candidate {
                     Protocol::UDP
                 },
             },
-            payload: BytesMut::from(raw),
+            message: BytesMut::from(raw),
         });
 
         self.seen(true);

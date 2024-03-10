@@ -97,7 +97,7 @@ impl Endpoint {
                         ecn: None,
                         protocol: self.protocol,
                     },
-                    payload,
+                    message: payload,
                 });
             }
 
@@ -120,7 +120,7 @@ impl Endpoint {
                         ecn: None,
                         protocol: self.protocol,
                     },
-                    payload,
+                    message: payload,
                 });
             }
         }
@@ -169,7 +169,7 @@ impl Endpoint {
                         ecn,
                         protocol: self.protocol,
                     },
-                    payload,
+                    message: payload,
                 });
             }
         }
@@ -189,7 +189,7 @@ impl Endpoint {
                         ecn: None,
                         protocol: self.protocol,
                     },
-                    payload,
+                    message: payload,
                 });
             }
             Ok(())
@@ -216,7 +216,7 @@ impl Endpoint {
                                 ecn: None,
                                 protocol: self.protocol,
                             },
-                            payload,
+                            message: payload,
                         });
                     }
                 }

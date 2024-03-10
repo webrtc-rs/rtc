@@ -49,12 +49,12 @@ const MAX_DATAGRAMS: usize = 10;
 
 fn split_transmit(transmit: Transmit<Payload>) -> Vec<Transmit<Payload>> {
     let mut transmits = Vec::new();
-    if let Payload::RawEncode(contents) = transmit.payload {
+    if let Payload::RawEncode(contents) = transmit.message {
         for content in contents {
             transmits.push(Transmit {
                 now: transmit.now,
                 transport: transmit.transport,
-                payload: Payload::RawEncode(vec![content]),
+                message: Payload::RawEncode(vec![content]),
             });
         }
     }
@@ -278,7 +278,7 @@ impl Pair {
     pub fn drive_client(&mut self) {
         self.client.drive(self.time, self.server.addr);
         for x in self.client.outbound.drain(..) {
-            if let Payload::RawEncode(contents) = x.payload {
+            if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
                     if let Some(ref socket) = self.client.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
@@ -298,7 +298,7 @@ impl Pair {
     pub fn drive_server(&mut self) {
         self.server.drive(self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {
-            if let Payload::RawEncode(contents) = x.payload {
+            if let Payload::RawEncode(contents) = x.message {
                 for content in contents {
                     if let Some(ref socket) = self.server.socket {
                         socket.send_to(&content, x.transport.peer_addr).unwrap();
@@ -1999,7 +1999,7 @@ fn test_assoc_abort() -> Result<()> {
                 ecn: None,
                 protocol: Default::default(),
             },
-            payload: Payload::RawEncode(vec![packet]),
+            message: Payload::RawEncode(vec![packet]),
         }
     };
 
@@ -2222,7 +2222,7 @@ fn test_association_handle_packet_before_init() -> Result<()> {
                     ecn: None,
                     protocol: Default::default(),
                 },
-                payload: Payload::RawEncode(vec![packet]),
+                message: Payload::RawEncode(vec![packet]),
             },
         )));
 

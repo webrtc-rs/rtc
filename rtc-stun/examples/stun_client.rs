@@ -35,7 +35,7 @@ fn main() -> Result<(), Error> {
     msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
     client.handle_write(msg)?;
     while let Some(transmit) = client.poll_transmit() {
-        conn.send(&transmit.payload)?;
+        conn.send(&transmit.message)?;
     }
 
     let mut buf = vec![0u8; 1500];

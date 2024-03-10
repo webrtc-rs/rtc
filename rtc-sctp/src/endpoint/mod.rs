@@ -159,7 +159,7 @@ impl Endpoint {
                             ecn,
                             protocol: self.protocol,
                         },
-                        payload: Payload::PartialDecode(partial_decode),
+                        message: Payload::PartialDecode(partial_decode),
                     },
                 ))),
             ));
@@ -257,7 +257,7 @@ impl Endpoint {
                     ecn,
                     protocol: self.protocol,
                 },
-                payload: Payload::PartialDecode(partial_decode),
+                message: Payload::PartialDecode(partial_decode),
             },
         )));
 

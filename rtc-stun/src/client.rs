@@ -188,7 +188,7 @@ impl Client {
                     ecn: None,
                     protocol: self.protocol,
                 },
-                payload,
+                message: payload,
             });
         }
 
@@ -229,7 +229,7 @@ impl Client {
                 ecn: None,
                 protocol: self.protocol,
             },
-            payload,
+            message: payload,
         });
 
         Ok(())
