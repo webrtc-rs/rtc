@@ -10,3 +10,9 @@ pub mod state;
 pub mod stats;
 pub mod tcp_type;
 pub mod url;
+
+pub use agent::{
+    agent_config::AgentConfig,
+    agent_stats::{CandidatePairStats, CandidateStats},
+    Agent, Credentials, Event,
+};
