@@ -348,14 +348,6 @@ impl Candidate {
             && self.tcp_type() == other.tcp_type()
             && self.related_address() == other.related_address()
     }
-
-    /*TODO: mDNS pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
-        let network_type = determine_network_type(&self.network, ip)?;
-        self.network_type = network_type;
-        self.resolved_addr = SocketAddr::new(*ip, self.port);
-
-        Ok(())
-    }*/
 }
 
 impl Candidate {

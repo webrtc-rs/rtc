@@ -18,7 +18,9 @@ use stun::message::*;
 use stun::textattrs::*;
 use stun::xoraddr::*;
 
+use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::{candidate_pair::*, *};
+use crate::network_type::NetworkType;
 use crate::rand::*;
 use crate::state::*;
 use crate::url::*;
@@ -313,6 +315,10 @@ impl Agent {
     pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
     }
+
+    pub fn handle_timeout(&mut self) {}
+
+    pub fn poll_timeout(&mut self) {}
 
     /// Cleans up the Agent.
     pub fn close(&mut self) -> Result<()> {
@@ -896,7 +902,7 @@ impl Agent {
             return;
         }
 
-        let remote_candidate_index = self.find_remote_candidate(remote_addr);
+        let mut remote_candidate_index = self.find_remote_candidate(remote_addr);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
             {
                 let ufrag_pwd = &self.ufrag_pwd;
@@ -949,24 +955,27 @@ impl Agent {
                 }
             }
 
-            /*TODO: FIXME
-            if remote_candidate.is_none() {
-                let (ip, port, network_type) = (remote.ip(), remote.port(), NetworkType::Udp4);
+            if remote_candidate_index.is_none() {
+                let (ip, port, network_type) =
+                    (remote_addr.ip(), remote_addr.port(), NetworkType::Udp4);
 
                 let prflx_candidate_config = CandidatePeerReflexiveConfig {
-                    base_config: CandidateBaseConfig {
+                    base_config: CandidateConfig {
                         network: network_type.to_string(),
                         address: ip.to_string(),
                         port,
-                        component: local.component(),
-                        ..CandidateBaseConfig::default()
+                        component: self.local_candidates[local_index].component(),
+                        ..CandidateConfig::default()
                     },
                     rel_addr: "".to_owned(),
                     rel_port: 0,
                 };
 
                 match prflx_candidate_config.new_candidate_peer_reflexive() {
-                    Ok(prflx_candidate) => remote_candidate = Some(Arc::new(prflx_candidate)),
+                    Ok(prflx_candidate) => {
+                        let _ = self.add_remote_candidate(prflx_candidate);
+                        remote_candidate_index = Some(self.remote_candidates.len() - 1);
+                    }
                     Err(err) => {
                         error!(
                             "[{}]: Failed to create new remote prflx candidate ({})",
@@ -980,12 +989,9 @@ impl Agent {
                 debug!(
                     "[{}]: adding a new peer-reflexive candidate: {} ",
                     self.get_name(),
-                    remote
+                    remote_addr
                 );
-                if let Some(rc) = &remote_candidate {
-                    self.add_remote_candidate_internal(rc).await;
-                }
-            }*/
+            }
 
             trace!(
                 "[{}]: inbound STUN (Request) from {} to {}",
@@ -1036,35 +1042,6 @@ impl Agent {
 
         self.local_candidates[local_index].seen(true);
     }
-
-    // Runs the candidate using the provided connection.
-    /*fn start_candidate(
-        &self,
-        candidate: &Rc<dyn Candidate>,
-        //TODO: _initialized_ch: Option<broadcast::Receiver<()>>,
-    ) {
-        TODO: let (closed_ch_tx, _closed_ch_rx) = broadcast::channel(1);
-        {
-            let closed_ch = candidate.get_closed_ch();
-            let mut closed = closed_ch.lock().await;
-            *closed = Some(closed_ch_tx);
-        }
-
-        let _cand = Rc::clone(candidate);
-        TODO:if let Some(conn) = candidate.get_conn() {
-            let conn = Arc::clone(conn);
-            let addr = candidate.addr();
-            let ai = Arc::clone(self);
-            tokio::spawn(async move {
-                let _ = ai
-                    .recv_loop(cand, closed_ch_rx, initialized_ch, conn, addr)
-                    .await;
-            });
-        } else
-        {
-            error!("[{}]: Can't start due to conn is_none", self.get_name(),);
-        }
-    }*/
 
     pub(super) fn start_on_connection_state_change_routine(
         &mut self,
@@ -1130,44 +1107,6 @@ impl Agent {
 
          */
     }
-
-    /*TODO fn recv_loop(
-        &self,
-        candidate: Rc<dyn Candidate>,
-        //mut _closed_ch_rx: broadcast::Receiver<()>,
-        //_initialized_ch: Option<broadcast::Receiver<()>>,
-        //TODO:conn: Arc<dyn util::Conn + Send + Sync>,
-        addr: SocketAddr,
-    ) -> Result<()> {
-        if let Some(mut initialized_ch) = initialized_ch {
-            tokio::select! {
-                _ = initialized_ch.recv() => {}
-                _ = closed_ch_rx.recv() => return Err(Error::ErrClosed),
-            }
-        }
-
-        let mut buffer = vec![0_u8; RECEIVE_MTU];
-        let mut n;
-        let mut src_addr;
-        loop {
-            tokio::select! {
-                result = conn.recv_from(&mut buffer) => {
-                   match result {
-                       Ok((num, src)) => {
-                            n = num;
-                            src_addr = src;
-                       }
-                       Err(err) => return Err(Error::Other(err.to_string())),
-                   }
-               },
-                _  = closed_ch_rx.recv() => return Err(Error::ErrClosed),
-            }
-
-            self.handle_inbound_candidate_msg(&candidate, &buffer[..n], src_addr, addr)
-                .await;
-        }
-        Ok(())
-    }*/
 
     fn handle_inbound_candidate_msg(
         &mut self,
