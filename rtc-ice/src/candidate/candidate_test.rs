@@ -361,7 +361,7 @@ fn test_candidate_marshal() -> Result<()> {
             }),
             "1052353102 1 tcp 2128609279 192.168.0.196 0 typ host tcptype active",
         ),
-        (
+        /*TODO: mDNS (
             Some(Candidate{
                     network_type:   NetworkType::Udp4,
                     candidate_type: CandidateType::Host,
@@ -370,7 +370,7 @@ fn test_candidate_marshal() -> Result<()> {
                 ..Default::default()
             }),
             "1380287402 1 udp 2130706431 e2494022-4d9a-4c1e-a750-cc48d4f8d6ee.local 60542 typ host",
-        ),
+        ),*/
         // Invalid candidates
         (None, ""),
         (None, "1938809241"),

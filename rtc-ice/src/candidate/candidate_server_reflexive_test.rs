@@ -25,7 +25,7 @@ async fn test_server_reflexive_only_connection() -> Result<()> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     let server_listener = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);

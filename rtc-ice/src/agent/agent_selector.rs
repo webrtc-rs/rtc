@@ -1,4 +1,5 @@
 use crate::agent::Agent;
+use log::{debug, error, trace, warn};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
@@ -55,7 +56,7 @@ impl Agent {
                     > self.host_acceptance_min_wait.as_nanos()
             }
             _ => {
-                log::error!(
+                error!(
                     "is_nominatable invalid candidate type {}",
                     c.candidate_type()
                 );
@@ -94,10 +95,10 @@ impl Agent {
                 };
 
                 if let Err(err) = result {
-                    log::error!("{}", err);
+                    error!("{}", err);
                     None
                 } else {
-                    log::trace!(
+                    trace!(
                         "ping STUN (nominate candidate pair from {} to {}",
                         self.local_candidates[pair.local_index],
                         self.remote_candidates[pair.remote_index],
@@ -190,14 +191,14 @@ impl ControllingSelector for Agent {
         // A lite selector should not contact candidates
         if self.lite {
             // This only happens if both peers are lite. See RFC 8445 S6.1.1 and S6.2
-            log::trace!("now falling back to full agent");
+            trace!("now falling back to full agent");
         }
 
         let nominated_pair_is_some = self.nominated_pair.is_some();
 
         if self.get_selected_pair().is_some() {
             if self.validate_selected_pair() {
-                log::trace!("[{}]: checking keepalive", self.get_name());
+                trace!("[{}]: checking keepalive", self.get_name());
                 self.check_keepalive();
             }
         } else if nominated_pair_is_some {
@@ -215,7 +216,7 @@ impl ControllingSelector for Agent {
             if has_nominated_pair {
                 if let Some(pair_index) = self.get_best_valid_candidate_pair() {
                     let p = &mut self.candidate_pairs[pair_index];
-                    log::trace!(
+                    trace!(
                         "Nominatable pair found, nominating ({}, {})",
                         self.local_candidates[p.local_index],
                         self.remote_candidates[p.remote_index],
@@ -251,7 +252,7 @@ impl ControllingSelector for Agent {
         };
 
         if let Err(err) = result {
-            log::error!("{}", err);
+            error!("{}", err);
         } else {
             self.send_binding_request(&msg, local_index, remote_index);
         }
@@ -270,11 +271,11 @@ impl ControllingSelector for Agent {
             // Assert that NAT is not symmetric
             // https://tools.ietf.org/html/rfc8445#section-7.2.5.2.1
             if transaction_addr != remote_addr {
-                log::debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
+                debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
                 return;
             }
 
-            log::trace!(
+            trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
                 remote_index,
                 local_index
@@ -284,7 +285,7 @@ impl ControllingSelector for Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
-                log::trace!(
+                trace!(
                     "Found valid candidate pair: {}, p.state: {}, isUseCandidate: {}, {}",
                     *p,
                     p.state,
@@ -296,26 +297,25 @@ impl ControllingSelector for Agent {
                 }
             } else {
                 // This shouldn't happen
-                log::error!("Success response from invalid candidate pair");
+                error!("Success response from invalid candidate pair");
             }
         } else {
-            log::warn!(
+            warn!(
                 "discard message from ({}), unknown TransactionID 0x{:?}",
-                remote_index,
-                m.transaction_id
+                remote_index, m.transaction_id
             );
         }
     }
 
     fn handle_binding_request(&mut self, m: &Message, local_index: usize, remote_index: usize) {
         self.send_binding_success(m, local_index, remote_index);
-        log::trace!("controllingSelector: sendBindingSuccess");
+        trace!("controllingSelector: sendBindingSuccess");
 
         if let Some(pair_index) = self.find_pair(local_index, remote_index) {
             let p = &self.candidate_pairs[pair_index];
             let nominated_pair_is_none = self.nominated_pair.is_none();
 
-            log::trace!(
+            trace!(
                 "controllingSelector: after findPair {}, p.state: {}, {}",
                 p,
                 p.state,
@@ -327,7 +327,7 @@ impl ControllingSelector for Agent {
                 && self.get_selected_pair().is_none()
             {
                 if let Some(best_pair_index) = self.get_best_available_candidate_pair() {
-                    log::trace!(
+                    trace!(
                         "controllingSelector: getBestAvailableCandidatePair {}",
                         best_pair_index
                     );
@@ -335,17 +335,17 @@ impl ControllingSelector for Agent {
                         && self.is_nominatable(p.local_index, true)
                         && self.is_nominatable(p.remote_index, false)
                     {
-                        log::trace!("The candidate ({}, {}) is the best candidate available, marking it as nominated",
+                        trace!("The candidate ({}, {}) is the best candidate available, marking it as nominated",
                             p.local_index, p.remote_index);
                         self.nominated_pair = Some(pair_index);
                         self.nominate_pair();
                     }
                 } else {
-                    log::trace!("No best pair available");
+                    trace!("No best pair available");
                 }
             }
         } else {
-            log::trace!("controllingSelector: addPair");
+            trace!("controllingSelector: addPair");
             self.add_pair(local_index, remote_index);
         }
     }
@@ -360,7 +360,7 @@ impl ControlledSelector for Agent {
             self.validate_selected_pair();
         } else if self.get_selected_pair().is_some() {
             if self.validate_selected_pair() {
-                log::trace!("[{}]: checking keepalive", self.get_name());
+                trace!("[{}]: checking keepalive", self.get_name());
                 self.check_keepalive();
             }
         } else {
@@ -388,7 +388,7 @@ impl ControlledSelector for Agent {
         };
 
         if let Err(err) = result {
-            log::error!("{}", err);
+            error!("{}", err);
         } else {
             self.send_binding_request(&msg, local_index, remote_index);
         }
@@ -413,11 +413,11 @@ impl ControlledSelector for Agent {
             // Assert that NAT is not symmetric
             // https://tools.ietf.org/html/rfc8445#section-7.2.5.2.1
             if transaction_addr != remote_addr {
-                log::debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
+                debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
                 return;
             }
 
-            log::trace!(
+            trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
                 remote_index,
                 local_index
@@ -426,16 +426,15 @@ impl ControlledSelector for Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
-                log::trace!("Found valid candidate pair: {}", *p);
+                trace!("Found valid candidate pair: {}", *p);
             } else {
                 // This shouldn't happen
-                log::error!("Success response from invalid candidate pair");
+                error!("Success response from invalid candidate pair");
             }
         } else {
-            log::warn!(
+            warn!(
                 "discard message from ({}), unknown TransactionID 0x{:?}",
-                remote_index,
-                m.transaction_id
+                remote_index, m.transaction_id
             );
         }
     }

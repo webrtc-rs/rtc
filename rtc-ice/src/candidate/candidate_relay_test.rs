@@ -44,7 +44,7 @@ async fn test_relay_only_connection() -> Result<(), Error> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     let server_listener = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);

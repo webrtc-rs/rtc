@@ -7,6 +7,7 @@ pub mod agent_stats;
 
 use agent_config::*;
 use bytes::BytesMut;
+use log::{debug, error, info, trace, warn};
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -248,7 +249,7 @@ impl Agent {
     pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<()> {
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
-            log::warn!(
+            warn!(
                 "remote mDNS candidate added, but mDNS is disabled: ({})",
                 c.address()
             );
@@ -288,7 +289,26 @@ impl Agent {
         )
     }
 
-    pub fn handle_read(&mut self, _msg: Transmit<BytesMut>) {}
+    pub fn handle_read(&mut self, msg: Transmit<BytesMut>) -> Result<()> {
+        if let Some(local_index) =
+            self.find_local_candidate(msg.transport.local_addr, msg.transport.protocol)
+        {
+            self.handle_inbound_candidate_msg(
+                local_index,
+                &msg.message,
+                msg.transport.peer_addr,
+                msg.transport.local_addr,
+            )
+        } else {
+            warn!(
+                "[{}]: Discarded message, not a valid local candidate from {:?}:{}",
+                self.get_name(),
+                msg.transport.protocol,
+                msg.transport.local_addr,
+            );
+            Err(Error::ErrUnhandledStunpacket)
+        }
+    }
 
     pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
@@ -381,11 +401,9 @@ impl Agent {
         remote_ufrag: String,
         remote_pwd: String,
     ) -> Result<()> {
-        log::debug!(
+        debug!(
             "Started agent: isControlling? {}, remoteUfrag: {}, remotePwd: {}",
-            is_controlling,
-            remote_ufrag,
-            remote_pwd
+            is_controlling, remote_ufrag, remote_pwd
         );
         self.set_remote_credentials(remote_ufrag, remote_pwd)?;
         self.is_controlling = is_controlling;
@@ -506,7 +524,7 @@ impl Agent {
                 self.delete_all_candidates(false);
             }
 
-            log::info!(
+            info!(
                 "[{}]: Setting new connection state: {}",
                 self.get_name(),
                 new_state
@@ -526,7 +544,7 @@ impl Agent {
 
     pub(crate) fn set_selected_pair(&mut self, selected_pair: Option<usize>) {
         if let Some(pair_index) = selected_pair {
-            log::trace!(
+            trace!(
                 "[{}]: Set selected candidate pair: {:?}",
                 self.get_name(),
                 self.candidate_pairs[pair_index]
@@ -557,14 +575,14 @@ impl Agent {
     }
 
     pub(crate) fn ping_all_candidates(&mut self) {
-        log::trace!("[{}]: pinging all candidates", self.get_name(),);
+        trace!("[{}]: pinging all candidates", self.get_name(),);
 
         let mut pairs: Vec<(usize, usize)> = vec![];
 
         {
             let name = self.get_name().to_string();
             if self.candidate_pairs.is_empty() {
-                log::warn!(
+                warn!(
                 "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
                 name,
             );
@@ -577,7 +595,7 @@ impl Agent {
                 }
 
                 if p.binding_request_count > self.max_binding_requests {
-                    log::trace!(
+                    trace!(
                         "[{}]: max requests reached for pair {}, marking it as failed",
                         name,
                         *p
@@ -711,9 +729,13 @@ impl Agent {
         None
     }
 
-    pub(crate) fn find_local_candidate(&self, addr: SocketAddr) -> Option<usize> {
+    pub(crate) fn find_local_candidate(
+        &self,
+        addr: SocketAddr,
+        protocol: Protocol,
+    ) -> Option<usize> {
         for (index, c) in self.local_candidates.iter().enumerate() {
-            if c.addr() == addr {
+            if c.addr() == addr && c.network_type().to_protocol() == protocol {
                 return Some(index);
             }
         }
@@ -726,7 +748,7 @@ impl Agent {
         local_index: usize,
         remote_index: usize,
     ) {
-        log::trace!(
+        trace!(
             "[{}]: ping STUN from {} to {}",
             self.get_name(),
             local_index,
@@ -769,7 +791,7 @@ impl Agent {
         };
 
         if let Err(err) = result {
-            log::warn!(
+            warn!(
                 "[{}]: Failed to handle inbound ICE from: {} to: {} error: {}",
                 self.get_name(),
                 local_index,
@@ -803,7 +825,7 @@ impl Agent {
         *pending_binding_requests = temp;
         let bind_requests_removed = initial_size - pending_binding_requests.len();
         if bind_requests_removed > 0 {
-            log::trace!(
+            trace!(
                 "[{}]: Discarded {} binding requests because they expired",
                 self.get_name(),
                 bind_requests_removed
@@ -841,7 +863,7 @@ impl Agent {
                 || m.typ.class == CLASS_REQUEST
                 || m.typ.class == CLASS_INDICATION)
         {
-            log::trace!(
+            trace!(
                 "[{}]: unhandled STUN from {} to {} class({}) method({})",
                 self.get_name(),
                 remote_addr,
@@ -854,20 +876,20 @@ impl Agent {
 
         if self.is_controlling {
             if m.contains(ATTR_ICE_CONTROLLING) {
-                log::debug!(
+                debug!(
                     "[{}]: inbound isControlling && a.isControlling == true",
                     self.get_name(),
                 );
                 return;
             } else if m.contains(ATTR_USE_CANDIDATE) {
-                log::debug!(
+                debug!(
                     "[{}]: useCandidate && a.isControlling == true",
                     self.get_name(),
                 );
                 return;
             }
         } else if m.contains(ATTR_ICE_CONTROLLED) {
-            log::debug!(
+            debug!(
                 "[{}]: inbound isControlled && a.isControlling == false",
                 self.get_name(),
             );
@@ -881,7 +903,7 @@ impl Agent {
                 if let Err(err) =
                     assert_inbound_message_integrity(m, ufrag_pwd.remote_pwd.as_bytes())
                 {
-                    log::warn!(
+                    warn!(
                         "[{}]: discard message from ({}), {}",
                         self.get_name(),
                         remote_addr,
@@ -894,7 +916,7 @@ impl Agent {
             if let Some(remote_index) = &remote_candidate_index {
                 self.handle_success_response(m, local_index, *remote_index, remote_addr);
             } else {
-                log::warn!(
+                warn!(
                     "[{}]: discard success message from ({}), no such remote",
                     self.get_name(),
                     remote_addr
@@ -907,7 +929,7 @@ impl Agent {
                 let username =
                     ufrag_pwd.local_ufrag.clone() + ":" + ufrag_pwd.remote_ufrag.as_str();
                 if let Err(err) = assert_inbound_username(m, &username) {
-                    log::warn!(
+                    warn!(
                         "[{}]: discard message from ({}), {}",
                         self.get_name(),
                         remote_addr,
@@ -917,7 +939,7 @@ impl Agent {
                 } else if let Err(err) =
                     assert_inbound_message_integrity(m, ufrag_pwd.local_pwd.as_bytes())
                 {
-                    log::warn!(
+                    warn!(
                         "[{}]: discard message from ({}), {}",
                         self.get_name(),
                         remote_addr,
@@ -946,7 +968,7 @@ impl Agent {
                 match prflx_candidate_config.new_candidate_peer_reflexive() {
                     Ok(prflx_candidate) => remote_candidate = Some(Arc::new(prflx_candidate)),
                     Err(err) => {
-                        log::error!(
+                        error!(
                             "[{}]: Failed to create new remote prflx candidate ({})",
                             self.get_name(),
                             err
@@ -955,7 +977,7 @@ impl Agent {
                     }
                 };
 
-                log::debug!(
+                debug!(
                     "[{}]: adding a new peer-reflexive candidate: {} ",
                     self.get_name(),
                     remote
@@ -965,7 +987,7 @@ impl Agent {
                 }
             }*/
 
-            log::trace!(
+            trace!(
                 "[{}]: inbound STUN (Request) from {} to {}",
                 self.get_name(),
                 remote_addr,
@@ -1040,7 +1062,7 @@ impl Agent {
             });
         } else
         {
-            log::error!("[{}]: Can't start due to conn is_none", self.get_name(),);
+            error!("[{}]: Can't start due to conn is_none", self.get_name(),);
         }
     }*/
 
@@ -1151,8 +1173,8 @@ impl Agent {
         &mut self,
         local_index: usize,
         buf: &[u8],
-        src_addr: SocketAddr,
-        addr: SocketAddr,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
     ) -> Result<()> {
         if stun::message::is_message(buf) {
             let mut m = Message {
@@ -1163,30 +1185,30 @@ impl Agent {
             m.raw.extend_from_slice(buf);
 
             if let Err(err) = m.decode() {
-                log::warn!(
+                warn!(
                     "[{}]: Failed to handle decode ICE from {} to {}: {}",
                     self.get_name(),
-                    addr,
-                    src_addr,
+                    local_addr,
+                    remote_addr,
                     err
                 );
                 Err(err)
             } else {
-                self.handle_inbound(&mut m, local_index, src_addr);
+                self.handle_inbound(&mut m, local_index, remote_addr);
                 Ok(())
             }
         } else {
-            if !self.validate_non_stun_traffic(src_addr) {
-                log::warn!(
+            if !self.validate_non_stun_traffic(remote_addr) {
+                warn!(
                     "[{}]: Discarded message, not a valid remote candidate from {}",
                     self.get_name(),
-                    src_addr,
+                    remote_addr,
                 );
             } else {
-                log::error!(
+                error!(
                     "[{}]: non-STUN traffic message from a valid remote candidate from {}",
                     self.get_name(),
-                    src_addr
+                    remote_addr
                 );
             }
             Err(Error::ErrNonStunmessage)

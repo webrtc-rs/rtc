@@ -398,7 +398,7 @@ async fn test_connectivity_on_startup() -> Result<()> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     // Create a network with two interfaces
@@ -511,7 +511,7 @@ async fn test_connectivity_lite() -> Result<()> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     let stun_server_url = Url {
@@ -637,7 +637,7 @@ async fn test_inbound_validity() -> Result<()> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     let remote = SocketAddr::from_str("172.17.0.3:999")?;
@@ -924,7 +924,7 @@ async fn test_connection_state_callback() -> Result<()> {
             record.args()
         )
     })
-    .filter(None, log::LevelFilter::Trace)
+    .filter(None, LevelFilter::Trace)
     .init();*/
 
     let disconnected_duration = Duration::from_secs(1);
@@ -973,27 +973,27 @@ async fn test_connection_state_callback() -> Result<()> {
         Box::pin(async move {
             match c {
                 ConnectionState::Checking => {
-                    log::debug!("drop is_checking_tx");
+                    debug!("drop is_checking_tx");
                     let mut tx = is_checking_tx_clone.lock().await;
                     tx.take();
                 }
                 ConnectionState::Connected => {
-                    log::debug!("drop is_connected_tx");
+                    debug!("drop is_connected_tx");
                     let mut tx = is_connected_tx_clone.lock().await;
                     tx.take();
                 }
                 ConnectionState::Disconnected => {
-                    log::debug!("drop is_disconnected_tx");
+                    debug!("drop is_disconnected_tx");
                     let mut tx = is_disconnected_tx_clone.lock().await;
                     tx.take();
                 }
                 ConnectionState::Failed => {
-                    log::debug!("drop is_failed_tx");
+                    debug!("drop is_failed_tx");
                     let mut tx = is_failed_tx_clone.lock().await;
                     tx.take();
                 }
                 ConnectionState::Closed => {
-                    log::debug!("drop is_closed_tx");
+                    debug!("drop is_closed_tx");
                     let mut tx = is_closed_tx_clone.lock().await;
                     tx.take();
                 }
@@ -1004,19 +1004,19 @@ async fn test_connection_state_callback() -> Result<()> {
 
     connect_with_vnet(&a_agent, &b_agent).await?;
 
-    log::debug!("wait is_checking_tx");
+    debug!("wait is_checking_tx");
     let _ = is_checking_rx.recv().await;
-    log::debug!("wait is_connected_rx");
+    debug!("wait is_connected_rx");
     let _ = is_connected_rx.recv().await;
-    log::debug!("wait is_disconnected_rx");
+    debug!("wait is_disconnected_rx");
     let _ = is_disconnected_rx.recv().await;
-    log::debug!("wait is_failed_rx");
+    debug!("wait is_failed_rx");
     let _ = is_failed_rx.recv().await;
 
     a_agent.close().await?;
     b_agent.close().await?;
 
-    log::debug!("wait is_closed_rx");
+    debug!("wait is_closed_rx");
     let _ = is_closed_rx.recv().await;
 
     Ok(())
