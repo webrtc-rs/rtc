@@ -143,8 +143,4 @@ impl CandidatePair {
             + 2 * u64::from(std::cmp::max(g, d))
             + u64::from(g > d)
     }
-
-    /*TODO: pub fn write(&mut self, b: &[u8]) -> shared::error::Result<usize> {
-        self.local.write_to(b, &*self.remote)
-    }*/
 }

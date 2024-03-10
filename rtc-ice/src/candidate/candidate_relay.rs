@@ -10,7 +10,6 @@ pub struct CandidateRelayConfig {
 
     pub rel_addr: String,
     pub rel_port: u16,
-    //TODO:pub relay_client: Option<Arc<turn::client::Client>>,
 }
 
 impl CandidateRelayConfig {
@@ -41,7 +40,6 @@ impl CandidateRelayConfig {
                 address: self.rel_addr,
                 port: self.rel_port,
             }),
-            //TODO: relay_client: self.relay_client.clone(),
             ..Candidate::default()
         })
     }

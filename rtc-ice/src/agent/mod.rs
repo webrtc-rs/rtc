@@ -462,7 +462,6 @@ impl Agent {
 
         self.update_connection_state(ConnectionState::Checking);
         self.request_connectivity_check();
-        self.connectivity_checks();
 
         Ok(())
     }
@@ -495,73 +494,6 @@ impl Agent {
         self.contact_candidates();
 
         self.last_connection_state = self.connection_state;
-    }
-
-    fn connectivity_checks(&mut self) {
-        const ZERO_DURATION: Duration = Duration::from_secs(0);
-        /*TODO: let mut last_connection_state = ConnectionState::Unspecified;
-        let mut checking_duration = Instant::now();
-        let (check_interval, keepalive_interval, disconnected_timeout, failed_timeout) = (
-            self.check_interval,
-            self.keepalive_interval,
-            self.disconnected_timeout,
-            self.failed_timeout,
-        );
-
-
-        let done_and_force_candidate_contact_rx = {
-            let mut done_and_force_candidate_contact_rx =
-                self.done_and_force_candidate_contact_rx.lock().await;
-            done_and_force_candidate_contact_rx.take()
-        };*/
-
-        /*TODO:
-        if let Some((mut done_rx, mut force_candidate_contact_rx)) =
-            done_and_force_candidate_contact_rx
-        {
-            let ai = Arc::clone(self);
-            tokio::spawn(async move {
-                loop {
-                    let mut interval = DEFAULT_CHECK_INTERVAL;
-
-                    let mut update_interval = |x: Duration| {
-                        if x != ZERO_DURATION && (interval == ZERO_DURATION || interval > x) {
-                            interval = x;
-                        }
-                    };
-
-                    match last_connection_state {
-                        ConnectionState::New | ConnectionState::Checking => {
-                            // While connecting, check candidates more frequently
-                            update_interval(check_interval);
-                        }
-                        ConnectionState::Connected | ConnectionState::Disconnected => {
-                            update_interval(keepalive_interval);
-                        }
-                        _ => {}
-                    };
-                    // Ensure we run our task loop as quickly as the minimum of our various configured timeouts
-                    update_interval(disconnected_timeout);
-                    update_interval(failed_timeout);
-
-                    let t = tokio::time::sleep(interval);
-                    tokio::pin!(t);
-
-                    tokio::select! {
-                        _ = t.as_mut() => {
-                            ai.contact(&mut last_connection_state, &mut checking_duration).await;
-                        },
-                        _ = force_candidate_contact_rx.recv() => {
-                            ai.contact(&mut last_connection_state, &mut checking_duration).await;
-                        },
-                        _ = done_rx.recv() => {
-                            return;
-                        }
-                    }
-                }
-            });
-        }
-         */
     }
 
     pub(crate) fn update_connection_state(&mut self, new_state: ConnectionState) {

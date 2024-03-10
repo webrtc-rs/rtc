@@ -129,7 +129,6 @@ pub struct CandidateConfig {
     pub component: u16,
     pub priority: u32,
     pub foundation: String,
-    //todo: pub initialized_ch: Option<broadcast::Receiver<()>>,
 }
 
 pub struct Candidate {
@@ -148,14 +147,10 @@ pub struct Candidate {
     pub(crate) last_sent: Instant,
     pub(crate) last_received: Instant,
 
-    //todo: pub(crate) closed_ch: Arc<Mutex<Option<broadcast::Sender<()>>>>,
     pub(crate) foundation_override: String,
     pub(crate) priority_override: u32,
 
-    //CandidateHost
     pub(crate) network: String,
-    //CandidateRelay
-    //TODO: pub(crate) relay_client: Option<Arc<turn::client::Client>>,
 }
 
 impl Default for Candidate {
@@ -179,7 +174,6 @@ impl Default for Candidate {
             foundation_override: String::new(),
             priority_override: 0,
             network: String::new(),
-            //TODO: relay_client: None,
         }
     }
 }
