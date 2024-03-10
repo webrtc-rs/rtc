@@ -13,24 +13,24 @@ repository = "https://github.com/webrtc-rs/rtc"
 shared = { version = "0.1.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
 stun = { version = "0.1.1", path = "../rtc-stun", package = "rtc-stun" }
 
-crc = "3.0"
+crc = "3.0.1"
 log = "0.4.21"
 rand = "0.8.5"
 serde = { version = "1.0.197", features = ["derive"] }
-url = "2.5"
+url = "2.5.0"
 bytes = "1.5.0"
 
 [dev-dependencies]
-regex = "1"
-env_logger = "0.9.0"
-chrono = "0.4.23"
-ipnet = "2.5.0"
-clap = "3.2.6"
+regex = "1.10.3"
+env_logger = "0.11.3"
+chrono = "0.4.35"
+ipnet = "2.9.0"
+clap = "4.5.2"
 lazy_static = "1.4.0"
-hyper = { version = "0.14.19", features = ["full"] }
-sha1 = "0.10.5"
+hyper = { version = "0.14.28", features = ["full"] }
+sha1 = "0.10.6"
 waitgroup = "0.1.2"
-serde_json = "1.0"
+serde_json = "1.0.114"
 
 #[[example]]
 #name = "ping_pong"
