@@ -1,5 +1,5 @@
-//TODO:#[cfg(test)]
-//TODO:mod use_candidate_test;
+#[cfg(test)]
+mod use_candidate_test;
 
 use shared::error::*;
 use stun::attributes::ATTR_USE_CANDIDATE;

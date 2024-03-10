@@ -1,5 +1,5 @@
-//TODO:#[cfg(test)]
-//TODO:mod control_test;
+#[cfg(test)]
+mod control_test;
 
 use std::fmt;
 

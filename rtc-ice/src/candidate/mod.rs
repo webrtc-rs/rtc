@@ -5,8 +5,8 @@ mod candidate_test;
 
 //TODO: #[cfg(test)]
 //TODO: mod candidate_relay_test;
-/*#[cfg(test)]
-mod candidate_server_reflexive_test;
+/*TODO: #[cfg(test)]
+TODO: mod candidate_server_reflexive_test;
 */
 
 pub mod candidate_host;
@@ -131,6 +131,7 @@ pub struct CandidateConfig {
     pub foundation: String,
 }
 
+#[derive(Clone)]
 pub struct Candidate {
     pub(crate) id: String,
     pub(crate) network_type: NetworkType,

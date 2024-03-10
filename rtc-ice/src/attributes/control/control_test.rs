@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use shared::error::{Error, Result};
 
 #[test]
 fn test_controlled_get_from() -> Result<()> {
@@ -7,7 +7,7 @@ fn test_controlled_get_from() -> Result<()> {
     let mut c = AttrControlled(4321);
     let result = c.get_from(&m);
     if let Err(err) = result {
-        assert_eq!(stun::Error::ErrAttributeNotFound, err, "unexpected error");
+        assert_eq!(Error::ErrAttributeNotFound, err, "unexpected error");
     } else {
         panic!("expected error, but got ok");
     }
@@ -44,7 +44,7 @@ fn test_controlling_get_from() -> Result<()> {
     let mut c = AttrControlling(4321);
     let result = c.get_from(&m);
     if let Err(err) = result {
-        assert_eq!(stun::Error::ErrAttributeNotFound, err, "unexpected error");
+        assert_eq!(Error::ErrAttributeNotFound, err, "unexpected error");
     } else {
         panic!("expected error, but got ok");
     }
@@ -83,7 +83,7 @@ fn test_control_get_from() -> Result<()> {
         let mut c = AttrControl::default();
         let result = c.get_from(&m);
         if let Err(err) = result {
-            assert_eq!(stun::Error::ErrAttributeNotFound, err, "unexpected error");
+            assert_eq!(Error::ErrAttributeNotFound, err, "unexpected error");
         } else {
             panic!("expected error, but got ok");
         }
@@ -94,7 +94,7 @@ fn test_control_get_from() -> Result<()> {
         let mut c = AttrControl::default();
         let result = c.get_from(&m);
         if let Err(err) = result {
-            assert_eq!(stun::Error::ErrAttributeNotFound, err, "unexpected error");
+            assert_eq!(Error::ErrAttributeNotFound, err, "unexpected error");
         } else {
             panic!("expected error, but got ok");
         }
@@ -132,7 +132,7 @@ fn test_control_get_from() -> Result<()> {
         let mut c = AttrControl::default();
         let result = c.get_from(&m);
         if let Err(err) = result {
-            assert_eq!(stun::Error::ErrAttributeNotFound, err, "unexpected error");
+            assert_eq!(Error::ErrAttributeNotFound, err, "unexpected error");
         } else {
             panic!("expected error, but got ok");
         }

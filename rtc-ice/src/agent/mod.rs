@@ -373,10 +373,16 @@ impl Agent {
         Ok(())
     }
 
-    /// Returns the selected pair or none if there is none
-    pub fn get_selected_candidate_pair(&self) -> Option<usize> {
-        //TODO:
-        self.get_selected_pair()
+    /// Returns the selected pair (local_candidate, remote_candidate) or none
+    pub fn get_selected_candidate_pair(&self) -> Option<(Candidate, Candidate)> {
+        if let Some(pair_index) = self.get_selected_pair() {
+            Some((
+                self.local_candidates[self.candidate_pairs[pair_index].local_index].clone(),
+                self.remote_candidates[self.candidate_pairs[pair_index].remote_index].clone(),
+            ))
+        } else {
+            None
+        }
     }
 
     /// Sets the credentials of the remote agent.
@@ -509,15 +515,6 @@ impl Agent {
                 new_state
             );
             self.connection_state = new_state;
-
-            // Call handler after finishing current task since we may be holding the agent lock
-            // and the handler may also require it
-            /*TODO:{
-                let chan_state_tx = self.chan_state_tx.lock().await;
-                if let Some(tx) = &*chan_state_tx {
-                    let _ = tx.send(new_state).await;
-                }
-            }*/
         }
     }
 
