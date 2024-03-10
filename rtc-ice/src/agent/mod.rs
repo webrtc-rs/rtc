@@ -27,6 +27,8 @@ use crate::url::*;
 use shared::error::*;
 use shared::{Protocol, Transmit, TransportContext};
 
+const ZERO_DURATION: Duration = Duration::from_secs(0);
+
 #[derive(Debug, Clone)]
 pub(crate) struct BindingRequest {
     pub(crate) timestamp: Instant,
@@ -84,6 +86,7 @@ pub struct Agent {
     pub(crate) start_time: Instant,
 
     pub(crate) connection_state: ConnectionState,
+    pub(crate) last_connection_state: ConnectionState,
 
     //pub(crate) started_ch_tx: Mutex<Option<broadcast::Sender<()>>>,
     pub(crate) ufrag_pwd: UfragPwd,
@@ -112,6 +115,7 @@ pub struct Agent {
     pub(crate) keepalive_interval: Duration,
     // How often should we run our internal taskLoop to check for state changes when connecting
     pub(crate) check_interval: Duration,
+    pub(crate) last_checking_time: Instant,
 
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
@@ -204,6 +208,8 @@ impl Agent {
             } else {
                 config.check_interval
             },
+            last_checking_time: Instant::now(),
+            last_connection_state: ConnectionState::Unspecified,
 
             ufrag_pwd: UfragPwd::default(),
 
@@ -316,9 +322,48 @@ impl Agent {
         self.transmits.pop_front()
     }
 
-    pub fn handle_timeout(&mut self) {}
+    pub fn handle_timeout(&mut self, now: Instant) {
+        let interval = self.get_timeout_interval();
+        if self.last_checking_time + interval <= now {
+            self.contact();
+            self.last_checking_time = now;
+        }
+    }
 
-    pub fn poll_timeout(&mut self) {}
+    pub fn poll_timeout(&self) -> Option<Instant> {
+        Some(self.last_checking_time + self.get_timeout_interval())
+    }
+
+    fn get_timeout_interval(&self) -> Duration {
+        let (check_interval, keepalive_interval, disconnected_timeout, failed_timeout) = (
+            self.check_interval,
+            self.keepalive_interval,
+            self.disconnected_timeout,
+            self.failed_timeout,
+        );
+        let mut interval = DEFAULT_CHECK_INTERVAL;
+
+        let mut update_interval = |x: Duration| {
+            if x != ZERO_DURATION && (interval == ZERO_DURATION || interval > x) {
+                interval = x;
+            }
+        };
+
+        match self.last_connection_state {
+            ConnectionState::New | ConnectionState::Checking => {
+                // While connecting, check candidates more frequently
+                update_interval(check_interval);
+            }
+            ConnectionState::Connected | ConnectionState::Disconnected => {
+                update_interval(keepalive_interval);
+            }
+            _ => {}
+        };
+        // Ensure we run our task loop as quickly as the minimum of our various configured timeouts
+        update_interval(disconnected_timeout);
+        update_interval(failed_timeout);
+        interval
+    }
 
     /// Cleans up the Agent.
     pub fn close(&mut self) -> Result<()> {
@@ -422,38 +467,34 @@ impl Agent {
         Ok(())
     }
 
-    fn contact(
-        &mut self,
-        last_connection_state: &mut ConnectionState,
-        checking_duration: &mut Instant,
-    ) {
+    fn contact(&mut self) {
         if self.connection_state == ConnectionState::Failed {
             // The connection is currently failed so don't send any checks
             // In the future it may be restarted though
-            *last_connection_state = self.connection_state;
+            self.last_connection_state = self.connection_state;
             return;
         }
         if self.connection_state == ConnectionState::Checking {
             // We have just entered checking for the first time so update our checking timer
-            if *last_connection_state != self.connection_state {
-                *checking_duration = Instant::now();
+            if self.last_connection_state != self.connection_state {
+                self.last_checking_time = Instant::now();
             }
 
             // We have been in checking longer then Disconnect+Failed timeout, set the connection to Failed
             if Instant::now()
-                .checked_duration_since(*checking_duration)
+                .checked_duration_since(self.last_checking_time)
                 .unwrap_or_else(|| Duration::from_secs(0))
                 > self.disconnected_timeout + self.failed_timeout
             {
                 self.update_connection_state(ConnectionState::Failed);
-                *last_connection_state = self.connection_state;
+                self.last_connection_state = self.connection_state;
                 return;
             }
         }
 
         self.contact_candidates();
 
-        *last_connection_state = self.connection_state;
+        self.last_connection_state = self.connection_state;
     }
 
     fn connectivity_checks(&mut self) {
