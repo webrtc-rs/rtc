@@ -77,6 +77,11 @@ fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
     message_integrity_attr.check(m)
 }
 
+pub enum Event {
+    ConnectionStateChange(ConnectionState),
+    SelectedCandidatePairChange(Candidate, Candidate),
+}
+
 /// Represents the ICE agent.
 pub struct Agent {
     pub(crate) tie_breaker: u64,
@@ -121,6 +126,7 @@ pub struct Agent {
     pub(crate) urls: Vec<Url>,
 
     pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
+    pub(crate) events: VecDeque<Event>,
 }
 
 impl Agent {
@@ -223,6 +229,7 @@ impl Agent {
             urls: config.urls.clone(),
 
             transmits: VecDeque::new(),
+            events: VecDeque::new(),
         };
 
         // Restart is also used to initialize the agent for the first time
@@ -244,8 +251,8 @@ impl Agent {
 
         self.local_candidates.push(c);
 
-        for remote_cand in 0..self.remote_candidates.len() {
-            self.add_pair(self.local_candidates.len() - 1, remote_cand);
+        for remote_index in 0..self.remote_candidates.len() {
+            self.add_pair(self.local_candidates.len() - 1, remote_index);
         }
 
         self.request_connectivity_check();
@@ -272,8 +279,8 @@ impl Agent {
 
         self.remote_candidates.push(c);
 
-        for local_cand in 0..self.local_candidates.len() {
-            self.add_pair(local_cand, self.remote_candidates.len() - 1);
+        for local_index in 0..self.local_candidates.len() {
+            self.add_pair(local_index, self.remote_candidates.len() - 1);
         }
 
         self.request_connectivity_check();
@@ -334,6 +341,10 @@ impl Agent {
         Some(self.last_checking_time + self.get_timeout_interval())
     }
 
+    pub fn poll_event(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
     fn get_timeout_interval(&self) -> Duration {
         let (check_interval, keepalive_interval, disconnected_timeout, failed_timeout) = (
             self.check_interval,
@@ -376,9 +387,10 @@ impl Agent {
     /// Returns the selected pair (local_candidate, remote_candidate) or none
     pub fn get_selected_candidate_pair(&self) -> Option<(Candidate, Candidate)> {
         if let Some(pair_index) = self.get_selected_pair() {
+            let candidate_pair = &self.candidate_pairs[pair_index];
             Some((
-                self.local_candidates[self.candidate_pairs[pair_index].local_index].clone(),
-                self.remote_candidates[self.candidate_pairs[pair_index].remote_index].clone(),
+                self.local_candidates[candidate_pair.local_index].clone(),
+                self.remote_candidates[candidate_pair.remote_index].clone(),
             ))
         } else {
             None
@@ -515,6 +527,8 @@ impl Agent {
                 new_state
             );
             self.connection_state = new_state;
+            self.events
+                .push_back(Event::ConnectionStateChange(new_state));
         }
     }
 
@@ -526,25 +540,17 @@ impl Agent {
                 self.candidate_pairs[pair_index]
             );
 
-            let p = &mut self.candidate_pairs[pair_index];
-            p.nominated = true;
+            self.candidate_pairs[pair_index].nominated = true;
             self.selected_pair = Some(pair_index);
 
             self.update_connection_state(ConnectionState::Connected);
 
             // Notify when the selected pair changes
-            /*TODO:{
-                let chan_candidate_pair_tx = self.chan_candidate_pair_tx.lock().await;
-                if let Some(tx) = &*chan_candidate_pair_tx {
-                    let _ = tx.send(()).await;
-                }
-            }*/
-
-            // Signal connected
-            /*TODO:{
-                let mut on_connected_tx = self.on_connected_tx.lock().await;
-                on_connected_tx.take();
-            }*/
+            let candidate_pair = &self.candidate_pairs[pair_index];
+            self.events.push_back(Event::SelectedCandidatePairChange(
+                self.local_candidates[candidate_pair.local_index].clone(),
+                self.remote_candidates[candidate_pair.remote_index].clone(),
+            ));
         } else {
             self.selected_pair = None;
         }
@@ -681,7 +687,7 @@ impl Agent {
     }
 
     fn request_connectivity_check(&self) {
-        //TODO: let _ = self.force_candidate_contact_tx.try_send(true);
+        //TODO: force_candidate_contact now???
     }
 
     /// Remove all candidates.
@@ -1011,71 +1017,6 @@ impl Agent {
         });
 
         self.local_candidates[local_index].seen(true);
-    }
-
-    pub(super) fn start_on_connection_state_change_routine(
-        &mut self,
-        /*mut chan_state_rx: mpsc::Receiver<ConnectionState>,
-        mut chan_candidate_rx: mpsc::Receiver<Option<Arc<dyn Candidate + Send + Sync>>>,
-        mut chan_candidate_pair_rx: mpsc::Receiver<()>,*/
-    ) {
-        /*TODO:
-        let ai = Arc::clone(self);
-        tokio::spawn(async move {
-            // CandidatePair and ConnectionState are usually changed at once.
-            // Blocking one by the other one causes deadlock.
-            while chan_candidate_pair_rx.recv().await.is_some() {
-                if let (Some(cb), Some(p)) = (
-                    &*ai.on_selected_candidate_pair_change_hdlr.load(),
-                    &*ai.agent_conn.selected_pair.load(),
-                ) {
-                    let mut f = cb.lock().await;
-                    f(&p.local, &p.remote).await;
-                }
-            }
-        });
-
-        let ai = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    opt_state = chan_state_rx.recv() => {
-                        if let Some(s) = opt_state {
-                            if let Some(handler) = &*ai.on_connection_state_change_hdlr.load() {
-                                let mut f = handler.lock().await;
-                                f(s).await;
-                            }
-                        } else {
-                            while let Some(c) = chan_candidate_rx.recv().await {
-                                if let Some(handler) = &*ai.on_candidate_hdlr.load() {
-                                    let mut f = handler.lock().await;
-                                    f(c).await;
-                                }
-                            }
-                            break;
-                        }
-                    },
-                    opt_cand = chan_candidate_rx.recv() => {
-                        if let Some(c) = opt_cand {
-                            if let Some(handler) = &*ai.on_candidate_hdlr.load() {
-                                let mut f = handler.lock().await;
-                                f(c).await;
-                            }
-                        } else {
-                            while let Some(s) = chan_state_rx.recv().await {
-                                if let Some(handler) = &*ai.on_connection_state_change_hdlr.load() {
-                                    let mut f = handler.lock().await;
-                                    f(s).await;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-
-         */
     }
 
     fn handle_inbound_candidate_msg(
