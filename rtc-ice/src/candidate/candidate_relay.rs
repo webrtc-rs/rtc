@@ -27,7 +27,7 @@ impl CandidateRelayConfig {
         };
         let network_type = determine_network_type(&self.base_config.network, &ip)?;
 
-        let c = Candidate {
+        Ok(Candidate {
             id: candidate_id,
             network_type,
             candidate_type: CandidateType::Relay,
@@ -41,11 +41,8 @@ impl CandidateRelayConfig {
                 address: self.rel_addr,
                 port: self.rel_port,
             }),
-            //TODO:conn: self.base_config.conn,
             //TODO: relay_client: self.relay_client.clone(),
             ..Candidate::default()
-        };
-
-        Ok(c)
+        })
     }
 }

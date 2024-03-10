@@ -17,26 +17,25 @@ impl CandidateHostConfig {
             candidate_id = generate_cand_id();
         }
 
-        let mut c = Candidate {
+        let ip: IpAddr = match self.base_config.address.parse() {
+            Ok(ip) => ip,
+            Err(_) => return Err(Error::ErrAddressParseFailed),
+        };
+        let network_type = determine_network_type(&self.base_config.network, &ip)?;
+
+        Ok(Candidate {
             id: candidate_id,
-            address: self.base_config.address.clone(),
+            network_type,
             candidate_type: CandidateType::Host,
-            component: self.base_config.component,
+            address: self.base_config.address,
             port: self.base_config.port,
-            tcp_type: self.tcp_type,
+            resolved_addr: SocketAddr::new(ip, self.base_config.port),
+            component: self.base_config.component,
             foundation_override: self.base_config.foundation,
             priority_override: self.base_config.priority,
             network: self.base_config.network,
-            network_type: NetworkType::Udp4,
-            //conn: self.base_config.conn,
+            tcp_type: self.tcp_type,
             ..Candidate::default()
-        };
-
-        if !self.base_config.address.ends_with(".local") {
-            let ip = self.base_config.address.parse()?;
-            c.set_ip(&ip)?;
-        };
-
-        Ok(c)
+        })
     }
 }

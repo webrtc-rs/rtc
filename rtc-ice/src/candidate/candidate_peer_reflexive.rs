@@ -15,18 +15,18 @@ pub struct CandidatePeerReflexiveConfig {
 impl CandidatePeerReflexiveConfig {
     /// Creates a new peer reflective candidate.
     pub fn new_candidate_peer_reflexive(self) -> Result<Candidate> {
+        let mut candidate_id = self.base_config.candidate_id;
+        if candidate_id.is_empty() {
+            candidate_id = generate_cand_id();
+        }
+
         let ip: IpAddr = match self.base_config.address.parse() {
             Ok(ip) => ip,
             Err(_) => return Err(Error::ErrAddressParseFailed),
         };
         let network_type = determine_network_type(&self.base_config.network, &ip)?;
 
-        let mut candidate_id = self.base_config.candidate_id;
-        if candidate_id.is_empty() {
-            candidate_id = generate_cand_id();
-        }
-
-        let c = Candidate {
+        Ok(Candidate {
             id: candidate_id,
             network_type,
             candidate_type: CandidateType::PeerReflexive,
@@ -40,10 +40,7 @@ impl CandidatePeerReflexiveConfig {
                 address: self.rel_addr,
                 port: self.rel_port,
             }),
-            //TODO:conn: self.base_config.conn,
             ..Candidate::default()
-        };
-
-        Ok(c)
+        })
     }
 }

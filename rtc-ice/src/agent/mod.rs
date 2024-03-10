@@ -288,6 +288,8 @@ impl Agent {
         )
     }
 
+    pub fn handle_read(&mut self, _msg: Transmit<BytesMut>) {}
+
     pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
     }
@@ -709,6 +711,15 @@ impl Agent {
         None
     }
 
+    pub(crate) fn find_local_candidate(&self, addr: SocketAddr) -> Option<usize> {
+        for (index, c) in self.local_candidates.iter().enumerate() {
+            if c.addr() == addr {
+                return Some(index);
+            }
+        }
+        None
+    }
+
     pub(crate) fn send_binding_request(
         &mut self,
         m: &Message,
@@ -1100,11 +1111,11 @@ impl Agent {
 
     /*TODO fn recv_loop(
         &self,
-        _candidate: Rc<dyn Candidate>,
+        candidate: Rc<dyn Candidate>,
         //mut _closed_ch_rx: broadcast::Receiver<()>,
         //_initialized_ch: Option<broadcast::Receiver<()>>,
         //TODO:conn: Arc<dyn util::Conn + Send + Sync>,
-        _addr: SocketAddr,
+        addr: SocketAddr,
     ) -> Result<()> {
         if let Some(mut initialized_ch) = initialized_ch {
             tokio::select! {
@@ -1142,7 +1153,7 @@ impl Agent {
         buf: &[u8],
         src_addr: SocketAddr,
         addr: SocketAddr,
-    ) {
+    ) -> Result<()> {
         if stun::message::is_message(buf) {
             let mut m = Message {
                 raw: vec![],
@@ -1159,19 +1170,27 @@ impl Agent {
                     src_addr,
                     err
                 );
+                Err(err)
             } else {
                 self.handle_inbound(&mut m, local_index, src_addr);
+                Ok(())
             }
-        } else if !self.validate_non_stun_traffic(src_addr) {
-            log::warn!(
-                "[{}]: Discarded message, not a valid remote candidate",
-                self.get_name(),
-                //c.addr().await //from {}
-            );
-        } /*TODO: else if let Err(err) = self.buffer.write(buf).await {
-              // NOTE This will return packetio.ErrFull if the buffer ever manages to fill up.
-              log::warn!("[{}]: failed to write packet: {}", self.get_name(), err);
-          }*/
+        } else {
+            if !self.validate_non_stun_traffic(src_addr) {
+                log::warn!(
+                    "[{}]: Discarded message, not a valid remote candidate from {}",
+                    self.get_name(),
+                    src_addr,
+                );
+            } else {
+                log::error!(
+                    "[{}]: non-STUN traffic message from a valid remote candidate from {}",
+                    self.get_name(),
+                    src_addr
+                );
+            }
+            Err(Error::ErrNonStunmessage)
+        }
     }
 
     pub(crate) fn get_name(&self) -> &str {

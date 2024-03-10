@@ -349,16 +349,12 @@ impl Candidate {
             && self.related_address() == other.related_address()
     }
 
-    pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
+    /*TODO: mDNS pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
         let network_type = determine_network_type(&self.network, ip)?;
         self.network_type = network_type;
         self.resolved_addr = SocketAddr::new(*ip, self.port);
 
         Ok(())
-    }
-
-    /*TODO:fn get_closed_ch(&self) -> Arc<Mutex<Option<broadcast::Sender<()>>>> {
-        self.closed_ch.clone()
     }*/
 }
 
