@@ -6,6 +6,8 @@ pub mod agent_selector;
 pub mod agent_stats;
 
 use agent_config::*;
+use bytes::BytesMut;
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use stun::attributes::*;
@@ -20,6 +22,7 @@ use crate::rand::*;
 use crate::state::*;
 use crate::url::*;
 use shared::error::*;
+use shared::{Protocol, Transmit, TransportContext};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BindingRequest {
@@ -109,6 +112,8 @@ pub struct Agent {
 
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
+
+    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
 }
 
 impl Agent {
@@ -207,6 +212,8 @@ impl Agent {
 
             candidate_types,
             urls: config.urls.clone(),
+
+            transmits: VecDeque::new(),
         };
 
         // Restart is also used to initialize the agent for the first time
@@ -279,6 +286,10 @@ impl Agent {
             self.ufrag_pwd.remote_ufrag.clone(),
             self.ufrag_pwd.remote_pwd.clone(),
         )
+    }
+
+    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+        self.transmits.pop_front()
     }
 
     /// Cleans up the Agent.
@@ -682,21 +693,8 @@ impl Agent {
     ///
     /// This is used for restarts, failures and on close.
     pub(crate) fn delete_all_candidates(&mut self, keep_local_candidates: bool) {
-        let name = self.get_name().to_string();
-
         if !keep_local_candidates {
-            for c in &self.local_candidates {
-                if let Err(err) = c.close() {
-                    log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
-                }
-            }
             self.local_candidates.clear();
-        }
-
-        for c in &self.remote_candidates {
-            if let Err(err) = c.close() {
-                log::warn!("[{}]: Failed to close candidate {}: {}", name, c, err);
-            }
         }
         self.remote_candidates.clear();
     }
@@ -984,14 +982,26 @@ impl Agent {
     }
 
     pub(crate) fn send_stun(&mut self, msg: &Message, local_index: usize, remote_index: usize) {
-        let remote_addr = self.remote_candidates[remote_index].addr();
-        if let Err(err) = self.local_candidates[local_index].write(&msg.raw, remote_addr) {
-            log::trace!(
-                "[{}]: failed to send STUN message: {}",
-                self.get_name(),
-                err
-            );
-        }
+        let peer_addr = self.remote_candidates[remote_index].addr();
+        let local_addr = self.local_candidates[local_index].addr();
+        let protocol = if self.local_candidates[local_index].network_type().is_tcp() {
+            Protocol::TCP
+        } else {
+            Protocol::UDP
+        };
+
+        self.transmits.push_back(Transmit {
+            now: Instant::now(),
+            transport: TransportContext {
+                local_addr,
+                peer_addr,
+                ecn: None,
+                protocol,
+            },
+            message: BytesMut::from(&msg.raw[..]),
+        });
+
+        self.local_candidates[local_index].seen(true);
     }
 
     // Runs the candidate using the provided connection.

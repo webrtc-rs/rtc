@@ -223,7 +223,7 @@ impl Agent {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
                 id: c.id(),
-                ip: c.address(),
+                ip: c.address().to_owned(),
                 port: c.port(),
                 candidate_type: c.candidate_type(),
                 priority: c.priority(),
@@ -244,7 +244,7 @@ impl Agent {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
                 id: c.id(),
-                ip: c.address(),
+                ip: c.address().to_owned(),
                 port: c.port(),
                 candidate_type: c.candidate_type(),
                 priority: c.priority(),

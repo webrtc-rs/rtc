@@ -17,11 +17,9 @@ pub mod candidate_server_reflexive;
 
 use crate::network_type::NetworkType;
 use crate::tcp_type::TcpType;
-use bytes::BytesMut;
 use crc::{Crc, CRC_32_ISCSI};
 use serde::Serialize;
 use shared::error::*;
-use std::collections::VecDeque;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
@@ -31,7 +29,6 @@ use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::network_type::determine_network_type;
-use shared::{Protocol, Transmit, TransportContext};
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
@@ -147,7 +144,6 @@ pub struct Candidate {
     pub(crate) tcp_type: TcpType,
 
     pub(crate) resolved_addr: SocketAddr,
-    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
 
     pub(crate) last_sent: Instant,
     pub(crate) last_received: Instant,
@@ -176,7 +172,6 @@ impl Default for Candidate {
             tcp_type: TcpType::default(),
 
             resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
-            transmits: VecDeque::new(),
 
             last_sent: Instant::now(),
             last_received: Instant::now(),
@@ -262,8 +257,8 @@ impl Candidate {
     }
 
     /// Returns Candidate Address.
-    pub fn address(&self) -> String {
-        self.address.clone()
+    pub fn address(&self) -> &str {
+        self.address.as_str()
     }
 
     /// Returns Candidate Port.
@@ -334,19 +329,6 @@ impl Candidate {
         self.resolved_addr
     }
 
-    /// Stops the recvLoop.
-    pub fn close(&self) -> Result<()> {
-        /*TODO:{
-            let mut closed_ch = self.closed_ch.lock().await;
-            if closed_ch.is_none() {
-                return Err(Error::ErrClosed);
-            }
-            closed_ch.take();
-        }*/
-
-        Ok(())
-    }
-
     pub fn seen(&mut self, outbound: bool) {
         let now = Instant::now();
 
@@ -355,31 +337,6 @@ impl Candidate {
         } else {
             self.set_last_received(now);
         }
-    }
-
-    pub fn write(&mut self, raw: &[u8], remote: SocketAddr) -> Result<usize> {
-        let n = raw.len();
-        self.transmits.push_back(Transmit {
-            now: Instant::now(),
-            transport: TransportContext {
-                local_addr: self.resolved_addr,
-                peer_addr: remote,
-                ecn: None,
-                protocol: if self.network_type.is_tcp() {
-                    Protocol::TCP
-                } else {
-                    Protocol::UDP
-                },
-            },
-            message: BytesMut::from(raw),
-        });
-
-        self.seen(true);
-        Ok(n)
-    }
-
-    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
-        self.transmits.pop_front()
     }
 
     /// Used to compare two candidateBases.
