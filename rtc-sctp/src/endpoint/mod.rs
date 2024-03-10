@@ -4,7 +4,7 @@ mod endpoint_test;
 use std::{
     collections::HashMap,
     fmt, iter,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     ops::{Index, IndexMut},
     sync::Arc,
     time::Instant,
@@ -18,8 +18,8 @@ use crate::shared::{
     AssociationEvent, AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner,
 };
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
-use crate::{Payload, Transmit};
-use shared::EcnCodepoint;
+use crate::Payload;
+use shared::{EcnCodepoint, Protocol, Transmit, TransportContext};
 
 use bytes::Bytes;
 use fxhash::FxHashMap;
@@ -34,6 +34,8 @@ use thiserror::Error;
 /// `poll_transmit`, and consumes incoming packets and association-generated events via `handle` and
 /// `handle_event`.
 pub struct Endpoint {
+    local_addr: SocketAddr,
+    protocol: Protocol,
     rng: StdRng,
     /// Identifies associations based on the INIT Dst AID the peer utilized
     ///
@@ -73,10 +75,14 @@ impl Endpoint {
     ///
     /// Returns `Err` if the configuration is invalid.
     pub fn new(
+        local_addr: SocketAddr,
+        protocol: Protocol,
         endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Self {
         Self {
+            local_addr,
+            protocol,
             rng: StdRng::from_entropy(),
             association_ids_init: HashMap::default(),
             association_ids: FxHashMap::default(),
@@ -111,7 +117,6 @@ impl Endpoint {
         &mut self,
         now: Instant,
         remote: SocketAddr,
-        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: Bytes,
     ) -> Option<(AssociationHandle, DatagramEvent)> {
@@ -148,10 +153,13 @@ impl Endpoint {
                 DatagramEvent::AssociationEvent(AssociationEvent(AssociationEventInner::Datagram(
                     Transmit {
                         now,
-                        remote,
-                        ecn,
+                        transport: TransportContext {
+                            local_addr: self.local_addr,
+                            peer_addr: remote,
+                            ecn,
+                            protocol: self.protocol,
+                        },
                         payload: Payload::PartialDecode(partial_decode),
-                        local_ip,
                     },
                 ))),
             ));
@@ -160,7 +168,7 @@ impl Endpoint {
         //
         // Potentially create a new association
         //
-        self.handle_first_packet(now, remote, local_ip, ecn, partial_decode)
+        self.handle_first_packet(now, remote, ecn, partial_decode)
             .map(|(ch, a)| (ch, DatagramEvent::NewAssociation(a)))
     }
 
@@ -184,7 +192,6 @@ impl Endpoint {
             remote_aid,
             local_aid,
             remote,
-            None,
             Instant::now(),
             None,
             config.transport,
@@ -205,7 +212,6 @@ impl Endpoint {
         &mut self,
         now: Instant,
         remote: SocketAddr,
-        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<(AssociationHandle, Association)> {
@@ -237,7 +243,6 @@ impl Endpoint {
             remote_aid,
             local_aid,
             remote,
-            local_ip,
             now,
             Some(server_config),
             transport_config,
@@ -246,10 +251,13 @@ impl Endpoint {
         conn.handle_event(AssociationEvent(AssociationEventInner::Datagram(
             Transmit {
                 now,
-                remote,
-                ecn,
+                transport: TransportContext {
+                    local_addr: self.local_addr,
+                    peer_addr: remote,
+                    ecn,
+                    protocol: self.protocol,
+                },
                 payload: Payload::PartialDecode(partial_decode),
-                local_ip,
             },
         )));
 
@@ -262,7 +270,6 @@ impl Endpoint {
         remote_aid: AssociationId,
         local_aid: AssociationId,
         remote_addr: SocketAddr,
-        local_ip: Option<IpAddr>,
         now: Instant,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
@@ -273,7 +280,8 @@ impl Endpoint {
             self.endpoint_config.get_max_payload_size(),
             local_aid,
             remote_addr,
-            local_ip,
+            self.local_addr,
+            self.protocol,
             now,
         );
 

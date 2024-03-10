@@ -9,7 +9,8 @@ fn create_association(config: TransportConfig) -> Association {
         1400,
         0,
         SocketAddr::from_str("0.0.0.0:0").unwrap(),
-        None,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        Protocol::UDP,
         Instant::now(),
     )
 }

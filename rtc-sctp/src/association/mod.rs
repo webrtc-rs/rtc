@@ -26,8 +26,9 @@ use crate::param::{
 use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
-use crate::{AssociationEvent, Payload, Side, Transmit};
+use crate::{AssociationEvent, Payload, Side};
 use shared::error::{Error, Result};
+use shared::{Protocol, Transmit, TransportContext};
 use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
 use timer::{RtoManager, Timer, TimerTable, ACK_INTERVAL};
 
@@ -37,7 +38,7 @@ use fxhash::FxHashMap;
 use log::{debug, error, trace, warn};
 use rand::random;
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -115,7 +116,6 @@ pub enum Event {
 //
 // No Closed state is illustrated since if a
 // association is Closed its TCB SHOULD be removed.
-#[derive(Debug)]
 pub struct Association {
     side: Side,
     state: AssociationState,
@@ -146,7 +146,9 @@ pub struct Association {
 
     // Non-RFC internal data
     remote_addr: SocketAddr,
-    local_ip: Option<IpAddr>,
+    local_addr: SocketAddr,
+    protocol: Protocol,
+
     source_port: u16,
     destination_port: u16,
     my_max_num_inbound_streams: u16,
@@ -233,7 +235,9 @@ impl Default for Association {
 
             // Non-RFC internal data
             remote_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
-            local_ip: None,
+            local_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
+            protocol: Protocol::UDP,
+
             source_port: 0,
             destination_port: 0,
             my_max_num_inbound_streams: 0,
@@ -297,7 +301,8 @@ impl Association {
         max_payload_size: u32,
         local_aid: AssociationId,
         remote_addr: SocketAddr,
-        local_ip: Option<IpAddr>,
+        local_addr: SocketAddr,
+        protocol: Protocol,
         now: Instant,
     ) -> Self {
         let side = if server_config.is_some() {
@@ -334,7 +339,8 @@ impl Association {
             mtu,
             cwnd,
             remote_addr,
-            local_ip,
+            local_addr,
+            protocol,
 
             my_verification_tag: local_aid,
             my_next_tsn: tsn,
@@ -415,7 +421,7 @@ impl Association {
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
     #[must_use]
-    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit<Payload>> {
         let (contents, _) = self.gather_outbound(now);
         if contents.is_empty() {
             None
@@ -428,10 +434,13 @@ impl Association {
             );
             Some(Transmit {
                 now,
-                remote: self.remote_addr,
+                transport: TransportContext {
+                    local_addr: self.local_addr,
+                    peer_addr: self.remote_addr,
+                    ecn: None,
+                    protocol: Default::default(),
+                },
                 payload: Payload::RawEncode(contents),
-                ecn: None,
-                local_ip: self.local_ip,
             })
         }
     }
@@ -569,8 +578,8 @@ impl Association {
     ///
     /// On all non-supported platforms the local IP address will not be available,
     /// and the method will return `None`.
-    pub fn local_ip(&self) -> Option<IpAddr> {
-        self.local_ip
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 
     /// Shutdown initiates the shutdown sequence. The method blocks until the

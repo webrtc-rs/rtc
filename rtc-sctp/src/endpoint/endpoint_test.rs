@@ -47,16 +47,14 @@ fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
 /// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
 const MAX_DATAGRAMS: usize = 10;
 
-fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
+fn split_transmit(transmit: Transmit<Payload>) -> Vec<Transmit<Payload>> {
     let mut transmits = Vec::new();
     if let Payload::RawEncode(contents) = transmit.payload {
         for content in contents {
             transmits.push(Transmit {
                 now: transmit.now,
-                remote: transmit.remote,
+                transport: transmit.transport,
                 payload: Payload::RawEncode(vec![content]),
-                ecn: transmit.ecn,
-                local_ip: transmit.local_ip,
             });
         }
     }
@@ -77,8 +75,8 @@ struct TestEndpoint {
     addr: SocketAddr,
     socket: Option<UdpSocket>,
     timeout: Option<Instant>,
-    outbound: VecDeque<Transmit>,
-    delayed: VecDeque<Transmit>,
+    outbound: VecDeque<Transmit<Payload>>,
+    delayed: VecDeque<Transmit<Payload>>,
     inbound: VecDeque<(Instant, Option<EcnCodepoint>, Bytes)>,
     accepted: Option<AssociationHandle>,
     associations: HashMap<AssociationHandle, Association>,
@@ -118,10 +116,7 @@ impl TestEndpoint {
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some((ch, event)) =
-                self.endpoint
-                    .handle(recv_time, remote, None, ecn, packet.into())
-            {
+            if let Some((ch, event)) = self.endpoint.handle(recv_time, remote, ecn, packet.into()) {
                 match event {
                     DatagramEvent::NewAssociation(conn) => {
                         self.associations.insert(ch, conn);
@@ -211,13 +206,6 @@ struct Pair {
 impl Pair {
     pub fn new(endpoint_config: EndpointConfig, server_config: ServerConfig) -> Self {
         let endpoint_config = Arc::new(endpoint_config);
-        let server = Endpoint::new(Arc::clone(&endpoint_config), Some(Arc::new(server_config)));
-        let client = Endpoint::new(endpoint_config, None);
-
-        Pair::new_from_endpoint(client, server)
-    }
-
-    pub fn new_from_endpoint(client: Endpoint, server: Endpoint) -> Self {
         let server_addr = SocketAddr::new(
             Ipv6Addr::LOCALHOST.into(),
             SERVER_PORTS.lock().unwrap().next().unwrap(),
@@ -226,6 +214,24 @@ impl Pair {
             Ipv6Addr::LOCALHOST.into(),
             CLIENT_PORTS.lock().unwrap().next().unwrap(),
         );
+
+        let server = Endpoint::new(
+            server_addr,
+            Protocol::UDP,
+            Arc::clone(&endpoint_config),
+            Some(Arc::new(server_config)),
+        );
+        let client = Endpoint::new(client_addr, Protocol::UDP, endpoint_config, None);
+
+        Pair::new_from_endpoint(client, server, client_addr, server_addr)
+    }
+
+    pub fn new_from_endpoint(
+        client: Endpoint,
+        server: Endpoint,
+        client_addr: SocketAddr,
+        server_addr: SocketAddr,
+    ) -> Self {
         Self {
             server: TestEndpoint::new(server, server_addr),
             client: TestEndpoint::new(client, client_addr),
@@ -275,12 +281,14 @@ impl Pair {
             if let Payload::RawEncode(contents) = x.payload {
                 for content in contents {
                     if let Some(ref socket) = self.client.socket {
-                        socket.send_to(&content, x.remote).unwrap();
+                        socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }
-                    if self.server.addr == x.remote {
-                        self.server
-                            .inbound
-                            .push_back((self.time + self.latency, x.ecn, content));
+                    if self.server.addr == x.transport.peer_addr {
+                        self.server.inbound.push_back((
+                            self.time + self.latency,
+                            x.transport.ecn,
+                            content,
+                        ));
                     }
                 }
             }
@@ -293,12 +301,14 @@ impl Pair {
             if let Payload::RawEncode(contents) = x.payload {
                 for content in contents {
                     if let Some(ref socket) = self.server.socket {
-                        socket.send_to(&content, x.remote).unwrap();
+                        socket.send_to(&content, x.transport.peer_addr).unwrap();
                     }
-                    if self.client.addr == x.remote {
-                        self.client
-                            .inbound
-                            .push_back((self.time + self.latency, x.ecn, content));
+                    if self.client.addr == x.transport.peer_addr {
+                        self.client.inbound.push_back((
+                            self.time + self.latency,
+                            x.transport.ecn,
+                            content,
+                        ));
                     }
                 }
             }
@@ -1983,9 +1993,12 @@ fn test_assoc_abort() -> Result<()> {
 
         Transmit {
             now: pair.time,
-            remote: pair.server.addr,
-            ecn: None,
-            local_ip: None,
+            transport: TransportContext {
+                local_addr: pair.client.addr,
+                peer_addr: pair.server.addr,
+                ecn: None,
+                protocol: Default::default(),
+            },
             payload: Payload::RawEncode(vec![packet]),
         }
     };
@@ -2181,21 +2194,34 @@ fn test_association_handle_packet_before_init() -> Result<()> {
     ];
 
     let remote = SocketAddr::from_str("0.0.0.0:0").unwrap();
+    let local = SocketAddr::from_str("0.0.0.0:0").unwrap();
 
     for (name, packet) in tests {
         debug!("testing {}", name);
 
         //let (a_conn, charlie_conn) = pipe();
         let config = Arc::new(TransportConfig::default());
-        let mut a = Association::new(None, config, 1400, 0, remote, None, Instant::now());
+        let mut a = Association::new(
+            None,
+            config,
+            1400,
+            0,
+            remote,
+            local,
+            Protocol::UDP,
+            Instant::now(),
+        );
 
         let packet = packet.marshal()?;
         a.handle_event(AssociationEvent(AssociationEventInner::Datagram(
             Transmit {
                 now: Instant::now(),
-                remote,
-                ecn: None,
-                local_ip: None,
+                transport: TransportContext {
+                    local_addr: local,
+                    peer_addr: remote,
+                    ecn: None,
+                    protocol: Default::default(),
+                },
                 payload: Payload::RawEncode(vec![packet]),
             },
         )));

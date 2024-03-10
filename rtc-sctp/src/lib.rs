@@ -16,14 +16,8 @@
 #![allow(dead_code)]
 #![allow(clippy::bool_to_int_with_if)]
 
-use ::shared::EcnCodepoint;
 use bytes::Bytes;
-use std::time::Instant;
-use std::{
-    fmt,
-    net::{IpAddr, SocketAddr},
-    ops,
-};
+use std::{fmt, ops};
 
 mod association;
 pub use crate::association::{
@@ -108,19 +102,4 @@ use crate::packet::PartialDecode;
 pub enum Payload {
     PartialDecode(PartialDecode),
     RawEncode(Vec<Bytes>),
-}
-
-/// Incoming/outgoing Transmit
-#[derive(Debug)]
-pub struct Transmit {
-    /// Received/Sent time
-    pub now: Instant,
-    /// The socket this datagram should be sent to
-    pub remote: SocketAddr,
-    /// Explicit congestion notification bits to set on the packet
-    pub ecn: Option<EcnCodepoint>,
-    /// Optional local IP address for the datagram
-    pub local_ip: Option<IpAddr>,
-    /// Payload of the datagram
-    pub payload: Payload,
 }

@@ -1,15 +1,24 @@
-use crate::Transmit;
+use crate::Payload;
+use ::shared::Transmit;
+use std::fmt::{Debug, Formatter};
 
 /// Events sent from an Endpoint to an Association
 #[derive(Debug)]
 pub struct AssociationEvent(pub(crate) AssociationEventInner);
 
-#[derive(Debug)]
 pub(crate) enum AssociationEventInner {
     /// A datagram has been received for the Association
-    Datagram(Transmit),
+    Datagram(Transmit<Payload>),
     // New Association identifiers have been issued for the Association
     //NewIdentifiers(Vec<IssuedAid>, Instant),
+}
+
+impl Debug for AssociationEventInner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssociationEventInner")
+            .field("Datagram", &self)
+            .finish()
+    }
 }
 
 /// Events sent from an Association to an Endpoint
