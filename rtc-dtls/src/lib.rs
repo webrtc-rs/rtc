@@ -23,12 +23,8 @@ pub mod record_layer;
 pub mod signature_hash_algorithm;
 pub mod state;
 
-use bytes::BytesMut;
 use cipher_suite::*;
 use extension::extension_use_srtp::SrtpProtectionProfile;
-use shared::EcnCodepoint;
-use std::net::{IpAddr, SocketAddr};
-use std::time::Instant;
 
 pub(crate) fn find_matching_srtp_profile(
     a: &[SrtpProtectionProfile],
@@ -56,19 +52,4 @@ pub(crate) fn find_matching_cipher_suite(
         }
     }
     Err(())
-}
-
-/// Incoming/outgoing Transmit
-#[derive(Debug)]
-pub struct Transmit {
-    /// Received/Sent time
-    pub now: Instant,
-    /// The socket this datagram should be sent to
-    pub remote: SocketAddr,
-    /// Explicit congestion notification bits to set on the packet
-    pub ecn: Option<EcnCodepoint>,
-    /// Optional local IP address for the datagram
-    pub local_ip: Option<IpAddr>,
-    /// Payload of the datagram
-    pub payload: BytesMut,
 }

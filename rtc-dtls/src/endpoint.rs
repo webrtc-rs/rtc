@@ -1,14 +1,14 @@
 use crate::conn::DTLSConn;
-use crate::Transmit;
 use shared::error::{Error, Result};
-use shared::EcnCodepoint;
+use shared::{EcnCodepoint, TransportContext};
+use shared::{Protocol, Transmit};
 
 use crate::config::HandshakeConfig;
 use crate::state::State;
 use bytes::BytesMut;
 use std::collections::hash_map::Keys;
 use std::collections::{hash_map::Entry::Vacant, HashMap, VecDeque};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,7 +23,9 @@ pub enum EndpointEvent {
 /// `poll_transmit`, and consumes incoming packets and connections-generated events via `handle` and
 /// `handle_event`.
 pub struct Endpoint {
-    transmits: VecDeque<Transmit>,
+    local_addr: SocketAddr,
+    protocol: Protocol,
+    transmits: VecDeque<Transmit<BytesMut>>,
     connections: HashMap<SocketAddr, DTLSConn>,
     server_config: Option<Arc<HandshakeConfig>>,
 }
@@ -32,8 +34,14 @@ impl Endpoint {
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(server_config: Option<Arc<HandshakeConfig>>) -> Self {
+    pub fn new(
+        local_addr: SocketAddr,
+        protocol: Protocol,
+        server_config: Option<Arc<HandshakeConfig>>,
+    ) -> Self {
         Self {
+            local_addr,
+            protocol,
             transmits: VecDeque::new(),
             connections: HashMap::new(),
             server_config,
@@ -47,7 +55,7 @@ impl Endpoint {
 
     /// Get the next packet to transmit
     #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -83,9 +91,12 @@ impl Endpoint {
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(Transmit {
                     now: Instant::now(),
-                    remote,
-                    ecn: None,
-                    local_ip: None,
+                    transport: TransportContext {
+                        local_addr: self.local_addr,
+                        peer_addr: remote,
+                        ecn: None,
+                        protocol: self.protocol,
+                    },
                     payload,
                 });
             }
@@ -103,9 +114,12 @@ impl Endpoint {
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(Transmit {
                     now: Instant::now(),
-                    remote,
-                    ecn: None,
-                    local_ip: None,
+                    transport: TransportContext {
+                        local_addr: self.local_addr,
+                        peer_addr: remote,
+                        ecn: None,
+                        protocol: self.protocol,
+                    },
                     payload,
                 });
             }
@@ -118,7 +132,6 @@ impl Endpoint {
         &mut self,
         now: Instant,
         remote: SocketAddr,
-        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) -> Result<Vec<EndpointEvent>> {
@@ -150,9 +163,12 @@ impl Endpoint {
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(Transmit {
                     now,
-                    remote,
-                    ecn,
-                    local_ip,
+                    transport: TransportContext {
+                        local_addr: self.local_addr,
+                        peer_addr: remote,
+                        ecn,
+                        protocol: self.protocol,
+                    },
                     payload,
                 });
             }
@@ -167,9 +183,12 @@ impl Endpoint {
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(Transmit {
                     now: Instant::now(),
-                    remote,
-                    ecn: None,
-                    local_ip: None,
+                    transport: TransportContext {
+                        local_addr: self.local_addr,
+                        peer_addr: remote,
+                        ecn: None,
+                        protocol: self.protocol,
+                    },
                     payload,
                 });
             }
@@ -191,9 +210,12 @@ impl Endpoint {
                     while let Some(payload) = conn.outgoing_raw_packet() {
                         self.transmits.push_back(Transmit {
                             now,
-                            remote,
-                            ecn: None,
-                            local_ip: None,
+                            transport: TransportContext {
+                                local_addr: self.local_addr,
+                                peer_addr: remote,
+                                ecn: None,
+                                protocol: self.protocol,
+                            },
                             payload,
                         });
                     }
