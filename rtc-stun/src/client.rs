@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::agent::*;
 use crate::message::*;
-use crate::Transmit;
+use shared::{Protocol, Transmit, TransportContext};
 
 const DEFAULT_TIMEOUT_RATE: Duration = Duration::from_millis(5);
 const DEFAULT_RTO: Duration = Duration::from_millis(300);
@@ -96,24 +96,38 @@ impl ClientBuilder {
         }
     }
 
-    pub fn build(self, remote: SocketAddr) -> Result<Client> {
-        Ok(Client::new(remote, self.settings))
+    pub fn build(
+        self,
+        local: SocketAddr,
+        remote: SocketAddr,
+        protocol: Protocol,
+    ) -> Result<Client> {
+        Ok(Client::new(local, remote, protocol, self.settings))
     }
 }
 
 /// Client simulates "connection" to STUN server.
 pub struct Client {
+    local: SocketAddr,
     remote: SocketAddr,
+    protocol: Protocol,
     agent: Agent,
     settings: ClientSettings,
     transactions: HashMap<TransactionId, ClientTransaction>,
-    transmits: VecDeque<Transmit>,
+    transmits: VecDeque<Transmit<BytesMut>>,
 }
 
 impl Client {
-    fn new(remote: SocketAddr, settings: ClientSettings) -> Self {
+    fn new(
+        local: SocketAddr,
+        remote: SocketAddr,
+        protocol: Protocol,
+        settings: ClientSettings,
+    ) -> Self {
         Self {
+            local,
             remote,
+            protocol,
             agent: Agent::new(),
             settings,
             transactions: HashMap::new(),
@@ -129,7 +143,7 @@ impl Client {
     /// - a call was made to `handle_write`
     /// - a call was made to `handle_timeout`
     #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -168,9 +182,12 @@ impl Client {
             // Writing message to connection again.
             self.transmits.push_back(Transmit {
                 now: Instant::now(),
-                remote: self.remote,
-                ecn: None,
-                local_ip: None,
+                transport: TransportContext {
+                    local_addr: self.local,
+                    peer_addr: self.remote,
+                    ecn: None,
+                    protocol: self.protocol,
+                },
                 payload,
             });
         }
@@ -206,9 +223,12 @@ impl Client {
 
         self.transmits.push_back(Transmit {
             now: Instant::now(),
-            remote: self.remote,
-            ecn: None,
-            local_ip: None,
+            transport: TransportContext {
+                local_addr: self.local,
+                peer_addr: self.remote,
+                ecn: None,
+                protocol: self.protocol,
+            },
             payload,
         });
 

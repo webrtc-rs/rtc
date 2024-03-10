@@ -31,7 +31,7 @@ use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use crate::network_type::determine_network_type;
-use stun::Transmit;
+use shared::{Protocol, Transmit, TransportContext};
 
 pub(crate) const RECEIVE_MTU: usize = 8192;
 pub(crate) const DEFAULT_LOCAL_PREFERENCE: u16 = 65535;
@@ -147,7 +147,7 @@ pub struct Candidate {
     pub(crate) tcp_type: TcpType,
 
     pub(crate) resolved_addr: SocketAddr,
-    pub(crate) transmits: VecDeque<Transmit>,
+    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
 
     pub(crate) last_sent: Instant,
     pub(crate) last_received: Instant,
@@ -361,9 +361,16 @@ impl Candidate {
         let n = raw.len();
         self.transmits.push_back(Transmit {
             now: Instant::now(),
-            remote,
-            ecn: None,
-            local_ip: Some(self.resolved_addr.ip()),
+            transport: TransportContext {
+                local_addr: self.resolved_addr,
+                peer_addr: remote,
+                ecn: None,
+                protocol: if self.network_type.is_tcp() {
+                    Protocol::TCP
+                } else {
+                    Protocol::UDP
+                },
+            },
             payload: BytesMut::from(raw),
         });
 
@@ -371,7 +378,7 @@ impl Candidate {
         Ok(n)
     }
 
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
         self.transmits.pop_front()
     }
 
