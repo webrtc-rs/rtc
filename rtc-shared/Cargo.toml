@@ -24,4 +24,4 @@ rcgen = "0.12"
 sec1 = { version = "0.7", features = ["std"] }
 p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
 aes = "0.8"
-retty = "0.27.0"
+retty = "0.28.0"
