@@ -11,7 +11,7 @@ repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
-rtp = { version = "0.1", path = "../rtc-rtp", package = "rtc-rtp" }
+rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
 rtcp = { version = "0.1", path = "../rtc-rtcp", package = "rtc-rtcp" }
 
 byteorder = "1"

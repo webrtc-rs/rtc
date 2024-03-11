@@ -1,6 +1,6 @@
 [package]
 name = "rtc-rtp"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC RTP in Rust"
@@ -12,14 +12,14 @@ repository = "https://github.com/webrtc-rs/rtc"
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 
-bytes = "1"
-rand = "0.8"
-thiserror = "1.0"
-serde = { version = "1", features = ["derive"] }
+bytes = "1.5.0"
+rand = "0.8.5"
+thiserror = "1.0.57"
+serde = { version = "1.0.197", features = ["derive"] }
 
 [dev-dependencies]
-chrono = "0.4.34"
-criterion = "0.5"
+chrono = "0.4.35"
+criterion = "0.5.1"
 
 [[bench]]
 name = "packet_bench"
