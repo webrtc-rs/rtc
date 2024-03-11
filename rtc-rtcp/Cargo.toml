@@ -1,6 +1,6 @@
 [package]
 name = "rtc-rtcp"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC RTCP in Rust"
@@ -12,5 +12,5 @@ repository = "https://github.com/webrtc-rs/rtc"
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 
-bytes = "1"
-thiserror = "1"
+bytes = "1.5.0"
+thiserror = "1.0.57"
