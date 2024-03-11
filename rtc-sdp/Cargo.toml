@@ -1,6 +1,6 @@
 [package]
 name = "rtc-sdp"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC SDP in Rust"
@@ -10,13 +10,13 @@ homepage = "https://webrtc.rs"
 repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
-url = "2"
-rand = "0.8"
-thiserror = "1"
-substring = "1"
+url = "2.5.0"
+rand = "0.8.5"
+thiserror = "1.0.57"
+substring = "1.4.5"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.5.1"
 
 [[bench]]
 name = "bench"
