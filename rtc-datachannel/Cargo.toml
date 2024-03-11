@@ -1,6 +1,6 @@
 [package]
 name = "rtc-datachannel"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC DataChannel in Rust"
@@ -13,10 +13,10 @@ repository = "https://github.com/webrtc-rs/rtc"
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 sctp = { version = "0.2.0", path = "../rtc-sctp", package = "rtc-sctp" }
 
-bytes = "1"
-log = "0.4"
-thiserror = "1"
+bytes = "1.5.0"
+log = "0.4.21"
+thiserror = "1.0.57"
 
 [dev-dependencies]
-env_logger = "0.11"
-chrono = "0.4.34"
+env_logger = "0.11.3"
+chrono = "0.4.35"
