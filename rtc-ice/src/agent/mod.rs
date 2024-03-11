@@ -127,6 +127,7 @@ pub struct Agent {
     pub(crate) keepalive_interval: Duration,
     // How often should we run our internal taskLoop to check for state changes when connecting
     pub(crate) check_interval: Duration,
+    pub(crate) checking_duration: Instant,
     pub(crate) last_checking_time: Instant,
 
     pub(crate) candidate_types: Vec<CandidateType>,
@@ -239,6 +240,7 @@ impl Agent {
             } else {
                 config.check_interval
             },
+            checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
             last_connection_state: ConnectionState::Unspecified,
 
@@ -421,6 +423,7 @@ impl Agent {
 
     /// Cleans up the Agent.
     pub fn close(&mut self) -> Result<()> {
+        self.set_selected_pair(None);
         self.delete_all_candidates(false);
         self.update_connection_state(ConnectionState::Closed);
 
@@ -520,12 +523,12 @@ impl Agent {
         if self.connection_state == ConnectionState::Checking {
             // We have just entered checking for the first time so update our checking timer
             if self.last_connection_state != self.connection_state {
-                self.last_checking_time = now;
+                self.checking_duration = now;
             }
 
             // We have been in checking longer then Disconnect+Failed timeout, set the connection to Failed
             if now
-                .checked_duration_since(self.last_checking_time)
+                .checked_duration_since(self.checking_duration)
                 .unwrap_or_else(|| Duration::from_secs(0))
                 > self.disconnected_timeout + self.failed_timeout
             {
@@ -545,6 +548,7 @@ impl Agent {
         if self.connection_state != new_state {
             // Connection has gone to failed, release all gathered candidates
             if new_state == ConnectionState::Failed {
+                self.set_selected_pair(None);
                 self.delete_all_candidates(false);
             }
 
@@ -661,13 +665,14 @@ impl Agent {
         };
 
         if valid {
-            // Only allow transitions to failed if a.failedTimeout is non-zero
-            if self.failed_timeout != Duration::from_secs(0) {
-                self.failed_timeout += self.disconnected_timeout;
+            // Only allow transitions to fail if a.failedTimeout is non-zero
+            let mut total_time_to_failure = self.failed_timeout;
+            if total_time_to_failure != Duration::from_secs(0) {
+                total_time_to_failure += self.disconnected_timeout;
             }
 
-            if self.failed_timeout != Duration::from_secs(0)
-                && disconnected_time > self.failed_timeout
+            if total_time_to_failure != Duration::from_secs(0)
+                && disconnected_time > total_time_to_failure
             {
                 self.update_connection_state(ConnectionState::Failed);
             } else if self.disconnected_timeout != Duration::from_secs(0)
@@ -833,12 +838,14 @@ impl Agent {
         }
 
         *pending_binding_requests = temp;
-        let bind_requests_removed = initial_size - pending_binding_requests.len();
+        let bind_requests_remaining = pending_binding_requests.len();
+        let bind_requests_removed = initial_size - bind_requests_remaining;
         if bind_requests_removed > 0 {
             trace!(
-                "[{}]: Discarded {} binding requests because they expired",
+                "[{}]: Discarded {} binding requests because they expired, still {} remaining",
                 self.get_name(),
-                bind_requests_removed
+                bind_requests_removed,
+                bind_requests_remaining,
             );
         }
     }
