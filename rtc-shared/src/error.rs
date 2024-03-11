@@ -1103,7 +1103,7 @@ pub enum Error {
     #[error("Max Data Channel ID")]
     ErrMaxDataChannelID,
 
-    //Data
+    //Data Channel
     #[error(
     "DataChannel message is not long enough to determine type: (expected: {expected}, actual: {actual})"
     )]
@@ -1117,11 +1117,11 @@ pub enum Error {
     #[error("Unknow Protocol")]
     UnknownProtocol,
 
+    //Third Party Error
     //#[error("mpsc send: {0}")]
     //MpscSend(String),
     #[error("aes gcm: {0}")]
     AesGcm(#[from] aes_gcm::Error),
-
     //#[error("parse ipnet: {0}")]
     //ParseIpnet(#[from] ipnet::AddrParseError),
     #[error("parse ip: {0}")]
@@ -1136,10 +1136,38 @@ pub enum Error {
     Utf8(#[from] FromUtf8Error),
     #[error("{0}")]
     Std(#[source] StdError),
-
     #[error("{0}")]
     Aes(#[from] aes::cipher::InvalidLength),
 
+    //Other Errors
+    #[error("Other RTCP Err: {0}")]
+    OtherRtcpErr(String),
+    #[error("Other RTP Err: {0}")]
+    OtherRtpErr(String),
+    #[error("Other SRTP Err: {0}")]
+    OtherSrtpErr(String),
+    #[error("Other STUN Err: {0}")]
+    OtherStunErr(String),
+    #[error("Other TURN Err: {0}")]
+    OtherTurnErr(String),
+    #[error("Other ICE Err: {0}")]
+    OtherIceErr(String),
+    #[error("Other DTLS Err: {0}")]
+    OtherDtlsErr(String),
+    #[error("Other SCTP Err: {0}")]
+    OtherSctpErr(String),
+    #[error("Other DataChannel Err: {0}")]
+    OtherDataChannelErr(String),
+    #[error("Other Interceptor Err: {0}")]
+    OtherInterceptorErr(String),
+    #[error("Other Media Err: {0}")]
+    OtherMediaErr(String),
+    #[error("Other mDNS Err: {0}")]
+    OtherMdnsErr(String),
+    #[error("Other SDP Err: {0}")]
+    OtherSdpErr(String),
+    #[error("Other PeerConnection Err: {0}")]
+    OtherPeerConnectionErr(String),
     #[error("{0}")]
     Other(String),
 }
