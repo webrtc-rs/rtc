@@ -1,6 +1,6 @@
 [package]
 name = "rtc-shared"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC Shared in Rust"
@@ -16,12 +16,12 @@ marshal = []
 replay = []
 
 [dependencies]
-thiserror = "1"
-bytes = "1.4"
-aes-gcm = { version = "0.10", features = ["std"] }
-url = "2.2"
-rcgen = "0.12"
-sec1 = { version = "0.7", features = ["std"] }
-p256 = { version = "0.13", features = ["default", "ecdh", "ecdsa"] }
-aes = "0.8"
+thiserror = "1.0.57"
+bytes = "1.5.0"
+aes-gcm = { version = "0.10.3", features = ["std"] }
+url = "2.5.0"
+rcgen = "0.12.1"
+sec1 = { version = "0.7.3", features = ["std"] }
+p256 = { version = "0.13.2", features = ["default", "ecdh", "ecdsa"] }
+aes = "0.8.4"
 retty = "0.29.0"

@@ -10,7 +10,7 @@ homepage = "https://webrtc.rs"
 repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
-shared = { version = "0.1.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
 
 bytes = "1"
 fxhash = "0.2"
