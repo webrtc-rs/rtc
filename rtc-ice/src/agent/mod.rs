@@ -113,6 +113,9 @@ pub struct Agent {
     pub(crate) insecure_skip_verify: bool,
     pub(crate) max_binding_requests: u16,
     pub(crate) host_acceptance_min_wait: Duration,
+    pub(crate) srflx_acceptance_min_wait: Duration,
+    pub(crate) prflx_acceptance_min_wait: Duration,
+    pub(crate) relay_acceptance_min_wait: Duration,
     // How long connectivity checks can fail before the ICE Agent
     // goes to disconnected
     pub(crate) disconnected_timeout: Duration,
@@ -183,6 +186,27 @@ impl Agent {
                 host_acceptance_min_wait
             } else {
                 DEFAULT_HOST_ACCEPTANCE_MIN_WAIT
+            },
+            srflx_acceptance_min_wait: if let Some(srflx_acceptance_min_wait) =
+                config.srflx_acceptance_min_wait
+            {
+                srflx_acceptance_min_wait
+            } else {
+                DEFAULT_SRFLX_ACCEPTANCE_MIN_WAIT
+            },
+            prflx_acceptance_min_wait: if let Some(prflx_acceptance_min_wait) =
+                config.prflx_acceptance_min_wait
+            {
+                prflx_acceptance_min_wait
+            } else {
+                DEFAULT_PRFLX_ACCEPTANCE_MIN_WAIT
+            },
+            relay_acceptance_min_wait: if let Some(relay_acceptance_min_wait) =
+                config.relay_acceptance_min_wait
+            {
+                relay_acceptance_min_wait
+            } else {
+                DEFAULT_RELAY_ACCEPTANCE_MIN_WAIT
             },
 
             // How long connectivity checks can fail before the ICE Agent
@@ -416,6 +440,27 @@ impl Agent {
         }
     }
 
+    /// start connectivity checks
+    pub fn start_connectivity_checks(
+        &mut self,
+        is_controlling: bool,
+        remote_ufrag: String,
+        remote_pwd: String,
+    ) -> Result<()> {
+        debug!(
+            "Started agent: isControlling? {}, remoteUfrag: {}, remotePwd: {}",
+            is_controlling, remote_ufrag, remote_pwd
+        );
+        self.set_remote_credentials(remote_ufrag, remote_pwd)?;
+        self.is_controlling = is_controlling;
+        self.start();
+
+        self.update_connection_state(ConnectionState::Checking);
+        self.request_connectivity_check();
+
+        Ok(())
+    }
+
     /// Restarts the ICE Agent with the provided ufrag/pwd
     /// If no ufrag/pwd is provided the Agent will generate one itself.
     pub fn restart(
@@ -463,26 +508,6 @@ impl Agent {
     // Returns the local candidates.
     pub(crate) fn get_local_candidates(&self) -> &[Candidate] {
         &self.local_candidates
-    }
-
-    pub(crate) fn start_connectivity_checks(
-        &mut self,
-        is_controlling: bool,
-        remote_ufrag: String,
-        remote_pwd: String,
-    ) -> Result<()> {
-        debug!(
-            "Started agent: isControlling? {}, remoteUfrag: {}, remotePwd: {}",
-            is_controlling, remote_ufrag, remote_pwd
-        );
-        self.set_remote_credentials(remote_ufrag, remote_pwd)?;
-        self.is_controlling = is_controlling;
-        self.start();
-
-        self.update_connection_state(ConnectionState::Checking);
-        self.request_connectivity_check();
-
-        Ok(())
     }
 
     fn contact(&mut self, now: Instant) {

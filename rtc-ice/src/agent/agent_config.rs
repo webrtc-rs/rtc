@@ -92,6 +92,15 @@ pub struct AgentConfig {
     /// Specify a minimum wait time before selecting host candidates.
     pub host_acceptance_min_wait: Option<Duration>,
 
+    /// Specify a minimum wait time before selecting srfl candidates.
+    pub srflx_acceptance_min_wait: Option<Duration>,
+
+    /// Specify a minimum wait time before selecting prfl candidates.
+    pub prflx_acceptance_min_wait: Option<Duration>,
+
+    /// Specify a minimum wait time before selecting relay candidates.
+    pub relay_acceptance_min_wait: Option<Duration>,
+
     /// Controls if self-signed certificates are accepted when connecting to TURN servers via TLS or
     /// DTLS.
     pub insecure_skip_verify: bool,

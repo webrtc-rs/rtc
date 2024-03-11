@@ -55,8 +55,29 @@ impl Agent {
                     .as_nanos()
                     > self.host_acceptance_min_wait.as_nanos()
             }
-            _ => {
-                error!(
+            CandidateType::ServerReflexive => {
+                Instant::now()
+                    .checked_duration_since(start_time)
+                    .unwrap_or_else(|| Duration::from_secs(0))
+                    .as_nanos()
+                    > self.srflx_acceptance_min_wait.as_nanos()
+            }
+            CandidateType::PeerReflexive => {
+                Instant::now()
+                    .checked_duration_since(start_time)
+                    .unwrap_or_else(|| Duration::from_secs(0))
+                    .as_nanos()
+                    > self.prflx_acceptance_min_wait.as_nanos()
+            }
+            CandidateType::Relay => {
+                Instant::now()
+                    .checked_duration_since(start_time)
+                    .unwrap_or_else(|| Duration::from_secs(0))
+                    .as_nanos()
+                    > self.relay_acceptance_min_wait.as_nanos()
+            }
+            CandidateType::Unspecified => {
+                log::error!(
                     "is_nominatable invalid candidate type {}",
                     c.candidate_type()
                 );
@@ -138,6 +159,8 @@ impl Agent {
     }
 
     pub(crate) fn ping_candidate(&mut self, local_index: usize, remote_index: usize) {
+        trace!("[{}]: ping_candidate", self.get_name());
+
         if self.is_controlling {
             ControllingSelector::ping_candidate(self, local_index, remote_index);
         } else {
@@ -202,7 +225,6 @@ impl ControllingSelector for Agent {
 
         if self.get_selected_pair().is_some() {
             if self.validate_selected_pair() {
-                trace!("[{}]: checking keepalive", self.get_name());
                 self.check_keepalive();
             }
         } else if nominated_pair_is_some {
@@ -370,7 +392,6 @@ impl ControlledSelector for Agent {
             self.validate_selected_pair();
         } else if self.get_selected_pair().is_some() {
             if self.validate_selected_pair() {
-                trace!("[{}]: checking keepalive", self.get_name());
                 self.check_keepalive();
             }
         } else {
