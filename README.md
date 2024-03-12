@@ -1,5 +1,5 @@
 <h1 align="center">
- <a href="https://webrtc.rs"><img src="https://raw.githubusercontent.com/webrtc-rs/webrtc-rs.github.io/master/res/rtc.png" alt="WebRTC.rs"></a>
+ <a href="https://webrtc.rs"><img src="https://raw.githubusercontent.com/webrtc-rs/sfu-rs.github.io/master/res/rtc.png" alt="WebRTC.rs"></a>
  <br>
 </h1>
 <p align="center">
@@ -42,7 +42,7 @@
     <br>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">DTLS<a href="https://crates.io/crates/rtc-dtls"><img src="https://img.shields.io/crates/v/rtc-dtls.svg"></a>
     <br>
-    <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/uncheck.png">mDNS<a href="https://crates.io/crates/rtc-mdns"><img src="https://img.shields.io/crates/v/rtc-mdns.svg"></a>
+    <!--img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/uncheck.png">mDNS<a href="https://crates.io/crates/rtc-mdns"><img src="https://img.shields.io/crates/v/rtc-mdns.svg"></a-->
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">STUN<a href="https://crates.io/crates/rtc-stun"><img src="https://img.shields.io/crates/v/rtc-stun.svg"></a>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/uncheck.png">TURN<a href="https://crates.io/crates/rtc-turn"><img src="https://img.shields.io/crates/v/rtc-turn.svg"></a>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">ICE<a href="https://crates.io/crates/rtc-ice"><img src="https://img.shields.io/crates/v/rtc-ice.svg"></a>
@@ -51,8 +51,8 @@
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">Shared<a href="https://crates.io/crates/rtc-shared"><img src="https://img.shields.io/crates/v/rtc-shared.svg"></a>
 </p>
 <p align="center">
- <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/rtc_crates_dep_graph.png" alt="RTC Crates Dependency Graph">
+ <img src="https://raw.githubusercontent.com/webrtc-rs/sfu-rs.github.io/master/res/rtc_crates_dep_graph.png" alt="RTC Crates Dependency Graph">
 </p>
 <p align="center">
- <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/rtc_stack.png" alt="RTC Protocols Stack">
+ <img src="https://raw.githubusercontent.com/webrtc-rs/sfu-rs.github.io/master/res/rtc_stack.png" alt="RTC Protocols Stack">
 </p>
