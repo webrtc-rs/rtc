@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Instant;
 
-//  Chanel number:
+//  Channel number:
 //    0x4000 through 0x7FFF: These values are the allowed channel
 //    numbers (16,383 possible values).
 const MIN_CHANNEL_NUMBER: u16 = 0x4000;

@@ -244,7 +244,7 @@ impl Client {
     // handle_inbound handles data received.
     // This method handles incoming packet demultiplex it by the source address
     // and the types of the message.
-    // This return a booleen (handled or not) and if there was an error.
+    // This return Ok(handled or not) and if there was an error.
     // Caller should check if the packet was handled by this client or not.
     // If not handled, it is assumed that the packet is application data.
     // If an error is returned, the caller should discard the packet regardless.
