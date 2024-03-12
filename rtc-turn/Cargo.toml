@@ -10,23 +10,23 @@ homepage = "https://webrtc.rs"
 repository = "https://github.com/webrtc-rs/rtc"
 
 [dependencies]
-shared = { version = "0.2.0", path = "../../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
-stun = { version = "0.2.0", path = "../../rtc-stun", package = "rtc-stun" }
+shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+stun = { version = "0.2.0", path = "../rtc-stun", package = "rtc-stun" }
 
-bytes = "1.4.0"
-log = "0.4.16"
-base64 = "0.21.2"
+bytes = "1.5.0"
+log = "0.4.21"
+base64 = "0.22.0"
 rand = "0.8.5"
-ring = "0.16.20"
-md-5 = "0.10.1"
-thiserror = "1.0"
+ring = "0.17.8"
+md-5 = "0.10.6"
+thiserror = "1.0.57"
 
 [dev-dependencies]
-env_logger = "0.9.0"
-chrono = "0.4.23"
+env_logger = "0.11.3"
+chrono = "0.4.35"
 hex = "0.4.3"
-clap = "3.2.6"
-criterion = "0.4.0"
+clap = "4.5.2"
+criterion = "0.5.1"
 
 [features]
 metrics = []
