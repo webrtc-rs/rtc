@@ -12,11 +12,11 @@
  <a href="https://deps.rs/repo/github/webrtc-rs/rtc">
   <img src="https://deps.rs/repo/github/webrtc-rs/rtc/status.svg">
  </a>
- <a href="https://crates.io/crates/rtc-sdp">
-  <img src="https://img.shields.io/crates/v/rtc-sdp.svg">
+ <a href="https://crates.io/crates/rtc-shared">
+  <img src="https://img.shields.io/crates/v/rtc-shared.svg">
  </a>
- <a href="https://docs.rs/rtc-sdp">
-  <img src="https://docs.rs/rtc-sdp/badge.svg">
+ <a href="https://docs.rs/rtc-shared">
+  <img src="https://docs.rs/rtc-shared/badge.svg">
  </a>
  <a href="https://doc.rust-lang.org/1.6.0/complement-project-faq.html#why-dual-mitasl2-license">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue" alt="License: MIT/Apache 2.0">
@@ -26,5 +26,5 @@
  </a>
 </p>
 <p align="center">
- RTC SDP Protocol in Rust With Sans-IO
+ RTC Shared Utilities in Rust With Sans-IO
 </p>

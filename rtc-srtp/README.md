@@ -1,22 +1,22 @@
 <h1 align="center">
- <a href="https://webrtc.rs"><img src="./doc/webrtc.rs.png" alt="WebRTC.rs"></a>
+ <a href="https://webrtc.rs"><img src="https://raw.githubusercontent.com/webrtc-rs/sfu-rs.github.io/master/res/rtc.png" alt="WebRTC.rs"></a>
  <br>
 </h1>
 <p align="center">
- <a href="https://github.com/webrtc-rs/srtp/actions">
-  <img src="https://github.com/webrtc-rs/srtp/workflows/cargo/badge.svg">
+ <a href="https://github.com/webrtc-rs/rtc/actions">
+  <img src="https://github.com/webrtc-rs/rtc/workflows/cargo/badge.svg">
  </a>
- <a href="https://codecov.io/gh/webrtc-rs/srtp">
-  <img src="https://codecov.io/gh/webrtc-rs/srtp/branch/main/graph/badge.svg">
+ <a href="https://codecov.io/gh/webrtc-rs/rtc">
+  <img src="https://codecov.io/gh/webrtc-rs/rtc/branch/main/graph/badge.svg">
  </a>
- <a href="https://deps.rs/repo/github/webrtc-rs/srtp">
-  <img src="https://deps.rs/repo/github/webrtc-rs/srtp/status.svg">
+ <a href="https://deps.rs/repo/github/webrtc-rs/rtc">
+  <img src="https://deps.rs/repo/github/webrtc-rs/rtc/status.svg">
  </a>
- <a href="https://crates.io/crates/webrtc-srtp">
-  <img src="https://img.shields.io/crates/v/webrtc-srtp.svg">
+ <a href="https://crates.io/crates/rtc-srtp">
+  <img src="https://img.shields.io/crates/v/rtc-srtp.svg">
  </a>
- <a href="https://docs.rs/webrtc-srtp">
-  <img src="https://docs.rs/webrtc-srtp/badge.svg">
+ <a href="https://docs.rs/rtc-srtp">
+  <img src="https://docs.rs/rtc-srtp/badge.svg">
  </a>
  <a href="https://doc.rust-lang.org/1.6.0/complement-project-faq.html#why-dual-mitasl2-license">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue" alt="License: MIT/Apache 2.0">
@@ -26,5 +26,5 @@
  </a>
 </p>
 <p align="center">
- A pure Rust implementation of SRTP. Rewrite <a href="https://github.com/pion/srtp/releases/tag/v1.5.2">Pion</a> SRTP in Rust
+ RTC SRTP Protocol in Rust With Sans-IO
 </p>
