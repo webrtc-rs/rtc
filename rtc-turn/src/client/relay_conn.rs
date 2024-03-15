@@ -18,7 +18,7 @@ use super::transaction::*;
 use crate::proto;
 
 use shared::error::{Error, Result};
-use stun::Transmit;
+use shared::Transmit;
 
 const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 const MAX_RETRY_ATTEMPTS: u16 = 3;

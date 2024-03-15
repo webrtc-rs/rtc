@@ -1,44 +1,49 @@
-#[cfg(test)]
+/*#[cfg(test)]
 mod client_test;
-
+*/
 pub mod binding;
 pub mod periodic_timer;
 pub mod permission;
-pub mod relay_conn;
+/*pub mod relay_conn;*/
 pub mod transaction;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
-use binding::*;
 use bytes::BytesMut;
-use relay_conn::*;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Instant;
 
 use stun::attributes::*;
-use stun::error_code::*;
-use stun::fingerprint::*;
 use stun::integrity::*;
 use stun::message::*;
 use stun::textattrs::*;
 use stun::xoraddr::*;
+
+use binding::*;
 use transaction::*;
+/*
+use relay_conn::*;
+*/
 
 use crate::proto::chandata::*;
+use crate::proto::channum::ChannelNumber;
 use crate::proto::data::*;
-use crate::proto::lifetime::*;
 use crate::proto::peeraddr::*;
-use crate::proto::relayaddr::*;
-use crate::proto::reqtrans::*;
-use crate::proto::PROTO_UDP;
 use shared::error::{Error, Result};
-use stun::Transmit;
+use shared::{Protocol, Transmit, TransportContext};
 
-const DEFAULT_RTO_IN_MS: u16 = 200;
+const DEFAULT_RTO_IN_MS: u64 = 200;
 const MAX_DATA_BUFFER_SIZE: usize = u16::MAX as usize; // message size limit for Chromium
 const MAX_READ_QUEUE_SIZE: usize = 1024;
+
+pub enum Event {
+    BindingResponse(String, SocketAddr),
+    BindingRequestTimeout(String),
+    DataIndication(SocketAddr, BytesMut),
+    ChannelData(ChannelNumber, SocketAddr, BytesMut),
+}
 
 //              interval [msec]
 // 0: 0 ms      +500
@@ -54,17 +59,21 @@ const MAX_READ_QUEUE_SIZE: usize = 1024;
 pub struct ClientConfig {
     pub stun_serv_addr: String, // STUN server address (e.g. "stun.abc.com:3478")
     pub turn_serv_addr: String, // TURN server address (e.g. "turn.abc.com:3478")
+    pub local_addr: SocketAddr,
+    pub protocol: Protocol,
     pub username: String,
     pub password: String,
     pub realm: String,
     pub software: String,
-    pub rto_in_ms: u16,
+    pub rto_in_ms: u64,
 }
 
 /// Client is a STUN client
-struct Client {
+pub struct Client {
     stun_serv_addr: Option<SocketAddr>,
     turn_serv_addr: SocketAddr,
+    local_addr: SocketAddr,
+    protocol: Protocol,
     username: Username,
     password: String,
     realm: Realm,
@@ -72,91 +81,10 @@ struct Client {
     software: Software,
     tr_map: TransactionMap,
     binding_mgr: BindingManager,
-    rto_in_ms: u16,
-    transmits: VecDeque<Transmit>,
-}
+    rto_in_ms: u64,
 
-impl RelayConnObserver for Client {
-    /// turn_server_addr return the TURN server address
-    fn turn_server_addr(&self) -> SocketAddr {
-        self.turn_serv_addr
-    }
-
-    /// username returns username
-    fn username(&self) -> Username {
-        self.username.clone()
-    }
-
-    /// realm return realm
-    fn realm(&self) -> Realm {
-        self.realm.clone()
-    }
-
-    /// WriteTo sends data to the specified destination using the base socket.
-    fn write(&mut self, data: &[u8], remote: SocketAddr) -> Result<usize> {
-        let n = data.len();
-        self.transmits.push_back(Transmit {
-            now: Instant::now(),
-            remote,
-            ecn: None,
-            local_ip: None,
-            payload: BytesMut::from(data),
-        });
-        Ok(n)
-    }
-
-    // PerformTransaction performs STUN transaction
-    fn perform_transaction(
-        &mut self,
-        msg: &Message,
-        to: &str,
-        ignore_result: bool,
-    ) -> Result<TransactionResult> {
-        let tr_key = BASE64_STANDARD.encode(msg.transaction_id.0);
-
-        let mut tr = Transaction::new(TransactionConfig {
-            key: tr_key.clone(),
-            raw: msg.raw.clone(),
-            to: to.to_string(),
-            interval: self.rto_in_ms,
-            ignore_result,
-        });
-        let result_ch_rx = tr.get_result_channel();
-
-        log::trace!("start {} transaction {} to {}", msg.typ, tr_key, tr.to);
-        {
-            let mut tm = self.tr_map.lock().await;
-            tm.insert(tr_key.clone(), tr);
-        }
-
-        self.conn
-            .send_to(&msg.raw, SocketAddr::from_str(to)?)
-            .await?;
-
-        let conn2 = Arc::clone(&self.conn);
-        let tr_map2 = Arc::clone(&self.tr_map);
-        {
-            let mut tm = self.tr_map.lock().await;
-            if let Some(tr) = tm.get(&tr_key) {
-                tr.start_rtx_timer(conn2, tr_map2).await;
-            }
-        }
-
-        // If dontWait is true, get the transaction going and return immediately
-        if ignore_result {
-            return Ok(TransactionResult::default());
-        }
-
-        // wait_for_result waits for the transaction result
-        if let Some(mut result_ch_rx) = result_ch_rx {
-            match result_ch_rx.recv().await {
-                Some(tr) => Ok(tr),
-                None => Err(Error::ErrTransactionClosed),
-            }
-        } else {
-            Err(Error::ErrWaitForResultOnNonResultTransaction)
-        }
-    }
+    transmits: VecDeque<Transmit<BytesMut>>,
+    events: VecDeque<Event>,
 }
 
 impl Client {
@@ -177,6 +105,8 @@ impl Client {
         Ok(Client {
             stun_serv_addr,
             turn_serv_addr,
+            local_addr: config.local_addr,
+            protocol: config.protocol,
             username: Username::new(ATTR_USERNAME, config.username),
             password: config.password,
             realm: Realm::new(ATTR_REALM, config.realm),
@@ -189,56 +119,36 @@ impl Client {
                 DEFAULT_RTO_IN_MS
             },
             integrity: MessageIntegrity::new_short_term_integrity(String::new()),
+
             transmits: VecDeque::new(),
+            events: VecDeque::new(),
         })
     }
 
-    // stun_server_addr return the STUN server address
-    fn stun_server_addr(&self) -> Option<SocketAddr> {
-        self.stun_serv_addr
+    pub fn poll_timout(&self) -> Option<Instant> {
+        self.tr_map.poll_timout()
     }
 
-    /// Listen will have this client start listening on the relay_conn provided via the config.
-    /// This is optional. If not used, you will need to call handle_inbound method
-    /// to supply incoming data, instead.
-    pub fn listen(&mut self) -> Result<()> {
-        let conn = Arc::clone(&self.conn);
-        let stun_serv_str = self.stun_serv_addr.clone();
-        let tr_map = Arc::clone(&self.tr_map);
-        let read_ch_tx = Arc::clone(&self.read_ch_tx);
-        let binding_mgr = Arc::clone(&self.binding_mgr);
+    pub fn handle_timeout(&mut self, now: Instant) {
+        self.tr_map.handle_timeout(now);
+    }
 
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; MAX_DATA_BUFFER_SIZE];
-            loop {
-                //TODO: gracefully exit loop
-                let (n, from) = match conn.recv_from(&mut buf).await {
-                    Ok((n, from)) => (n, from),
-                    Err(err) => {
-                        log::debug!("exiting read loop: {}", err);
-                        break;
-                    }
-                };
+    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+        while let Some(transmit) = self.tr_map.poll_transmit() {
+            self.transmits.push_back(transmit);
+        }
+        self.transmits.pop_front()
+    }
 
-                log::debug!("received {} bytes of udp from {}", n, from);
+    pub fn handle_transmit(&mut self, msg: Transmit<BytesMut>) -> Result<()> {
+        self.handle_inbound(&msg.message[..], msg.transport.peer_addr)
+    }
 
-                if let Err(err) = ClientInternal::handle_inbound(
-                    &read_ch_tx,
-                    &buf[..n],
-                    from,
-                    &stun_serv_str,
-                    &tr_map,
-                    &binding_mgr,
-                )
-                .await
-                {
-                    log::debug!("exiting read loop: {}", err);
-                    break;
-                }
-            }
-        });
-
-        Ok(())
+    pub(crate) fn poll_event(&mut self) -> Option<Event> {
+        while let Some(event) = self.tr_map.poll_event() {
+            self.events.push_back(event);
+        }
+        self.events.pop_front()
     }
 
     // handle_inbound handles data received.
@@ -248,14 +158,7 @@ impl Client {
     // Caller should check if the packet was handled by this client or not.
     // If not handled, it is assumed that the packet is application data.
     // If an error is returned, the caller should discard the packet regardless.
-    async fn handle_inbound(
-        read_ch_tx: &Arc<Mutex<Option<mpsc::Sender<InboundData>>>>,
-        data: &[u8],
-        from: SocketAddr,
-        stun_serv_str: &str,
-        tr_map: &Arc<Mutex<TransactionMap>>,
-        binding_mgr: &Arc<Mutex<BindingManager>>,
-    ) -> Result<()> {
+    fn handle_inbound(&mut self, data: &[u8], from: SocketAddr) -> Result<()> {
         // +-------------------+-------------------------------+
         // |   Return Values   |                               |
         // +-------------------+       Meaning / Action        |
@@ -275,25 +178,20 @@ impl Client {
         //  - Non-STUN message from the STUN server
 
         if is_message(data) {
-            ClientInternal::handle_stun_message(tr_map, read_ch_tx, data, from).await
+            self.handle_stun_message(data)
         } else if ChannelData::is_channel_data(data) {
-            ClientInternal::handle_channel_data(binding_mgr, read_ch_tx, data).await
-        } else if !stun_serv_str.is_empty() && from.to_string() == *stun_serv_str {
-            // received from STUN server but it is not a STUN message
+            self.handle_channel_data(data)
+        } else if self.stun_serv_addr.is_some() && &from == self.stun_serv_addr.as_ref().unwrap() {
+            // received from STUN server, but it is not a STUN message
             Err(Error::ErrNonStunmessage)
         } else {
             // assume, this is an application data
-            log::trace!("non-STUN/TURN packect, unhandled");
+            log::trace!("non-STUN/TURN packet, unhandled");
             Ok(())
         }
     }
 
-    async fn handle_stun_message(
-        tr_map: &Arc<Mutex<TransactionMap>>,
-        read_ch_tx: &Arc<Mutex<Option<mpsc::Sender<InboundData>>>>,
-        data: &[u8],
-        mut from: SocketAddr,
-    ) -> Result<()> {
+    fn handle_stun_message(&mut self, data: &[u8]) -> Result<()> {
         let mut msg = Message::new();
         msg.raw = data.to_vec();
         msg.decode()?;
@@ -310,14 +208,15 @@ impl Client {
             if msg.typ.method == METHOD_DATA {
                 let mut peer_addr = PeerAddress::default();
                 peer_addr.get_from(&msg)?;
-                from = SocketAddr::new(peer_addr.ip, peer_addr.port);
+                let from = SocketAddr::new(peer_addr.ip, peer_addr.port);
 
                 let mut data = Data::default();
                 data.get_from(&msg)?;
 
                 log::debug!("data indication received from {}", from);
 
-                let _ = ClientInternal::handle_inbound_relay_conn(read_ch_tx, &data.0, from).await;
+                self.events
+                    .push_back(Event::DataIndication(from, BytesMut::from(&data.0[..])))
             }
 
             return Ok(());
@@ -330,46 +229,33 @@ impl Client {
 
         let tr_key = BASE64_STANDARD.encode(msg.transaction_id.0);
 
-        let mut tm = tr_map.lock().await;
-        if tm.find(&tr_key).is_none() {
+        if self.tr_map.find(&tr_key).is_none() {
             // silently discard
             log::debug!("no transaction for {}", msg);
             return Ok(());
         }
 
-        if let Some(mut tr) = tm.delete(&tr_key) {
-            // End the transaction
-            tr.stop_rtx_timer();
-
-            if !tr
-                .write_result(TransactionResult {
-                    msg,
-                    from,
-                    retries: tr.retries(),
-                    ..Default::default()
-                })
-                .await
-            {
-                log::debug!("no listener for msg.raw {:?}", data);
-            }
+        if let Some(tr) = self.tr_map.delete(&tr_key) {
+            let mut refl_addr = XorMappedAddress::default();
+            refl_addr.get_from(&msg)?;
+            self.events.push_back(Event::BindingResponse(
+                tr.key,
+                SocketAddr::new(refl_addr.ip, refl_addr.port),
+            ));
         }
 
         Ok(())
     }
 
-    async fn handle_channel_data(
-        binding_mgr: &Arc<Mutex<BindingManager>>,
-        read_ch_tx: &Arc<Mutex<Option<mpsc::Sender<InboundData>>>>,
-        data: &[u8],
-    ) -> Result<()> {
+    fn handle_channel_data(&mut self, data: &[u8]) -> Result<()> {
         let mut ch_data = ChannelData {
             raw: data.to_vec(),
             ..Default::default()
         };
         ch_data.decode()?;
 
-        let addr = ClientInternal::find_addr_by_channel_number(binding_mgr, ch_data.number.0)
-            .await
+        let addr = self
+            .find_addr_by_channel_number(ch_data.number.0)
             .ok_or(Error::ErrChannelBindNotFound)?;
 
         log::trace!(
@@ -378,50 +264,23 @@ impl Client {
             ch_data.number.0
         );
 
-        let _ = ClientInternal::handle_inbound_relay_conn(read_ch_tx, &ch_data.data, addr).await;
+        self.events.push_back(Event::ChannelData(
+            ch_data.number,
+            addr,
+            BytesMut::from(&ch_data.data[..]),
+        ));
 
         Ok(())
     }
 
-    // handle_inbound_relay_conn passes inbound data in RelayConn
-    async fn handle_inbound_relay_conn(
-        read_ch_tx: &Arc<Mutex<Option<mpsc::Sender<InboundData>>>>,
-        data: &[u8],
-        from: SocketAddr,
-    ) -> Result<()> {
-        let read_ch_tx_opt = read_ch_tx.lock().await;
-        log::debug!("read_ch_tx_opt = {}", read_ch_tx_opt.is_some());
-        if let Some(tx) = &*read_ch_tx_opt {
-            log::debug!("try_send data = {:?}, from = {}", data, from);
-            if tx
-                .try_send(InboundData {
-                    data: data.to_vec(),
-                    from,
-                })
-                .is_err()
-            {
-                log::warn!("receive buffer full");
-            }
-            Ok(())
-        } else {
-            Err(Error::ErrAlreadyClosed)
-        }
-    }
-
     /// Close closes this client
     pub fn close(&mut self) {
-        {
-            let mut read_ch_tx = self.read_ch_tx.lock().await;
-            read_ch_tx.take();
-        }
-        {
-            let mut tm = self.tr_map.lock().await;
-            tm.close_and_delete_all();
-        }
+        self.tr_map.delete_all();
     }
 
     /// send_binding_request_to sends a new STUN request to the given transport address
-    pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<SocketAddr> {
+    /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
+    pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<String> {
         let msg = {
             let attrs: Vec<Box<dyn Setter>> = if !self.software.text.is_empty() {
                 vec![
@@ -439,35 +298,32 @@ impl Client {
         };
 
         log::debug!("client.SendBindingRequestTo call PerformTransaction 1");
-        let tr_res = self.perform_transaction(&msg, to, false)?;
-
-        let mut refl_addr = XorMappedAddress::default();
-        refl_addr.get_from(&tr_res.msg)?;
-
-        Ok(SocketAddr::new(refl_addr.ip, refl_addr.port))
+        self.perform_transaction(&msg, to)
     }
 
     /// send_binding_request sends a new STUN request to the STUN server
-    pub fn send_binding_request(&mut self) -> Result<SocketAddr> {
-        if self.stun_serv_addr.is_empty() {
-            Err(Error::ErrStunserverAddressNotSet)
+    /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
+    pub fn send_binding_request(&mut self) -> Result<String> {
+        if let Some(stun_serv_addr) = &self.stun_serv_addr {
+            self.send_binding_request_to(*stun_serv_addr)
         } else {
-            self.send_binding_request_to(&self.stun_serv_addr)
+            Err(Error::ErrStunserverAddressNotSet)
         }
     }
 
     // find_addr_by_channel_number returns a peer address associated with the
     // channel number on this UDPConn
-    async fn find_addr_by_channel_number(
-        binding_mgr: &Arc<Mutex<BindingManager>>,
-        ch_num: u16,
-    ) -> Option<SocketAddr> {
-        let bm = binding_mgr.lock().await;
-        bm.find_by_number(ch_num).map(|b| b.addr)
+    fn find_addr_by_channel_number(&self, ch_num: u16) -> Option<SocketAddr> {
+        self.binding_mgr.find_by_number(ch_num).map(|b| b.addr)
     }
 
-    /// Allocate sends a TURN allocation request to the given transport address
-    pub fn allocate(&mut self) -> Result<RelayConnConfig> {
+    // stun_server_addr return the STUN server address
+    fn stun_server_addr(&self) -> Option<SocketAddr> {
+        self.stun_serv_addr
+    }
+
+    /*/// Allocate sends a TURN allocation request to the given transport address
+    TODO:pub fn allocate(&mut self) -> Result<RelayConnConfig> {
         {
             let read_ch_tx = self.read_ch_tx.lock().await;
             log::debug!("allocate check: read_ch_tx_opt = {}", read_ch_tx.is_some());
@@ -557,10 +413,7 @@ impl Client {
             read_ch_rx: Arc::new(Mutex::new(read_ch_rx)),
         })
     }
-}
 
-/*TODO:
-impl Client {
     pub async fn allocate(&self) -> Result<impl Conn> {
         let config = {
             let mut ci = self.client_internal.lock().await;
@@ -568,5 +421,60 @@ impl Client {
         };
 
         Ok(RelayConn::new(Arc::clone(&self.client_internal), config).await)
+    }*/
+
+    /// turn_server_addr return the TURN server address
+    fn turn_server_addr(&self) -> SocketAddr {
+        self.turn_serv_addr
     }
-}*/
+
+    /// username returns username
+    fn username(&self) -> Username {
+        self.username.clone()
+    }
+
+    /// realm return realm
+    fn realm(&self) -> Realm {
+        self.realm.clone()
+    }
+
+    /// WriteTo sends data to the specified destination using the base socket.
+    fn write(&mut self, data: &[u8], remote: SocketAddr) {
+        self.transmits.push_back(Transmit {
+            now: Instant::now(),
+            transport: TransportContext {
+                local_addr: self.local_addr,
+                peer_addr: remote,
+                protocol: self.protocol,
+                ecn: None,
+            },
+            message: BytesMut::from(data),
+        });
+    }
+
+    // PerformTransaction performs STUN transaction
+    fn perform_transaction(&mut self, msg: &Message, to: SocketAddr) -> Result<String> {
+        let tr_key = BASE64_STANDARD.encode(msg.transaction_id.0);
+
+        let tr = Transaction::new(TransactionConfig {
+            key: tr_key.clone(),
+            raw: BytesMut::from(&msg.raw[..]),
+            local_addr: self.local_addr,
+            peer_addr: to,
+            protocol: self.protocol,
+            interval: self.rto_in_ms,
+        });
+
+        log::trace!(
+            "start {} transaction {} to {}",
+            msg.typ,
+            tr_key,
+            tr.peer_addr
+        );
+        self.tr_map.insert(tr_key.clone(), tr);
+
+        self.write(&msg.raw, to);
+
+        Ok(tr_key)
+    }
+}

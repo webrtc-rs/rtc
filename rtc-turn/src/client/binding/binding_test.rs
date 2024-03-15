@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
 #[test]
 fn test_binding_manager_number_assignment() -> Result<()> {

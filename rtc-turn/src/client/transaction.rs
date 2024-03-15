@@ -1,86 +1,21 @@
-use std::collections::HashMap;
+use bytes::BytesMut;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::str::FromStr;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::ops::Add;
+use std::time::{Duration, Instant};
 
 use stun::message::*;
 
+use crate::client::Event;
 use shared::error::Error;
+use shared::{Protocol, Transmit, TransportContext};
 
-const MAX_RTX_INTERVAL_IN_MS: u16 = 1600;
+const MAX_RTX_INTERVAL_IN_MS: u64 = 1600;
 const MAX_RTX_COUNT: u16 = 7; // total 7 requests (Rc)
-
-async fn on_rtx_timeout(
-    conn: &Arc<dyn Conn + Send + Sync>,
-    tr_map: &Arc<Mutex<TransactionMap>>,
-    tr_key: &str,
-    n_rtx: u16,
-) -> bool {
-    let mut tm = tr_map.lock().await;
-    let (tr_raw, tr_to) = match tm.find(tr_key) {
-        Some(tr) => (tr.raw.clone(), tr.to.clone()),
-        None => return true, // already gone
-    };
-
-    if n_rtx == MAX_RTX_COUNT {
-        // all retransmisstions failed
-        if let Some(tr) = tm.delete(tr_key) {
-            if !tr
-                .write_result(TransactionResult {
-                    err: Some(Error::Other(format!(
-                        "{:?} {}",
-                        Error::ErrAllRetransmissionsFailed,
-                        tr_key
-                    ))),
-                    ..Default::default()
-                })
-                .await
-            {
-                log::debug!("no listener for transaction");
-            }
-        }
-        return true;
-    }
-
-    log::trace!(
-        "retransmitting transaction {} to {} (n_rtx={})",
-        tr_key,
-        tr_to,
-        n_rtx
-    );
-
-    let dst = match SocketAddr::from_str(&tr_to) {
-        Ok(dst) => dst,
-        Err(_) => return false,
-    };
-
-    if conn.send_to(&tr_raw, dst).await.is_err() {
-        if let Some(tr) = tm.delete(tr_key) {
-            if !tr
-                .write_result(TransactionResult {
-                    err: Some(Error::Other(format!(
-                        "{:?} {}",
-                        Error::ErrAllRetransmissionsFailed,
-                        tr_key
-                    ))),
-                    ..Default::default()
-                })
-                .await
-            {
-                log::debug!("no listener for transaction");
-            }
-        }
-        return true;
-    }
-
-    false
-}
 
 // TransactionResult is a bag of result values of a transaction
 #[derive(Debug)] //Clone
-pub struct TransactionResult {
+pub(crate) struct TransactionResult {
     pub msg: Message,
     pub from: SocketAddr,
     pub retries: u16,
@@ -99,179 +34,185 @@ impl Default for TransactionResult {
 }
 
 // TransactionConfig is a set of config params used by NewTransaction
-#[derive(Default)]
-pub struct TransactionConfig {
-    pub key: String,
-    pub raw: Vec<u8>,
-    pub to: String,
-    pub interval: u16,
-    pub ignore_result: bool, // true to throw away the result of this transaction (it will not be readable using wait_for_result)
+pub(crate) struct TransactionConfig {
+    pub(crate) key: String,
+    pub(crate) raw: BytesMut,
+    pub(crate) local_addr: SocketAddr,
+    pub(crate) peer_addr: SocketAddr,
+    pub(crate) protocol: Protocol,
+    pub(crate) interval: u64,
 }
 
 // Transaction represents a transaction
-#[derive(Debug)]
-pub struct Transaction {
-    pub key: String,
-    pub raw: Vec<u8>,
-    pub to: String,
-    pub n_rtx: Arc<AtomicU16>,
-    pub interval: Arc<AtomicU16>,
-    timer_ch_tx: Option<mpsc::Sender<()>>,
-    result_ch_tx: Option<mpsc::Sender<TransactionResult>>,
-    result_ch_rx: Option<mpsc::Receiver<TransactionResult>>,
-}
-
-impl Default for Transaction {
-    fn default() -> Self {
-        Transaction {
-            key: String::new(),
-            raw: vec![],
-            to: String::new(),
-            n_rtx: Arc::new(AtomicU16::new(0)),
-            interval: Arc::new(AtomicU16::new(0)),
-            //timer: None,
-            timer_ch_tx: None,
-            result_ch_tx: None,
-            result_ch_rx: None,
-        }
-    }
+pub(crate) struct Transaction {
+    pub(crate) key: String,
+    pub(crate) raw: BytesMut,
+    pub(crate) local_addr: SocketAddr,
+    pub(crate) peer_addr: SocketAddr,
+    pub(crate) protocol: Protocol,
+    pub(crate) n_rtx: u16,
+    pub(crate) interval: u64,
+    pub(crate) timeout: Instant,
+    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
 }
 
 impl Transaction {
     // NewTransaction creates a new instance of Transaction
-    pub fn new(config: TransactionConfig) -> Self {
-        let (result_ch_tx, result_ch_rx) = if !config.ignore_result {
-            let (tx, rx) = mpsc::channel(1);
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
-        Transaction {
+    pub(crate) fn new(config: TransactionConfig) -> Self {
+        Self {
             key: config.key,
             raw: config.raw,
-            to: config.to,
-            interval: Arc::new(AtomicU16::new(config.interval)),
-            result_ch_tx,
-            result_ch_rx,
-            ..Default::default()
+            local_addr: config.local_addr,
+            peer_addr: config.peer_addr,
+            protocol: config.protocol,
+            n_rtx: 0,
+            interval: config.interval,
+            timeout: Instant::now().add(Duration::from_millis(config.interval)),
+            transmits: VecDeque::new(),
         }
     }
 
-    // start_rtx_timer starts the transaction timer
-    pub async fn start_rtx_timer(
-        &mut self,
-        conn: Arc<dyn Conn + Send + Sync>,
-        tr_map: Arc<Mutex<TransactionMap>>,
-    ) {
-        let (timer_ch_tx, mut timer_ch_rx) = mpsc::channel(1);
-        self.timer_ch_tx = Some(timer_ch_tx);
-        let (n_rtx, interval, key) = (self.n_rtx.clone(), self.interval.clone(), self.key.clone());
+    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
+        if self.retries() < MAX_RTX_COUNT {
+            Some(self.timeout)
+        } else {
+            None
+        }
+    }
 
-        tokio::spawn(async move {
-            let mut done = false;
-            while !done {
-                let timer = tokio::time::sleep(Duration::from_millis(
-                    interval.load(Ordering::SeqCst) as u64,
-                ));
-                tokio::pin!(timer);
-
-                tokio::select! {
-                    _ = timer.as_mut() => {
-                        let rtx = n_rtx.fetch_add(1, Ordering::SeqCst);
-
-                        let mut val = interval.load(Ordering::SeqCst);
-                        val *= 2;
-                        if val > MAX_RTX_INTERVAL_IN_MS {
-                            val = MAX_RTX_INTERVAL_IN_MS;
-                        }
-                        interval.store(val, Ordering::SeqCst);
-
-                        done = on_rtx_timeout(&conn, &tr_map, &key, rtx + 1).await;
-                    }
-                    _ = timer_ch_rx.recv() => done = true,
-                }
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        if self.retries() < MAX_RTX_COUNT && self.timeout <= now {
+            self.n_rtx += 1;
+            self.interval *= 2;
+            if self.interval > MAX_RTX_INTERVAL_IN_MS {
+                self.interval = MAX_RTX_INTERVAL_IN_MS;
             }
+
+            self.on_rtx_timeout(now);
+
+            self.timeout = now.add(Duration::from_millis(self.interval));
+        }
+    }
+
+    pub(crate) fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+        self.transmits.pop_front()
+    }
+
+    fn on_rtx_timeout(&mut self, now: Instant) {
+        if self.n_rtx == MAX_RTX_COUNT {
+            return;
+        }
+
+        log::trace!(
+            "retransmitting transaction {} to {} (n_rtx={})",
+            self.key,
+            self.peer_addr,
+            self.n_rtx
+        );
+
+        self.transmits.push_back(Transmit {
+            now,
+            transport: TransportContext {
+                local_addr: self.local_addr,
+                peer_addr: self.peer_addr,
+                protocol: self.protocol,
+                ecn: None,
+            },
+            message: self.raw.clone(),
         });
     }
 
-    // stop_rtx_timer stop the transaction timer
-    pub fn stop_rtx_timer(&mut self) {
-        if self.timer_ch_tx.is_some() {
-            self.timer_ch_tx.take();
-        }
-    }
-
-    // write_result writes the result to the result channel
-    pub async fn write_result(&self, res: TransactionResult) -> bool {
-        if let Some(result_ch) = &self.result_ch_tx {
-            result_ch.send(res).await.is_ok()
-        } else {
-            false
-        }
-    }
-
-    pub fn get_result_channel(&mut self) -> Option<mpsc::Receiver<TransactionResult>> {
-        self.result_ch_rx.take()
-    }
-
-    // Close closes the transaction
-    pub fn close(&mut self) {
-        if self.result_ch_tx.is_some() {
-            self.result_ch_tx.take();
-        }
-    }
-
     // retries returns the number of retransmission it has made
-    pub fn retries(&self) -> u16 {
-        self.n_rtx.load(Ordering::SeqCst)
+    pub(crate) fn retries(&self) -> u16 {
+        self.n_rtx
     }
 }
 
 // TransactionMap is a thread-safe transaction map
-#[derive(Default, Debug)]
-pub struct TransactionMap {
+#[derive(Default)]
+pub(crate) struct TransactionMap {
     tr_map: HashMap<String, Transaction>,
+    transmits: VecDeque<Transmit<BytesMut>>,
+    events: VecDeque<Event>,
 }
 
 impl TransactionMap {
     // NewTransactionMap create a new instance of the transaction map
-    pub fn new() -> TransactionMap {
+    pub(crate) fn new() -> TransactionMap {
         TransactionMap {
             tr_map: HashMap::new(),
+            transmits: VecDeque::new(),
+            events: VecDeque::new(),
         }
     }
 
+    pub(crate) fn poll_timout(&self) -> Option<Instant> {
+        let mut eto = None;
+        for tr in self.tr_map.values() {
+            if let Some(to) = tr.poll_timeout() {
+                if eto.is_none() || to < *eto.as_ref().unwrap() {
+                    eto = Some(to);
+                }
+            }
+        }
+        eto
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        let mut keys = vec![];
+        for (key, tr) in self.tr_map.iter_mut() {
+            tr.handle_timeout(now);
+            if tr.retries() >= MAX_RTX_COUNT {
+                keys.push(key.clone());
+            }
+        }
+
+        for key in keys {
+            self.tr_map.remove(&key);
+            self.events.push_back(Event::BindingRequestTimeout(key));
+        }
+    }
+
+    pub(crate) fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+        for tr in self.tr_map.values_mut() {
+            while let Some(transmit) = tr.poll_transmit() {
+                self.transmits.push_back(transmit);
+            }
+        }
+        self.transmits.pop_front()
+    }
+
+    pub(crate) fn poll_event(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
     // Insert inserts a trasaction to the map
-    pub fn insert(&mut self, key: String, tr: Transaction) -> bool {
+    pub(crate) fn insert(&mut self, key: String, tr: Transaction) -> bool {
         self.tr_map.insert(key, tr);
         true
     }
 
     // Find looks up a transaction by its key
-    pub fn find(&self, key: &str) -> Option<&Transaction> {
+    pub(crate) fn find(&self, key: &str) -> Option<&Transaction> {
         self.tr_map.get(key)
     }
 
-    pub fn get(&mut self, key: &str) -> Option<&mut Transaction> {
+    pub(crate) fn get(&mut self, key: &str) -> Option<&mut Transaction> {
         self.tr_map.get_mut(key)
     }
 
     // Delete deletes a transaction by its key
-    pub fn delete(&mut self, key: &str) -> Option<Transaction> {
+    pub(crate) fn delete(&mut self, key: &str) -> Option<Transaction> {
         self.tr_map.remove(key)
     }
 
     // close_and_delete_all closes and deletes all transactions
-    pub fn close_and_delete_all(&mut self) {
-        for tr in self.tr_map.values_mut() {
-            tr.close();
-        }
+    pub(crate) fn delete_all(&mut self) {
         self.tr_map.clear();
     }
 
     // Size returns the length of the transaction map
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.tr_map.len()
     }
 }
