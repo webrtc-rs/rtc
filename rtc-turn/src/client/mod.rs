@@ -2,15 +2,12 @@
 mod client_test;
 */
 pub mod binding;
-pub mod periodic_timer;
 pub mod permission;
-/*pub mod relay_conn;*/
+pub mod relay;
 pub mod transaction;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use bytes::BytesMut;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Instant;
@@ -23,26 +20,44 @@ use stun::xoraddr::*;
 
 use binding::*;
 use transaction::*;
-/*
-use relay_conn::*;
-*/
 
+use crate::client::relay::{Relay, RelayState};
 use crate::proto::chandata::*;
 use crate::proto::channum::ChannelNumber;
 use crate::proto::data::*;
+use crate::proto::lifetime::Lifetime;
 use crate::proto::peeraddr::*;
+use crate::proto::relayaddr::RelayedAddress;
+use crate::proto::reqtrans::RequestedTransport;
+use crate::proto::{PROTO_TCP, PROTO_UDP};
 use shared::error::{Error, Result};
 use shared::{Protocol, Transmit, TransportContext};
+use stun::error_code::ErrorCodeAttribute;
+use stun::fingerprint::FINGERPRINT;
 
 const DEFAULT_RTO_IN_MS: u64 = 200;
 const MAX_DATA_BUFFER_SIZE: usize = u16::MAX as usize; // message size limit for Chromium
 const MAX_READ_QUEUE_SIZE: usize = 1024;
 
 pub enum Event {
-    BindingResponse(String, SocketAddr),
-    BindingRequestTimeout(String),
+    TransactionTimeout(TransactionId),
+
+    BindingResponse(TransactionId, SocketAddr),
+    BindingError(TransactionId, Box<dyn std::error::Error>),
+
+    AllocateResponse(TransactionId, SocketAddr),
+    AllocateError(TransactionId, Box<dyn std::error::Error>),
+
+    CreatePermissionResponse(TransactionId),
+    CreatePermissionError(TransactionId, Box<dyn std::error::Error>),
+
     DataIndication(SocketAddr, BytesMut),
     ChannelData(ChannelNumber, SocketAddr, BytesMut),
+}
+
+enum AllocateState {
+    Attempting,
+    Requesting(TextAttribute),
 }
 
 //              interval [msec]
@@ -83,6 +98,7 @@ pub struct Client {
     binding_mgr: BindingManager,
     rto_in_ms: u64,
 
+    relays: HashMap<SocketAddr, RelayState>,
     transmits: VecDeque<Transmit<BytesMut>>,
     events: VecDeque<Event>,
 }
@@ -120,6 +136,7 @@ impl Client {
             },
             integrity: MessageIntegrity::new_short_term_integrity(String::new()),
 
+            relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
         })
@@ -227,21 +244,60 @@ impl Client {
         // - stun.ClassSuccessResponse
         // - stun.ClassErrorResponse
 
-        let tr_key = BASE64_STANDARD.encode(msg.transaction_id.0);
-
-        if self.tr_map.find(&tr_key).is_none() {
+        if self.tr_map.find(&msg.transaction_id).is_none() {
             // silently discard
             log::debug!("no transaction for {}", msg);
             return Ok(());
         }
 
-        if let Some(tr) = self.tr_map.delete(&tr_key) {
-            let mut refl_addr = XorMappedAddress::default();
-            refl_addr.get_from(&msg)?;
-            self.events.push_back(Event::BindingResponse(
-                tr.key,
-                SocketAddr::new(refl_addr.ip, refl_addr.port),
-            ));
+        if let Some(tr) = self.tr_map.delete(&msg.transaction_id) {
+            match msg.typ.method {
+                METHOD_BINDING => {
+                    if msg.typ.class == CLASS_ERROR_RESPONSE {
+                        let mut code = ErrorCodeAttribute::default();
+                        let err = if code.get_from(&msg).is_err() {
+                            Error::Other(format!("{}", msg.typ))
+                        } else {
+                            Error::Other(format!("{} (error {})", msg.typ, code))
+                        };
+                        self.events
+                            .push_back(Event::BindingError(tr.transaction_id, Box::new(err)));
+                    } else {
+                        let mut refl_addr = XorMappedAddress::default();
+                        match refl_addr.get_from(&msg) {
+                            Ok(_) => {
+                                self.events.push_back(Event::BindingResponse(
+                                    tr.transaction_id,
+                                    SocketAddr::new(refl_addr.ip, refl_addr.port),
+                                ));
+                            }
+                            Err(err) => {
+                                self.events.push_back(Event::BindingError(
+                                    tr.transaction_id,
+                                    Box::new(err),
+                                ));
+                            }
+                        }
+                    }
+                }
+                METHOD_ALLOCATE => {
+                    self.handle_allocate_response(msg, tr.transaction_type)?;
+                }
+                METHOD_CREATE_PERMISSION => {
+                    if let TransactionType::CreatePermissionRequest(relayed_addr, peer_addr) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_create_permission_response(msg, peer_addr)?;
+                    }
+                }
+                METHOD_REFRESH => {}
+                METHOD_CHANNEL_BIND => {}
+                _ => {}
+            }
         }
 
         Ok(())
@@ -280,7 +336,7 @@ impl Client {
 
     /// send_binding_request_to sends a new STUN request to the given transport address
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
-    pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<String> {
+    pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<TransactionId> {
         let msg = {
             let attrs: Vec<Box<dyn Setter>> = if !self.software.text.is_empty() {
                 vec![
@@ -298,12 +354,12 @@ impl Client {
         };
 
         log::debug!("client.SendBindingRequestTo call PerformTransaction 1");
-        self.perform_transaction(&msg, to)
+        Ok(self.perform_transaction(&msg, to, TransactionType::BindingRequest))
     }
 
     /// send_binding_request sends a new STUN request to the STUN server
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
-    pub fn send_binding_request(&mut self) -> Result<String> {
+    pub fn send_binding_request(&mut self) -> Result<TransactionId> {
         if let Some(stun_serv_addr) = &self.stun_serv_addr {
             self.send_binding_request_to(*stun_serv_addr)
         } else {
@@ -322,106 +378,165 @@ impl Client {
         self.stun_serv_addr
     }
 
-    /*/// Allocate sends a TURN allocation request to the given transport address
-    TODO:pub fn allocate(&mut self) -> Result<RelayConnConfig> {
-        {
-            let read_ch_tx = self.read_ch_tx.lock().await;
-            log::debug!("allocate check: read_ch_tx_opt = {}", read_ch_tx.is_some());
-            if read_ch_tx.is_some() {
-                return Err(Error::ErrOneAllocateOnly);
-            }
-        }
-
+    /* https://datatracker.ietf.org/doc/html/rfc8656#section-20
+    TURN                                 TURN          Peer         Peer
+    client                               server         A            B
+      |                                    |            |            |
+      |--- Allocate request -------------->|            |            |
+      |    Transaction-Id=0xA56250D3F17ABE679422DE85    |            |
+      |    SOFTWARE="Example client, version 1.03"      |            |
+      |    LIFETIME=3600 (1 hour)          |            |            |
+      |    REQUESTED-TRANSPORT=17 (UDP)    |            |            |
+      |    DONT-FRAGMENT                   |            |            |
+      |                                    |            |            |
+      |<-- Allocate error response --------|            |            |
+      |    Transaction-Id=0xA56250D3F17ABE679422DE85    |            |
+      |    SOFTWARE="Example server, version 1.17"      |            |
+      |    ERROR-CODE=401 (Unauthorized)   |            |            |
+      |    REALM="example.com"             |            |            |
+      |    NONCE="obMatJos2gAAAadl7W7PeDU4hKE72jda"     |            |
+      |    PASSWORD-ALGORITHMS=MD5 and SHA256           |            |
+      |                                    |            |            |
+      |--- Allocate request -------------->|            |            |
+      |    Transaction-Id=0xC271E932AD7446A32C234492    |            |
+      |    SOFTWARE="Example client 1.03"  |            |            |
+      |    LIFETIME=3600 (1 hour)          |            |            |
+      |    REQUESTED-TRANSPORT=17 (UDP)    |            |            |
+      |    DONT-FRAGMENT                   |            |            |
+      |    USERNAME="George"               |            |            |
+      |    REALM="example.com"             |            |            |
+      |    NONCE="obMatJos2gAAAadl7W7PeDU4hKE72jda"     |            |
+      |    PASSWORD-ALGORITHMS=MD5 and SHA256           |            |
+      |    PASSWORD-ALGORITHM=SHA256       |            |            |
+      |    MESSAGE-INTEGRITY=...           |            |            |
+      |    MESSAGE-INTEGRITY-SHA256=...    |            |            |
+      |                                    |            |            |
+      |<-- Allocate success response ------|            |            |
+      |    Transaction-Id=0xC271E932AD7446A32C234492    |            |
+      |    SOFTWARE="Example server, version 1.17"      |            |
+      |    LIFETIME=1200 (20 minutes)      |            |            |
+      |    XOR-RELAYED-ADDRESS=192.0.2.15:50000         |            |
+      |    XOR-MAPPED-ADDRESS=192.0.2.1:7000            |            |
+      |    MESSAGE-INTEGRITY-SHA256=...    |            |            |
+    */
+    /// Allocate sends a TURN allocation request to the given transport address
+    pub fn allocate(&mut self) -> Result<TransactionId> {
         let mut msg = Message::new();
         msg.build(&[
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
             Box::new(RequestedTransport {
-                protocol: PROTO_UDP,
+                protocol: if self.protocol == Protocol::UDP {
+                    PROTO_UDP
+                } else {
+                    PROTO_TCP
+                },
             }),
             Box::new(FINGERPRINT),
         ])?;
 
         log::debug!("client.Allocate call PerformTransaction 1");
-        let tr_res = self
-            .perform_transaction(&msg, &self.turn_serv_addr.clone(), false)
-            .await?;
-        let res = tr_res.msg;
-
-        // Anonymous allocate failed, trying to authenticate.
-        let nonce = Nonce::get_from_as(&res, ATTR_NONCE)?;
-        self.realm = Realm::get_from_as(&res, ATTR_REALM)?;
-
-        self.integrity = MessageIntegrity::new_long_term_integrity(
-            self.username.text.clone(),
-            self.realm.text.clone(),
-            self.password.clone(),
-        );
-
-        // Trying to authorize.
-        msg.build(&[
-            Box::new(TransactionId::new()),
-            Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
-            Box::new(RequestedTransport {
-                protocol: PROTO_UDP,
-            }),
-            Box::new(self.username.clone()),
-            Box::new(self.realm.clone()),
-            Box::new(nonce.clone()),
-            Box::new(self.integrity.clone()),
-            Box::new(FINGERPRINT),
-        ])?;
-
-        log::debug!("client.Allocate call PerformTransaction 2");
-        let tr_res = self
-            .perform_transaction(&msg, &self.turn_serv_addr.clone(), false)
-            .await?;
-        let res = tr_res.msg;
-
-        if res.typ.class == CLASS_ERROR_RESPONSE {
-            let mut code = ErrorCodeAttribute::default();
-            let result = code.get_from(&res);
-            if result.is_err() {
-                return Err(Error::Other(format!("{}", res.typ)));
-            } else {
-                return Err(Error::Other(format!("{} (error {})", res.typ, code)));
-            }
-        }
-
-        // Getting relayed addresses from response.
-        let mut relayed = RelayedAddress::default();
-        relayed.get_from(&res)?;
-        let relayed_addr = SocketAddr::new(relayed.ip, relayed.port);
-
-        // Getting lifetime from response
-        let mut lifetime = Lifetime::default();
-        lifetime.get_from(&res)?;
-
-        let (read_ch_tx, read_ch_rx) = mpsc::channel(MAX_READ_QUEUE_SIZE);
-        {
-            let mut read_ch_tx_opt = self.read_ch_tx.lock().await;
-            *read_ch_tx_opt = Some(read_ch_tx);
-            log::debug!("allocate: read_ch_tx_opt = {}", read_ch_tx_opt.is_some());
-        }
-
-        Ok(RelayConnConfig {
-            relayed_addr,
-            integrity: self.integrity.clone(),
-            nonce,
-            lifetime: lifetime.0,
-            binding_mgr: Arc::clone(&self.binding_mgr),
-            read_ch_rx: Arc::new(Mutex::new(read_ch_rx)),
-        })
+        let tid =
+            self.perform_transaction(&msg, self.turn_serv_addr, TransactionType::AllocateAttempt);
+        Ok(tid)
     }
 
-    pub async fn allocate(&self) -> Result<impl Conn> {
-        let config = {
-            let mut ci = self.client_internal.lock().await;
-            ci.allocate().await?
-        };
+    fn handle_allocate_response(
+        &mut self,
+        response: Message,
+        allocate_state: TransactionType,
+    ) -> Result<()> {
+        match allocate_state {
+            TransactionType::AllocateAttempt => {
+                // Anonymous allocate failed, trying to authenticate.
+                let nonce = match Nonce::get_from_as(&response, ATTR_NONCE) {
+                    Ok(nonce) => nonce,
+                    Err(err) => {
+                        self.events.push_back(Event::AllocateError(
+                            response.transaction_id,
+                            Box::new(err),
+                        ));
+                        return Ok(());
+                    }
+                };
+                self.realm = match Realm::get_from_as(&response, ATTR_REALM) {
+                    Ok(realm) => realm,
+                    Err(err) => {
+                        self.events.push_back(Event::AllocateError(
+                            response.transaction_id,
+                            Box::new(err),
+                        ));
+                        return Ok(());
+                    }
+                };
 
-        Ok(RelayConn::new(Arc::clone(&self.client_internal), config).await)
-    }*/
+                self.integrity = MessageIntegrity::new_long_term_integrity(
+                    self.username.text.clone(),
+                    self.realm.text.clone(),
+                    self.password.clone(),
+                );
+
+                let mut msg = Message::new();
+                // Trying to authorize.
+                msg.build(&[
+                    Box::new(TransactionId::new()),
+                    Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
+                    Box::new(RequestedTransport {
+                        protocol: if self.protocol == Protocol::UDP {
+                            PROTO_UDP
+                        } else {
+                            PROTO_TCP
+                        },
+                    }),
+                    Box::new(self.username.clone()),
+                    Box::new(self.realm.clone()),
+                    Box::new(nonce.clone()),
+                    Box::new(self.integrity.clone()),
+                    Box::new(FINGERPRINT),
+                ])?;
+
+                log::debug!("client.Allocate call PerformTransaction 2");
+                self.perform_transaction(
+                    &msg,
+                    self.turn_serv_addr,
+                    TransactionType::AllocateRequest(nonce),
+                );
+            }
+            TransactionType::AllocateRequest(nonce) => {
+                if response.typ.class == CLASS_ERROR_RESPONSE {
+                    let mut code = ErrorCodeAttribute::default();
+                    let err = if code.get_from(&response).is_err() {
+                        Error::Other(format!("{}", response.typ))
+                    } else {
+                        Error::Other(format!("{} (error {})", response.typ, code))
+                    };
+                    self.events
+                        .push_back(Event::AllocateError(response.transaction_id, Box::new(err)));
+                    return Ok(());
+                }
+
+                // Getting relayed addresses from response.
+                let mut relayed = RelayedAddress::default();
+                relayed.get_from(&response)?;
+                let relayed_addr = SocketAddr::new(relayed.ip, relayed.port);
+
+                // Getting lifetime from response
+                let mut lifetime = Lifetime::default();
+                lifetime.get_from(&response)?;
+
+                self.relays.insert(
+                    relayed_addr,
+                    RelayState::new(relayed_addr, self.integrity.clone(), nonce, lifetime.0),
+                );
+                self.events.push_back(Event::AllocateResponse(
+                    response.transaction_id,
+                    relayed_addr,
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 
     /// turn_server_addr return the TURN server address
     fn turn_server_addr(&self) -> SocketAddr {
@@ -439,7 +554,7 @@ impl Client {
     }
 
     /// WriteTo sends data to the specified destination using the base socket.
-    fn write(&mut self, data: &[u8], remote: SocketAddr) {
+    fn write_to(&mut self, data: &[u8], remote: SocketAddr) {
         self.transmits.push_back(Transmit {
             now: Instant::now(),
             transport: TransportContext {
@@ -453,11 +568,15 @@ impl Client {
     }
 
     // PerformTransaction performs STUN transaction
-    fn perform_transaction(&mut self, msg: &Message, to: SocketAddr) -> Result<String> {
-        let tr_key = BASE64_STANDARD.encode(msg.transaction_id.0);
-
+    fn perform_transaction(
+        &mut self,
+        msg: &Message,
+        to: SocketAddr,
+        transaction_type: TransactionType,
+    ) -> TransactionId {
         let tr = Transaction::new(TransactionConfig {
-            key: tr_key.clone(),
+            transaction_id: msg.transaction_id,
+            transaction_type,
             raw: BytesMut::from(&msg.raw[..]),
             local_addr: self.local_addr,
             peer_addr: to,
@@ -466,15 +585,15 @@ impl Client {
         });
 
         log::trace!(
-            "start {} transaction {} to {}",
+            "start {} transaction {:?} to {}",
             msg.typ,
-            tr_key,
+            msg.transaction_id,
             tr.peer_addr
         );
-        self.tr_map.insert(tr_key.clone(), tr);
+        self.tr_map.insert(msg.transaction_id, tr);
 
-        self.write(&msg.raw, to);
+        self.write_to(&msg.raw, to);
 
-        Ok(tr_key)
+        msg.transaction_id
     }
 }

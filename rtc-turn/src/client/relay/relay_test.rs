@@ -9,34 +9,6 @@ struct DummyRelayConnObserver {
     realm: Realm,
 }
 
-#[async_trait]
-impl RelayConnObserver for DummyRelayConnObserver {
-    fn turn_server_addr(&self) -> String {
-        self.turn_server_addr.clone()
-    }
-
-    fn username(&self) -> Username {
-        self.username.clone()
-    }
-
-    fn realm(&self) -> Realm {
-        self.realm.clone()
-    }
-
-    async fn write_to(&self, _data: &[u8], _to: &str) -> std::result::Result<usize> {
-        Ok(0)
-    }
-
-    async fn perform_transaction(
-        &mut self,
-        _msg: &Message,
-        _to: &str,
-        _dont_wait: bool,
-    ) -> Result<TransactionResult> {
-        Err(Error::ErrFakeErr)
-    }
-}
-
 #[tokio::test]
 async fn test_relay_conn() -> Result<()> {
     let obs = DummyRelayConnObserver {
@@ -47,7 +19,7 @@ async fn test_relay_conn() -> Result<()> {
 
     let (_read_ch_tx, read_ch_rx) = mpsc::channel(100);
 
-    let config = RelayConnConfig {
+    let config = RelayConfig {
         relayed_addr: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
         integrity: MessageIntegrity::default(),
         nonce: Nonce::new(ATTR_NONCE, "nonce".to_owned()),
@@ -56,7 +28,7 @@ async fn test_relay_conn() -> Result<()> {
         read_ch_rx: Arc::new(Mutex::new(read_ch_rx)),
     };
 
-    let rc = RelayConn::new(Arc::new(Mutex::new(obs)), config).await;
+    let rc = Relay::new(Arc::new(Mutex::new(obs)), config).await;
 
     let rci = rc.relay_conn.lock().await;
     let (bind_addr, bind_number) = {

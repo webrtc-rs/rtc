@@ -1,41 +1,31 @@
 use bytes::BytesMut;
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
 
 use stun::message::*;
 
 use crate::client::Event;
-use shared::error::Error;
 use shared::{Protocol, Transmit, TransportContext};
+use stun::textattrs::TextAttribute;
 
 const MAX_RTX_INTERVAL_IN_MS: u64 = 1600;
 const MAX_RTX_COUNT: u16 = 7; // total 7 requests (Rc)
 
-// TransactionResult is a bag of result values of a transaction
-#[derive(Debug)] //Clone
-pub(crate) struct TransactionResult {
-    pub msg: Message,
-    pub from: SocketAddr,
-    pub retries: u16,
-    pub err: Option<Error>,
-}
-
-impl Default for TransactionResult {
-    fn default() -> Self {
-        TransactionResult {
-            msg: Message::default(),
-            from: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-            retries: 0,
-            err: None,
-        }
-    }
+pub(crate) enum TransactionType {
+    BindingRequest,
+    AllocateAttempt,
+    AllocateRequest(TextAttribute),
+    CreatePermissionRequest(SocketAddr, Option<SocketAddr>),
+    RefreshRequest,
+    ChannelBindRequest,
 }
 
 // TransactionConfig is a set of config params used by NewTransaction
 pub(crate) struct TransactionConfig {
-    pub(crate) key: String,
+    pub(crate) transaction_id: TransactionId,
+    pub(crate) transaction_type: TransactionType,
     pub(crate) raw: BytesMut,
     pub(crate) local_addr: SocketAddr,
     pub(crate) peer_addr: SocketAddr,
@@ -45,7 +35,8 @@ pub(crate) struct TransactionConfig {
 
 // Transaction represents a transaction
 pub(crate) struct Transaction {
-    pub(crate) key: String,
+    pub(crate) transaction_id: TransactionId,
+    pub(crate) transaction_type: TransactionType,
     pub(crate) raw: BytesMut,
     pub(crate) local_addr: SocketAddr,
     pub(crate) peer_addr: SocketAddr,
@@ -60,7 +51,8 @@ impl Transaction {
     // NewTransaction creates a new instance of Transaction
     pub(crate) fn new(config: TransactionConfig) -> Self {
         Self {
-            key: config.key,
+            transaction_id: config.transaction_id,
+            transaction_type: config.transaction_type,
             raw: config.raw,
             local_addr: config.local_addr,
             peer_addr: config.peer_addr,
@@ -104,8 +96,8 @@ impl Transaction {
         }
 
         log::trace!(
-            "retransmitting transaction {} to {} (n_rtx={})",
-            self.key,
+            "retransmitting transaction {:?} to {} (n_rtx={})",
+            self.transaction_id,
             self.peer_addr,
             self.n_rtx
         );
@@ -131,7 +123,7 @@ impl Transaction {
 // TransactionMap is a thread-safe transaction map
 #[derive(Default)]
 pub(crate) struct TransactionMap {
-    tr_map: HashMap<String, Transaction>,
+    tr_map: HashMap<TransactionId, Transaction>,
     transmits: VecDeque<Transmit<BytesMut>>,
     events: VecDeque<Event>,
 }
@@ -163,13 +155,13 @@ impl TransactionMap {
         for (key, tr) in self.tr_map.iter_mut() {
             tr.handle_timeout(now);
             if tr.retries() >= MAX_RTX_COUNT {
-                keys.push(key.clone());
+                keys.push(*key);
             }
         }
 
         for key in keys {
             self.tr_map.remove(&key);
-            self.events.push_back(Event::BindingRequestTimeout(key));
+            self.events.push_back(Event::TransactionTimeout(key));
         }
     }
 
@@ -187,23 +179,23 @@ impl TransactionMap {
     }
 
     // Insert inserts a trasaction to the map
-    pub(crate) fn insert(&mut self, key: String, tr: Transaction) -> bool {
-        self.tr_map.insert(key, tr);
+    pub(crate) fn insert(&mut self, tid: TransactionId, tr: Transaction) -> bool {
+        self.tr_map.insert(tid, tr);
         true
     }
 
     // Find looks up a transaction by its key
-    pub(crate) fn find(&self, key: &str) -> Option<&Transaction> {
-        self.tr_map.get(key)
+    pub(crate) fn find(&self, tid: &TransactionId) -> Option<&Transaction> {
+        self.tr_map.get(tid)
     }
 
-    pub(crate) fn get(&mut self, key: &str) -> Option<&mut Transaction> {
-        self.tr_map.get_mut(key)
+    pub(crate) fn get(&mut self, tid: &TransactionId) -> Option<&mut Transaction> {
+        self.tr_map.get_mut(tid)
     }
 
     // Delete deletes a transaction by its key
-    pub(crate) fn delete(&mut self, key: &str) -> Option<Transaction> {
-        self.tr_map.remove(key)
+    pub(crate) fn delete(&mut self, tid: &TransactionId) -> Option<Transaction> {
+        self.tr_map.remove(tid)
     }
 
     // close_and_delete_all closes and deletes all transactions

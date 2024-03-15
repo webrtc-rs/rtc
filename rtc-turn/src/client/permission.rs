@@ -45,12 +45,20 @@ impl PermissionMap {
         }
     }
 
-    pub(crate) fn insert(&mut self, addr: &SocketAddr, p: Permission) {
+    pub(crate) fn insert(&mut self, addr: SocketAddr, p: Permission) {
         self.perm_map.insert(addr.ip().to_string(), p);
     }
 
-    pub(crate) fn find(&self, addr: &SocketAddr) -> Option<&Permission> {
+    pub(crate) fn contains(&self, addr: &SocketAddr) -> bool {
+        self.perm_map.contains_key(&addr.ip().to_string())
+    }
+
+    pub(crate) fn get(&self, addr: &SocketAddr) -> Option<&Permission> {
         self.perm_map.get(&addr.ip().to_string())
+    }
+
+    pub(crate) fn get_mut(&mut self, addr: &SocketAddr) -> Option<&mut Permission> {
+        self.perm_map.get_mut(&addr.ip().to_string())
     }
 
     pub(crate) fn delete(&mut self, addr: &SocketAddr) {
