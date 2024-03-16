@@ -201,7 +201,7 @@ impl Client {
         self.handle_inbound(&msg.message[..], msg.transport.peer_addr)
     }
 
-    pub(crate) fn poll_event(&mut self) -> Option<Event> {
+    pub fn poll_event(&mut self) -> Option<Event> {
         while let Some(event) = self.tr_map.poll_event() {
             self.events.push_back(event);
         }
