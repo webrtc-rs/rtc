@@ -72,7 +72,7 @@ pub struct Relay<'a> {
 }
 
 impl<'a> Relay<'a> {
-    pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<()> {
+    pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<Option<TransactionId>> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             relay
                 .perm_map
@@ -80,11 +80,12 @@ impl<'a> Relay<'a> {
                 .or_insert_with(Permission::default);
             if let Some(perm) = relay.perm_map.get(&peer_addr) {
                 if perm.state() == PermState::Idle {
-                    // punch a hole! (this would block a bit..)
-                    self.create_permissions(&[peer_addr], Some(peer_addr))?;
+                    return Ok(Some(
+                        self.create_permissions(&[peer_addr], Some(peer_addr))?,
+                    ));
                 }
             }
-            Ok(())
+            Ok(None)
         } else {
             Err(Error::ErrConnClosed)
         }
@@ -238,7 +239,7 @@ impl<'a> Relay<'a> {
         &mut self,
         peer_addrs: &[SocketAddr],
         peer_addr_opt: Option<SocketAddr>,
-    ) -> Result<()> {
+    ) -> Result<TransactionId> {
         let (username, realm) = (self.client.username(), self.client.realm());
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             let msg = {
@@ -265,13 +266,11 @@ impl<'a> Relay<'a> {
                 msg
             };
 
-            let _ = self.client.perform_transaction(
+            Ok(self.client.perform_transaction(
                 &msg,
                 self.client.turn_server_addr()?,
                 TransactionType::CreatePermissionRequest(self.relayed_addr, peer_addr_opt),
-            );
-
-            Ok(())
+            ))
         } else {
             Err(Error::ErrConnClosed)
         }
@@ -379,7 +378,8 @@ impl<'a> Relay<'a> {
                 debug!("no permission to refresh");
                 return Ok(());
             }
-            self.create_permissions(&addrs, None)
+            let _ = self.create_permissions(&addrs, None)?;
+            Ok(())
         } else {
             Err(Error::ErrConnClosed)
         }
