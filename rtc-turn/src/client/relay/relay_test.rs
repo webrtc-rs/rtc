@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use super::*;
-use crate::error::Result;
+use shared::error::Result;
 
 struct DummyRelayConnObserver {
     turn_server_addr: String,
@@ -9,8 +9,8 @@ struct DummyRelayConnObserver {
     realm: Realm,
 }
 
-#[tokio::test]
-async fn test_relay_conn() -> Result<()> {
+#[test]
+fn test_relay() -> Result<()> {
     let obs = DummyRelayConnObserver {
         turn_server_addr: String::new(),
         username: Username::new(ATTR_USERNAME, "username".to_owned()),

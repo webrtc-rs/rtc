@@ -1,7 +1,8 @@
-//TODO: #[cfg(test)]
-//mod relay_conn_test;
+//TODO #[cfg(test)]
+//mod relay_test;
 
 use log::{debug, warn};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
@@ -30,13 +31,13 @@ pub(crate) struct RelayState {
     pub(crate) integrity: MessageIntegrity,
     pub(crate) nonce: Nonce,
     pub(crate) lifetime: Duration,
-    perm_map: PermissionMap,
+    perm_map: HashMap<SocketAddr, Permission>,
     refresh_alloc_timer: Instant,
     refresh_perms_timer: Instant,
 }
 
 impl RelayState {
-    pub(crate) fn new(
+    pub(super) fn new(
         relayed_addr: RelayedAddr,
         integrity: MessageIntegrity,
         nonce: Nonce,
@@ -49,13 +50,13 @@ impl RelayState {
             integrity,
             nonce,
             lifetime,
-            perm_map: PermissionMap::new(),
+            perm_map: HashMap::new(),
             refresh_alloc_timer: Instant::now().add(lifetime / 2),
             refresh_perms_timer: Instant::now().add(PERM_REFRESH_INTERVAL),
         }
     }
 
-    pub fn set_nonce_from_msg(&mut self, msg: &Message) {
+    pub(super) fn set_nonce_from_msg(&mut self, msg: &Message) {
         // Update nonce
         match Nonce::get_from_as(msg, ATTR_NONCE) {
             Ok(nonce) => {
@@ -76,10 +77,10 @@ pub struct Relay<'a> {
 impl<'a> Relay<'a> {
     pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            if !relay.perm_map.contains(&peer_addr) {
-                relay.perm_map.insert(peer_addr, Permission::default());
-            }
-
+            relay
+                .perm_map
+                .entry(peer_addr)
+                .or_insert_with(Permission::default);
             if let Some(perm) = relay.perm_map.get(&peer_addr) {
                 if perm.state() == PermState::Idle {
                     // punch a hole! (this would block a bit..)
@@ -300,7 +301,7 @@ impl<'a> Relay<'a> {
                     self.client
                         .events
                         .push_back(Event::CreatePermissionError(res.transaction_id, err));
-                    relay.perm_map.delete(&peer_addr);
+                    relay.perm_map.remove(&peer_addr);
                 }
             } else if let Some(peer_addr) = peer_addr_opt {
                 if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
@@ -375,7 +376,8 @@ impl<'a> Relay<'a> {
 
     fn refresh_permissions(&mut self) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            let addrs = relay.perm_map.addrs();
+            #[allow(clippy::map_clone)]
+            let addrs: Vec<SocketAddr> = relay.perm_map.keys().map(|addr| *addr).collect();
             if addrs.is_empty() {
                 debug!("no permission to refresh");
                 return Ok(());

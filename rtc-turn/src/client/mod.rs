@@ -145,12 +145,43 @@ impl Client {
         })
     }
 
-    pub fn poll_timout(&self) -> Option<Instant> {
-        self.tr_map.poll_timout()
+    pub fn poll_timout(&mut self) -> Option<Instant> {
+        let mut eto = None;
+        if let Some(to) = self.tr_map.poll_timout() {
+            if eto.is_none() || to < *eto.as_ref().unwrap() {
+                eto = Some(to);
+            }
+        }
+
+        #[allow(clippy::map_clone)]
+        let relayed_addrs: Vec<SocketAddr> = self.relays.keys().map(|key| *key).collect();
+        for relayed_addr in relayed_addrs {
+            let relay = Relay {
+                relayed_addr,
+                client: self,
+            };
+            if let Some(to) = relay.poll_timeout() {
+                if eto.is_none() || to < *eto.as_ref().unwrap() {
+                    eto = Some(to);
+                }
+            }
+        }
+
+        eto
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
         self.tr_map.handle_timeout(now);
+
+        #[allow(clippy::map_clone)]
+        let relayed_addrs: Vec<SocketAddr> = self.relays.keys().map(|key| *key).collect();
+        for relayed_addr in relayed_addrs {
+            let mut relay = Relay {
+                relayed_addr,
+                client: self,
+            };
+            relay.handle_timeout(now);
+        }
     }
 
     pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
