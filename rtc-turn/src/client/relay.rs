@@ -20,6 +20,9 @@ use crate::client::{Client, Event, RelayedAddr};
 use shared::error::{Error, Result};
 
 const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
+// https://datatracker.ietf.org/doc/html/rfc8656#name-permissions-2
+// The Permission Lifetime MUST be 300 seconds (= 5 minutes).
+const PERM_LIFETIME: Duration = Duration::from_secs(300);
 const MAX_RETRY_ATTEMPTS: u16 = 3;
 
 // RelayState is a set of params use by Relay
@@ -214,7 +217,7 @@ impl<'a> Relay<'a> {
                 && Instant::now()
                     .checked_duration_since(bind_at)
                     .unwrap_or_else(|| Duration::from_secs(0))
-                    > Duration::from_secs(5 * 60)
+                    > PERM_LIFETIME
             {
                 if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
                     b.set_state(BindingState::Refresh);
@@ -304,7 +307,10 @@ impl<'a> Relay<'a> {
                     perm.set_state(PermState::Permitted);
                     self.client
                         .events
-                        .push_back(Event::CreatePermissionResponse(res.transaction_id));
+                        .push_back(Event::CreatePermissionResponse(
+                            res.transaction_id,
+                            peer_addr,
+                        ));
                 }
             }
 

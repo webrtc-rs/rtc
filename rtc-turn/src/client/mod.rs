@@ -44,6 +44,7 @@ pub type RelayedAddr = SocketAddr;
 pub type ReflexiveAddr = SocketAddr;
 pub type PeerAddr = SocketAddr;
 
+#[derive(Debug)]
 pub enum Event {
     TransactionTimeout(TransactionId),
 
@@ -53,7 +54,7 @@ pub enum Event {
     AllocateResponse(TransactionId, RelayedAddr),
     AllocateError(TransactionId, Error),
 
-    CreatePermissionResponse(TransactionId),
+    CreatePermissionResponse(TransactionId, PeerAddr),
     CreatePermissionError(TransactionId, Error),
 
     DataIndicationOrChannelData(Option<ChannelNumber>, PeerAddr, BytesMut),
@@ -507,11 +508,12 @@ impl Client {
         ])?;
 
         debug!("client.Allocate call PerformTransaction 1");
-        let tid = self.perform_transaction(
+        let mut tid = self.perform_transaction(
             &msg,
             self.turn_server_addr()?,
             TransactionType::AllocateAttempt,
         );
+        tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
         Ok(tid)
     }
 
@@ -547,9 +549,15 @@ impl Client {
                 );
 
                 let mut msg = Message::new();
+
+                // make it same as allocate() return value so that client can retrieve it
+                // from Event::AllocateResponse
+                let mut tid = response.transaction_id;
+                tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
+
                 // Trying to authorize.
                 msg.build(&[
-                    Box::new(TransactionId::new()),
+                    Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
                         protocol: if self.protocol == Protocol::UDP {
