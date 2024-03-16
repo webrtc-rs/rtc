@@ -18,7 +18,7 @@ pub(crate) enum TransactionType {
     AllocateAttempt,
     AllocateRequest(TextAttribute),
     CreatePermissionRequest(SocketAddr, Option<SocketAddr>),
-    RefreshRequest,
+    RefreshRequest(SocketAddr),
     ChannelBindRequest,
 }
 

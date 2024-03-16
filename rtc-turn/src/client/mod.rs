@@ -39,20 +39,23 @@ const DEFAULT_RTO_IN_MS: u64 = 200;
 const MAX_DATA_BUFFER_SIZE: usize = u16::MAX as usize; // message size limit for Chromium
 const MAX_READ_QUEUE_SIZE: usize = 1024;
 
+pub type RelayedAddr = SocketAddr;
+pub type ReflexiveAddr = SocketAddr;
+pub type PeerAddr = SocketAddr;
+
 pub enum Event {
     TransactionTimeout(TransactionId),
 
-    BindingResponse(TransactionId, SocketAddr),
-    BindingError(TransactionId, Box<dyn std::error::Error>),
+    BindingResponse(TransactionId, ReflexiveAddr),
+    BindingError(TransactionId, Error),
 
-    AllocateResponse(TransactionId, SocketAddr),
-    AllocateError(TransactionId, Box<dyn std::error::Error>),
+    AllocateResponse(TransactionId, RelayedAddr),
+    AllocateError(TransactionId, Error),
 
     CreatePermissionResponse(TransactionId),
-    CreatePermissionError(TransactionId, Box<dyn std::error::Error>),
+    CreatePermissionError(TransactionId, Error),
 
-    DataIndication(SocketAddr, BytesMut),
-    ChannelData(ChannelNumber, SocketAddr, BytesMut),
+    DataIndicationOrChannelData(Option<ChannelNumber>, PeerAddr, BytesMut),
 }
 
 enum AllocateState {
@@ -98,7 +101,7 @@ pub struct Client {
     binding_mgr: BindingManager,
     rto_in_ms: u64,
 
-    relays: HashMap<SocketAddr, RelayState>,
+    relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<Transmit<BytesMut>>,
     events: VecDeque<Event>,
 }
@@ -232,8 +235,11 @@ impl Client {
 
                 log::debug!("data indication received from {}", from);
 
-                self.events
-                    .push_back(Event::DataIndication(from, BytesMut::from(&data.0[..])))
+                self.events.push_back(Event::DataIndicationOrChannelData(
+                    None,
+                    from,
+                    BytesMut::from(&data.0[..]),
+                ))
             }
 
             return Ok(());
@@ -261,21 +267,19 @@ impl Client {
                             Error::Other(format!("{} (error {})", msg.typ, code))
                         };
                         self.events
-                            .push_back(Event::BindingError(tr.transaction_id, Box::new(err)));
+                            .push_back(Event::BindingError(tr.transaction_id, err));
                     } else {
                         let mut refl_addr = XorMappedAddress::default();
                         match refl_addr.get_from(&msg) {
                             Ok(_) => {
                                 self.events.push_back(Event::BindingResponse(
                                     tr.transaction_id,
-                                    SocketAddr::new(refl_addr.ip, refl_addr.port),
+                                    ReflexiveAddr::new(refl_addr.ip, refl_addr.port),
                                 ));
                             }
                             Err(err) => {
-                                self.events.push_back(Event::BindingError(
-                                    tr.transaction_id,
-                                    Box::new(err),
-                                ));
+                                self.events
+                                    .push_back(Event::BindingError(tr.transaction_id, err));
                             }
                         }
                     }
@@ -294,7 +298,15 @@ impl Client {
                         relay.handle_create_permission_response(msg, peer_addr)?;
                     }
                 }
-                METHOD_REFRESH => {}
+                METHOD_REFRESH => {
+                    if let TransactionType::RefreshRequest(relayed_addr) = tr.transaction_type {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_refresh_allocation_response(msg)?;
+                    }
+                }
                 METHOD_CHANNEL_BIND => {}
                 _ => {}
             }
@@ -320,8 +332,8 @@ impl Client {
             ch_data.number.0
         );
 
-        self.events.push_back(Event::ChannelData(
-            ch_data.number,
+        self.events.push_back(Event::DataIndicationOrChannelData(
+            Some(ch_data.number),
             addr,
             BytesMut::from(&ch_data.data[..]),
         ));
@@ -332,6 +344,17 @@ impl Client {
     /// Close closes this client
     pub fn close(&mut self) {
         self.tr_map.delete_all();
+    }
+
+    pub fn relay(&mut self, relayed_addr: SocketAddr) -> Result<Relay<'_>> {
+        if !self.relays.contains_key(&relayed_addr) {
+            Err(Error::ErrStreamNotExisted)
+        } else {
+            Ok(Relay {
+                relayed_addr,
+                client: self,
+            })
+        }
     }
 
     /// send_binding_request_to sends a new STUN request to the given transport address
@@ -452,20 +475,16 @@ impl Client {
                 let nonce = match Nonce::get_from_as(&response, ATTR_NONCE) {
                     Ok(nonce) => nonce,
                     Err(err) => {
-                        self.events.push_back(Event::AllocateError(
-                            response.transaction_id,
-                            Box::new(err),
-                        ));
+                        self.events
+                            .push_back(Event::AllocateError(response.transaction_id, err));
                         return Ok(());
                     }
                 };
                 self.realm = match Realm::get_from_as(&response, ATTR_REALM) {
                     Ok(realm) => realm,
                     Err(err) => {
-                        self.events.push_back(Event::AllocateError(
-                            response.transaction_id,
-                            Box::new(err),
-                        ));
+                        self.events
+                            .push_back(Event::AllocateError(response.transaction_id, err));
                         return Ok(());
                     }
                 };
@@ -511,14 +530,14 @@ impl Client {
                         Error::Other(format!("{} (error {})", response.typ, code))
                     };
                     self.events
-                        .push_back(Event::AllocateError(response.transaction_id, Box::new(err)));
+                        .push_back(Event::AllocateError(response.transaction_id, err));
                     return Ok(());
                 }
 
                 // Getting relayed addresses from response.
                 let mut relayed = RelayedAddress::default();
                 relayed.get_from(&response)?;
-                let relayed_addr = SocketAddr::new(relayed.ip, relayed.port);
+                let relayed_addr = RelayedAddr::new(relayed.ip, relayed.port);
 
                 // Getting lifetime from response
                 let mut lifetime = Lifetime::default();

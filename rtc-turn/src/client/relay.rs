@@ -1,6 +1,7 @@
 //TODO: #[cfg(test)]
 //mod relay_conn_test;
 
+use log::{debug, warn};
 use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ use super::permission::*;
 use super::transaction::*;
 use crate::proto;
 
-use crate::client::{Client, Event};
+use crate::client::{Client, Event, RelayedAddr};
 use shared::error::{Error, Result};
 
 const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
@@ -24,7 +25,7 @@ const MAX_RETRY_ATTEMPTS: u16 = 3;
 
 // RelayState is a set of params use by Relay
 pub(crate) struct RelayState {
-    pub(crate) relayed_addr: SocketAddr,
+    pub(crate) relayed_addr: RelayedAddr,
     pub(crate) integrity: MessageIntegrity,
     pub(crate) nonce: Nonce,
     pub(crate) lifetime: Duration,
@@ -35,12 +36,12 @@ pub(crate) struct RelayState {
 
 impl RelayState {
     pub(crate) fn new(
-        relayed_addr: SocketAddr,
+        relayed_addr: RelayedAddr,
         integrity: MessageIntegrity,
         nonce: Nonce,
         lifetime: Duration,
     ) -> Self {
-        log::debug!("initial lifetime: {} seconds", lifetime.as_secs());
+        debug!("initial lifetime: {} seconds", lifetime.as_secs());
 
         Self {
             relayed_addr,
@@ -58,16 +59,16 @@ impl RelayState {
         match Nonce::get_from_as(msg, ATTR_NONCE) {
             Ok(nonce) => {
                 self.nonce = nonce;
-                log::debug!("refresh allocation: 438, got new nonce.");
+                debug!("refresh allocation: 438, got new nonce.");
             }
-            Err(_) => log::warn!("refresh allocation: 438 but no nonce."),
+            Err(_) => warn!("refresh allocation: 438 but no nonce."),
         }
     }
 }
 
 // Relay is the implementation of the Conn interfaces for UDP Relayed network connections.
 pub struct Relay<'a> {
-    pub(crate) relayed_addr: SocketAddr,
+    pub(crate) relayed_addr: RelayedAddr,
     pub(crate) client: &'a mut Client,
 }
 
@@ -79,16 +80,16 @@ impl<'a> Relay<'a> {
     /// all the data transmission. This is done assuming that the request
     /// will be mostly likely successful and we can tolerate some loss of
     /// UDP packet (or reorder), inorder to minimize the latency in most cases.
-    pub fn create_permission(&mut self, addr: SocketAddr) -> Result<()> {
+    pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            if !relay.perm_map.contains(&addr) {
-                relay.perm_map.insert(addr, Permission::default());
+            if !relay.perm_map.contains(&peer_addr) {
+                relay.perm_map.insert(peer_addr, Permission::default());
             }
 
-            if let Some(perm) = relay.perm_map.get(&addr) {
+            if let Some(perm) = relay.perm_map.get(&peer_addr) {
                 if perm.state() == PermState::Idle {
                     // punch a hole! (this would block a bit..)
-                    self.create_permissions(&[addr], Some(addr))?;
+                    self.create_permissions(&[peer_addr], Some(peer_addr))?;
                 }
             }
             Ok(())
@@ -97,7 +98,7 @@ impl<'a> Relay<'a> {
         }
     }
 
-    pub fn poll_timeout(&self) -> Option<Instant> {
+    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
         if let Some(relay) = self.client.relays.get(&self.relayed_addr) {
             if relay.refresh_alloc_timer < relay.refresh_perms_timer {
                 Some(relay.refresh_alloc_timer)
@@ -109,7 +110,7 @@ impl<'a> Relay<'a> {
         }
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) {
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
         let (refresh_alloc_timer, refresh_perms_timer) = if let Some(relay) =
             self.client.relays.get_mut(&self.relayed_addr)
         {
@@ -140,16 +141,10 @@ impl<'a> Relay<'a> {
         }
     }
 
-    // new creates a new instance of UDPConn
-    // write_to writes a packet with payload p to addr.
-    // write_to can be made to time out and return
-    // an Error with Timeout() == true after a fixed time limit;
-    // see SetDeadline and SetWriteDeadline.
-    // On packet-oriented connections, write timeouts are rare.
-    pub fn send_to(&mut self, _p: &[u8], addr: SocketAddr) -> Result<()> {
+    pub fn send_to(&mut self, _p: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // check if we have a permission for the destination IP addr
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
-            if let Some(perm) = relay.perm_map.get_mut(&addr) {
+            if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
                 if perm.state() != PermState::Permitted {
                     Err(Error::ErrNoPermission)
                 } else {
@@ -213,7 +208,7 @@ impl<'a> Relay<'a> {
                                 }
 
                                 // keep going...
-                                log::warn!("bind() failed: {}", err);
+                                warn!("bind() failed: {}", err);
                             } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr)
                             {
                                 b.set_state(BindingState::Ready);
@@ -272,7 +267,7 @@ impl<'a> Relay<'a> {
                             }
 
                             // keep going...
-                            log::warn!("bind() for refresh failed: {}", err);
+                            warn!("bind() for refresh failed: {}", err);
                         } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
                             b.set_refreshed_at(Instant::now());
                             b.set_state(BindingState::Ready);
@@ -297,9 +292,9 @@ impl<'a> Relay<'a> {
 
     fn create_permissions(
         &mut self,
-        addrs: &[SocketAddr],
-        addr: Option<SocketAddr>,
-    ) -> Result<TransactionId> {
+        peer_addrs: &[SocketAddr],
+        peer_addr_opt: Option<SocketAddr>,
+    ) -> Result<()> {
         let (username, realm) = (self.client.username(), self.client.realm());
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             let msg = {
@@ -308,7 +303,7 @@ impl<'a> Relay<'a> {
                     Box::new(MessageType::new(METHOD_CREATE_PERMISSION, CLASS_REQUEST)),
                 ];
 
-                for addr in addrs {
+                for addr in peer_addrs {
                     setters.push(Box::new(proto::peeraddr::PeerAddress {
                         ip: addr.ip(),
                         port: addr.port(),
@@ -326,20 +321,22 @@ impl<'a> Relay<'a> {
                 msg
             };
 
-            Ok(self.client.perform_transaction(
+            let _ = self.client.perform_transaction(
                 &msg,
                 self.client.turn_server_addr(),
-                TransactionType::CreatePermissionRequest(self.relayed_addr, addr),
-            ))
+                TransactionType::CreatePermissionRequest(self.relayed_addr, peer_addr_opt),
+            );
+
+            Ok(())
         } else {
             Err(Error::ErrConnClosed)
         }
     }
 
-    pub(crate) fn handle_create_permission_response(
+    pub(super) fn handle_create_permission_response(
         &mut self,
         res: Message,
-        addr: Option<SocketAddr>,
+        peer_addr_opt: Option<SocketAddr>,
     ) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if res.typ.class == CLASS_ERROR_RESPONSE {
@@ -353,15 +350,14 @@ impl<'a> Relay<'a> {
                 } else {
                     Error::Other(format!("{} (error {})", res.typ, code))
                 };
-                self.client.events.push_back(Event::CreatePermissionError(
-                    res.transaction_id,
-                    Box::new(err),
-                ));
-                if let Some(addr) = addr {
-                    relay.perm_map.delete(&addr);
+                if let Some(peer_addr) = peer_addr_opt {
+                    self.client
+                        .events
+                        .push_back(Event::CreatePermissionError(res.transaction_id, err));
+                    relay.perm_map.delete(&peer_addr);
                 }
-            } else if let Some(addr) = addr {
-                if let Some(perm) = relay.perm_map.get_mut(&addr) {
+            } else if let Some(peer_addr) = peer_addr_opt {
+                if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
                     perm.set_state(PermState::Permitted);
                     self.client
                         .events
@@ -393,7 +389,7 @@ impl<'a> Relay<'a> {
             let _ = self.client.perform_transaction(
                 &msg,
                 self.client.turn_server_addr(),
-                TransactionType::RefreshRequest,
+                TransactionType::RefreshRequest(self.relayed_addr),
             );
 
             Ok(())
@@ -402,32 +398,30 @@ impl<'a> Relay<'a> {
         }
     }
 
-    pub(crate) fn handle_refresh_allocation_response(&mut self, res: Message) -> Result<()> {
+    pub(super) fn handle_refresh_allocation_response(&mut self, res: Message) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if res.typ.class == CLASS_ERROR_RESPONSE {
                 let mut code = ErrorCodeAttribute::default();
                 let result = code.get_from(&res);
-                let err = if result.is_err() {
-                    Error::Other(format!("{}", res.typ))
+                if result.is_err() {
+                    Err(Error::Other(format!("{}", res.typ)))
                 } else if code.code == CODE_STALE_NONCE {
                     relay.set_nonce_from_msg(&res);
-                    Error::ErrTryAgain
+                    //Error::ErrTryAgain
+                    Ok(())
                 } else {
-                    Error::Other(format!("{} (error {})", res.typ, code))
-                };
-                self.client.events.push_back(Event::CreatePermissionError(
-                    res.transaction_id,
-                    Box::new(err),
-                ));
+                    Err(Error::Other(format!("{} (error {})", res.typ, code)))
+                }
             } else {
                 // Getting lifetime from response
                 let mut updated_lifetime = proto::lifetime::Lifetime::default();
                 updated_lifetime.get_from(&res)?;
 
                 relay.lifetime = updated_lifetime.0;
-                log::debug!("updated lifetime: {} seconds", relay.lifetime.as_secs());
+                debug!("updated lifetime: {} seconds", relay.lifetime.as_secs());
+
+                Ok(())
             }
-            Ok(())
         } else {
             Err(Error::ErrConnClosed)
         }
@@ -437,19 +431,10 @@ impl<'a> Relay<'a> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             let addrs = relay.perm_map.addrs();
             if addrs.is_empty() {
-                log::debug!("no permission to refresh");
+                debug!("no permission to refresh");
                 return Ok(());
             }
-
-            if let Err(err) = self.create_permissions(&addrs, None) {
-                if Error::ErrTryAgain != err {
-                    log::error!("fail to refresh permissions: {}", err);
-                }
-                return Err(err);
-            }
-
-            log::debug!("refresh permissions successful");
-            Ok(())
+            self.create_permissions(&addrs, None)
         } else {
             Err(Error::ErrConnClosed)
         }
@@ -484,7 +469,7 @@ impl<'a> Relay<'a> {
             (msg, self.client.turn_server_addr())
         };
 
-        log::debug!("UDPConn.bind call PerformTransaction 1");
+        debug!("UDPConn.bind call PerformTransaction 1");
         let tr_res = self.client.perform_transaction(
             &msg,
             turn_server_addr,
@@ -497,7 +482,7 @@ impl<'a> Relay<'a> {
             return Err(Error::ErrUnexpectedResponse);
         }
 
-        log::debug!("channel binding successful: {} {}", bind_addr, bind_number);
+        debug!("channel binding successful: {} {}", bind_addr, bind_number);
 
         // Success.
         Ok(())
@@ -517,44 +502,3 @@ impl<'a> Relay<'a> {
         Ok(())
     }
 }
-
-/*
-impl<T: RelayConnObserver + Send + Sync> PeriodicTimerTimeoutHandler for RelayConnInternal<T> {
-    async fn on_timeout(&mut self, id: TimerIdRefresh) {
-        log::debug!("refresh timer {:?} expired", id);
-        match id {
-            TimerIdRefresh::Alloc => {
-                let lifetime = self.lifetime;
-                // limit the max retries on errTryAgain to 3
-                // when stale nonce returns, sencond retry should succeed
-                let mut result = Ok(());
-                for _ in 0..MAX_RETRY_ATTEMPTS {
-                    result = self.refresh_allocation(lifetime, false).await;
-                    if let Err(err) = &result {
-                        if Error::ErrTryAgain != *err {
-                            break;
-                        }
-                    }
-                }
-                if result.is_err() {
-                    log::warn!("refresh allocation failed");
-                }
-            }
-            TimerIdRefresh::Perms => {
-                let mut result = Ok(());
-                for _ in 0..MAX_RETRY_ATTEMPTS {
-                    result = self.refresh_permissions().await;
-                    if let Err(err) = &result {
-                        if Error::ErrTryAgain != *err {
-                            break;
-                        }
-                    }
-                }
-                if result.is_err() {
-                    log::warn!("refresh permissions failed");
-                }
-            }
-        }
-    }
-}
-*/
