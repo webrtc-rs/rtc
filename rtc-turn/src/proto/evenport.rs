@@ -34,7 +34,7 @@ impl fmt::Display for EvenPort {
 }
 
 const EVEN_PORT_SIZE: usize = 1;
-const FIRST_BIT_SET: u8 = 0b10000000; //FIXME? (1 << 8) - 1;
+const FIRST_BIT_SET: u8 = 0b10000000;
 
 impl Setter for EvenPort {
     // AddTo adds EVEN-PORT to message.

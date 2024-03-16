@@ -2248,7 +2248,7 @@ fn test_old_rtx_on_regular_acks() -> Result<()> {
 
     // Send 20 packet at a regular interval that is < RTO
     for i in 0..20u32 {
-        println!("sending packet {}", i);
+        //println!("sending packet {}", i);
         sbuf[0..4].copy_from_slice(&i.to_be_bytes());
         let n = pair.client_stream(client_ch, si)?.write_sctp(
             &Bytes::from(sbuf.clone()),
@@ -2281,7 +2281,7 @@ fn test_old_rtx_on_regular_acks() -> Result<()> {
                 .get(&si)
                 .unwrap()
                 .reassembly_queue;
-            println!("q.is_readable()={}", q.is_readable());
+            //println!("q.is_readable()={}", q.is_readable());
             assert!(q.is_readable(), "should be readable at {}", i);
         }
 

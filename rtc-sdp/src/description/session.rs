@@ -512,7 +512,7 @@ impl SessionDescription {
     /// description as opposed to the session description, the states are marked
     /// with an asterisk ("a*", "k*").
     ///
-    /// ```ignore
+    /// ```text
     /// +--------+----+-------+----+-----+----+-----+---+----+----+---+---+-----+---+---+----+---+----+
     /// | STATES | a* | a*,k* | a  | a,k | b  | b,c | e | i  | m  | o | p | r,t | s | t | u  | v | z  |
     /// +--------+----+-------+----+-----+----+-----+---+----+----+---+---+-----+---+---+----+---+----+
