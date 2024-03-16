@@ -9,6 +9,7 @@ use crate::extension::*;
 use crate::record_layer::record_layer_header::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use log::warn;
 use std::fmt;
 use std::io::{BufReader, BufWriter};
 
@@ -169,7 +170,7 @@ impl HandshakeMessageClientHello {
             if let Ok(extension) = Extension::unmarshal(&mut extension_reader) {
                 extensions.push(extension);
             } else {
-                log::warn!(
+                warn!(
                     "Unsupported Extension Type {} {}",
                     extension_buffer[offset],
                     extension_buffer[offset + 1]

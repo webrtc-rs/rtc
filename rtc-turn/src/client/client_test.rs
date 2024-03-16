@@ -68,7 +68,7 @@ fn test_client_with_stun_send_binding_request() -> Result<()> {
         match event {
             Event::BindingResponse(id, refl_addr) => {
                 assert_eq!(tid, id);
-                log::debug!("mapped-addr: {}", refl_addr);
+                debug!("mapped-addr: {}", refl_addr);
             }
             _ => assert!(false),
         }
@@ -118,7 +118,7 @@ fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
         match event {
             Event::BindingResponse(tid, refl_addr) => {
                 tids.insert(tid);
-                log::debug!("mapped-addr: {}", refl_addr);
+                debug!("mapped-addr: {}", refl_addr);
             }
             _ => {}
         }

@@ -77,7 +77,7 @@ impl Agent {
                     > self.relay_acceptance_min_wait.as_nanos()
             }
             CandidateType::Unspecified => {
-                log::error!(
+                error!(
                     "is_nominatable invalid candidate type {}",
                     c.candidate_type()
                 );

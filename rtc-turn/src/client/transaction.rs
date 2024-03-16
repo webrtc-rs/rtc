@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use log::trace;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::ops::Add;
@@ -95,7 +96,7 @@ impl Transaction {
             return;
         }
 
-        log::trace!(
+        trace!(
             "retransmitting transaction {:?} to {} (n_rtx={})",
             self.transaction_id,
             self.peer_addr,

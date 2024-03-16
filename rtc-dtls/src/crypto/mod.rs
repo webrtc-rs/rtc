@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use der_parser::oid;
 use der_parser::oid::Oid;
+use log::trace;
 use rcgen::KeyPair;
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
@@ -337,7 +338,7 @@ fn verify_signature(
         _ => return Err(Error::ErrKeySignatureVerifyUnimplemented),
     };
 
-    log::trace!("Picked an algorithm {:?}", verify_alg);
+    trace!("Picked an algorithm {:?}", verify_alg);
 
     let public_key = ring::signature::UnparsedPublicKey::new(
         verify_alg,

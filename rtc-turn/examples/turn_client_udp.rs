@@ -1,17 +1,25 @@
-/*
-use std::sync::Arc;
-
-use clap::{App, AppSettings, Arg};
-use tokio::net::UdpSocket;
-use tokio::time::Duration;
-use turn::client::*;
-use turn::Error;
-use util::Conn;
+use clap::Parser;
+use rtc_turn::client::*;
+use shared::error::Result;
 
 // RUST_LOG=trace cargo run --color=always --package turn --example turn_client_udp -- --host 0.0.0.0 --user user=pass --ping
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+#[derive(Parser)]
+#[command(name = "ICE Ping Pong")]
+#[command(author = "Rusty Rain <y@ngr.tc>")]
+#[command(version = "0.1.0")]
+#[command(about = "An example of ICE", long_about = None)]
+struct Cli {
+    #[arg(short, long)]
+    controlling: bool,
+
+    #[arg(short, long)]
+    debug: bool,
+    #[arg(long, default_value_t = format!("INFO"))]
+    log_level: String,
+}
+
+fn main() -> Result<()> {
     env_logger::init();
 
     let mut app = App::new("TURN Client UDP")
@@ -196,5 +204,3 @@ async fn do_ping_test(
 
     Ok(())
 }
-*/
-fn main() {}

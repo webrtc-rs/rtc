@@ -7,6 +7,7 @@ pub mod relay;
 pub mod transaction;
 
 use bytes::BytesMut;
+use log::{debug, trace};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -243,7 +244,7 @@ impl Client {
             Err(Error::ErrNonStunmessage)
         } else {
             // assume, this is an application data
-            log::trace!("non-STUN/TURN packet, unhandled");
+            trace!("non-STUN/TURN packet, unhandled");
             Ok(())
         }
     }
@@ -270,7 +271,7 @@ impl Client {
                 let mut data = Data::default();
                 data.get_from(&msg)?;
 
-                log::debug!("data indication received from {}", from);
+                debug!("data indication received from {}", from);
 
                 self.events.push_back(Event::DataIndicationOrChannelData(
                     None,
@@ -289,7 +290,7 @@ impl Client {
 
         if self.tr_map.find(&msg.transaction_id).is_none() {
             // silently discard
-            log::debug!("no transaction for {}", msg);
+            debug!("no transaction for {}", msg);
             return Ok(());
         }
 
@@ -373,7 +374,7 @@ impl Client {
             .find_addr_by_channel_number(ch_data.number.0)
             .ok_or(Error::ErrChannelBindNotFound)?;
 
-        log::trace!(
+        trace!(
             "channel data received from {} (ch={})",
             addr,
             ch_data.number.0
@@ -423,7 +424,7 @@ impl Client {
             msg
         };
 
-        log::debug!("client.SendBindingRequestTo call PerformTransaction 1");
+        debug!("client.SendBindingRequestTo call PerformTransaction 1");
         Ok(self.perform_transaction(&msg, to, TransactionType::BindingRequest))
     }
 
@@ -505,7 +506,7 @@ impl Client {
             Box::new(FINGERPRINT),
         ])?;
 
-        log::debug!("client.Allocate call PerformTransaction 1");
+        debug!("client.Allocate call PerformTransaction 1");
         let tid = self.perform_transaction(
             &msg,
             self.turn_server_addr()?,
@@ -564,7 +565,7 @@ impl Client {
                     Box::new(FINGERPRINT),
                 ])?;
 
-                log::debug!("client.Allocate call PerformTransaction 2");
+                debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
                     &msg,
                     self.turn_server_addr()?,
@@ -653,7 +654,7 @@ impl Client {
             interval: self.rto_in_ms,
         });
 
-        log::trace!(
+        trace!(
             "start {} transaction {:?} to {}",
             msg.typ,
             msg.transaction_id,

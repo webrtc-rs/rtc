@@ -3,6 +3,7 @@
 
 use crate::message::{message_channel_ack::*, message_channel_open::*, *};
 use bytes::{Buf, BytesMut};
+use log::{debug, error};
 use sctp::{PayloadProtocolIdentifier, ReliabilityType};
 use shared::error::{Error, Result};
 use shared::marshal::*;
@@ -143,7 +144,7 @@ impl DataChannel {
                 match self.handle_dcep(&mut data_buf) {
                     Ok(()) => {}
                     Err(err) => {
-                        log::error!("Failed to handle DCEP: {:?}", err);
+                        error!("Failed to handle DCEP: {:?}", err);
                         return Err(err);
                     }
                 }
@@ -207,11 +208,11 @@ impl DataChannel {
             Message::DataChannelOpen(_) => {
                 // Note: DATA_CHANNEL_OPEN message is handled inside Server() method.
                 // Therefore, the message will not reach here.
-                log::debug!("Received DATA_CHANNEL_OPEN");
+                debug!("Received DATA_CHANNEL_OPEN");
                 self.write_data_channel_ack()?;
             }
             Message::DataChannelAck(_) => {
-                log::debug!("Received DATA_CHANNEL_ACK");
+                debug!("Received DATA_CHANNEL_ACK");
                 //self.commit_reliability_params();
             }
         };
