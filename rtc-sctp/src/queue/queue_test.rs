@@ -993,3 +993,48 @@ fn test_chunk_set_incomplete_chunk_set_no_contiguous_tsn() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn test_reassembly_queue_ssn_overflow() -> Result<()> {
+    let mut rq = ReassemblyQueue::new(0);
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+
+    for stream_sequence_number in 0..=u16::MAX {
+        let chunk = ChunkPayloadData {
+            payload_type: org_ppi,
+            beginning_fragment: true,
+            ending_fragment: true,
+            tsn: 10,
+            stream_sequence_number,
+            user_data: Bytes::from_static(b"123"),
+            ..Default::default()
+        };
+        assert!(rq.push(chunk));
+        assert!(rq.read().is_some());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_reassembly_queue_ssn_overflow_in_forward_tsn_for_ordered() -> Result<()> {
+    let mut rq = ReassemblyQueue::new(0);
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+
+    for stream_sequence_number in 0..u16::MAX {
+        let chunk = ChunkPayloadData {
+            payload_type: org_ppi,
+            beginning_fragment: true,
+            ending_fragment: true,
+            tsn: 10,
+            stream_sequence_number,
+            user_data: Bytes::from_static(b"123"),
+            ..Default::default()
+        };
+        assert!(rq.push(chunk));
+        assert!(rq.read().is_some());
+    }
+    rq.forward_tsn_for_ordered(u16::MAX);
+
+    Ok(())
+}
