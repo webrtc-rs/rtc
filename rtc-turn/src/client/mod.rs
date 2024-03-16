@@ -1,6 +1,6 @@
-/*TODO:#[cfg(test)]
+#[cfg(test)]
 mod client_test;
-*/
+
 pub mod binding;
 pub mod permission;
 pub mod relay;
@@ -9,7 +9,6 @@ pub mod transaction;
 use bytes::BytesMut;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::time::Instant;
 
 use stun::attributes::*;
@@ -31,6 +30,7 @@ use crate::proto::relayaddr::RelayedAddress;
 use crate::proto::reqtrans::RequestedTransport;
 use crate::proto::{PROTO_TCP, PROTO_UDP};
 use shared::error::{Error, Result};
+use shared::util::lookup_host;
 use shared::{Protocol, Transmit, TransportContext};
 use stun::error_code::ErrorCodeAttribute;
 use stun::fingerprint::FINGERPRINT;
@@ -89,7 +89,7 @@ pub struct ClientConfig {
 /// Client is a STUN client
 pub struct Client {
     stun_serv_addr: Option<SocketAddr>,
-    turn_serv_addr: SocketAddr,
+    turn_serv_addr: Option<SocketAddr>,
     local_addr: SocketAddr,
     protocol: Protocol,
     username: Username,
@@ -112,13 +112,19 @@ impl Client {
         let stun_serv_addr = if config.stun_serv_addr.is_empty() {
             None
         } else {
-            Some(SocketAddr::from_str(config.stun_serv_addr.as_str())?)
+            Some(lookup_host(
+                config.local_addr.is_ipv4(),
+                config.stun_serv_addr.as_str(),
+            )?)
         };
 
         let turn_serv_addr = if config.turn_serv_addr.is_empty() {
-            return Err(Error::ErrNilTurnSocket);
+            None
         } else {
-            SocketAddr::from_str(config.turn_serv_addr.as_str())?
+            Some(lookup_host(
+                config.local_addr.is_ipv4(),
+                config.turn_serv_addr.as_str(),
+            )?)
         };
 
         Ok(Client {
@@ -500,8 +506,11 @@ impl Client {
         ])?;
 
         log::debug!("client.Allocate call PerformTransaction 1");
-        let tid =
-            self.perform_transaction(&msg, self.turn_serv_addr, TransactionType::AllocateAttempt);
+        let tid = self.perform_transaction(
+            &msg,
+            self.turn_server_addr()?,
+            TransactionType::AllocateAttempt,
+        );
         Ok(tid)
     }
 
@@ -558,7 +567,7 @@ impl Client {
                 log::debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
                     &msg,
-                    self.turn_serv_addr,
+                    self.turn_server_addr()?,
                     TransactionType::AllocateRequest(nonce),
                 );
             }
@@ -599,8 +608,8 @@ impl Client {
     }
 
     /// turn_server_addr return the TURN server address
-    fn turn_server_addr(&self) -> SocketAddr {
-        self.turn_serv_addr
+    fn turn_server_addr(&self) -> Result<SocketAddr> {
+        self.turn_serv_addr.ok_or(Error::ErrNilTurnSocket)
     }
 
     /// username returns username

@@ -1,120 +1,167 @@
-use tokio::net::UdpSocket;
-
 use super::*;
-use crate::auth::*;
+use std::collections::HashSet;
+use std::net::UdpSocket;
 
-async fn create_listening_test_client(rto_in_ms: u16) -> Result<Client> {
-    let conn = UdpSocket::bind("0.0.0.0:0").await?;
+fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    let c = Client::new(ClientConfig {
+    let client = Client::new(ClientConfig {
         stun_serv_addr: String::new(),
         turn_serv_addr: String::new(),
+        local_addr: udp_socket.local_addr()?,
+        protocol: Protocol::UDP,
         username: String::new(),
         password: String::new(),
         realm: String::new(),
         software: "TEST SOFTWARE".to_owned(),
         rto_in_ms,
-        conn: Arc::new(conn),
-        vnet: None,
-    })
-    .await?;
+    })?;
 
-    c.listen().await?;
-
-    Ok(c)
+    Ok((udp_socket, client))
 }
 
-async fn create_listening_test_client_with_stun_serv() -> Result<Client> {
-    let conn = UdpSocket::bind("0.0.0.0:0").await?;
+fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> {
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    let c = Client::new(ClientConfig {
+    let client = Client::new(ClientConfig {
         stun_serv_addr: "stun1.l.google.com:19302".to_owned(),
         turn_serv_addr: String::new(),
+        local_addr: udp_socket.local_addr()?,
+        protocol: Protocol::UDP,
         username: String::new(),
         password: String::new(),
         realm: String::new(),
         software: "TEST SOFTWARE".to_owned(),
         rto_in_ms: 0,
-        conn: Arc::new(conn),
-        vnet: None,
-    })
-    .await?;
+    })?;
 
-    c.listen().await?;
-
-    Ok(c)
+    Ok((udp_socket, client))
 }
 
-#[tokio::test]
-async fn test_client_with_stun_send_binding_request() -> Result<()> {
+#[test]
+fn test_client_with_stun_send_binding_request() -> Result<()> {
     //env_logger::init();
 
-    let c = create_listening_test_client_with_stun_serv().await?;
+    let (conn, mut client) = create_listening_test_client_with_stun_serv()?;
+    let local_addr = conn.local_addr()?;
 
-    let resp = c.send_binding_request().await?;
-    log::debug!("mapped-addr: {}", resp);
-    {
-        let ci = c.client_internal.lock().await;
-        let tm = ci.tr_map.lock().await;
-        assert_eq!(0, tm.size(), "should be no transaction left");
+    let tid = client.send_binding_request()?;
+
+    while let Some(transmit) = client.poll_transmit() {
+        conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
     }
 
-    c.close().await?;
+    let mut buffer = vec![0u8; 2048];
+    let (n, peer_addr) = conn.recv_from(&mut buffer)?;
+    client.handle_transmit(Transmit {
+        now: Instant::now(),
+        transport: TransportContext {
+            local_addr,
+            peer_addr,
+            protocol: Protocol::UDP,
+            ecn: None,
+        },
+        message: BytesMut::from(&buffer[..n]),
+    })?;
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
-    env_logger::init();
-
-    let c1 = create_listening_test_client(0).await?;
-    let c2 = c1.clone();
-
-    let (stared_tx, mut started_rx) = mpsc::channel::<()>(1);
-    let (finished_tx, mut finished_rx) = mpsc::channel::<()>(1);
-
-    let to = lookup_host(true, "stun1.l.google.com:19302").await?;
-
-    tokio::spawn(async move {
-        drop(stared_tx);
-        if let Ok(resp) = c2.send_binding_request_to(&to.to_string()).await {
-            log::debug!("mapped-addr: {}", resp);
+    if let Some(event) = client.poll_event() {
+        match event {
+            Event::BindingResponse(id, refl_addr) => {
+                assert_eq!(tid, id);
+                log::debug!("mapped-addr: {}", refl_addr);
+            }
+            _ => assert!(false),
         }
-        drop(finished_tx);
-    });
+    } else {
+        assert!(false);
+    }
 
-    let _ = started_rx.recv().await;
+    assert_eq!(0, client.tr_map.size(), "should be no transaction left");
 
-    let resp = c1.send_binding_request_to(&to.to_string()).await?;
-    log::debug!("mapped-addr: {}", resp);
-
-    let _ = finished_rx.recv().await;
-
-    c1.close().await?;
+    client.close();
 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_client_with_stun_send_binding_request_to_timeout() -> Result<()> {
+#[test]
+fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
     //env_logger::init();
 
-    let c = create_listening_test_client(10).await?;
+    let (conn, mut client) = create_listening_test_client(0)?;
+    let local_addr = conn.local_addr()?;
 
-    let to = lookup_host(true, "127.0.0.1:9").await?;
+    let to = lookup_host(true, "stun1.l.google.com:19302")?;
 
-    let result = c.send_binding_request_to(&to.to_string()).await;
-    assert!(result.is_err(), "expected error, but got ok");
+    let tid1 = client.send_binding_request_to(to)?;
+    let tid2 = client.send_binding_request_to(to)?;
+    while let Some(transmit) = client.poll_transmit() {
+        conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
+    }
 
-    c.close().await?;
+    let mut buffer = vec![0u8; 2048];
+    for _ in 0..2 {
+        let (n, peer_addr) = conn.recv_from(&mut buffer)?;
+        client.handle_transmit(Transmit {
+            now: Instant::now(),
+            transport: TransportContext {
+                local_addr,
+                peer_addr,
+                protocol: Protocol::UDP,
+                ecn: None,
+            },
+            message: BytesMut::from(&buffer[..n]),
+        })?;
+    }
+
+    let mut tids = HashSet::new();
+    while let Some(event) = client.poll_event() {
+        match event {
+            Event::BindingResponse(tid, refl_addr) => {
+                tids.insert(tid);
+                log::debug!("mapped-addr: {}", refl_addr);
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(2, tids.len());
+    assert!(tids.contains(&tid1));
+    assert!(tids.contains(&tid2));
+
+    client.close();
 
     Ok(())
 }
 
-struct TestAuthHandler;
-impl AuthHandler for TestAuthHandler {
-    fn auth_handle(&self, username: &str, realm: &str, _src_addr: SocketAddr) -> Result<Vec<u8>> {
-        Ok(generate_auth_key(username, realm, "pass"))
+#[test]
+fn test_client_with_stun_send_binding_request_to_timeout() -> Result<()> {
+    //env_logger::init();
+
+    let (conn, mut client) = create_listening_test_client(10)?;
+
+    let to = lookup_host(true, "127.0.0.1:9")?;
+
+    let tid = client.send_binding_request_to(to)?;
+    while let Some(transmit) = client.poll_transmit() {
+        conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
     }
+
+    while let Some(to) = client.poll_timout() {
+        client.handle_timeout(to);
+    }
+
+    if let Some(event) = client.poll_event() {
+        match event {
+            Event::TransactionTimeout(id) => {
+                assert_eq!(tid, id);
+            }
+            _ => assert!(false),
+        }
+    } else {
+        assert!(false);
+    }
+
+    client.close();
+
+    Ok(())
 }

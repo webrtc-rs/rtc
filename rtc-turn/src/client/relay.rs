@@ -1,6 +1,3 @@
-//TODO #[cfg(test)]
-//mod relay_test;
-
 use log::{debug, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -206,7 +203,7 @@ impl<'a> Relay<'a> {
 
                 // indication has no transaction (fire-and-forget)
                 self.client
-                    .write_to(&msg.raw, self.client.turn_server_addr());
+                    .write_to(&msg.raw, self.client.turn_server_addr()?);
                 return Ok(());
             }
 
@@ -270,7 +267,7 @@ impl<'a> Relay<'a> {
 
             let _ = self.client.perform_transaction(
                 &msg,
-                self.client.turn_server_addr(),
+                self.client.turn_server_addr()?,
                 TransactionType::CreatePermissionRequest(self.relayed_addr, peer_addr_opt),
             );
 
@@ -335,7 +332,7 @@ impl<'a> Relay<'a> {
 
             let _ = self.client.perform_transaction(
                 &msg,
-                self.client.turn_server_addr(),
+                self.client.turn_server_addr()?,
                 TransactionType::RefreshRequest(self.relayed_addr),
             );
 
@@ -415,7 +412,7 @@ impl<'a> Relay<'a> {
             let mut msg = Message::new();
             msg.build(&setters)?;
 
-            (msg, self.client.turn_server_addr())
+            (msg, self.client.turn_server_addr()?)
         };
 
         debug!("UDPConn.bind call PerformTransaction 1");
@@ -480,7 +477,7 @@ impl<'a> Relay<'a> {
         ch_data.encode();
 
         self.client
-            .write_to(&ch_data.raw, self.client.turn_server_addr());
+            .write_to(&ch_data.raw, self.client.turn_server_addr()?);
 
         Ok(())
     }

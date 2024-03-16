@@ -1,3 +1,6 @@
+use crate::error::{Error, Result};
+use std::net::{SocketAddr, ToSocketAddrs};
+
 // match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]
 fn match_range(lower: u8, upper: u8) -> impl Fn(&[u8]) -> bool {
     move |buf: &[u8]| -> bool {
@@ -52,4 +55,18 @@ pub fn match_srtp(buf: &[u8]) -> bool {
 /// match_srtcp is a MatchFunc that only matches SRTCP and not SRTP
 pub fn match_srtcp(buf: &[u8]) -> bool {
     match_srtp_or_srtcp(buf) && is_rtcp(buf)
+}
+
+/// lookup host to SocketAddr
+pub fn lookup_host<T>(use_ipv4: bool, host: T) -> Result<SocketAddr>
+where
+    T: ToSocketAddrs,
+{
+    for remote_addr in host.to_socket_addrs()? {
+        if (use_ipv4 && remote_addr.is_ipv4()) || (!use_ipv4 && remote_addr.is_ipv6()) {
+            return Ok(remote_addr);
+        }
+    }
+
+    Err(Error::ErrAddressParseFailed)
 }
