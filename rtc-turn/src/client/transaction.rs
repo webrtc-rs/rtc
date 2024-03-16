@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use stun::message::*;
 
-use crate::client::Event;
+use crate::client::{Event, RelayedAddr};
 use shared::{Protocol, Transmit, TransportContext};
 use stun::textattrs::TextAttribute;
 
@@ -17,9 +17,9 @@ pub(crate) enum TransactionType {
     BindingRequest,
     AllocateAttempt,
     AllocateRequest(TextAttribute),
-    CreatePermissionRequest(SocketAddr, Option<SocketAddr>),
-    RefreshRequest(SocketAddr),
-    ChannelBindRequest,
+    CreatePermissionRequest(RelayedAddr, Option<SocketAddr>),
+    RefreshRequest(RelayedAddr),
+    ChannelBindRequest(RelayedAddr, SocketAddr),
 }
 
 // TransactionConfig is a set of config params used by NewTransaction

@@ -307,7 +307,17 @@ impl Client {
                         relay.handle_refresh_allocation_response(msg)?;
                     }
                 }
-                METHOD_CHANNEL_BIND => {}
+                METHOD_CHANNEL_BIND => {
+                    if let TransactionType::ChannelBindRequest(relayed_addr, bind_addr) =
+                        tr.transaction_type
+                    {
+                        let mut relay = Relay {
+                            relayed_addr,
+                            client: self,
+                        };
+                        relay.handle_channel_bind_response(msg, bind_addr)?;
+                    }
+                }
                 _ => {}
             }
         }

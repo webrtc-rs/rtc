@@ -17,6 +17,7 @@ use super::permission::*;
 use super::transaction::*;
 use crate::proto;
 
+use crate::client::binding::BindingState;
 use crate::client::{Client, Event, RelayedAddr};
 use shared::error::{Error, Result};
 
@@ -73,13 +74,6 @@ pub struct Relay<'a> {
 }
 
 impl<'a> Relay<'a> {
-    /// This func-block would block, per destination IP (, or perm), until
-    /// the perm state becomes "requested". Purpose of this is to guarantee
-    /// the order of packets (within the same perm).
-    /// Note that CreatePermission transaction may not be complete before
-    /// all the data transmission. This is done assuming that the request
-    /// will be mostly likely successful and we can tolerate some loss of
-    /// UDP packet (or reorder), inorder to minimize the latency in most cases.
     pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if !relay.perm_map.contains(&peer_addr) {
@@ -141,32 +135,42 @@ impl<'a> Relay<'a> {
         }
     }
 
-    pub fn send_to(&mut self, _p: &[u8], peer_addr: SocketAddr) -> Result<()> {
+    pub fn send_to(&mut self, p: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // check if we have a permission for the destination IP addr
-        if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+        let result = if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
                 if perm.state() != PermState::Permitted {
                     Err(Error::ErrNoPermission)
                 } else {
-                    //TODO:
-                    Ok(())
+                    Ok((relay.integrity.clone(), relay.nonce.clone()))
                 }
             } else {
                 Err(Error::ErrNoPermission)
             }
         } else {
             Err(Error::ErrConnClosed)
-        }
+        };
 
-        /*TODO:
-        let number = {
+        let (integrity, nonce) = result?;
+
+        self.send(p, peer_addr, integrity, nonce)
+    }
+
+    fn send(
+        &mut self,
+        p: &[u8],
+        peer_addr: SocketAddr,
+        integrity: MessageIntegrity,
+        nonce: Nonce,
+    ) -> Result<()> {
+        let channel_number = {
             let (bind_st, bind_at, bind_number, bind_addr) = {
-                let b = if let Some(b) = self.client.binding_mgr.find_by_addr(&addr) {
+                let b = if let Some(b) = self.client.binding_mgr.find_by_addr(&peer_addr) {
                     b
                 } else {
                     self.client
                         .binding_mgr
-                        .create(addr)
+                        .create(peer_addr)
                         .ok_or_else(|| Error::Other("Addr not found".to_owned()))?
                 };
                 (b.state(), b.refreshed_at(), b.number, b.addr)
@@ -180,64 +184,32 @@ impl<'a> Relay<'a> {
                 // the binding transaction has been complete
                 // binding state may have been changed while waiting. check again.
                 if bind_st == BindingState::Idle {
-                    let nonce = self.nonce.clone();
-                    let integrity = self.integrity.clone();
-                    {
-                        if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
-                            b.set_state(BindingState::Request);
-                        }
+                    if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
+                        b.set_state(BindingState::Request);
                     }
-                    tokio::spawn(async move {
-                        let result = RelayConnInternal::bind(
-                            rc_obs,
-                            bind_addr,
-                            bind_number,
-                            nonce,
-                            integrity,
-                        )
-                        .await;
-
-                        {
-                            if let Err(err) = result {
-                                if Error::ErrUnexpectedResponse != err {
-                                    self.client.binding_mgr.delete_by_addr(&bind_addr);
-                                } else if let Some(b) =
-                                    self.client.binding_mgr.get_by_addr(&bind_addr)
-                                {
-                                    b.set_state(BindingState::Failed);
-                                }
-
-                                // keep going...
-                                warn!("bind() failed: {}", err);
-                            } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr)
-                            {
-                                b.set_state(BindingState::Ready);
-                            }
-                        }
-                    });
+                    self.channel_bind(self.relayed_addr, bind_addr, bind_number, nonce, integrity)?;
                 }
 
                 // send data using SendIndication
-                let peer_addr = proto::peeraddr::PeerAddress {
-                    ip: addr.ip(),
-                    port: addr.port(),
-                };
                 let mut msg = Message::new();
                 msg.build(&[
                     Box::new(TransactionId::new()),
                     Box::new(MessageType::new(METHOD_SEND, CLASS_INDICATION)),
                     Box::new(proto::data::Data(p.to_vec())),
-                    Box::new(peer_addr),
+                    Box::new(proto::peeraddr::PeerAddress {
+                        ip: peer_addr.ip(),
+                        port: peer_addr.port(),
+                    }),
                     Box::new(FINGERPRINT),
                 ])?;
 
                 // indication has no transaction (fire-and-forget)
-                let turn_server_addr = self.client.turn_server_addr();
-                return Ok(self.client.write_to(&msg.raw, &turn_server_addr)?);
+                self.client
+                    .write_to(&msg.raw, self.client.turn_server_addr());
+                return Ok(());
             }
 
-            // binding is either ready
-
+            // binding is ready
             // check if the binding needs a refresh
             if bind_st == BindingState::Ready
                 && Instant::now()
@@ -245,43 +217,17 @@ impl<'a> Relay<'a> {
                     .unwrap_or_else(|| Duration::from_secs(0))
                     > Duration::from_secs(5 * 60)
             {
-                let nonce = self.nonce.clone();
-                let integrity = self.integrity.clone();
-                {
-                    if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
-                        b.set_state(BindingState::Refresh);
-                    }
+                if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
+                    b.set_state(BindingState::Refresh);
                 }
-                tokio::spawn(async move {
-                    let result =
-                        RelayConnInternal::bind(rc_obs, bind_addr, bind_number, nonce, integrity)
-                            .await;
-
-                    {
-                        if let Err(err) = result {
-                            if Error::ErrUnexpectedResponse != err {
-                                self.client.binding_mgr.delete_by_addr(&bind_addr);
-                            } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr)
-                            {
-                                b.set_state(BindingState::Failed);
-                            }
-
-                            // keep going...
-                            warn!("bind() for refresh failed: {}", err);
-                        } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
-                            b.set_refreshed_at(Instant::now());
-                            b.set_state(BindingState::Ready);
-                        }
-                    }
-                });
+                self.channel_bind(self.relayed_addr, bind_addr, bind_number, nonce, integrity)?;
             }
 
             bind_number
         };
 
         // send via ChannelData
-        self.send_channel_data(p, number)
-         */
+        self.send_channel_data(p, channel_number)
     }
 
     // Close closes the connection.
@@ -440,8 +386,9 @@ impl<'a> Relay<'a> {
         }
     }
 
-    /*TODO: fn bind(
+    fn channel_bind(
         &mut self,
+        relayed_addr: RelayedAddr,
         bind_addr: SocketAddr,
         bind_number: u16,
         nonce: Nonce,
@@ -470,28 +417,62 @@ impl<'a> Relay<'a> {
         };
 
         debug!("UDPConn.bind call PerformTransaction 1");
-        let tr_res = self.client.perform_transaction(
+        let _ = self.client.perform_transaction(
             &msg,
             turn_server_addr,
-            TransactionType::ChannelBindRequest,
+            TransactionType::ChannelBindRequest(relayed_addr, bind_addr),
         );
 
-        let res = tr_res.msg;
-
-        if res.typ != MessageType::new(METHOD_CHANNEL_BIND, CLASS_SUCCESS_RESPONSE) {
-            return Err(Error::ErrUnexpectedResponse);
-        }
-
-        debug!("channel binding successful: {} {}", bind_addr, bind_number);
-
-        // Success.
         Ok(())
-    }*/
+    }
 
-    fn send_channel_data(&mut self, data: &[u8], ch_num: u16) -> Result<()> {
+    pub(super) fn handle_channel_bind_response(
+        &mut self,
+        res: Message,
+        bind_addr: SocketAddr,
+    ) -> Result<()> {
+        if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+            let result = if res.typ.class == CLASS_ERROR_RESPONSE {
+                let mut code = ErrorCodeAttribute::default();
+                let result = code.get_from(&res);
+                if result.is_err() {
+                    Err(Error::Other(format!("{}", res.typ)))
+                } else if code.code == CODE_STALE_NONCE {
+                    relay.set_nonce_from_msg(&res);
+                    Err(Error::ErrTryAgain)
+                } else {
+                    Err(Error::Other(format!("{} (error {})", res.typ, code)))
+                }
+            } else if res.typ != MessageType::new(METHOD_CHANNEL_BIND, CLASS_SUCCESS_RESPONSE) {
+                Err(Error::ErrUnexpectedResponse)
+            } else {
+                Ok(())
+            };
+
+            if let Err(err) = result {
+                if Error::ErrUnexpectedResponse != err {
+                    self.client.binding_mgr.delete_by_addr(&bind_addr);
+                } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
+                    b.set_state(BindingState::Failed);
+                }
+
+                // keep going...
+                warn!("bind() failed: {}", err);
+            } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
+                b.set_refreshed_at(Instant::now());
+                b.set_state(BindingState::Ready);
+                debug!("channel binding successful: {}", bind_addr);
+            }
+            Ok(())
+        } else {
+            Err(Error::ErrConnClosed)
+        }
+    }
+
+    fn send_channel_data(&mut self, data: &[u8], channel_number: u16) -> Result<()> {
         let mut ch_data = proto::chandata::ChannelData {
             data: data.to_vec(),
-            number: proto::channum::ChannelNumber(ch_num),
+            number: proto::channum::ChannelNumber(channel_number),
             ..Default::default()
         };
         ch_data.encode();
