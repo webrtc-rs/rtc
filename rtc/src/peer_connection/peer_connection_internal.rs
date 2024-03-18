@@ -17,137 +17,9 @@ use crate::stats::{
 use crate::track::TrackStream;
 use crate::{SDES_REPAIR_RTP_STREAM_ID_URI, SDP_ATTRIBUTE_RID};
 
-pub(crate) struct PeerConnectionInternal {
-    /// a value containing the last known greater mid value
-    /// we internally generate mids as numbers. Needed since JSEP
-    /// requires that when reusing a media section a new unique mid
-    /// should be defined (see JSEP 3.4.1).
-    pub(super) greater_mid: AtomicIsize,
-    pub(super) sdp_origin: Mutex<::sdp::description::session::Origin>,
-    pub(super) last_offer: Mutex<String>,
-    pub(super) last_answer: Mutex<String>,
-
-    pub(super) on_negotiation_needed_handler: Arc<ArcSwapOption<Mutex<OnNegotiationNeededHdlrFn>>>,
-    pub(super) is_closed: Arc<AtomicBool>,
-
-    /// ops is an operations queue which will ensure the enqueued actions are
-    /// executed in order. It is used for asynchronously, but serially processing
-    /// remote and local descriptions
-    pub(crate) ops: Arc<Operations>,
-    pub(super) negotiation_needed_state: Arc<AtomicU8>,
-    pub(super) is_negotiation_needed: Arc<AtomicBool>,
-    pub(super) signaling_state: Arc<AtomicU8>,
-
-    pub(super) ice_transport: Arc<RTCIceTransport>,
-    pub(super) dtls_transport: Arc<RTCDtlsTransport>,
-    pub(super) on_peer_connection_state_change_handler:
-        Arc<ArcSwapOption<Mutex<OnPeerConnectionStateChangeHdlrFn>>>,
-    pub(super) peer_connection_state: Arc<AtomicU8>,
-    pub(super) ice_connection_state: Arc<AtomicU8>,
-
-    pub(super) sctp_transport: Arc<RTCSctpTransport>,
-    pub(super) rtp_transceivers: Arc<Mutex<Vec<Arc<RTCRtpTransceiver>>>>,
-
-    pub(super) on_track_handler: Arc<ArcSwapOption<Mutex<OnTrackHdlrFn>>>,
-    pub(super) on_signaling_state_change_handler:
-        ArcSwapOption<Mutex<OnSignalingStateChangeHdlrFn>>,
-    pub(super) on_ice_connection_state_change_handler:
-        Arc<ArcSwapOption<Mutex<OnICEConnectionStateChangeHdlrFn>>>,
-    pub(super) on_data_channel_handler: Arc<ArcSwapOption<Mutex<OnDataChannelHdlrFn>>>,
-
-    pub(super) ice_gatherer: Arc<RTCIceGatherer>,
-
-    pub(super) current_local_description: Arc<Mutex<Option<RTCSessionDescription>>>,
-    pub(super) current_remote_description: Arc<Mutex<Option<RTCSessionDescription>>>,
-    pub(super) pending_local_description: Arc<Mutex<Option<RTCSessionDescription>>>,
-    pub(super) pending_remote_description: Arc<Mutex<Option<RTCSessionDescription>>>,
-
-    // A reference to the associated API state used by this connection
-    pub(super) setting_engine: Arc<SettingEngine>,
-    pub(crate) media_engine: Arc<MediaEngine>,
-    pub(super) interceptor: Weak<dyn Interceptor + Send + Sync>,
-    stats_interceptor: Arc<stats::StatsInterceptor>,
-}
+pub(crate) struct PeerConnectionInternal {}
 
 impl PeerConnectionInternal {
-    pub(super) async fn new(
-        api: &API,
-        interceptor: Weak<dyn Interceptor + Send + Sync>,
-        stats_interceptor: Arc<stats::StatsInterceptor>,
-        mut configuration: RTCConfiguration,
-    ) -> Result<(Arc<Self>, RTCConfiguration)> {
-        let mut pc = PeerConnectionInternal {
-            greater_mid: AtomicIsize::new(-1),
-            sdp_origin: Mutex::new(Default::default()),
-            last_offer: Mutex::new("".to_owned()),
-            last_answer: Mutex::new("".to_owned()),
-
-            on_negotiation_needed_handler: Arc::new(ArcSwapOption::empty()),
-            ops: Arc::new(Operations::new()),
-            is_closed: Arc::new(AtomicBool::new(false)),
-            is_negotiation_needed: Arc::new(AtomicBool::new(false)),
-            negotiation_needed_state: Arc::new(AtomicU8::new(NegotiationNeededState::Empty as u8)),
-            signaling_state: Arc::new(AtomicU8::new(RTCSignalingState::Stable as u8)),
-            ice_transport: Arc::new(Default::default()),
-            dtls_transport: Arc::new(Default::default()),
-            ice_connection_state: Arc::new(AtomicU8::new(RTCIceConnectionState::New as u8)),
-            sctp_transport: Arc::new(Default::default()),
-            rtp_transceivers: Arc::new(Default::default()),
-            on_track_handler: Arc::new(ArcSwapOption::empty()),
-            on_signaling_state_change_handler: ArcSwapOption::empty(),
-            on_ice_connection_state_change_handler: Arc::new(ArcSwapOption::empty()),
-            on_data_channel_handler: Arc::new(Default::default()),
-            ice_gatherer: Arc::new(Default::default()),
-            current_local_description: Arc::new(Default::default()),
-            current_remote_description: Arc::new(Default::default()),
-            pending_local_description: Arc::new(Default::default()),
-            peer_connection_state: Arc::new(AtomicU8::new(RTCPeerConnectionState::New as u8)),
-
-            setting_engine: Arc::clone(&api.setting_engine),
-            media_engine: if !api.setting_engine.disable_media_engine_copy {
-                Arc::new(api.media_engine.clone_to())
-            } else {
-                Arc::clone(&api.media_engine)
-            },
-            interceptor,
-            stats_interceptor,
-            on_peer_connection_state_change_handler: Arc::new(ArcSwapOption::empty()),
-            pending_remote_description: Arc::new(Default::default()),
-        };
-
-        // Create the ice gatherer
-        pc.ice_gatherer = Arc::new(api.new_ice_gatherer(RTCIceGatherOptions {
-            ice_servers: configuration.get_ice_servers(),
-            ice_gather_policy: configuration.ice_transport_policy,
-        })?);
-
-        // Create the ice transport
-        pc.ice_transport = pc.create_ice_transport(api).await;
-
-        // Create the DTLS transport
-        let certificates = configuration.certificates.drain(..).collect();
-        pc.dtls_transport =
-            Arc::new(api.new_dtls_transport(Arc::clone(&pc.ice_transport), certificates)?);
-
-        // Create the SCTP transport
-        pc.sctp_transport = Arc::new(api.new_sctp_transport(Arc::clone(&pc.dtls_transport))?);
-
-        // Wire up the on datachannel handler
-        let on_data_channel_handler = Arc::clone(&pc.on_data_channel_handler);
-        pc.sctp_transport
-            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-                let on_data_channel_handler2 = Arc::clone(&on_data_channel_handler);
-                Box::pin(async move {
-                    if let Some(handler) = &*on_data_channel_handler2.load() {
-                        let mut f = handler.lock().await;
-                        f(d).await;
-                    }
-                })
-            }));
-
-        Ok((Arc::new(pc), configuration))
-    }
-
     pub(super) async fn start_rtp(
         self: &Arc<Self>,
         is_renegotiation: bool,
@@ -1142,7 +1014,7 @@ impl PeerConnectionInternal {
             let dtls_transport_state = dtls_transport.state();
             let peer_connection_state2 = Arc::clone(&peer_connection_state);
             Box::pin(async move {
-                RTCPeerConnection::do_ice_connection_state_change(
+                RTCPeerConnection::update_ice_connection_state_change(
                     &on_ice_connection_state_change_handler2,
                     &ice_connection_state2,
                     cs,

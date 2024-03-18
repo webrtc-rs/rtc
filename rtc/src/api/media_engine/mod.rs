@@ -77,7 +77,7 @@ impl MediaEngineHeaderExtension {
 /// A MediaEngine defines the codecs supported by a PeerConnection, and the
 /// configuration of those codecs. A MediaEngine must not be shared between
 /// PeerConnections.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MediaEngine {
     // If we have attempted to negotiate a codec type yet.
     pub(crate) negotiated_video: bool,

@@ -12,8 +12,8 @@ pub mod ice_transport;
 /*pub mod mux;*/
 pub mod peer_connection;
 pub mod rtp_transceiver;
-/*pub mod sctp_transport;
-pub mod stats;
+pub mod sctp_transport;
+/*pub mod stats;
 pub mod track;
 
 // re-export sub-crates

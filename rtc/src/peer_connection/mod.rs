@@ -12,13 +12,13 @@ pub mod peer_connection_state;
 pub mod policy;
 pub mod sdp;
 pub mod signaling_state;
-/*
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use ::sdp::description::session::Origin;
+use rcgen::KeyPair;
+use shared::error::{Error, Result};
+use std::collections::VecDeque;
+use std::time::{SystemTime, UNIX_EPOCH};
+/*
 use ::ice::candidate::candidate_base::unmarshal_candidate;
 use ::ice::candidate::Candidate;
 use ::sdp::description::session::*;
@@ -28,15 +28,12 @@ use async_trait::async_trait;
 use interceptor::{stats, Attributes, Interceptor, RTCPWriter};
 use peer_connection_internal::*;*/
 use rand::{thread_rng, Rng};
-/*
-use rcgen::KeyPair;
-use smol_str::SmolStr;
-use srtp::stream::Stream;
-use tokio::sync::{mpsc, Mutex};
+//use srtp::stream::Stream;
 
 use crate::api::media_engine::MediaEngine;
 use crate::api::setting_engine::SettingEngine;
 use crate::api::API;
+/*
 use crate::data_channel::data_channel_init::RTCDataChannelInit;
 use crate::data_channel::data_channel_parameters::DataChannelParameters;
 use crate::data_channel::data_channel_state::RTCDataChannelState;
@@ -47,11 +44,11 @@ use crate::dtls_transport::dtls_role::{
     DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
 };
 use crate::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
-use crate::dtls_transport::RTCDtlsTransport;
-use crate::error::{flatten_errs, Error, Result};
-use crate::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+//use crate::dtls_transport::RTCDtlsTransport;
+use shared::error::{flatten_errs, Error, Result};
+//use crate::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
 use crate::ice_transport::ice_connection_state::RTCIceConnectionState;
-use crate::ice_transport::ice_gatherer::{
+/*use crate::ice_transport::ice_gatherer::{
     OnGatheringCompleteHdlrFn, OnICEGathererStateChangeHdlrFn, OnLocalCandidateHdlrFn,
     RTCIceGatherOptions, RTCIceGatherer,
 };
@@ -60,21 +57,21 @@ use crate::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use crate::ice_transport::ice_parameters::RTCIceParameters;
 use crate::ice_transport::ice_role::RTCIceRole;
 use crate::ice_transport::ice_transport_state::RTCIceTransportState;
-use crate::ice_transport::RTCIceTransport;
+//use crate::ice_transport::RTCIceTransport;*/
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
-use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
-use crate::peer_connection::operation::{Operation, Operations};
+//use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
+//use crate::peer_connection::operation::{Operation, Operations};
 use crate::peer_connection::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
-use crate::peer_connection::sdp::sdp_type::RTCSdpType;
+//use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
-use crate::peer_connection::sdp::*;
+//use crate::peer_connection::sdp::*;
 use crate::peer_connection::signaling_state::{
-    check_next_signaling_state, RTCSignalingState, StateChangeOp,
+    /*check_next_signaling_state,*/ RTCSignalingState, //StateChangeOp,
 };
-use crate::rtp_transceiver::rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType};
+/*use crate::rtp_transceiver::rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType};
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
@@ -121,56 +118,20 @@ pub enum PeerConnectionEvent {
     OnNegotiationNeeded,
     OnIceCandidate,
     OnIceCandidateError,
-    OnSignalingStateChange,
-    OnIceConnectionStateChange,
+    OnSignalingStateChange(RTCSignalingState),
+    OnIceConnectionStateChange(RTCIceConnectionState),
     OnIceGatheringStateChane,
-    OnConnectionStateChange,
+    OnPeerConnectionStateChange(RTCPeerConnectionState),
     // RTP Media API
     OnTrack,
     // Peer-to-peer Data API
     OnDataChannel,
 }
+
 /*
-pub type OnSignalingStateChangeHdlrFn = Box<
-    dyn (FnMut(RTCSignalingState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnICEConnectionStateChangeHdlrFn = Box<
-    dyn (FnMut(RTCIceConnectionState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnPeerConnectionStateChangeHdlrFn = Box<
-    dyn (FnMut(RTCPeerConnectionState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnDataChannelHdlrFn = Box<
-    dyn (FnMut(Arc<RTCDataChannel>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnTrackHdlrFn = Box<
-    dyn (FnMut(
-            Arc<TrackRemote>,
-            Arc<RTCRtpReceiver>,
-            Arc<RTCRtpTransceiver>,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnNegotiationNeededHdlrFn =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
-
 #[derive(Clone)]
 struct StartTransportsParams {
-    ice_transport: Arc<RTCIceTransport>,
+    ice_transport: RTCIceTransport,
     dtls_transport: Arc<RTCDtlsTransport>,
     on_peer_connection_state_change_handler: Arc<Mutex<Option<OnPeerConnectionStateChangeHdlrFn>>>,
     is_closed: Arc<AtomicBool>,
@@ -184,42 +145,69 @@ struct CheckNegotiationNeededParams {
     rtp_transceivers: Arc<Mutex<Vec<Arc<RTCRtpTransceiver>>>>,
     current_local_description: Arc<Mutex<Option<RTCSessionDescription>>>,
     current_remote_description: Arc<Mutex<Option<RTCSessionDescription>>>,
-}
+}*/
 
 #[derive(Clone)]
 struct NegotiationNeededParams {
-    on_negotiation_needed_handler: Arc<ArcSwapOption<Mutex<OnNegotiationNeededHdlrFn>>>,
-    is_closed: Arc<AtomicBool>,
-    ops: Arc<Operations>,
-    negotiation_needed_state: Arc<AtomicU8>,
-    is_negotiation_needed: Arc<AtomicBool>,
-    signaling_state: Arc<AtomicU8>,
-    check_negotiation_needed_params: CheckNegotiationNeededParams,
+    is_closed: bool,
+    //TODO:ops: Arc<Operations>,
+    negotiation_needed_state: NegotiationNeededState,
+    is_negotiation_needed: bool,
+    signaling_state: RTCSignalingState,
+    //TODO:check_negotiation_needed_params: CheckNegotiationNeededParams,
 }
-
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
 /// browser, or to another endpoint implementing the required protocols.
+#[derive(Default)]
 pub struct RTCPeerConnection {
-    stats_id: String,
-    idp_login_url: Option<String>,
+    pub(super) sdp_origin: Origin,
+    pub(crate) configuration: RTCConfiguration,
+    pub(super) is_closed: bool,
+    pub(super) is_negotiation_needed: bool,
+    pub(super) negotiation_needed_state: NegotiationNeededState,
+    pub(super) last_offer: String,
+    pub(super) last_answer: String,
+    pub(super) signaling_state: RTCSignalingState,
+    pub(super) peer_connection_state: RTCPeerConnectionState,
+    pub(super) ice_connection_state: RTCIceConnectionState,
+    pub(super) current_local_description: Option<RTCSessionDescription>,
+    pub(super) current_remote_description: Option<RTCSessionDescription>,
+    pub(super) pending_local_description: Option<RTCSessionDescription>,
+    pub(super) pending_remote_description: Option<RTCSessionDescription>,
 
-    configuration: RTCConfiguration,
-
+    /// ops is an operations queue which will ensure the enqueued actions are
+    /// executed in order. It is used for asynchronously, but serially processing
+    /// remote and local descriptions
+    /*TODO:pub(crate) ops: Arc<Operations>,
+    pub(super) ice_transport: Arc<RTCIceTransport>,
+    pub(super) dtls_transport: Arc<RTCDtlsTransport>,
+    pub(super) sctp_transport: Arc<RTCSctpTransport>,
+    pub(super) rtp_transceivers: Arc<Mutex<Vec<Arc<RTCRtpTransceiver>>>>,
+    pub(super) ice_gatherer: Arc<RTCIceGatherer>,
     interceptor_rtcp_writer: Arc<dyn RTCPWriter + Send + Sync>,
-
     interceptor: Arc<dyn Interceptor + Send + Sync>,
+    pub(super) interceptor: Weak<dyn Interceptor + Send + Sync>,
+    stats_interceptor: Arc<stats::StatsInterceptor>,*/
+    pub(crate) stats_id: String,
+    /// a value containing the last known greater mid value
+    /// we internally generate mids as numbers. Needed since JSEP
+    /// requires that when reusing a media section a new unique mid
+    /// should be defined (see JSEP 3.4.1).
+    pub(super) greater_mid: isize,
+    /// A reference to the associated API state used by this connection
+    pub(super) setting_engine: SettingEngine,
+    pub(crate) media_engine: MediaEngine,
 
-    pub(crate) internal: Arc<PeerConnectionInternal>,
+    pub(crate) events: VecDeque<PeerConnectionEvent>,
 }
 
 impl std::fmt::Debug for RTCPeerConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RTCPeerConnection")
             .field("stats_id", &self.stats_id)
-            .field("idp_login_url", &self.idp_login_url)
-            .field("signaling_state", &self.signaling_state())
-            .field("ice_connection_state", &self.ice_connection_state())
+            .field("signaling_state", &self.signaling_state)
+            .field("ice_connection_state", &self.ice_connection_state)
             .finish()
     }
 }
@@ -237,23 +225,50 @@ impl RTCPeerConnection {
     /// If you wish to customize the set of available codecs or the set of
     /// active interceptors, create a MediaEngine and call api.new_peer_connection
     /// instead of this function.
-    pub(crate) async fn new(api: &API, mut configuration: RTCConfiguration) -> Result<Self> {
+    pub(crate) fn new(api: &API, mut configuration: RTCConfiguration) -> Result<Self> {
         RTCPeerConnection::init_configuration(&mut configuration)?;
 
-        let (interceptor, stats_interceptor): (Arc<dyn Interceptor + Send + Sync>, _) = {
+        /*let (interceptor, stats_interceptor): (Arc<dyn Interceptor + Send + Sync>, _) = {
             let mut chain = api.interceptor_registry.build_chain("")?;
             let stats_interceptor = stats::make_stats_interceptor("");
             chain.add(stats_interceptor.clone());
 
             (Arc::new(chain), stats_interceptor)
-        };
+        };*/
 
-        let weak_interceptor = Arc::downgrade(&interceptor);
-        let (internal, configuration) =
-            PeerConnectionInternal::new(api, weak_interceptor, stats_interceptor, configuration)
-                .await?;
-        let internal_rtcp_writer = Arc::clone(&internal) as Arc<dyn RTCPWriter + Send + Sync>;
-        let interceptor_rtcp_writer = interceptor.bind_rtcp_writer(internal_rtcp_writer).await;
+        /*
+        // Create the ice gatherer
+        pc.ice_gatherer = Arc::new(api.new_ice_gatherer(RTCIceGatherOptions {
+            ice_servers: configuration.get_ice_servers(),
+            ice_gather_policy: configuration.ice_transport_policy,
+        })?);
+
+        // Create the ice transport
+        pc.ice_transport = pc.create_ice_transport(api).await;
+
+        // Create the DTLS transport
+        let certificates = configuration.certificates.drain(..).collect();
+        pc.dtls_transport =
+            Arc::new(api.new_dtls_transport(Arc::clone(&pc.ice_transport), certificates)?);
+
+        // Create the SCTP transport
+        pc.sctp_transport = Arc::new(api.new_sctp_transport(Arc::clone(&pc.dtls_transport))?);
+
+        // Wire up the on datachannel handler
+        let on_data_channel_handler = Arc::clone(&pc.on_data_channel_handler);
+        pc.sctp_transport
+            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+                let on_data_channel_handler2 = Arc::clone(&on_data_channel_handler);
+                Box::pin(async move {
+                    if let Some(handler) = &*on_data_channel_handler2.load() {
+                        let mut f = handler.lock().await;
+                        f(d).await;
+                    }
+                })
+            }));*/
+
+        //let internal_rtcp_writer = Arc::clone(&internal) as Arc<dyn RTCPWriter + Send + Sync>;
+        //let interceptor_rtcp_writer = interceptor.bind_rtcp_writer(internal_rtcp_writer).await;
 
         // <https://w3c.github.io/webrtc-pc/#constructor> (Step #2)
         // Some variables defined explicitly despite their implicit zero values to
@@ -266,11 +281,20 @@ impl RTCPeerConnection {
                     .unwrap()
                     .as_nanos()
             ),
-            interceptor,
-            interceptor_rtcp_writer,
-            internal,
+
             configuration,
-            idp_login_url: None,
+
+            greater_mid: -1,
+
+            negotiation_needed_state: NegotiationNeededState::Empty,
+            signaling_state: RTCSignalingState::Stable,
+            ice_connection_state: RTCIceConnectionState::New,
+            peer_connection_state: RTCPeerConnectionState::New,
+
+            setting_engine: api.setting_engine.clone(),
+            media_engine: api.media_engine.clone(),
+
+            ..Default::default()
         })
     }
 
@@ -287,15 +311,30 @@ impl RTCPeerConnection {
             }
         }
 
-        // <https://www.w3.org/TR/webrtc/#constructor> (step #3)
+        // TODO: <https://www.w3.org/TR/webrtc/#constructor> (step #2):
+        // Let connection have a [[DocumentOrigin]] internal slot,
+        // initialized to the relevant settings object's origin.
+
+        // <https://www.w3.org/TR/webrtc/#constructor> (step #5)
         if !configuration.certificates.is_empty() {
+            // If the value of certificate.expires is less than the current time,
+            // throw an InvalidAccessError.
             let now = SystemTime::now();
             for cert in &configuration.certificates {
                 cert.expires
                     .duration_since(now)
                     .map_err(|_| Error::ErrCertificateExpired)?;
             }
+
+            //TODO: If certificate.[[Origin]] is not same origin with connection.[[DocumentOrigin]],
+            // throw an InvalidAccessError.
         } else {
+            // (step #6) Else, generate one or more new RTCCertificate instances with this RTCPeerConnection
+            // instance and store them. This MAY happen asynchronously and the value of certificates
+            // remains undefined for the subsequent steps. As noted in Section 4.3.2.3 of [RFC8826],
+            // WebRTC utilizes self-signed rather than Public Key Infrastructure (PKI) certificates,
+            // so that the expiration check is to ensure that keys are not used indefinitely and
+            // additional certificate checks are unnecessary.
             let kp = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)?;
             let cert = RTCCertificate::from_key_pair(kp)?;
             configuration.certificates = vec![cert];
@@ -304,63 +343,26 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    /// on_signaling_state_change sets an event handler which is invoked when the
-    /// peer connection's signaling state changes
-    pub fn on_signaling_state_change(&self, f: OnSignalingStateChangeHdlrFn) {
-        self.internal
-            .on_signaling_state_change_handler
-            .store(Some(Arc::new(Mutex::new(f))))
-    }
-
-    async fn do_signaling_state_change(&self, new_state: RTCSignalingState) {
-        log::info!("signaling state changed to {}", new_state);
-        if let Some(handler) = &*self.internal.on_signaling_state_change_handler.load() {
-            let mut f = handler.lock().await;
-            f(new_state).await;
-        }
-    }
-
-    /// on_data_channel sets an event handler which is invoked when a data
-    /// channel message arrives from a remote peer.
-    pub fn on_data_channel(&self, f: OnDataChannelHdlrFn) {
-        self.internal
-            .on_data_channel_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    /// on_negotiation_needed sets an event handler which is invoked when
-    /// a change has occurred which requires session negotiation
-    pub fn on_negotiation_needed(&self, f: OnNegotiationNeededHdlrFn) {
-        self.internal
-            .on_negotiation_needed_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    fn do_negotiation_needed_inner(params: &NegotiationNeededParams) -> bool {
+    fn do_negotiation_needed_inner(params: &mut NegotiationNeededParams) -> bool {
         // https://w3c.github.io/webrtc-pc/#updating-the-negotiation-needed-flag
         // non-canon step 1
-        let state: NegotiationNeededState = params
-            .negotiation_needed_state
-            .load(Ordering::SeqCst)
-            .into();
-        if state == NegotiationNeededState::Run {
-            params
-                .negotiation_needed_state
-                .store(NegotiationNeededState::Queue as u8, Ordering::SeqCst);
+
+        if params.negotiation_needed_state == NegotiationNeededState::Run {
+            params.negotiation_needed_state = NegotiationNeededState::Queue;
             false
-        } else if state == NegotiationNeededState::Queue {
+        } else if params.negotiation_needed_state == NegotiationNeededState::Queue {
             false
         } else {
-            params
-                .negotiation_needed_state
-                .store(NegotiationNeededState::Run as u8, Ordering::SeqCst);
+            params.negotiation_needed_state = NegotiationNeededState::Run;
             true
         }
     }
+
+    /*
     /// do_negotiation_needed enqueues negotiation_needed_op if necessary
     /// caller of this method should hold `pc.mu` lock
-    async fn do_negotiation_needed(params: NegotiationNeededParams) {
-        if !RTCPeerConnection::do_negotiation_needed_inner(&params) {
+    fn do_negotiation_needed(mut params: NegotiationNeededParams) {
+        if !RTCPeerConnection::do_negotiation_needed_inner(&mut params) {
             return;
         }
 
@@ -373,9 +375,9 @@ impl RTCPeerConnection {
                     Box::pin(async move { RTCPeerConnection::negotiation_needed_op(params3).await })
                 },
                 "do_negotiation_needed",
-            ))
-            .await;
+            ));
     }
+
 
     async fn after_negotiation_needed_op(params: NegotiationNeededParams) -> bool {
         let old_negotiation_needed_state = params.negotiation_needed_state.load(Ordering::SeqCst);
@@ -580,27 +582,6 @@ impl RTCPeerConnection {
         }
     }
 
-    /// on_ice_candidate sets an event handler which is invoked when a new ICE
-    /// candidate is found.
-    /// Take note that the handler is gonna be called with a nil pointer when
-    /// gathering is finished.
-    pub fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
-        self.internal.ice_gatherer.on_local_candidate(f)
-    }
-
-    /// on_ice_gathering_state_change sets an event handler which is invoked when the
-    /// ICE candidate gathering state has changed.
-    pub fn on_ice_gathering_state_change(&self, f: OnICEGathererStateChangeHdlrFn) {
-        self.internal.ice_gatherer.on_state_change(f)
-    }
-
-    /// on_track sets an event handler which is called when remote track
-    /// arrives from a remote peer.
-    pub fn on_track(&self, f: OnTrackHdlrFn) {
-        self.internal
-            .on_track_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
 
     fn do_track(
         on_track_handler: Arc<ArcSwapOption<Mutex<OnTrackHdlrFn>>>,
@@ -618,46 +599,25 @@ impl RTCPeerConnection {
                 log::warn!("on_track unset, unable to handle incoming media streams");
             }
         });
+    }*/
+
+    /// 4.4.1.3 Update the connection state
+    fn update_peer_connection_state_change(&mut self, new_state: RTCPeerConnectionState) {
+        self.peer_connection_state = new_state;
+        self.events
+            .push_back(PeerConnectionEvent::OnPeerConnectionStateChange(new_state));
     }
 
-    /// on_ice_connection_state_change sets an event handler which is called
-    /// when an ICE connection state is changed.
-    pub fn on_ice_connection_state_change(&self, f: OnICEConnectionStateChangeHdlrFn) {
-        self.internal
-            .on_ice_connection_state_change_handler
-            .store(Some(Arc::new(Mutex::new(f))));
+    fn update_signaling_state_change(&mut self, new_state: RTCSignalingState) {
+        self.signaling_state = new_state;
+        self.events
+            .push_back(PeerConnectionEvent::OnSignalingStateChange(new_state));
     }
 
-    async fn do_ice_connection_state_change(
-        handler: &Arc<ArcSwapOption<Mutex<OnICEConnectionStateChangeHdlrFn>>>,
-        ice_connection_state: &Arc<AtomicU8>,
-        cs: RTCIceConnectionState,
-    ) {
-        ice_connection_state.store(cs as u8, Ordering::SeqCst);
-
-        log::info!("ICE connection state changed: {}", cs);
-        if let Some(handler) = &*handler.load() {
-            let mut f = handler.lock().await;
-            f(cs).await;
-        }
-    }
-
-    /// on_peer_connection_state_change sets an event handler which is called
-    /// when the PeerConnectionState has changed
-    pub fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) {
-        self.internal
-            .on_peer_connection_state_change_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    async fn do_peer_connection_state_change(
-        handler: &Arc<ArcSwapOption<Mutex<OnPeerConnectionStateChangeHdlrFn>>>,
-        cs: RTCPeerConnectionState,
-    ) {
-        if let Some(handler) = &*handler.load() {
-            let mut f = handler.lock().await;
-            f(cs).await;
-        }
+    fn update_ice_connection_state_change(&mut self, new_state: RTCIceConnectionState) {
+        self.ice_connection_state = new_state;
+        self.events
+            .push_back(PeerConnectionEvent::OnIceConnectionStateChange(new_state));
     }
 
     /*TODO: // set_configuration updates the configuration of this PeerConnection object.
@@ -732,16 +692,14 @@ impl RTCPeerConnection {
         self.stats_id.as_str()
     }
 
+    /*
     /// create_offer starts the PeerConnection and generates the localDescription
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createoffer>
     pub async fn create_offer(
         &self,
         options: Option<RTCOfferOptions>,
     ) -> Result<RTCSessionDescription> {
-        let use_identity = self.idp_login_url.is_some();
-        if use_identity {
-            return Err(Error::ErrIdentityProviderNotImplemented);
-        } else if self.internal.is_closed.load(Ordering::SeqCst) {
+        if self.internal.is_closed.load(Ordering::SeqCst) {
             return Err(Error::ErrConnectionClosed);
         }
 
@@ -910,7 +868,7 @@ impl RTCPeerConnection {
         log::info!("peer connection state changed: {}", connection_state);
         peer_connection_state.store(connection_state as u8, Ordering::SeqCst);
 
-        RTCPeerConnection::do_peer_connection_state_change(
+        RTCPeerConnection::update_peer_connection_state_change(
             on_peer_connection_state_change_handler,
             connection_state,
         )
@@ -922,7 +880,6 @@ impl RTCPeerConnection {
         &self,
         _options: Option<RTCAnswerOptions>,
     ) -> Result<RTCSessionDescription> {
-        let use_identity = self.idp_login_url.is_some();
         let remote_desc = self.remote_description().await;
         let remote_description: RTCSessionDescription;
         if let Some(desc) = remote_desc {
@@ -930,9 +887,7 @@ impl RTCPeerConnection {
         } else {
             return Err(Error::ErrNoRemoteDescription);
         }
-        if use_identity {
-            return Err(Error::ErrIdentityProviderNotImplemented);
-        } else if self.internal.is_closed.load(Ordering::SeqCst) {
+        if self.internal.is_closed.load(Ordering::SeqCst) {
             return Err(Error::ErrConnectionClosed);
         } else if self.signaling_state() != RTCSignalingState::HaveRemoteOffer
             && self.signaling_state() != RTCSignalingState::HaveLocalPranswer
@@ -1207,7 +1162,7 @@ impl RTCPeerConnection {
                         .store(false, Ordering::SeqCst);
                     self.internal.trigger_negotiation_needed().await;
                 }
-                self.do_signaling_state_change(next_state).await;
+                self.update_signaling_state_change(next_state).await;
                 Ok(())
             }
             Err(err) => Err(err),
@@ -2114,6 +2069,5 @@ impl RTCPeerConnection {
     /// Adds the specified [`RTCRtpTransceiver`] to this [`RTCPeerConnection`].
     pub async fn add_transceiver(&self, t: Arc<RTCRtpTransceiver>) {
         self.internal.add_rtp_transceiver(t).await
-    }
+    }*/
 }
-*/
