@@ -115,6 +115,21 @@ pub fn math_rand_alpha(n: usize) -> String {
 
     rand_string
 }
+
+pub enum PeerConnectionEvent {
+    // Peer-to-peer connections
+    OnNegotiationNeeded,
+    OnIceCandidate,
+    OnIceCandidateError,
+    OnSignalingStateChange,
+    OnIceConnectionStateChange,
+    OnIceGatheringStateChane,
+    OnConnectionStateChange,
+    // RTP Media API
+    OnTrack,
+    // Peer-to-peer Data API
+    OnDataChannel,
+}
 /*
 pub type OnSignalingStateChangeHdlrFn = Box<
     dyn (FnMut(RTCSignalingState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
