@@ -1,17 +1,18 @@
-/*#[cfg(test)]
+/*TODO:#[cfg(test)]
 pub(crate) mod peer_connection_test;
-
+*/
 pub mod certificate;
 pub mod configuration;
 pub mod offer_answer_options;
+/*
 pub(crate) mod operation;
 mod peer_connection_internal;
+*/
 pub mod peer_connection_state;
-pub mod policy;*/
+pub mod policy;
 pub mod sdp;
-/*
 pub mod signaling_state;
-
+/*
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
@@ -25,8 +26,9 @@ use ::sdp::util::ConnectionRole;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use interceptor::{stats, Attributes, Interceptor, RTCPWriter};
-use peer_connection_internal::*;
+use peer_connection_internal::*;*/
 use rand::{thread_rng, Rng};
+/*
 use rcgen::KeyPair;
 use smol_str::SmolStr;
 use srtp::stream::Stream;
@@ -86,7 +88,7 @@ use crate::sctp_transport::RTCSctpTransport;
 use crate::stats::StatsReport;
 use crate::track::track_local::TrackLocal;
 use crate::track::track_remote::TrackRemote;
-
+*/
 /// SIMULCAST_PROBE_COUNT is the amount of RTP Packets
 /// that handleUndeclaredSSRC will read and try to dispatch from
 /// mid and rid values
@@ -113,7 +115,7 @@ pub fn math_rand_alpha(n: usize) -> String {
 
     rand_string
 }
-
+/*
 pub type OnSignalingStateChangeHdlrFn = Box<
     dyn (FnMut(RTCSignalingState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
         + Send
@@ -649,14 +651,6 @@ impl RTCPeerConnection {
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
         if self.internal.is_closed.load(Ordering::SeqCst) {
             return Err(Error::ErrConnectionClosed.into());
-        }
-
-        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #3)
-        if !configuration.peer_identity.is_empty() {
-            if configuration.peer_identity != self.configuration.peer_identity {
-                return Err(Error::ErrModifyingPeerIdentity.into());
-            }
-            self.configuration.peer_identity = configuration.peer_identity;
         }
 
         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #4)

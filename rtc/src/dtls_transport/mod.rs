@@ -34,13 +34,12 @@ use crate::stats::stats_collector::StatsCollector;
 
 #[cfg(test)]
 mod dtls_transport_test;
-
+*/
 pub mod dtls_fingerprint;
-pub mod dtls_parameters;*/
+pub mod dtls_parameters;
 pub mod dtls_role;
-/*
 pub mod dtls_transport_state;
-
+/*
 pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
     vec![
         SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm,

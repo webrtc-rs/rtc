@@ -12,21 +12,14 @@ pub enum RTCIceCredentialType {
     /// ICECredential::Password describes username and password based
     /// credentials as described in <https://tools.ietf.org/html/rfc5389>.
     Password,
-
-    /// ICECredential::Oauth describes token based credential as described
-    /// in <https://tools.ietf.org/html/rfc7635>.
-    /// Not supported in WebRTC 1.0 spec
-    Oauth,
 }
 
 const ICE_CREDENTIAL_TYPE_PASSWORD_STR: &str = "password";
-const ICE_CREDENTIAL_TYPE_OAUTH_STR: &str = "oauth";
 
 impl From<&str> for RTCIceCredentialType {
     fn from(raw: &str) -> Self {
         match raw {
             ICE_CREDENTIAL_TYPE_PASSWORD_STR => RTCIceCredentialType::Password,
-            ICE_CREDENTIAL_TYPE_OAUTH_STR => RTCIceCredentialType::Oauth,
             _ => RTCIceCredentialType::Unspecified,
         }
     }
@@ -36,7 +29,6 @@ impl fmt::Display for RTCIceCredentialType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             RTCIceCredentialType::Password => write!(f, "{ICE_CREDENTIAL_TYPE_PASSWORD_STR}"),
-            RTCIceCredentialType::Oauth => write!(f, "{ICE_CREDENTIAL_TYPE_OAUTH_STR}"),
             _ => write!(f, "{}", crate::UNSPECIFIED_STR),
         }
     }
@@ -51,7 +43,6 @@ mod test {
         let tests = vec![
             ("Unspecified", RTCIceCredentialType::Unspecified),
             ("password", RTCIceCredentialType::Password),
-            ("oauth", RTCIceCredentialType::Oauth),
         ];
 
         for (ct_str, expected_ct) in tests {
@@ -64,7 +55,6 @@ mod test {
         let tests = vec![
             (RTCIceCredentialType::Unspecified, "Unspecified"),
             (RTCIceCredentialType::Password, "password"),
-            (RTCIceCredentialType::Oauth, "oauth"),
         ];
 
         for (ct, expected_string) in tests {

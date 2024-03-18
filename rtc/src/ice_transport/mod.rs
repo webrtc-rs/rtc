@@ -30,16 +30,17 @@ pub mod ice_candidate;
 pub mod ice_candidate_pair;*/
 pub mod ice_candidate_type;
 pub mod ice_connection_state;
-pub mod ice_credential_type; /*
-                             pub mod ice_gatherer;
-                             pub mod ice_gatherer_state;
-                             pub mod ice_gathering_state;
-                             pub mod ice_parameters;
-                             pub mod ice_protocol;
-                             pub mod ice_role;
-                             pub mod ice_server;
-                             pub mod ice_transport_state;
-                             */
+pub mod ice_credential_type;
+/*
+pub mod ice_gatherer;
+pub mod ice_gatherer_state;
+pub mod ice_gathering_state;*/
+pub mod ice_parameters;
+pub mod ice_protocol;
+pub mod ice_role;
+pub mod ice_server;
+pub mod ice_transport_state;
+
 /*TODO:
 
 pub type OnConnectionStateChangeHdlrFn = Box<

@@ -12,14 +12,14 @@ use crate::rtp_transceiver::rtp_codec::{
     RTCRtpCodecCapability,
     RTCRtpCodecParameters, //, RTPCodecType,
 };
-//use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::{PayloadType, RTCPFeedback /*RTCRtpTransceiver, SSRC*/};
 
-use shared::error::Result;
-/*
+use shared::error::{Error, Result};
+
 pub mod sdp_type;
 pub mod session_description;
-*/
+
 use std::collections::HashMap;
 //use std::convert::From;
 use std::io::BufReader;
@@ -34,9 +34,9 @@ use sdp::extmap::ExtMap;
 /*use sdp::util::ConnectionRole;
 use smol_str::SmolStr;
 use url::Url;
-
+*/
 use crate::peer_connection::MEDIA_SECTION_APPLICATION;
-use crate::{SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
+/*use crate::{SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
 
 /// TrackDetails represents any media source that can be represented in a SDP
 /// This isn't keyed by SSRC because it also needs to support rid based sources
@@ -848,7 +848,7 @@ pub(crate) async fn populate_sdp(
 
     Ok(d.with_value_attribute(ATTR_KEY_GROUP.to_owned(), bundle_value))
 }
-
+*/
 pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&String> {
     for attr in &media.attributes {
         if attr.key == "mid" {
@@ -872,12 +872,12 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
     let mut fingerprints = vec![];
 
     if let Some(fingerprint) = desc.attribute("fingerprint") {
-        fingerprints.push(fingerprint.clone());
+        fingerprints.push(fingerprint);
     }
 
     for m in &desc.media_descriptions {
         if let Some(fingerprint) = m.attribute("fingerprint").and_then(|o| o) {
-            fingerprints.push(fingerprint.to_owned());
+            fingerprints.push(fingerprint);
         }
     }
 
@@ -899,6 +899,7 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
     Ok((parts[1].to_owned(), parts[0].to_owned()))
 }
 
+/*TODO:
 pub(crate) async fn extract_ice_details(
     desc: &SessionDescription,
 ) -> Result<(String, String, Vec<RTCIceCandidate>)> {
@@ -952,7 +953,7 @@ pub(crate) async fn extract_ice_details(
 
     Ok((remote_ufrags[0].clone(), remote_pwds[0].clone(), candidates))
 }
-
+*/
 pub(crate) fn have_application_media_section(desc: &SessionDescription) -> bool {
     for m in &desc.media_descriptions {
         if m.media_name.media == MEDIA_SECTION_APPLICATION {
@@ -992,7 +993,6 @@ pub(crate) fn have_data_channel(
     }
     None
 }
-*/
 pub(crate) fn codecs_from_media_description(
     m: &MediaDescription,
 ) -> Result<Vec<RTCRtpCodecParameters>> {
@@ -1070,7 +1070,7 @@ pub(crate) fn rtp_extensions_from_media_description(
 
     Ok(out)
 }
-/*TODO:
+
 /// update_sdp_origin saves sdp.Origin in PeerConnection when creating 1st local SDP;
 /// for subsequent calling, it updates Origin for SessionDescription from saved one
 /// and increments session version by one.
@@ -1097,4 +1097,3 @@ pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription)
         d.origin.session_version += 1;
     }
 }
-*/

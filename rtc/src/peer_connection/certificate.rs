@@ -9,10 +9,10 @@ use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
 use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
-use crate::error::{Error, Result};
 use crate::peer_connection::math_rand_alpha;
-use crate::stats::stats_collector::StatsCollector;
-use crate::stats::{CertificateStats, StatsReportType};
+use shared::error::{Error, Result};
+/*TODO:use crate::stats::stats_collector::StatsCollector;
+use crate::stats::{CertificateStats, StatsReportType};*/
 
 /// Certificate represents a X.509 certificate used to authenticate WebRTC communications.
 #[derive(Clone, Debug)]
@@ -50,7 +50,7 @@ impl RTCCertificate {
             CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(
                     Ed25519KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::new(e.to_string()))?,
+                        .map_err(|e| Error::Other(e.to_string()))?,
                 ),
                 serialized_der,
             }
@@ -62,7 +62,7 @@ impl RTCCertificate {
                         &serialized_der,
                         &SystemRandom::new(),
                     )
-                    .map_err(|e| Error::new(e.to_string()))?,
+                    .map_err(|e| Error::Other(e.to_string()))?,
                 ),
                 serialized_der,
             }
@@ -70,12 +70,12 @@ impl RTCCertificate {
             CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Rsa256(
                     rsa::KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::new(e.to_string()))?,
+                        .map_err(|e| Error::Other(e.to_string()))?,
                 ),
                 serialized_der,
             }
         } else {
-            return Err(Error::new("Unsupported key_pair".to_owned()));
+            return Err(Error::Other("Unsupported key_pair".to_owned()));
         };
 
         let expires = if cfg!(target_arch = "arm") {
@@ -107,7 +107,7 @@ impl RTCCertificate {
         } else if key_pair.is_compatible(&rcgen::PKCS_RSA_SHA256) {
             params.alg = &rcgen::PKCS_RSA_SHA256;
         } else {
-            return Err(Error::new("Unsupported key_pair".to_owned()));
+            return Err(Error::Other("Unsupported key_pair".to_owned()));
         };
         params.key_pair = Some(key_pair);
 
@@ -205,7 +205,7 @@ impl RTCCertificate {
         fingerprints
     }
 
-    pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
+    /*TODO:pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
         if let Some(fingerprint) = self.get_fingerprints().into_iter().next() {
             let stats = CertificateStats::new(self, fingerprint);
             collector.insert(
@@ -213,7 +213,7 @@ impl RTCCertificate {
                 StatsReportType::CertificateStats(stats),
             );
         }
-    }
+    }*/
 }
 
 fn gen_stats_id() -> String {

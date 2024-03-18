@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
 use crate::ice_transport::ice_credential_type::RTCIceCredentialType;
+use shared::error::{Error, Result};
 
 /// ICEServer describes a single STUN and TURN server that can be used by
 /// the ICEAgent to establish a connection with a peer.
@@ -15,7 +15,7 @@ pub struct RTCIceServer {
 
 impl RTCIceServer {
     pub(crate) fn parse_url(&self, url_str: &str) -> Result<ice::url::Url> {
-        Ok(ice::url::Url::parse_url(url_str)?)
+        ice::url::Url::parse_url(url_str)
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
@@ -40,14 +40,6 @@ impl RTCIceServer {
                     RTCIceCredentialType::Password => {
                         // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3.3)
                         url.password = self.credential.clone();
-                    }
-                    RTCIceCredentialType::Oauth => {
-                        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3.4)
-                        /*if _, ok: = s.Credential.(OAuthCredential); !ok {
-                                return nil,
-                                &rtcerr.InvalidAccessError{Err: ErrTurnCredentials
-                            }
-                        }*/
                     }
                     _ => return Err(Error::ErrTurnCredentials),
                 };
@@ -126,7 +118,7 @@ mod test {
                     urls: vec!["turn:192.158.29.39?transport=udp".to_owned()],
                     username: "unittest".to_owned(),
                     credential: String::new(),
-                    credential_type: RTCIceCredentialType::Oauth,
+                    credential_type: RTCIceCredentialType::Unspecified,
                 },
                 Error::ErrNoTurnCredentials,
             ),
@@ -157,9 +149,9 @@ mod test {
                 urls: vec!["stun:google.de?transport=udp".to_owned()],
                 username: "unittest".to_owned(),
                 credential: String::new(),
-                credential_type: RTCIceCredentialType::Oauth,
+                credential_type: RTCIceCredentialType::Unspecified,
             },
-            ice::Error::ErrStunQuery,
+            Error::ErrStunQuery,
         )];
 
         for (ice_server, expected_err) in tests {

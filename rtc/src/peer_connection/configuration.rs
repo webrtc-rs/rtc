@@ -15,7 +15,7 @@ pub struct RTCConfiguration {
     /// ICE, such as STUN and TURN servers.
     pub ice_servers: Vec<RTCIceServer>,
 
-    /// icetransport_policy indicates which candidates the ICEAgent is allowed
+    /// ice_transport_policy indicates which candidates the ICEAgent is allowed
     /// to use.
     pub ice_transport_policy: RTCIceTransportPolicy,
 
@@ -26,11 +26,6 @@ pub struct RTCConfiguration {
     /// rtcp_mux_policy indicates which rtcp-mux policy to use when gathering ICE
     /// candidates.
     pub rtcp_mux_policy: RTCRtcpMuxPolicy,
-
-    /// peer_identity sets the target peer identity for the PeerConnection.
-    /// The PeerConnection will not establish a connection to a remote peer
-    /// unless it can be successfully authenticated with the provided name.
-    pub peer_identity: String,
 
     /// Certificates describes a set of certificates that the PeerConnection
     /// uses to authenticate. Valid values for this parameter are created
@@ -45,12 +40,12 @@ pub struct RTCConfiguration {
     /// set of certificates is generated for each PeerConnection instance.
     pub certificates: Vec<RTCCertificate>,
 
-    /// icecandidate_pool_size describes the size of the prefetched ICE pool.
+    /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub ice_candidate_pool_size: u8,
 }
 
 impl RTCConfiguration {
-    /// get_iceservers side-steps the strict parsing mode of the ice package
+    /// get_ice_servers side-steps the strict parsing mode of the ice package
     /// (as defined in https://tools.ietf.org/html/rfc7064) by copying and then
     /// stripping any erroneous queries from "stun(s):" URLs before parsing.
     pub(crate) fn get_ice_servers(&self) -> Vec<RTCIceServer> {
