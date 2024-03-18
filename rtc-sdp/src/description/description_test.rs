@@ -1,7 +1,7 @@
 use super::common::*;
 use super::media::*;
 use super::session::*;
-use crate::error::{Error, Result};
+use shared::error::{Error, Result};
 
 use std::io::Cursor;
 use url::Url;

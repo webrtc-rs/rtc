@@ -1,4 +1,4 @@
-#[cfg(test)]
+/*#[cfg(test)]
 pub(crate) mod peer_connection_test;
 
 pub mod certificate;
@@ -7,8 +7,9 @@ pub mod offer_answer_options;
 pub(crate) mod operation;
 mod peer_connection_internal;
 pub mod peer_connection_state;
-pub mod policy;
+pub mod policy;*/
 pub mod sdp;
+/*
 pub mod signaling_state;
 
 use std::future::Future;
@@ -2106,3 +2107,4 @@ impl RTCPeerConnection {
         self.internal.add_rtp_transceiver(t).await
     }
 }
+*/

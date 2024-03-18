@@ -17,6 +17,7 @@ replay = []
 
 [dependencies]
 thiserror = "1.0.58"
+substring = "1.4.5"
 bytes = "1.5.0"
 aes-gcm = { version = "0.10.3", features = ["std"] }
 url = "2.5.0"

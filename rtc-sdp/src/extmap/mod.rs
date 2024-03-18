@@ -2,8 +2,8 @@
 mod extmap_test;
 
 use super::direction::*;
-use super::error::{Error, Result};
 use crate::description::common::*;
+use shared::error::{Error, Result};
 
 use std::fmt;
 use std::io;

@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::num::ParseIntError;
 use std::string::FromUtf8Error;
 use std::time::SystemTimeError;
+use substring::Substring;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -1454,6 +1455,26 @@ pub enum Error {
 
     #[error("not long enough to be a RTP Packet")]
     ErrRTPTooShort,
+
+    //SDP
+    #[error("codec not found")]
+    CodecNotFound,
+    #[error("missing whitespace")]
+    MissingWhitespace,
+    #[error("missing colon")]
+    MissingColon,
+    #[error("payload type not found")]
+    PayloadTypeNotFound,
+    #[error("SdpInvalidSyntax: {0}")]
+    SdpInvalidSyntax(String),
+    #[error("SdpInvalidValue: {0}")]
+    SdpInvalidValue(String),
+    #[error("sdp: empty time_descriptions")]
+    SdpEmptyTimeDescription,
+    #[error("parse extmap: {0}")]
+    ParseExtMap(String),
+    #[error("{} --> {} <-- {}", .s.substring(0,*.p), .s.substring(*.p, *.p+1), .s.substring(*.p+1, .s.len()))]
+    SyntaxError { s: String, p: usize },
 
     //Third Party Error
     #[error("{0}")]

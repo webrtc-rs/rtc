@@ -2,8 +2,8 @@ use std::fmt;
 
 use super::*;
 use crate::api::media_engine::*;
-use crate::error::{Error, Result};
 use crate::rtp_transceiver::fmtp;
+use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -62,7 +62,7 @@ pub struct RTCRtpCodecCapability {
 
 impl RTCRtpCodecCapability {
     /// Turn codec capability into a `packetizer::Payloader`
-    pub fn payloader_for_codec(&self) -> Result<Box<dyn rtp::packetizer::Payloader + Send + Sync>> {
+    pub fn payloader_for_codec(&self) -> Result<Box<dyn rtp::packetizer::Payloader>> {
         let mime_type = self.mime_type.to_lowercase();
         if mime_type == MIME_TYPE_H264.to_lowercase() {
             Ok(Box::<rtp::codecs::h264::H264Payloader>::default())

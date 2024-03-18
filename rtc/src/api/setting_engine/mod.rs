@@ -1,20 +1,19 @@
-#[cfg(test)]
-mod setting_engine_test;
+//TODO:#[cfg(test)]
+//TODO:mod setting_engine_test;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
-use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
+/*TODO:use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
 use ice::mdns::MulticastDnsMode;
+use ice::udp_network::UDPNetwork;*/
 use ice::network_type::NetworkType;
-use ice::udp_network::UDPNetwork;
-use tokio::time::Duration;
-use util::vnet::net::*;
 
 use crate::dtls_transport::dtls_role::DTLSRole;
-use crate::error::{Error, Result};
 use crate::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use crate::RECEIVE_MTU;
+use shared::error::{Error, Result};
 
 #[derive(Default, Clone)]
 pub struct Detach {
@@ -36,12 +35,12 @@ pub struct Timeout {
 pub struct Candidates {
     pub ice_lite: bool,
     pub ice_network_types: Vec<NetworkType>,
-    pub interface_filter: Arc<Option<InterfaceFilterFn>>,
-    pub ip_filter: Arc<Option<IpFilterFn>>,
+    /*TODO pub interface_filter: Arc<Option<InterfaceFilterFn>>,
+    pub ip_filter: Arc<Option<IpFilterFn>>,*/
     pub nat_1to1_ips: Vec<String>,
     pub nat_1to1_ip_candidate_type: RTCIceCandidateType,
-    pub multicast_dns_mode: MulticastDnsMode,
-    pub multicast_dns_host_name: String,
+    /*TODO:pub multicast_dns_mode: MulticastDnsMode,
+    pub multicast_dns_host_name: String,*/
     pub username_fragment: String,
     pub password: String,
 }
@@ -68,11 +67,7 @@ pub struct SettingEngine {
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_srtp_replay_protection: bool,
     pub(crate) disable_srtcp_replay_protection: bool,
-    pub(crate) vnet: Option<Arc<Net>>,
-    //BufferFactory                             :func(packetType packetio.BufferPacketType, ssrc uint32) io.ReadWriteCloser,
-    //iceTCPMux                                 :ice.TCPMux,?
-    //iceProxyDialer                            :proxy.Dialer,?
-    pub(crate) udp_network: UDPNetwork,
+    //TODO: pub(crate) udp_network: UDPNetwork,
     pub(crate) disable_media_engine_copy: bool,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) receive_mtu: usize,
@@ -136,12 +131,12 @@ impl SettingEngine {
         self.timeout.ice_relay_acceptance_min_wait = t;
     }
 
-    /// set_udp_network allows ICE traffic to come through Ephemeral or UDPMux.
+    /*TODO:/// set_udp_network allows ICE traffic to come through Ephemeral or UDPMux.
     /// UDPMux drastically simplifying deployments where ports will need to be opened/forwarded.
     /// UDPMux should be started prior to creating PeerConnections.
     pub fn set_udp_network(&mut self, udp_network: UDPNetwork) {
         self.udp_network = udp_network;
-    }
+    }*/
 
     /// set_lite configures whether or not the ice agent should be a lite agent
     pub fn set_lite(&mut self, lite: bool) {
@@ -154,7 +149,7 @@ impl SettingEngine {
         self.candidates.ice_network_types = candidate_types;
     }
 
-    /// set_interface_filter sets the filtering functions when gathering ICE candidates
+    /*TODO:/// set_interface_filter sets the filtering functions when gathering ICE candidates
     /// This can be used to exclude certain network interfaces from ICE. Which may be
     /// useful if you know a certain interface will never succeed, or if you wish to reduce
     /// the amount of information you wish to expose to the remote peer
@@ -168,7 +163,7 @@ impl SettingEngine {
     /// the amount of information you wish to expose to the remote peer
     pub fn set_ip_filter(&mut self, filter: IpFilterFn) {
         self.candidates.ip_filter = Arc::new(Some(filter));
-    }
+    }*/
 
     /// set_nat_1to1_ips sets a list of external IP addresses of 1:1 (D)NAT
     /// and a candidate type for which the external IP address is used.
@@ -215,15 +210,7 @@ impl SettingEngine {
         Ok(())
     }
 
-    /// set_vnet sets the VNet instance that is passed to ice
-    /// VNet is a virtual network layer, allowing users to simulate
-    /// different topologies, latency, loss and jitter. This can be useful for
-    /// learning WebRTC concepts or testing your application in a lab environment
-    pub fn set_vnet(&mut self, vnet: Option<Arc<Net>>) {
-        self.vnet = vnet;
-    }
-
-    /// set_ice_multicast_dns_mode controls if ice queries and generates mDNS ICE Candidates
+    /*TODO:/// set_ice_multicast_dns_mode controls if ice queries and generates mDNS ICE Candidates
     pub fn set_ice_multicast_dns_mode(&mut self, multicast_dns_mode: ice::mdns::MulticastDnsMode) {
         self.candidates.multicast_dns_mode = multicast_dns_mode
     }
@@ -233,7 +220,7 @@ impl SettingEngine {
     /// undefined behavior
     pub fn set_multicast_dns_host_name(&mut self, host_name: String) {
         self.candidates.multicast_dns_host_name = host_name;
-    }
+    }*/
 
     /// set_ice_credentials sets a staic uFrag/uPwd to be used by ice
     /// This is useful if you want to do signalless WebRTC session, or having a reproducible environment with static credentials

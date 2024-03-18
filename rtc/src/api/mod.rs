@@ -1,23 +1,18 @@
-#[cfg(test)]
-mod api_test;
+//TODO: #[cfg(test)]
+//TODO: mod api_test;
 
-pub mod interceptor_registry;
+//TODO: pub mod interceptor_registry;
 pub mod media_engine;
 pub mod setting_engine;
 
-use std::sync::Arc;
-use std::time::SystemTime;
-
-use interceptor::registry::Registry;
-use interceptor::Interceptor;
+/*TODO: use interceptor::registry::Registry;
+use interceptor::Interceptor;*/
 use media_engine::*;
-use rcgen::KeyPair;
 use setting_engine::*;
 
-use crate::data_channel::data_channel_parameters::DataChannelParameters;
+/*TODO:use crate::data_channel::data_channel_parameters::DataChannelParameters;
 use crate::data_channel::RTCDataChannel;
 use crate::dtls_transport::RTCDtlsTransport;
-use crate::error::{Error, Result};
 use crate::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
 use crate::ice_transport::RTCIceTransport;
 use crate::peer_connection::certificate::RTCCertificate;
@@ -28,19 +23,22 @@ use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::sctp_transport::RTCSctpTransport;
 use crate::track::track_local::TrackLocal;
+use rcgen::KeyPair;
+use shared::error::{Error, Result};
+ */
 
 /// API bundles the global functions of the WebRTC and ORTC API.
 /// Some of these functions are also exported globally using the
 /// defaultAPI object. Note that the global version of the API
 /// may be phased out in the future.
 pub struct API {
-    pub(crate) setting_engine: Arc<SettingEngine>,
-    pub(crate) media_engine: Arc<MediaEngine>,
-    pub(crate) interceptor_registry: Registry,
+    pub(crate) setting_engine: SettingEngine,
+    pub(crate) media_engine: MediaEngine,
+    //TODO: pub(crate) interceptor_registry: Registry,
 }
 
 impl API {
-    /// new_peer_connection creates a new PeerConnection with the provided configuration against the received API object
+    /*TODO:/// new_peer_connection creates a new PeerConnection with the provided configuration against the received API object
     pub async fn new_peer_connection(
         &self,
         configuration: RTCConfiguration,
@@ -166,24 +164,24 @@ impl API {
             false,
         )
         .await
-    }
+    }*/
 
     /// Returns the internal [`SettingEngine`].
-    pub fn setting_engine(&self) -> Arc<SettingEngine> {
-        Arc::clone(&self.setting_engine)
+    pub fn setting_engine(&self) -> &SettingEngine {
+        &self.setting_engine
     }
 
     /// Returns the internal [`MediaEngine`].
-    pub fn media_engine(&self) -> Arc<MediaEngine> {
-        Arc::clone(&self.media_engine)
+    pub fn media_engine(&self) -> &MediaEngine {
+        &self.media_engine
     }
 }
 
 #[derive(Default)]
 pub struct APIBuilder {
-    setting_engine: Option<Arc<SettingEngine>>,
-    media_engine: Option<Arc<MediaEngine>>,
-    interceptor_registry: Option<Registry>,
+    setting_engine: Option<SettingEngine>,
+    media_engine: Option<MediaEngine>,
+    //TODO: interceptor_registry: Option<Registry>,
 }
 
 impl APIBuilder {
@@ -196,41 +194,41 @@ impl APIBuilder {
             setting_engine: if let Some(setting_engine) = self.setting_engine.take() {
                 setting_engine
             } else {
-                Arc::new(SettingEngine::default())
+                SettingEngine::default()
             },
             media_engine: if let Some(media_engine) = self.media_engine.take() {
                 media_engine
             } else {
-                Arc::new(MediaEngine::default())
+                MediaEngine::default()
             },
-            interceptor_registry: if let Some(interceptor_registry) =
+            /*TODO:interceptor_registry: if let Some(interceptor_registry) =
                 self.interceptor_registry.take()
             {
                 interceptor_registry
             } else {
                 Registry::new()
-            },
+            },*/
         }
     }
 
     /// WithSettingEngine allows providing a SettingEngine to the API.
     /// Settings should not be changed after passing the engine to an API.
     pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
-        self.setting_engine = Some(Arc::new(setting_engine));
+        self.setting_engine = Some(setting_engine);
         self
     }
 
     /// WithMediaEngine allows providing a MediaEngine to the API.
     /// Settings can be changed after passing the engine to an API.
     pub fn with_media_engine(mut self, media_engine: MediaEngine) -> Self {
-        self.media_engine = Some(Arc::new(media_engine));
+        self.media_engine = Some(media_engine);
         self
     }
 
-    /// with_interceptor_registry allows providing Interceptors to the API.
+    /*TODO: /// with_interceptor_registry allows providing Interceptors to the API.
     /// Settings should not be changed after passing the registry to an API.
     pub fn with_interceptor_registry(mut self, interceptor_registry: Registry) -> Self {
         self.interceptor_registry = Some(interceptor_registry);
         self
-    }
+    }*/
 }

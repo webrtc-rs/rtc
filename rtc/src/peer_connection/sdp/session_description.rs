@@ -4,7 +4,7 @@ use sdp::description::session::SessionDescription;
 use serde::{Deserialize, Serialize};
 
 use super::sdp_type::RTCSdpType;
-use crate::error::Result;
+use shared::error::Result;
 
 /// SessionDescription is used to expose local and remote session descriptions.
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]

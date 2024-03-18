@@ -1,5 +1,5 @@
 use super::description::session::SessionDescription;
-use super::error::{Error, Result};
+use shared::error::{Error, Result};
 
 use std::io;
 use std::io::SeekFrom;

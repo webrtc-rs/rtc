@@ -4,9 +4,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fmt, io};
 use url::Url;
 
-use crate::error::{Error, Result};
 use crate::lexer::*;
 use crate::util::*;
+use shared::error::{Error, Result};
 
 use super::common::*;
 use super::media::*;

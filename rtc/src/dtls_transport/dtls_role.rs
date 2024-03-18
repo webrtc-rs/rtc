@@ -91,7 +91,7 @@ mod test {
     use std::io::Cursor;
 
     use super::*;
-    use crate::error::Result;
+    use shared::error::Result;
 
     #[test]
     fn test_dtls_role_string() {

@@ -1,34 +1,37 @@
+/*TODO:
 #[cfg(test)]
 mod sdp_test;
 
 use crate::api::media_engine::MediaEngine;
 use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
-use crate::error::{Error, Result};
 use crate::ice_transport::ice_candidate::RTCIceCandidate;
 use crate::ice_transport::ice_gatherer::RTCIceGatherer;
 use crate::ice_transport::ice_gathering_state::RTCIceGatheringState;
-use crate::ice_transport::ice_parameters::RTCIceParameters;
+use crate::ice_transport::ice_parameters::RTCIceParameters;*/
 use crate::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
+    RTCRtpCodecCapability,
+    RTCRtpCodecParameters, //, RTPCodecType,
 };
-use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::rtp_transceiver::{PayloadType, RTCPFeedback, RTCRtpTransceiver, SSRC};
+//use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::{PayloadType, RTCPFeedback /*RTCRtpTransceiver, SSRC*/};
 
+use shared::error::Result;
+/*
 pub mod sdp_type;
 pub mod session_description;
-
+*/
 use std::collections::HashMap;
-use std::convert::From;
+//use std::convert::From;
 use std::io::BufReader;
-use std::sync::Arc;
+/*use std::sync::Arc;
 
 use ice::candidate::candidate_base::unmarshal_candidate;
 use ice::candidate::Candidate;
-use sdp::description::common::{Address, ConnectionInformation};
-use sdp::description::media::{MediaDescription, MediaName, RangedPort};
+use sdp::description::common::{Address, ConnectionInformation};*/
+use sdp::description::media::{MediaDescription /*, MediaName, RangedPort*/};
 use sdp::description::session::*;
 use sdp::extmap::ExtMap;
-use sdp::util::ConnectionRole;
+/*use sdp::util::ConnectionRole;
 use smol_str::SmolStr;
 use url::Url;
 
@@ -989,7 +992,7 @@ pub(crate) fn have_data_channel(
     }
     None
 }
-
+*/
 pub(crate) fn codecs_from_media_description(
     m: &MediaDescription,
 ) -> Result<Vec<RTCRtpCodecParameters>> {
@@ -1007,7 +1010,7 @@ pub(crate) fn codecs_from_media_description(
                 if payload_type == 0 {
                     continue;
                 }
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -1067,7 +1070,7 @@ pub(crate) fn rtp_extensions_from_media_description(
 
     Ok(out)
 }
-
+/*TODO:
 /// update_sdp_origin saves sdp.Origin in PeerConnection when creating 1st local SDP;
 /// for subsequent calling, it updates Origin for SessionDescription from saved one
 /// and increments session version by one.
@@ -1094,3 +1097,4 @@ pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription)
         d.origin.session_version += 1;
     }
 }
+*/
