@@ -5,7 +5,51 @@ authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
 description = "RTC in Rust"
 license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/webrtc-rs/rtc"
+readme = "../README.md"
 
 [dependencies]
+datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
+dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }
+ice = { version = "0.2.0", path = "../rtc-ice", package = "rtc-ice" }
+#TODO: interceptor = { version = "0.0.0", path = "../rtc-interceptor", package = "rtc-interceptor"  }
+#TODO: mdns = { version = "0.0.0", path = "../mdns", package = "rtc-mdns" }
+#TODO: media = { version = "0.0.0", path = "../media", package = "rtc-media" }
+rtcp = { version = "0.2.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
+rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
+sctp = { version = "0.2.0", path = "../rtc-sctp", package = "rtc-sctp" }
+sdp = { version = "0.2.0", path = "../rtc-sdp", package = "rtc-sdp" }
+shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
+srtp = { version = "0.2.0", path = "../rtc-srtp", package = "rtc-srtp" }
+stun = { version = "0.2.0", path = "../rtc-stun", package = "rtc-stun" }
+turn = { version = "0.1.0", path = "../rtc-turn", package = "rtc-turn" }
+
+log = "0.4.21"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+rand = "0.8.5"
+bytes = "1.5.0"
+regex = "1.10.3"
+url = "2.5.0"
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rcgen = { version = "0.11", features = ["pem", "x509-parser"] }
+ring = "0.17.8"
+sha2 = "0.10.8"
+hex = "0.4.3"
+pem = { version = "3.0.3", optional = true }
+time = "0.3.34"
+cfg-if = "1.0.0"
+lazy_static = "1.4.0"
+smol_str = { version = "0.2.1", features = ["serde"] }
 
 [dev-dependencies]
+tokio-test = "0.4.4"
+env_logger = "0.10.2"
+arc-swap = "1.7.0"
+tokio = { version = "1.36.0", features = ["full"] }
+waitgroup = "0.1.2"
+
+[features]
+pem = ["dep:pem", "dtls/pem"]
