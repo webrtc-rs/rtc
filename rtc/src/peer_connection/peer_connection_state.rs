@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// PeerConnectionState indicates the state of the PeerConnection.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCPeerConnectionState {
     #[default]
     Unspecified,
@@ -10,29 +11,35 @@ pub enum RTCPeerConnectionState {
     /// DTLSTransports are in the "new" state and none of the transports are
     /// in the "connecting", "checking", "failed" or "disconnected" state, or
     /// all transports are in the "closed" state, or there are no transports.
+    #[serde(rename = "new")]
     New,
 
     /// PeerConnectionStateConnecting indicates that any of the
     /// ICETransports or DTLSTransports are in the "connecting" or
     /// "checking" state and none of them is in the "failed" state.
+    #[serde(rename = "connecting")]
     Connecting,
 
     /// PeerConnectionStateConnected indicates that all ICETransports and
     /// DTLSTransports are in the "connected", "completed" or "closed" state
     /// and at least one of them is in the "connected" or "completed" state.
+    #[serde(rename = "connected")]
     Connected,
 
     /// PeerConnectionStateDisconnected indicates that any of the
     /// ICETransports or DTLSTransports are in the "disconnected" state
     /// and none of them are in the "failed" or "connecting" or "checking" state.
+    #[serde(rename = "disconnect")]
     Disconnected,
 
     /// PeerConnectionStateFailed indicates that any of the ICETransports
     /// or DTLSTransports are in a "failed" state.
+    #[serde(rename = "failed")]
     Failed,
 
     /// PeerConnectionStateClosed indicates the peer connection is closed
     /// and the isClosed member variable of PeerConnection is true.
+    #[serde(rename = "closed")]
     Closed,
 }
 

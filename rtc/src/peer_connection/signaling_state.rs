@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::peer_connection::sdp::sdp_type::RTCSdpType;
@@ -21,7 +22,7 @@ impl fmt::Display for StateChangeOp {
 }
 
 /// SignalingState indicates the signaling state of the offer/answer process.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCSignalingState {
     #[default]
     Unspecified = 0,
@@ -29,24 +30,29 @@ pub enum RTCSignalingState {
     /// SignalingStateStable indicates there is no offer/answer exchange in
     /// progress. This is also the initial state, in which case the local and
     /// remote descriptions are nil.
+    #[serde(rename = "stable")]
     Stable,
 
     /// SignalingStateHaveLocalOffer indicates that a local description, of
     /// type "offer", has been successfully applied.
+    #[serde(rename = "have-local-offer")]
     HaveLocalOffer,
 
     /// SignalingStateHaveRemoteOffer indicates that a remote description, of
     /// type "offer", has been successfully applied.
+    #[serde(rename = "have-remote-offer")]
     HaveRemoteOffer,
 
     /// SignalingStateHaveLocalPranswer indicates that a remote description
     /// of type "offer" has been successfully applied and a local description
     /// of type "pranswer" has been successfully applied.
+    #[serde(rename = "have-local-pranswer")]
     HaveLocalPranswer,
 
     /// SignalingStateHaveRemotePranswer indicates that a local description
     /// of type "offer" has been successfully applied and a remote description
     /// of type "pranswer" has been successfully applied.
+    #[serde(rename = "have-remote-pranswer")]
     HaveRemotePranswer,
 
     /// SignalingStateClosed indicates The PeerConnection has been closed.

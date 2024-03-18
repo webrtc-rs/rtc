@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// ICEGatheringState describes the state of the candidate gathering process.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceGatheringState {
     #[default]
     Unspecified,
@@ -9,14 +9,17 @@ pub enum RTCIceGatheringState {
     /// ICEGatheringStateNew indicates that any of the ICETransports are
     /// in the "new" gathering state and none of the transports are in the
     /// "gathering" state, or there are no transports.
+    #[serde(rename = "new")]
     New,
 
     /// ICEGatheringStateGathering indicates that any of the ICETransports
     /// are in the "gathering" state.
+    #[serde(rename = "gathering")]
     Gathering,
 
     /// ICEGatheringStateComplete indicates that at least one ICETransport
-    /// exists, and all ICETransports are in the "completed" gathering state.
+    /// exists, and all ICETransports are in the "complete" gathering state.
+    #[serde(rename = "complete")]
     Complete,
 }
 

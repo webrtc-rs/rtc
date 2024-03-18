@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// RTCIceConnectionState indicates signaling state of the ICE Connection.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceConnectionState {
     #[default]
     Unspecified,
@@ -10,34 +11,41 @@ pub enum RTCIceConnectionState {
     /// in the "new" state and none of them are in the "checking", "disconnected"
     /// or "failed" state, or all ICETransports are in the "closed" state, or
     /// there are no transports.
+    #[serde(rename = "new")]
     New,
 
     /// ICEConnectionStateChecking indicates that any of the ICETransports
     /// are in the "checking" state and none of them are in the "disconnected"
     /// or "failed" state.
+    #[serde(rename = "checking")]
     Checking,
 
     /// ICEConnectionStateConnected indicates that all ICETransports are
     /// in the "connected", "completed" or "closed" state and at least one of
     /// them is in the "connected" state.
+    #[serde(rename = "connected")]
     Connected,
 
     /// ICEConnectionStateCompleted indicates that all ICETransports are
     /// in the "completed" or "closed" state and at least one of them is in the
     /// "completed" state.
+    #[serde(rename = "completed")]
     Completed,
 
     /// ICEConnectionStateDisconnected indicates that any of the
     /// ICETransports are in the "disconnected" state and none of them are
     /// in the "failed" state.
+    #[serde(rename = "disconnected")]
     Disconnected,
 
     /// ICEConnectionStateFailed indicates that any of the ICETransports
     /// are in the "failed" state.
+    #[serde(rename = "failed")]
     Failed,
 
     /// ICEConnectionStateClosed indicates that the PeerConnection's
     /// isClosed is true.
+    #[serde(rename = "closed")]
     Closed,
 }
 
