@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// ICEGatheringState describes the state of the candidate gathering process.

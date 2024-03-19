@@ -336,7 +336,7 @@ impl Agent {
     }
 
     /// Returns the remote credentials.
-    pub async fn get_remote_credentials(&self) -> Option<&Credentials> {
+    pub fn get_remote_credentials(&self) -> Option<&Credentials> {
         self.ufrag_pwd.remote_credentials.as_ref()
     }
 
@@ -508,8 +508,8 @@ impl Agent {
         Ok(())
     }
 
-    // Returns the local candidates.
-    pub(crate) fn get_local_candidates(&self) -> &[Candidate] {
+    /// Returns the local candidates.
+    pub fn get_local_candidates(&self) -> &[Candidate] {
         &self.local_candidates
     }
 

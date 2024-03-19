@@ -1,14 +1,10 @@
 /*TODO: use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
 
-use arc_swap::ArcSwapOption;
 use bytes::Bytes;
 use dtls::config::ClientAuthType;
-use dtls::conn::DTLSConn;
+use dtls::conn::DTLSConn;*/
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
+/*
 use dtls_role::*;
 use interceptor::stream_info::StreamInfo;
 use interceptor::{Interceptor, RTCPReader, RTPReader};
@@ -16,30 +12,30 @@ use sha2::{Digest, Sha256};
 use srtp::protection_profile::ProtectionProfile;
 use srtp::session::Session;
 use srtp::stream::Stream;
-use tokio::sync::{mpsc, Mutex};
-use util::Conn;
 
 use crate::api::setting_engine::SettingEngine;
 use crate::dtls_transport::dtls_parameters::DTLSParameters;
+*/
 use crate::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
-use crate::error::{flatten_errs, Error, Result};
-use crate::ice_transport::ice_role::RTCIceRole;
+/*use crate::ice_transport::ice_role::RTCIceRole;
 use crate::ice_transport::ice_transport_state::RTCIceTransportState;
 use crate::ice_transport::RTCIceTransport;
 use crate::mux::endpoint::Endpoint;
 use crate::mux::mux_func::{match_dtls, match_srtcp, match_srtp, MatchFunc};
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::SSRC;
-use crate::stats::stats_collector::StatsCollector;
+use shared::error::{flatten_errs, Error, Result};*/
+/*todo:use crate::stats::stats_collector::StatsCollector;
 
 #[cfg(test)]
 mod dtls_transport_test;
 */
+
 pub mod dtls_fingerprint;
 pub mod dtls_parameters;
 pub mod dtls_role;
 pub mod dtls_transport_state;
-/*
+
 pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
     vec![
         SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm,
@@ -47,11 +43,11 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
     ]
 }
 
-pub type OnDTLSTransportStateChangeHdlrFn = Box<
-    dyn (FnMut(RTCDtlsTransportState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
+pub enum DtlsTransportEvent {
+    OnDtlsTransportStateChange(RTCDtlsTransportState),
+}
+
+/*
 
 /// DTLSTransport allows an application access to information about the DTLS
 /// transport over which RTP and RTCP packets are sent and received by

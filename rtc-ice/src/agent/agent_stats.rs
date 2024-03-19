@@ -2,6 +2,7 @@ use crate::agent::Agent;
 use std::time::Instant;
 
 use crate::candidate::{candidate_pair::CandidatePairState, CandidateType};
+use crate::network_type::NetworkType;
 
 /// Contains ICE candidate pair statistics.
 pub struct CandidatePairStats {
@@ -153,6 +154,16 @@ pub struct CandidateStats {
     /// The candidate id.
     pub id: String,
 
+    /// The type of network interface used by the base of a local candidate (the address the ICE
+    /// agent sends from). Only present for local candidates; it's not possible to know what type of
+    /// network interface a remote candidate is using.
+    ///
+    /// Note: This stat only tells you about the network interface used by the first "hop"; it's
+    /// possible that a connection will be bottlenecked by another type of network.  For example,
+    /// when using Wi-Fi tethering, the networkType of the relevant candidate would be "wifi", even
+    /// when the next hop is over a cellular connection.
+    pub network_type: NetworkType,
+
     /// The IP address of the candidate, allowing for IPv4 addresses and IPv6 addresses, but fully
     /// qualified domain names (FQDNs) are not allowed.
     pub ip: String,
@@ -187,6 +198,7 @@ impl Default for CandidateStats {
         Self {
             timestamp: Instant::now(),
             id: String::new(),
+            network_type: NetworkType::default(),
             ip: String::new(),
             port: 0,
             candidate_type: CandidateType::default(),
@@ -223,6 +235,7 @@ impl Agent {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
                 id: c.id(),
+                network_type: c.network_type(),
                 ip: c.address().to_owned(),
                 port: c.port(),
                 candidate_type: c.candidate_type(),
@@ -244,6 +257,7 @@ impl Agent {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
                 id: c.id(),
+                network_type: c.network_type(),
                 ip: c.address().to_owned(),
                 port: c.port(),
                 candidate_type: c.candidate_type(),

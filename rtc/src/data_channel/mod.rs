@@ -1,48 +1,34 @@
-#[cfg(test)]
-mod data_channel_test;
+//todo:#[cfg(test)]
+//todo:mod data_channel_test;
 
 pub mod data_channel_init;
 pub mod data_channel_message;
 pub mod data_channel_parameters;
 pub mod data_channel_state;
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, Weak};
-use std::time::SystemTime;
-
-use arc_swap::ArcSwapOption;
-use bytes::Bytes;
-use data::message::message_channel_open::ChannelType;
+/*use bytes::Bytes;
 use data_channel_message::*;
 use data_channel_parameters::*;
 use data_channel_state::RTCDataChannelState;
-use sctp::stream::OnBufferedAmountLowFn;
-use tokio::sync::{Mutex, Notify};
-use util::sync::Mutex as SyncMutex;
+use datachannel::message::message_channel_open::ChannelType;*/
+//todo:use sctp::stream::OnBufferedAmountLowFn;
 
-use crate::api::setting_engine::SettingEngine;
-use crate::error::{Error, OnErrorHdlrFn, Result};
-use crate::sctp_transport::RTCSctpTransport;
-use crate::stats::stats_collector::StatsCollector;
-use crate::stats::{DataChannelStats, StatsReportType};
+//use crate::api::setting_engine::SettingEngine;
+//TODO:use crate::sctp_transport::RTCSctpTransport;
+/*TODO:use crate::stats::stats_collector::StatsCollector;
+use crate::stats::{DataChannelStats, StatsReportType};*/
+//use shared::error::{Error, Result};
 
 /// message size limit for Chromium
 const DATA_CHANNEL_BUFFER_SIZE: u16 = u16::MAX;
 
-pub type OnMessageHdlrFn = Box<
-    dyn (FnMut(DataChannelMessage) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
+pub enum DataChannelEvent {
+    OnMessage,
+    OnOpen,
+    OnClose,
+}
 
-pub type OnOpenHdlrFn =
-    Box<dyn (FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
-
-pub type OnCloseHdlrFn =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
-
+/*
 /// DataChannel represents a WebRTC DataChannel
 /// The DataChannel interface represents a network channel
 /// which can be used for bidirectional peer-to-peer transfers of arbitrary data
@@ -553,3 +539,4 @@ impl RTCDataChannel {
         self.ready_state.store(r as u8, Ordering::SeqCst);
     }
 }
+*/

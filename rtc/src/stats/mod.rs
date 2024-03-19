@@ -1,23 +1,20 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::SystemTime;
-
 use ice::agent::agent_stats::{CandidatePairStats, CandidateStats};
 use ice::agent::Agent;
-use ice::candidate::{CandidatePairState, CandidateType};
+use ice::candidate::{candidate_pair::CandidatePairState, CandidateType};
 use ice::network_type::NetworkType;
 use serde::{Serialize, Serializer};
-use smol_str::SmolStr;
 use stats_collector::StatsCollector;
-use tokio::time::Instant;
+use std::collections::HashMap;
+use std::time::Instant;
+use std::time::SystemTime;
 
 use crate::data_channel::data_channel_state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannel;
+//TODO: use crate::data_channel::RTCDataChannel;
 use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
-use crate::sctp_transport::RTCSctpTransport;
+//TODO:use crate::sctp_transport::RTCSctpTransport;
 
 mod serialize;
 pub mod stats_collector;
@@ -265,18 +262,17 @@ pub struct ICETransportStats {
     #[serde(rename = "type")]
     pub stats_type: RTCStatsType,
     pub id: String,
-
     // Non-canon
-    pub bytes_received: usize,
-    pub bytes_sent: usize,
+    //TODO: pub bytes_received: usize,
+    //TODO: pub bytes_sent: usize,
 }
 
 impl ICETransportStats {
-    pub(crate) fn new(id: String, agent: Arc<Agent>) -> Self {
+    pub(crate) fn new(id: String, _agent: &Agent) -> Self {
         ICETransportStats {
             id,
-            bytes_received: agent.get_bytes_received(),
-            bytes_sent: agent.get_bytes_sent(),
+            //TODO: bytes_received: agent.get_bytes_received(),
+            //TODO: bytes_sent: agent.get_bytes_sent(),
             stats_type: RTCStatsType::Transport,
             timestamp: Instant::now(),
         }
@@ -368,6 +364,7 @@ pub struct DataChannelStats {
     pub state: RTCDataChannelState,
 }
 
+/*TODO:
 impl DataChannelStats {
     pub(crate) async fn from(data_channel: &RTCDataChannel) -> Self {
         let state = data_channel.ready_state();
@@ -401,6 +398,7 @@ impl DataChannelStats {
         }
     }
 }
+*/
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -421,6 +419,7 @@ pub struct PeerConnectionStats {
     pub data_channels_requested: u32,
 }
 
+/*todo:
 impl PeerConnectionStats {
     pub fn new(transport: &RTCSctpTransport, stats_id: String, data_channels_closed: u32) -> Self {
         PeerConnectionStats {
@@ -433,7 +432,7 @@ impl PeerConnectionStats {
             timestamp: Instant::now(),
         }
     }
-}
+}*/
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -460,7 +459,7 @@ pub struct InboundRTPStats {
 
     // RTCInboundRtpStreamStats
     pub track_identifier: String,
-    pub mid: SmolStr,
+    pub mid: String,
     // TODO: `remoteId`
     // NB: `framesDecoded`, `frameWidth`, frameHeight`, `framesPerSecond`, `qpSum`,
     // `totalDecodeTime`, `totalInterFrameDelay`, and `totalSquaredInterFrameDelay` are all decoder
@@ -505,9 +504,9 @@ pub struct OutboundRTPStats {
     // RTCOutboundRtpStreamStats
     // NB: non-canon in browsers this is available via `RTCMediaSourceStats` which we are unlikely to implement
     pub track_identifier: String,
-    pub mid: SmolStr,
+    pub mid: String,
     // TODO: `mediaSourceId` and `remoteId`
-    pub rid: Option<SmolStr>,
+    pub rid: Option<String>,
     pub header_bytes_sent: u64,
     // TODO: `retransmittedPacketsSent` and `retransmittedPacketsSent`
     // NB: `targetBitrate`, `totalEncodedBytesTarget`, `frameWidth` `frameHeight`, `framesPerSecond`, `framesSent`,

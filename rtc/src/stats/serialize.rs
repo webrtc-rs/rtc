@@ -8,7 +8,7 @@ pub mod instant_to_epoch_seconds {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde::{Serialize, Serializer};
-    use tokio::time::Instant;
+    use std::time::Instant;
 
     pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
     where

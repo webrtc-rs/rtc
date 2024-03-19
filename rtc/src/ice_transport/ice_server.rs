@@ -77,15 +77,6 @@ mod test {
                 },
                 true,
             ),
-            /*TODO:(ICEServer{
-                URLs:     []string{"turn:192.158.29.39?transport=udp"},
-                Username: "unittest".to_owned(),
-                Credential: OAuthCredential{
-                    MACKey:      "WmtzanB3ZW9peFhtdm42NzUzNG0=",
-                    AccessToken: "AAwg3kPHWPfvk9bDFL936wYvkoctMADzQ5VhNDgeMR3+ZlZ35byg972fW8QjpEl7bx91YLBPFsIhsxloWcXPhA==",
-                },
-                CredentialType: ICECredentialTypeOauth,
-            }, true),*/
         ];
 
         for (ice_server, expected_validate) in tests {

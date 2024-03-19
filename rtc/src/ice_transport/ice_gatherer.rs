@@ -1,19 +1,11 @@
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
 
-use arc_swap::ArcSwapOption;
 use ice::agent::Agent;
-use ice::candidate::{Candidate, CandidateType};
 use ice::url::Url;
-use tokio::sync::Mutex;
+use ice::Credentials;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::error::{Error, Result};
 use crate::ice_transport::ice_candidate::*;
-use crate::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use crate::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use crate::ice_transport::ice_parameters::RTCIceParameters;
 use crate::ice_transport::ice_server::RTCIceServer;
@@ -21,6 +13,7 @@ use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::SourceStatsType::*;
 use crate::stats::{ICECandidatePairStats, StatsReportType};
+use shared::error::{Error, Result};
 
 /// ICEGatherOptions provides options relating to the gathering of ICE candidates.
 #[derive(Default, Debug, Clone)]
@@ -29,20 +22,11 @@ pub struct RTCIceGatherOptions {
     pub ice_gather_policy: RTCIceTransportPolicy,
 }
 
-pub type OnLocalCandidateHdlrFn = Box<
-    dyn (FnMut(Option<RTCIceCandidate>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnICEGathererStateChangeHdlrFn = Box<
-    dyn (FnMut(RTCIceGathererState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-pub type OnGatheringCompleteHdlrFn =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub enum IceGathererEvent {
+    OnLocalCandidate(RTCIceCandidate),
+    OnICEGathererState(RTCIceGathererState),
+    OnGatheringComplete,
+}
 
 /// ICEGatherer gathers local host, server reflexive and relay
 /// candidates, as well as enabling the retrieval of local Interactive
@@ -52,41 +36,34 @@ pub type OnGatheringCompleteHdlrFn =
 pub struct RTCIceGatherer {
     pub(crate) validated_servers: Vec<Url>,
     pub(crate) gather_policy: RTCIceTransportPolicy,
-    pub(crate) setting_engine: Arc<SettingEngine>,
+    pub(crate) setting_engine: SettingEngine,
 
-    pub(crate) state: Arc<AtomicU8>, //ICEGathererState,
-    pub(crate) agent: Mutex<Option<Arc<ice::agent::Agent>>>,
+    pub(crate) state: RTCIceGathererState,
+    pub(crate) events: VecDeque<IceGathererEvent>,
 
-    pub(crate) on_local_candidate_handler: Arc<ArcSwapOption<Mutex<OnLocalCandidateHdlrFn>>>,
-    pub(crate) on_state_change_handler: Arc<ArcSwapOption<Mutex<OnICEGathererStateChangeHdlrFn>>>,
-
-    // Used for gathering_complete_promise
-    pub(crate) on_gathering_complete_handler: Arc<ArcSwapOption<Mutex<OnGatheringCompleteHdlrFn>>>,
+    pub(crate) agent: Option<Agent>,
 }
 
 impl RTCIceGatherer {
     pub(crate) fn new(
         validated_servers: Vec<Url>,
         gather_policy: RTCIceTransportPolicy,
-        setting_engine: Arc<SettingEngine>,
+        setting_engine: SettingEngine,
     ) -> Self {
         RTCIceGatherer {
             gather_policy,
             validated_servers,
             setting_engine,
-            state: Arc::new(AtomicU8::new(RTCIceGathererState::New as u8)),
-            ..Default::default()
+
+            state: RTCIceGathererState::New,
+            events: VecDeque::new(),
+
+            agent: None,
         }
     }
 
-    pub(crate) async fn create_agent(&self) -> Result<()> {
-        // NOTE: A lock is held for the duration of this function in order to
-        // avoid potential double-agent creations. Care should be taken to
-        // ensure we do not do anything expensive other than the actual agent
-        // creation in this function.
-        let mut agent = self.agent.lock().await;
-
-        if agent.is_some() || self.state() != RTCIceGathererState::New {
+    pub(crate) fn create_agent(&mut self) -> Result<()> {
+        if self.agent.is_some() || self.state() != RTCIceGathererState::New {
             return Ok(());
         }
 
@@ -97,16 +74,16 @@ impl RTCIceGatherer {
             candidate_types.push(ice::candidate::CandidateType::Relay);
         }
 
-        let nat_1to1_cand_type = match self.setting_engine.candidates.nat_1to1_ip_candidate_type {
+        /*let nat_1to1_cand_type = match self.setting_engine.candidates.nat_1to1_ip_candidate_type {
             RTCIceCandidateType::Host => CandidateType::Host,
             RTCIceCandidateType::Srflx => CandidateType::ServerReflexive,
             _ => CandidateType::Unspecified,
-        };
+        };*/
 
-        let mdns_mode = self.setting_engine.candidates.multicast_dns_mode;
+        //TOOD: let mdns_mode = self.setting_engine.candidates.multicast_dns_mode;
 
-        let mut config = ice::agent::agent_config::AgentConfig {
-            udp_network: self.setting_engine.udp_network.clone(),
+        let config = ice::agent::agent_config::AgentConfig {
+            //TODO: udp_network: self.setting_engine.udp_network.clone(),
             lite: self.setting_engine.candidates.ice_lite,
             urls: self.validated_servers.clone(),
             disconnected_timeout: self.setting_engine.timeout.ice_disconnected_timeout,
@@ -117,7 +94,7 @@ impl RTCIceGatherer {
             srflx_acceptance_min_wait: self.setting_engine.timeout.ice_srflx_acceptance_min_wait,
             prflx_acceptance_min_wait: self.setting_engine.timeout.ice_prflx_acceptance_min_wait,
             relay_acceptance_min_wait: self.setting_engine.timeout.ice_relay_acceptance_min_wait,
-            interface_filter: self.setting_engine.candidates.interface_filter.clone(),
+            /*TODO: interface_filter: self.setting_engine.candidates.interface_filter.clone(),
             ip_filter: self.setting_engine.candidates.ip_filter.clone(),
             nat_1to1_ips: self.setting_engine.candidates.nat_1to1_ips.clone(),
             nat_1to1_ip_candidate_type: nat_1to1_cand_type,
@@ -127,30 +104,28 @@ impl RTCIceGatherer {
                 .setting_engine
                 .candidates
                 .multicast_dns_host_name
-                .clone(),
+                .clone(),*/
             local_ufrag: self.setting_engine.candidates.username_fragment.clone(),
             local_pwd: self.setting_engine.candidates.password.clone(),
-            //TODO: TCPMux:                 self.setting_engine.iceTCPMux,
-            //TODO: ProxyDialer:            self.setting_engine.iceProxyDialer,
             ..Default::default()
         };
 
-        let requested_network_types = if self.setting_engine.candidates.ice_network_types.is_empty()
+        /*TODO: let requested_network_types = if self.setting_engine.candidates.ice_network_types.is_empty()
         {
             ice::network_type::supported_network_types()
         } else {
             self.setting_engine.candidates.ice_network_types.clone()
         };
 
-        config.network_types.extend(requested_network_types);
+        config.network_types.extend(requested_network_types);*/
 
-        *agent = Some(Arc::new(ice::agent::Agent::new(config).await?));
+        self.agent = Some(Agent::new(config)?);
 
         Ok(())
     }
 
-    /// Gather ICE candidates.
-    pub async fn gather(&self) -> Result<()> {
+    /*TODO:/// Gather ICE candidates.
+    pub fn gather(&self) -> Result<()> {
         self.create_agent().await?;
         self.set_state(RTCIceGathererState::Gathering).await;
 
@@ -199,111 +174,84 @@ impl RTCIceGatherer {
 
             agent.gather_candidates()?;
         }
-
         Ok(())
-    }
+    }*/
 
     /// Close prunes all local candidates, and closes the ports.
-    pub async fn close(&self) -> Result<()> {
-        self.set_state(RTCIceGathererState::Closed).await;
-
-        let agent = {
-            let mut agent_opt = self.agent.lock().await;
-            agent_opt.take()
-        };
-
-        if let Some(agent) = agent {
-            agent.close().await?;
+    pub fn close(&mut self) -> Result<()> {
+        self.set_state(RTCIceGathererState::Closed);
+        if let Some(mut agent) = self.agent.take() {
+            agent.close()?;
         }
-
         Ok(())
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.
-    pub async fn get_local_parameters(&self) -> Result<RTCIceParameters> {
-        self.create_agent().await?;
+    pub fn get_local_parameters(&mut self) -> Result<RTCIceParameters> {
+        self.create_agent()?;
 
-        let (frag, pwd) = if let Some(agent) = self.get_agent().await {
-            agent.get_local_user_credentials().await
+        let Credentials { ufrag, pwd } = if let Some(agent) = self.get_agent() {
+            agent.get_local_credentials()
         } else {
             return Err(Error::ErrICEAgentNotExist);
         };
 
         Ok(RTCIceParameters {
-            username_fragment: frag,
-            password: pwd,
+            username_fragment: ufrag.to_string(),
+            password: pwd.to_string(),
             ice_lite: false,
         })
     }
 
     /// get_local_candidates returns the sequence of valid local candidates associated with the ICEGatherer.
-    pub async fn get_local_candidates(&self) -> Result<Vec<RTCIceCandidate>> {
-        self.create_agent().await?;
+    pub fn get_local_candidates(&mut self) -> Result<Vec<RTCIceCandidate>> {
+        self.create_agent()?;
 
-        let ice_candidates = if let Some(agent) = self.get_agent().await {
-            agent.get_local_candidates().await?
+        let ice_candidates = if let Some(agent) = self.get_agent() {
+            agent.get_local_candidates()
         } else {
             return Err(Error::ErrICEAgentNotExist);
         };
 
-        Ok(rtc_ice_candidates_from_ice_candidates(&ice_candidates))
-    }
-
-    /// on_local_candidate sets an event handler which fires when a new local ICE candidate is available
-    /// Take note that the handler is gonna be called with a nil pointer when gathering is finished.
-    pub fn on_local_candidate(&self, f: OnLocalCandidateHdlrFn) {
-        self.on_local_candidate_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    /// on_state_change sets an event handler which fires any time the ICEGatherer changes
-    pub fn on_state_change(&self, f: OnICEGathererStateChangeHdlrFn) {
-        self.on_state_change_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    /// on_gathering_complete sets an event handler which fires any time the ICEGatherer changes
-    pub fn on_gathering_complete(&self, f: OnGatheringCompleteHdlrFn) {
-        self.on_gathering_complete_handler
-            .store(Some(Arc::new(Mutex::new(f))));
+        Ok(rtc_ice_candidates_from_ice_candidates(ice_candidates))
     }
 
     /// State indicates the current state of the ICE gatherer.
     pub fn state(&self) -> RTCIceGathererState {
-        self.state.load(Ordering::SeqCst).into()
+        self.state
     }
 
-    pub async fn set_state(&self, s: RTCIceGathererState) {
-        self.state.store(s as u8, Ordering::SeqCst);
-
-        if let Some(handler) = &*self.on_state_change_handler.load() {
-            let mut f = handler.lock().await;
-            f(s).await;
-        }
+    pub fn set_state(&mut self, s: RTCIceGathererState) {
+        self.state = s;
+        self.events
+            .push_back(IceGathererEvent::OnICEGathererState(s));
     }
 
-    pub(crate) async fn get_agent(&self) -> Option<Arc<Agent>> {
-        let agent = self.agent.lock().await;
-        agent.clone()
+    pub(crate) fn get_agent(&self) -> Option<&Agent> {
+        self.agent.as_ref()
     }
 
-    pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
-        if let Some(agent) = self.get_agent().await {
+    pub(crate) fn get_mut_agent(&mut self) -> Option<&mut Agent> {
+        self.agent.as_mut()
+    }
+
+    pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
+        if let Some(agent) = self.get_agent() {
             let mut reports = HashMap::new();
 
-            for stats in agent.get_candidate_pairs_stats().await {
+            for stats in agent.get_candidate_pairs_stats() {
                 let stats: ICECandidatePairStats = stats.into();
                 reports.insert(stats.id.clone(), StatsReportType::CandidatePair(stats));
             }
 
-            for stats in agent.get_local_candidates_stats().await {
+            for stats in agent.get_local_candidates_stats() {
                 reports.insert(
                     stats.id.clone(),
                     StatsReportType::from(LocalCandidate(stats)),
                 );
             }
 
-            for stats in agent.get_remote_candidates_stats().await {
+            for stats in agent.get_remote_candidates_stats() {
                 reports.insert(
                     stats.id.clone(),
                     StatsReportType::from(RemoteCandidate(stats)),
@@ -315,7 +263,7 @@ impl RTCIceGatherer {
     }
 }
 
-#[cfg(test)]
+/*TODO: #[cfg(test)]
 mod test {
     use tokio::sync::mpsc;
 
@@ -324,8 +272,8 @@ mod test {
     use crate::ice_transport::ice_gatherer::RTCIceGatherOptions;
     use crate::ice_transport::ice_server::RTCIceServer;
 
-    #[tokio::test]
-    async fn test_new_ice_gatherer_success() -> Result<()> {
+    #[test]
+    fn test_new_ice_gatherer_success() -> Result<()> {
         let opts = RTCIceGatherOptions {
             ice_servers: vec![RTCIceServer {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -407,3 +355,4 @@ mod test {
         Ok(())
     }
 }
+*/

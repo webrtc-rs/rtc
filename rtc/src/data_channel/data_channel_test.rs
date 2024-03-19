@@ -1310,7 +1310,7 @@ impl TestOrtcStack {
             RTCIceRole::Controlled
         };
 
-        self.ice.set_remote_candidates(&sig.ice_candidates).await?;
+        self.ice.add_remote_candidates(&sig.ice_candidates).await?;
 
         // Start the ICE transport
         self.ice.start(&sig.ice_parameters, Some(ice_role)).await?;

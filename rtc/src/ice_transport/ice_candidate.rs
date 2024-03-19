@@ -1,17 +1,13 @@
-use std::fmt;
-use std::sync::Arc;
-
-use ice::candidate::candidate_base::CandidateBaseConfig;
+use crate::ice_transport::ice_candidate_type::RTCIceCandidateType;
+use crate::ice_transport::ice_protocol::RTCIceProtocol;
 use ice::candidate::candidate_host::CandidateHostConfig;
 use ice::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use ice::candidate::candidate_relay::CandidateRelayConfig;
 use ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
-use ice::candidate::Candidate;
+use ice::candidate::{Candidate, CandidateConfig};
 use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
-use crate::ice_transport::ice_candidate_type::RTCIceCandidateType;
-use crate::ice_transport::ice_protocol::RTCIceProtocol;
+use shared::error::{Error, Result};
+use std::fmt;
 
 /// ICECandidate represents a ice candidate
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,13 +27,13 @@ pub struct RTCIceCandidate {
 
 /// Conversion for ice_candidates
 pub(crate) fn rtc_ice_candidates_from_ice_candidates(
-    ice_candidates: &[Arc<dyn Candidate + Send + Sync>],
+    ice_candidates: &[Candidate],
 ) -> Vec<RTCIceCandidate> {
     ice_candidates.iter().map(|c| c.into()).collect()
 }
 
-impl From<&Arc<dyn Candidate + Send + Sync>> for RTCIceCandidate {
-    fn from(c: &Arc<dyn Candidate + Send + Sync>) -> Self {
+impl From<&Candidate> for RTCIceCandidate {
+    fn from(c: &Candidate) -> Self {
         let typ: RTCIceCandidateType = c.candidate_type().into();
         let protocol = RTCIceProtocol::from(c.network_type().network_short().as_str());
         let (related_address, related_port) = if let Some(ra) = c.related_address() {
@@ -50,7 +46,7 @@ impl From<&Arc<dyn Candidate + Send + Sync>> for RTCIceCandidate {
             stats_id: c.id(),
             foundation: c.foundation(),
             priority: c.priority(),
-            address: c.address(),
+            address: c.address().to_string(),
             protocol,
             port: c.port(),
             component: c.component(),
@@ -63,21 +59,19 @@ impl From<&Arc<dyn Candidate + Send + Sync>> for RTCIceCandidate {
 }
 
 impl RTCIceCandidate {
-    pub(crate) fn to_ice(&self) -> Result<impl Candidate> {
+    pub(crate) fn to_ice(&self) -> Result<Candidate> {
         let candidate_id = self.stats_id.clone();
         let c = match self.typ {
             RTCIceCandidateType::Host => {
                 let config = CandidateHostConfig {
-                    base_config: CandidateBaseConfig {
+                    base_config: CandidateConfig {
                         candidate_id,
                         network: self.protocol.to_string(),
                         address: self.address.clone(),
                         port: self.port,
                         component: self.component,
-                        //tcp_type: ice.NewTCPType(c.TCPType),
                         foundation: self.foundation.clone(),
                         priority: self.priority,
-                        ..Default::default()
                     },
                     ..Default::default()
                 };
@@ -85,7 +79,7 @@ impl RTCIceCandidate {
             }
             RTCIceCandidateType::Srflx => {
                 let config = CandidateServerReflexiveConfig {
-                    base_config: CandidateBaseConfig {
+                    base_config: CandidateConfig {
                         candidate_id,
                         network: self.protocol.to_string(),
                         address: self.address.clone(),
@@ -93,7 +87,6 @@ impl RTCIceCandidate {
                         component: self.component,
                         foundation: self.foundation.clone(),
                         priority: self.priority,
-                        ..Default::default()
                     },
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
@@ -102,7 +95,7 @@ impl RTCIceCandidate {
             }
             RTCIceCandidateType::Prflx => {
                 let config = CandidatePeerReflexiveConfig {
-                    base_config: CandidateBaseConfig {
+                    base_config: CandidateConfig {
                         candidate_id,
                         network: self.protocol.to_string(),
                         address: self.address.clone(),
@@ -110,7 +103,6 @@ impl RTCIceCandidate {
                         component: self.component,
                         foundation: self.foundation.clone(),
                         priority: self.priority,
-                        ..Default::default()
                     },
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
@@ -119,7 +111,7 @@ impl RTCIceCandidate {
             }
             RTCIceCandidateType::Relay => {
                 let config = CandidateRelayConfig {
-                    base_config: CandidateBaseConfig {
+                    base_config: CandidateConfig {
                         candidate_id,
                         network: self.protocol.to_string(),
                         address: self.address.clone(),
@@ -127,11 +119,9 @@ impl RTCIceCandidate {
                         component: self.component,
                         foundation: self.foundation.clone(),
                         priority: self.priority,
-                        ..Default::default()
                     },
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
-                    relay_client: None, //TODO?
                 };
                 config.new_candidate_relay()?
             }
