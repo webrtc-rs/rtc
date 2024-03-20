@@ -9,7 +9,6 @@ pub mod api;
 pub mod data_channel;
 pub mod dtls_transport;
 pub mod ice_transport;
-/*pub mod mux;*/
 pub mod peer_connection;
 pub mod rtp_transceiver;
 pub mod sctp_transport;
