@@ -10,9 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::math_rand_alpha;
+use crate::stats::stats_collector::StatsCollector;
+use crate::stats::{CertificateStats, StatsReportType};
 use shared::error::{Error, Result};
-/*TODO:use crate::stats::stats_collector::StatsCollector;
-use crate::stats::{CertificateStats, StatsReportType};*/
 
 /// Certificate represents a X.509 certificate used to authenticate WebRTC communications.
 #[derive(Clone, Debug)]
@@ -205,7 +205,7 @@ impl RTCCertificate {
         fingerprints
     }
 
-    /*TODO:pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
+    pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
         if let Some(fingerprint) = self.get_fingerprints().into_iter().next() {
             let stats = CertificateStats::new(self, fingerprint);
             collector.insert(
@@ -213,7 +213,7 @@ impl RTCCertificate {
                 StatsReportType::CertificateStats(stats),
             );
         }
-    }*/
+    }
 }
 
 fn gen_stats_id() -> String {

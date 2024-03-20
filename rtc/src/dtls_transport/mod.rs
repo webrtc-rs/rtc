@@ -1,35 +1,30 @@
-/*TODO: use std::collections::HashMap;
+use std::collections::{/*HashMap,*/ VecDeque};
 
 use bytes::Bytes;
-use dtls::config::ClientAuthType;
-use dtls::conn::DTLSConn;*/
+//use dtls::config::ClientAuthType;
+//use dtls::conn::DTLSConn;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
-/*
 use dtls_role::*;
-use interceptor::stream_info::StreamInfo;
-use interceptor::{Interceptor, RTCPReader, RTPReader};
+//use interceptor::stream_info::StreamInfo;
+//use interceptor::{Interceptor, RTCPReader, RTPReader};
 use sha2::{Digest, Sha256};
 use srtp::protection_profile::ProtectionProfile;
-use srtp::session::Session;
-use srtp::stream::Stream;
+//use srtp::session::Session;
+//use srtp::stream::Stream;
 
 use crate::api::setting_engine::SettingEngine;
 use crate::dtls_transport::dtls_parameters::DTLSParameters;
-*/
 use crate::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
 /*use crate::ice_transport::ice_role::RTCIceRole;
 use crate::ice_transport::ice_transport_state::RTCIceTransportState;
-use crate::ice_transport::RTCIceTransport;
-use crate::mux::endpoint::Endpoint;
-use crate::mux::mux_func::{match_dtls, match_srtcp, match_srtp, MatchFunc};
+use crate::ice_transport::RTCIceTransport;*/
 use crate::peer_connection::certificate::RTCCertificate;
-use crate::rtp_transceiver::SSRC;
-use shared::error::{flatten_errs, Error, Result};*/
-/*todo:use crate::stats::stats_collector::StatsCollector;
+//use crate::rtp_transceiver::SSRC;
+use crate::stats::stats_collector::StatsCollector;
+use shared::error::{Error, Result};
 
-#[cfg(test)]
-mod dtls_transport_test;
-*/
+//TODO:#[cfg(test)]
+//TODO:mod dtls_transport_test;
 
 pub mod dtls_fingerprint;
 pub mod dtls_parameters;
@@ -47,94 +42,52 @@ pub enum DtlsTransportEvent {
     OnDtlsTransportStateChange(RTCDtlsTransportState),
 }
 
-/*
-
 /// DTLSTransport allows an application access to information about the DTLS
 /// transport over which RTP and RTCP packets are sent and received by
 /// RTPSender and RTPReceiver, as well other data such as SCTP packets sent
 /// and received by data channels.
 #[derive(Default)]
 pub struct RTCDtlsTransport {
-    pub(crate) ice_transport: Arc<RTCIceTransport>,
     pub(crate) certificates: Vec<RTCCertificate>,
-    pub(crate) setting_engine: Arc<SettingEngine>,
-
-    pub(crate) remote_parameters: Mutex<DTLSParameters>,
-    pub(crate) remote_certificate: Mutex<Bytes>,
-    pub(crate) state: AtomicU8, //DTLSTransportState,
-    pub(crate) srtp_protection_profile: Mutex<ProtectionProfile>,
-    pub(crate) on_state_change_handler: ArcSwapOption<Mutex<OnDTLSTransportStateChangeHdlrFn>>,
-    pub(crate) conn: Mutex<Option<Arc<DTLSConn>>>,
-
-    pub(crate) srtp_session: Mutex<Option<Arc<Session>>>,
+    pub(crate) setting_engine: SettingEngine,
+    pub(crate) remote_parameters: DTLSParameters,
+    pub(crate) remote_certificate: Bytes,
+    pub(crate) state: RTCDtlsTransportState,
+    pub(crate) events: VecDeque<DtlsTransportEvent>,
+    pub(crate) srtp_protection_profile: ProtectionProfile,
+    /*TODO:pub(crate) srtp_session: Mutex<Option<Arc<Session>>>,
     pub(crate) srtcp_session: Mutex<Option<Arc<Session>>>,
     pub(crate) srtp_endpoint: Mutex<Option<Arc<Endpoint>>>,
     pub(crate) srtcp_endpoint: Mutex<Option<Arc<Endpoint>>>,
-
-    pub(crate) simulcast_streams: Mutex<HashMap<SSRC, Arc<Stream>>>,
-
-    pub(crate) srtp_ready_signal: Arc<AtomicBool>,
-    pub(crate) srtp_ready_tx: Mutex<Option<mpsc::Sender<()>>>,
-    pub(crate) srtp_ready_rx: Mutex<Option<mpsc::Receiver<()>>>,
-
-    pub(crate) dtls_matcher: Option<MatchFunc>,
+    pub(crate) simulcast_streams: Mutex<HashMap<SSRC, Arc<Stream>>>,*/
 }
 
 impl RTCDtlsTransport {
-    pub(crate) fn new(
-        ice_transport: Arc<RTCIceTransport>,
-        certificates: Vec<RTCCertificate>,
-        setting_engine: Arc<SettingEngine>,
-    ) -> Self {
-        let (srtp_ready_tx, srtp_ready_rx) = mpsc::channel(1);
+    pub(crate) fn new(certificates: Vec<RTCCertificate>, setting_engine: SettingEngine) -> Self {
         RTCDtlsTransport {
-            ice_transport,
             certificates,
             setting_engine,
-            srtp_ready_signal: Arc::new(AtomicBool::new(false)),
-            srtp_ready_tx: Mutex::new(Some(srtp_ready_tx)),
-            srtp_ready_rx: Mutex::new(Some(srtp_ready_rx)),
-            state: AtomicU8::new(RTCDtlsTransportState::New as u8),
-            dtls_matcher: Some(Box::new(match_dtls)),
+            state: RTCDtlsTransportState::New,
+            events: VecDeque::new(),
             ..Default::default()
         }
     }
 
-    pub(crate) async fn conn(&self) -> Option<Arc<DTLSConn>> {
-        let conn = self.conn.lock().await;
-        conn.clone()
-    }
-
-    /// returns the currently-configured ICETransport or None
-    /// if one has not been configured
-    pub fn ice_transport(&self) -> &RTCIceTransport {
-        &self.ice_transport
-    }
-
     /// state_change requires the caller holds the lock
-    async fn state_change(&self, state: RTCDtlsTransportState) {
-        self.state.store(state as u8, Ordering::SeqCst);
-        if let Some(handler) = &*self.on_state_change_handler.load() {
-            let mut f = handler.lock().await;
-            f(state).await;
-        }
-    }
-
-    /// on_state_change sets a handler that is fired when the DTLS
-    /// connection state changes.
-    pub fn on_state_change(&self, f: OnDTLSTransportStateChangeHdlrFn) {
-        self.on_state_change_handler
-            .store(Some(Arc::new(Mutex::new(f))));
+    fn state_change(&mut self, state: RTCDtlsTransportState) {
+        self.state = state;
+        self.events
+            .push_back(DtlsTransportEvent::OnDtlsTransportStateChange(state));
     }
 
     /// state returns the current dtls_transport transport state.
     pub fn state(&self) -> RTCDtlsTransportState {
-        self.state.load(Ordering::SeqCst).into()
+        self.state
     }
 
     /// write_rtcp sends a user provided RTCP packet to the connected peer. If no peer is connected the
     /// packet is discarded.
-    pub async fn write_rtcp(
+    /*TODO: pub async fn write_rtcp(
         &self,
         pkts: &[Box<dyn rtcp::packet::Packet + Send + Sync>],
     ) -> Result<usize> {
@@ -145,7 +98,7 @@ impl RTCDtlsTransport {
         } else {
             Ok(0)
         }
-    }
+    }*/
 
     /// get_local_parameters returns the DTLS parameters of the local DTLSTransport upon construction.
     pub fn get_local_parameters(&self) -> Result<DTLSParameters> {
@@ -163,12 +116,11 @@ impl RTCDtlsTransport {
 
     /// get_remote_certificate returns the certificate chain in use by the remote side
     /// returns an empty list prior to selection of the remote certificate
-    pub async fn get_remote_certificate(&self) -> Bytes {
-        let remote_certificate = self.remote_certificate.lock().await;
-        remote_certificate.clone()
+    pub fn get_remote_certificate(&self) -> &Bytes {
+        &self.remote_certificate
     }
 
-    pub(crate) async fn start_srtp(&self) -> Result<()> {
+    /*TODO: pub(crate) fn start_srtp(&self) -> Result<()> {
         let profile = {
             let srtp_protection_profile = self.srtp_protection_profile.lock().await;
             *srtp_protection_profile
@@ -274,18 +226,15 @@ impl RTCDtlsTransport {
     pub(crate) async fn get_srtcp_session(&self) -> Option<Arc<Session>> {
         let srtcp_session = self.srtcp_session.lock().await;
         srtcp_session.clone()
-    }
+    }*/
 
-    pub(crate) async fn role(&self) -> DTLSRole {
+    pub(crate) fn role(&self) -> DTLSRole {
         // If remote has an explicit role use the inverse
-        {
-            let remote_parameters = self.remote_parameters.lock().await;
-            match remote_parameters.role {
-                DTLSRole::Client => return DTLSRole::Server,
-                DTLSRole::Server => return DTLSRole::Client,
-                _ => {}
-            };
-        }
+        match self.remote_parameters.role {
+            DTLSRole::Client => return DTLSRole::Server,
+            DTLSRole::Server => return DTLSRole::Client,
+            _ => {}
+        };
 
         // If SettingEngine has an explicit role
         match self.setting_engine.answering_dtls_role {
@@ -295,20 +244,20 @@ impl RTCDtlsTransport {
         };
 
         // Remote was auto and no explicit role was configured via SettingEngine
-        if self.ice_transport.role().await == RTCIceRole::Controlling {
+        /*todo:if self.ice_transport.role().await == RTCIceRole::Controlling {
             return DTLSRole::Server;
-        }
+        }*/
 
         DEFAULT_DTLS_ROLE_ANSWER
     }
 
-    pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
+    pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
         for cert in &self.certificates {
-            cert.collect_stats(collector).await;
+            cert.collect_stats(collector);
         }
     }
 
-    async fn prepare_transport(
+    /*todo:async fn prepare_transport(
         &self,
         remote_parameters: DTLSParameters,
     ) -> Result<(DTLSRole, dtls::config::Config)> {
@@ -460,81 +409,17 @@ impl RTCDtlsTransport {
         self.state_change(RTCDtlsTransportState::Connected).await;
 
         self.start_srtp().await
-    }
+    }*/
 
     /// stops and closes the DTLSTransport object.
-    pub async fn stop(&self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         // Try closing everything and collect the errors
-        let mut close_errs: Vec<Error> = vec![];
-        {
-            let srtp_session = {
-                let mut srtp_session = self.srtp_session.lock().await;
-                srtp_session.take()
-            };
-            if let Some(srtp_session) = srtp_session {
-                match srtp_session.close().await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        close_errs.push(err.into());
-                    }
-                };
-            }
-        }
-
-        {
-            let srtcp_session = {
-                let mut srtcp_session = self.srtcp_session.lock().await;
-                srtcp_session.take()
-            };
-            if let Some(srtcp_session) = srtcp_session {
-                match srtcp_session.close().await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        close_errs.push(err.into());
-                    }
-                };
-            }
-        }
-
-        {
-            let simulcast_streams: Vec<Arc<Stream>> = {
-                let mut simulcast_streams = self.simulcast_streams.lock().await;
-                simulcast_streams.drain().map(|(_, v)| v).collect()
-            };
-            for ss in simulcast_streams {
-                match ss.close().await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        close_errs.push(Error::new(format!(
-                            "simulcast_streams ssrc={}: {}",
-                            ss.get_ssrc(),
-                            err
-                        )));
-                    }
-                };
-            }
-        }
-
-        if let Some(conn) = self.conn().await {
-            // dtls_transport connection may be closed on sctp close.
-            match conn.close().await {
-                Ok(_) => {}
-                Err(err) => {
-                    if err.to_string() != dtls::Error::ErrConnClosed.to_string() {
-                        close_errs.push(err.into());
-                    }
-                }
-            }
-        }
-
-        self.state_change(RTCDtlsTransportState::Closed).await;
-
-        flatten_errs(close_errs)
+        self.state_change(RTCDtlsTransportState::Closed);
+        Ok(())
     }
 
-    pub(crate) async fn validate_fingerprint(&self, remote_cert: &[u8]) -> Result<()> {
-        let remote_parameters = self.remote_parameters.lock().await;
-        for fp in &remote_parameters.fingerprints {
+    pub(crate) fn validate_fingerprint(&self, remote_cert: &[u8]) -> Result<()> {
+        for fp in &self.remote_parameters.fingerprints {
             if fp.algorithm != "sha-256" {
                 return Err(Error::ErrUnsupportedFingerprintAlgorithm);
             }
@@ -552,62 +437,4 @@ impl RTCDtlsTransport {
 
         Err(Error::ErrNoMatchingCertificateFingerprint)
     }
-
-    pub(crate) fn ensure_ice_conn(&self) -> Result<()> {
-        if self.ice_transport.state() == RTCIceTransportState::New {
-            Err(Error::ErrICEConnectionNotStarted)
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(crate) async fn store_simulcast_stream(&self, ssrc: SSRC, stream: Arc<Stream>) {
-        let mut simulcast_streams = self.simulcast_streams.lock().await;
-        simulcast_streams.insert(ssrc, stream);
-    }
-
-    pub(crate) async fn remove_simulcast_stream(&self, ssrc: SSRC) {
-        let mut simulcast_streams = self.simulcast_streams.lock().await;
-        simulcast_streams.remove(&ssrc);
-    }
-
-    pub(crate) async fn streams_for_ssrc(
-        &self,
-        ssrc: SSRC,
-        stream_info: &StreamInfo,
-        interceptor: &Arc<dyn Interceptor + Send + Sync>,
-    ) -> Result<(
-        Arc<srtp::stream::Stream>,
-        Arc<dyn RTPReader + Send + Sync>,
-        Arc<srtp::stream::Stream>,
-        Arc<dyn RTCPReader + Send + Sync>,
-    )> {
-        let srtp_session = self
-            .get_srtp_session()
-            .await
-            .ok_or(Error::ErrDtlsTransportNotStarted)?;
-        //log::debug!("streams_for_ssrc: srtp_session.listen ssrc={}", ssrc);
-        let rtp_read_stream = srtp_session.open(ssrc).await;
-        let rtp_stream_reader = Arc::clone(&rtp_read_stream) as Arc<dyn RTPReader + Send + Sync>;
-        let rtp_interceptor = interceptor
-            .bind_remote_stream(stream_info, rtp_stream_reader)
-            .await;
-
-        let srtcp_session = self
-            .get_srtcp_session()
-            .await
-            .ok_or(Error::ErrDtlsTransportNotStarted)?;
-        //log::debug!("streams_for_ssrc: srtcp_session.listen ssrc={}", ssrc);
-        let rtcp_read_stream = srtcp_session.open(ssrc).await;
-        let rtcp_stream_reader = Arc::clone(&rtcp_read_stream) as Arc<dyn RTCPReader + Send + Sync>;
-        let rtcp_interceptor = interceptor.bind_rtcp_reader(rtcp_stream_reader).await;
-
-        Ok((
-            rtp_read_stream,
-            rtp_interceptor,
-            rtcp_read_stream,
-            rtcp_interceptor,
-        ))
-    }
 }
-*/
