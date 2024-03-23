@@ -162,11 +162,11 @@ async fn main() -> Result<(), Error> {
 
     let port = if cli.controlling { 4000 } else { 4001 };
     let udp_socket = UdpSocket::bind(("0.0.0.0", port)).await?;
-    let mut ice_agent = Agent::new(AgentConfig {
+    let mut ice_agent = Agent::new(Arc::new(AgentConfig {
         disconnected_timeout: Some(Duration::from_secs(5)),
         failed_timeout: Some(Duration::from_secs(5)),
         ..Default::default()
-    })?;
+    }))?;
 
     let client = Arc::new(Client::new());
 

@@ -120,7 +120,7 @@ impl RTCIceGatherer {
 
         config.network_types.extend(requested_network_types);*/
 
-        self.agent = Some(Agent::new(config)?);
+        self.agent = Some(Agent::new(Arc::new(config))?);
 
         Ok(())
     }

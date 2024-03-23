@@ -10,6 +10,7 @@ use bytes::BytesMut;
 use log::{debug, error, info, trace, warn};
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
 use stun::fingerprint::*;
@@ -139,7 +140,7 @@ pub struct Agent {
 
 impl Agent {
     /// Creates a new Agent.
-    pub fn new(config: AgentConfig) -> Result<Self> {
+    pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
         let candidate_types = if config.candidate_types.is_empty() {
             default_candidate_types()
         } else {
@@ -260,7 +261,8 @@ impl Agent {
         };
 
         // Restart is also used to initialize the agent for the first time
-        if let Err(err) = agent.restart(config.local_ufrag, config.local_pwd, false) {
+        if let Err(err) = agent.restart(config.local_ufrag.clone(), config.local_pwd.clone(), false)
+        {
             let _ = agent.close();
             return Err(err);
         }

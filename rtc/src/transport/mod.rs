@@ -1,53 +1,54 @@
-use crate::transport::candidate::Candidate;
 use crate::transport::data_channel::RTCDataChannel;
 use retty::transport::{FiveTuple, FourTuple};
 use sctp::{Association, AssociationHandle};
+use shared::error::Result;
 use srtp::context::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub mod candidate;
 pub mod data_channel;
 pub mod dtls_transport;
 pub mod ice_transport;
 pub mod sctp_transport;
 
 pub struct RTCTransport {
-    five_tuple: FiveTuple,
-    last_activity: Instant,
+    pub(crate) last_activity: Instant,
+
+    pub(crate) five_tuple: FiveTuple,
 
     // ICE
-    candidate: Candidate,
+    pub(crate) ice_agent: ice::Agent,
 
     // DTLS
-    dtls_endpoint: dtls::endpoint::Endpoint,
+    pub(crate) dtls_endpoint: dtls::endpoint::Endpoint,
 
     // SCTP
-    sctp_endpoint: sctp::Endpoint,
-    sctp_associations: HashMap<AssociationHandle, Association>,
+    pub(crate) sctp_endpoint: sctp::Endpoint,
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // DataChannel
-    data_channels: HashMap<AssociationHandle, RTCDataChannel>,
+    pub(crate) data_channels: HashMap<AssociationHandle, RTCDataChannel>,
 
     // SRTP
-    local_srtp_context: Option<Context>,
-    remote_srtp_context: Option<Context>,
+    pub(crate) local_srtp_context: Option<Context>,
+    pub(crate) remote_srtp_context: Option<Context>,
 }
 
 impl RTCTransport {
     pub fn new(
         five_tuple: FiveTuple,
-        candidate: Candidate,
+        ice_agent_config: Arc<ice::AgentConfig>,
         dtls_handshake_config: Arc<dtls::config::HandshakeConfig>,
         sctp_endpoint_config: Arc<sctp::EndpointConfig>,
         sctp_server_config: Arc<sctp::ServerConfig>,
-    ) -> Self {
-        Self {
-            five_tuple,
+    ) -> Result<Self> {
+        Ok(Self {
             last_activity: Instant::now(),
 
-            candidate,
+            five_tuple,
+
+            ice_agent: ice::Agent::new(ice_agent_config)?,
 
             dtls_endpoint: dtls::endpoint::Endpoint::new(
                 five_tuple.local_addr,
@@ -66,47 +67,49 @@ impl RTCTransport {
 
             local_srtp_context: None,
             remote_srtp_context: None,
-        }
+        })
     }
 
-    pub(crate) fn four_tuple(&self) -> FourTuple {
+    pub fn four_tuple(&self) -> FourTuple {
         FourTuple {
             local_addr: self.five_tuple.local_addr,
             peer_addr: self.five_tuple.peer_addr,
         }
     }
 
-    pub(crate) fn five_tuple(&self) -> FiveTuple {
+    pub fn five_tuple(&self) -> FiveTuple {
         self.five_tuple
     }
 
-    pub(crate) fn candidate(&self) -> &Candidate {
-        &self.candidate
+    pub fn get_ice_agent(&self) -> &ice::Agent {
+        &self.ice_agent
     }
 
-    pub(crate) fn get_mut_dtls_endpoint(&mut self) -> &mut dtls::endpoint::Endpoint {
+    pub fn get_mut_ice_agent(&mut self) -> &mut ice::Agent {
+        &mut self.ice_agent
+    }
+
+    pub fn get_mut_dtls_endpoint(&mut self) -> &mut dtls::endpoint::Endpoint {
         &mut self.dtls_endpoint
     }
 
-    pub(crate) fn get_dtls_endpoint(&self) -> &dtls::endpoint::Endpoint {
+    pub fn get_dtls_endpoint(&self) -> &dtls::endpoint::Endpoint {
         &self.dtls_endpoint
     }
 
-    pub(crate) fn get_mut_sctp_endpoint(&mut self) -> &mut sctp::Endpoint {
+    pub fn get_mut_sctp_endpoint(&mut self) -> &mut sctp::Endpoint {
         &mut self.sctp_endpoint
     }
 
-    pub(crate) fn get_sctp_endpoint(&self) -> &sctp::Endpoint {
+    pub fn get_sctp_endpoint(&self) -> &sctp::Endpoint {
         &self.sctp_endpoint
     }
 
-    pub(crate) fn get_mut_sctp_associations(
-        &mut self,
-    ) -> &mut HashMap<AssociationHandle, Association> {
+    pub fn get_mut_sctp_associations(&mut self) -> &mut HashMap<AssociationHandle, Association> {
         &mut self.sctp_associations
     }
 
-    pub(crate) fn get_mut_sctp_endpoint_associations(
+    pub fn get_mut_sctp_endpoint_associations(
         &mut self,
     ) -> (
         &mut sctp::Endpoint,
@@ -117,6 +120,24 @@ impl RTCTransport {
 
     pub fn get_sctp_associations(&self) -> &HashMap<AssociationHandle, Association> {
         &self.sctp_associations
+    }
+
+    pub fn get_data_channels(&self) -> &HashMap<AssociationHandle, RTCDataChannel> {
+        &self.data_channels
+    }
+
+    pub fn get_data_channel(
+        &self,
+        association_handle: &AssociationHandle,
+    ) -> Option<&RTCDataChannel> {
+        self.data_channels.get(association_handle)
+    }
+
+    pub fn get_mut_data_channel(
+        &mut self,
+        association_handle: &AssociationHandle,
+    ) -> Option<&mut RTCDataChannel> {
+        self.data_channels.get_mut(association_handle)
     }
 
     pub fn local_srtp_context(&mut self) -> Option<&mut Context> {

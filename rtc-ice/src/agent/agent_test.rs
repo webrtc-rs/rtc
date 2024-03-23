@@ -14,7 +14,7 @@ use crate::candidate::*;
 
 #[test]
 fn test_pair_search() -> Result<()> {
-    let config = AgentConfig::default();
+    let config = Arc::new(AgentConfig::default());
     let mut a = Agent::new(config)?;
 
     assert!(
@@ -32,7 +32,7 @@ fn test_pair_search() -> Result<()> {
 
 #[test]
 fn test_pair_priority() -> Result<()> {
-    let mut a = Agent::new(AgentConfig::default())?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -152,7 +152,7 @@ fn pipe(
     };
     cfg0.urls = vec![];
 
-    let a_agent = Agent::new(cfg0)?;
+    let a_agent = Agent::new(Arc::new(cfg0))?;
 
     let mut cfg1 = if let Some(cfg) = default_config1 {
         cfg
@@ -161,14 +161,14 @@ fn pipe(
     };
     cfg1.urls = vec![];
 
-    let b_agent = Agent::new(cfg1)?;
+    let b_agent = Agent::new(Arc::new(cfg1))?;
 
     Ok((a_agent, b_agent))
 }
 
 #[test]
 fn test_on_selected_candidate_pair_change() -> Result<()> {
-    let mut a = Agent::new(AgentConfig::default())?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -219,7 +219,7 @@ fn test_on_selected_candidate_pair_change() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
-    let mut a = Agent::new(AgentConfig::default())?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -302,7 +302,7 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
-    let mut a = Agent::new(AgentConfig::default())?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
 
     let mut tid = TransactionId::default();
     tid.0[..3].copy_from_slice("ABC".as_bytes());
