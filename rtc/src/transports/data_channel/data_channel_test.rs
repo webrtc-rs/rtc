@@ -9,22 +9,22 @@ use waitgroup::WaitGroup;
 use super::*;
 use crate::api::media_engine::MediaEngine;
 use crate::api::{APIBuilder, API};
-use crate::data_channel::data_channel_init::RTCDataChannelInit;
+use crate::transports::data_channel::data_channel_init::RTCDataChannelInit;
 //use log::LevelFilter;
 //use std::io::Write;
-use crate::dtls_transport::dtls_parameters::DTLSParameters;
-use crate::dtls_transport::RTCDtlsTransport;
 use crate::error::flatten_errs;
-use crate::ice_transport::ice_candidate::RTCIceCandidate;
-use crate::ice_transport::ice_connection_state::RTCIceConnectionState;
-use crate::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
-use crate::ice_transport::ice_parameters::RTCIceParameters;
-use crate::ice_transport::ice_role::RTCIceRole;
-use crate::ice_transport::RTCIceTransport;
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::peer_connection_test::*;
 use crate::peer_connection::RTCPeerConnection;
-use crate::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
+use crate::transports::dtls_transport::dtls_parameters::DTLSParameters;
+use crate::transports::dtls_transport::RTCDtlsTransport;
+use crate::transports::ice_transport::ice_candidate::RTCIceCandidate;
+use crate::transports::ice_transport::ice_connection_state::RTCIceConnectionState;
+use crate::transports::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
+use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
+use crate::transports::ice_transport::ice_role::RTCIceRole;
+use crate::transports::ice_transport::RTCIceTransport;
+use crate::transports::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
 
 // EXPECTED_LABEL represents the label of the data channel we are trying to test.
 // Some other channels may have been created during initialization (in the Wasm

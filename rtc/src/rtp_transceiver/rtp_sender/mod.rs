@@ -12,7 +12,6 @@ use util::sync::Mutex as SyncMutex;
 
 use super::srtp_writer_future::SequenceTransformer;
 use crate::api::media_engine::MediaEngine;
-use crate::dtls_transport::RTCDtlsTransport;
 use crate::error::{Error, Result};
 use crate::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
@@ -24,6 +23,7 @@ use crate::rtp_transceiver::{
 use crate::track::track_local::{
     InterceptorToTrackLocalWriter, TrackLocal, TrackLocalContext, TrackLocalWriter,
 };
+use crate::transports::dtls_transport::RTCDtlsTransport;
 
 pub(crate) struct RTPSenderInternal {
     pub(crate) send_called_rx: Mutex<mpsc::Receiver<()>>,

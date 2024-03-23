@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::time::Instant;
 use std::time::SystemTime;
 
-use crate::data_channel::data_channel_state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannel;
-use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
-use crate::sctp_transport::RTCSctpTransport;
+use crate::transports::data_channel::data_channel_state::RTCDataChannelState;
+use crate::transports::data_channel::RTCDataChannel;
+use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::transports::sctp_transport::RTCSctpTransport;
 
 mod serialize;
 pub mod stats_collector;

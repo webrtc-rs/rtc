@@ -10,8 +10,8 @@ use ice::mdns::MulticastDnsMode;
 use ice::udp_network::UDPNetwork;*/
 use ice::network_type::NetworkType;
 
-use crate::dtls_transport::dtls_role::DTLSRole;
-use crate::ice_transport::ice_candidate_type::RTCIceCandidateType;
+use crate::transports::dtls_transport::dtls_role::DTLSRole;
+use crate::transports::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use crate::RECEIVE_MTU;
 use shared::error::{Error, Result};
 

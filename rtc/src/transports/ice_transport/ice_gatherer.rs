@@ -1,18 +1,19 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use ice::agent::Agent;
 use ice::url::Url;
 use ice::Credentials;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::ice_transport::ice_candidate::*;
-use crate::ice_transport::ice_gatherer_state::RTCIceGathererState;
-use crate::ice_transport::ice_parameters::RTCIceParameters;
-use crate::ice_transport::ice_server::RTCIceServer;
 use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::SourceStatsType::*;
 use crate::stats::{ICECandidatePairStats, StatsReportType};
+use crate::transports::ice_transport::ice_candidate::*;
+use crate::transports::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
+use crate::transports::ice_transport::ice_server::RTCIceServer;
 use shared::error::{Error, Result};
 
 /// ICEGatherOptions provides options relating to the gathering of ICE candidates.
@@ -36,7 +37,7 @@ pub enum IceGathererEvent {
 pub struct RTCIceGatherer {
     pub(crate) validated_servers: Vec<Url>,
     pub(crate) gather_policy: RTCIceTransportPolicy,
-    pub(crate) setting_engine: SettingEngine,
+    pub(crate) setting_engine: Arc<SettingEngine>,
 
     pub(crate) state: RTCIceGathererState,
     pub(crate) events: VecDeque<IceGathererEvent>,
@@ -48,7 +49,7 @@ impl RTCIceGatherer {
     pub(crate) fn new(
         validated_servers: Vec<Url>,
         gather_policy: RTCIceTransportPolicy,
-        setting_engine: SettingEngine,
+        setting_engine: Arc<SettingEngine>,
     ) -> Self {
         RTCIceGatherer {
             gather_policy,
@@ -269,8 +270,8 @@ mod test {
 
     use super::*;
     use crate::api::APIBuilder;
-    use crate::ice_transport::ice_gatherer::RTCIceGatherOptions;
-    use crate::ice_transport::ice_server::RTCIceServer;
+    use crate::transports::ice_transport::ice_gatherer::RTCIceGatherOptions;
+    use crate::transports::ice_transport::ice_server::RTCIceServer;
 
     #[test]
     fn test_new_ice_gatherer_success() -> Result<()> {

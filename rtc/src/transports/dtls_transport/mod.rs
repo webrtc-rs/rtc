@@ -1,4 +1,5 @@
 use std::collections::{/*HashMap,*/ VecDeque};
+use std::sync::Arc;
 
 use bytes::Bytes;
 //use dtls::config::ClientAuthType;
@@ -13,11 +14,11 @@ use srtp::protection_profile::ProtectionProfile;
 //use srtp::stream::Stream;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::dtls_transport::dtls_parameters::DTLSParameters;
-use crate::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
-/*use crate::ice_transport::ice_role::RTCIceRole;
-use crate::ice_transport::ice_transport_state::RTCIceTransportState;
-use crate::ice_transport::RTCIceTransport;*/
+use crate::transports::dtls_transport::dtls_parameters::DTLSParameters;
+use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
+/*use crate::transports::ice_transport::ice_role::RTCIceRole;
+use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
+use crate::transports::ice_transport::RTCIceTransport;*/
 use crate::peer_connection::certificate::RTCCertificate;
 //use crate::rtp_transceiver::SSRC;
 use crate::stats::stats_collector::StatsCollector;
@@ -49,7 +50,7 @@ pub enum DtlsTransportEvent {
 #[derive(Default)]
 pub struct RTCDtlsTransport {
     pub(crate) certificates: Vec<RTCCertificate>,
-    pub(crate) setting_engine: SettingEngine,
+    pub(crate) setting_engine: Arc<SettingEngine>,
     pub(crate) remote_parameters: DTLSParameters,
     pub(crate) remote_certificate: Bytes,
     pub(crate) state: RTCDtlsTransportState,
@@ -63,7 +64,10 @@ pub struct RTCDtlsTransport {
 }
 
 impl RTCDtlsTransport {
-    pub(crate) fn new(certificates: Vec<RTCCertificate>, setting_engine: SettingEngine) -> Self {
+    pub(crate) fn new(
+        certificates: Vec<RTCCertificate>,
+        setting_engine: Arc<SettingEngine>,
+    ) -> Self {
         RTCDtlsTransport {
             certificates,
             setting_engine,

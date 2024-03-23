@@ -6,13 +6,11 @@
 extern crate lazy_static;
 */
 pub mod api;
-pub mod data_channel;
-pub mod dtls_transport;
-pub mod ice_transport;
 pub mod peer_connection;
 pub mod rtp_transceiver;
-pub mod sctp_transport;
 pub mod stats;
+pub mod transports;
+
 /*pub mod track;
 
 // re-export sub-crates

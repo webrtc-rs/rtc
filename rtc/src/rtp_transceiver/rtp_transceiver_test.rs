@@ -3,9 +3,9 @@ use std::sync::atomic::AtomicUsize;
 use super::*;
 use crate::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9};
 use crate::api::APIBuilder;
-use crate::dtls_transport::RTCDtlsTransport;
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::peer_connection_test::{close_pair_now, create_vnet_pair};
+use crate::transports::dtls_transport::RTCDtlsTransport;
 
 #[tokio::test]
 async fn test_rtp_transceiver_set_codec_preferences() -> Result<()> {

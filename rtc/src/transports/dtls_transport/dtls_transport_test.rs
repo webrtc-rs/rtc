@@ -7,13 +7,13 @@ use waitgroup::WaitGroup;
 use super::*;
 use crate::api::media_engine::MediaEngine;
 use crate::api::APIBuilder;
-use crate::data_channel::RTCDataChannel;
-use crate::ice_transport::ice_candidate::RTCIceCandidate;
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::peer_connection_test::{
     close_pair_now, new_pair, signal_pair, until_connection_state,
 };
+use crate::transports::data_channel::RTCDataChannel;
+use crate::transports::ice_transport::ice_candidate::RTCIceCandidate;
 
 //use log::LevelFilter;
 //use std::io::Write;

@@ -12,7 +12,6 @@ use smol_str::SmolStr;
 use tokio::sync::{watch, Mutex, RwLock};
 
 use crate::api::media_engine::MediaEngine;
-use crate::dtls_transport::RTCDtlsTransport;
 use crate::error::{flatten_errs, Error, Result};
 use crate::peer_connection::sdp::TrackDetails;
 use crate::rtp_transceiver::rtp_codec::{
@@ -25,6 +24,7 @@ use crate::rtp_transceiver::{
 };
 use crate::track::track_remote::TrackRemote;
 use crate::track::{TrackStream, TrackStreams};
+use crate::transports::dtls_transport::RTCDtlsTransport;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]

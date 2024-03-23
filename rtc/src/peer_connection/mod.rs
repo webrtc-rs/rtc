@@ -17,6 +17,7 @@ use ::sdp::description::session::Origin;
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 /*
 use ::ice::candidate::candidate_base::unmarshal_candidate;
@@ -34,30 +35,30 @@ use crate::api::media_engine::MediaEngine;
 use crate::api::setting_engine::SettingEngine;
 use crate::api::API;
 /*
-use crate::data_channel::data_channel_init::RTCDataChannelInit;
-use crate::data_channel::data_channel_parameters::DataChannelParameters;
-use crate::data_channel::data_channel_state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannel;
-use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
-use crate::dtls_transport::dtls_parameters::DTLSParameters;
-use crate::dtls_transport::dtls_role::{
+use crate::transports::data_channel::data_channel_init::RTCDataChannelInit;
+use crate::transports::data_channel::data_channel_parameters::DataChannelParameters;
+use crate::transports::data_channel::data_channel_state::RTCDataChannelState;
+use crate::transports::data_channel::RTCDataChannel;
+use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::transports::dtls_transport::dtls_parameters::DTLSParameters;
+use crate::transports::dtls_transport::dtls_role::{
     DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
 };
-use crate::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
-//use crate::dtls_transport::RTCDtlsTransport;
+use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
+//use crate::transports::dtls_transport::RTCDtlsTransport;
 use shared::error::{flatten_errs, Error, Result};
-//use crate::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
-use crate::ice_transport::ice_connection_state::RTCIceConnectionState;
-/*use crate::ice_transport::ice_gatherer::{
+//use crate::transports::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
+use crate::transports::ice_transport::ice_connection_state::RTCIceConnectionState;
+/*use crate::transports::ice_transport::ice_gatherer::{
     OnGatheringCompleteHdlrFn, OnICEGathererStateChangeHdlrFn, OnLocalCandidateHdlrFn,
     RTCIceGatherOptions, RTCIceGatherer,
 };
-use crate::ice_transport::ice_gatherer_state::RTCIceGathererState;
-use crate::ice_transport::ice_gathering_state::RTCIceGatheringState;
-use crate::ice_transport::ice_parameters::RTCIceParameters;
-use crate::ice_transport::ice_role::RTCIceRole;
-use crate::ice_transport::ice_transport_state::RTCIceTransportState;
-//use crate::ice_transport::RTCIceTransport;*/
+use crate::transports::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use crate::transports::ice_transport::ice_gathering_state::RTCIceGatheringState;
+use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
+use crate::transports::ice_transport::ice_role::RTCIceRole;
+use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
+//use crate::transports::ice_transport::RTCIceTransport;*/
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
 //use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
@@ -79,9 +80,9 @@ use crate::rtp_transceiver::{
     find_by_mid, handle_unknown_rtp_packet, satisfy_type_and_direction, RTCRtpTransceiver,
     RTCRtpTransceiverInit, SSRC,
 };
-use crate::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
-use crate::sctp_transport::sctp_transport_state::RTCSctpTransportState;
-use crate::sctp_transport::RTCSctpTransport;
+use crate::transports::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
+use crate::transports::sctp_transport::sctp_transport_state::RTCSctpTransportState;
+use crate::transports::sctp_transport::RTCSctpTransport;
 use crate::stats::StatsReport;
 use crate::track::track_local::TrackLocal;
 use crate::track::track_remote::TrackRemote;
@@ -196,7 +197,7 @@ pub struct RTCPeerConnection {
     /// should be defined (see JSEP 3.4.1).
     pub(super) greater_mid: isize,
     /// A reference to the associated API state used by this connection
-    pub(super) setting_engine: SettingEngine,
+    pub(super) setting_engine: Arc<SettingEngine>,
     pub(crate) media_engine: MediaEngine,
 
     pub(crate) events: VecDeque<PeerConnectionEvent>,

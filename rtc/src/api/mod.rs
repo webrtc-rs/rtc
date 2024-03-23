@@ -9,19 +9,20 @@ pub mod setting_engine;
 use interceptor::Interceptor;*/
 use media_engine::*;
 use setting_engine::*;
+use std::sync::Arc;
 
-/*TODO:use crate::data_channel::data_channel_parameters::DataChannelParameters;
-use crate::data_channel::RTCDataChannel;
-use crate::dtls_transport::RTCDtlsTransport;
-use crate::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
-use crate::ice_transport::RTCIceTransport;
+/*TODO:use crate::transports::data_channel::data_channel_parameters::DataChannelParameters;
+use crate::transports::data_channel::RTCDataChannel;
+use crate::transports::dtls_transport::RTCDtlsTransport;
+use crate::transports::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
+use crate::transports::ice_transport::RTCIceTransport;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::sctp_transport::RTCSctpTransport;
+use crate::transports::sctp_transport::RTCSctpTransport;
 use crate::track::track_local::TrackLocal;
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
@@ -32,7 +33,7 @@ use shared::error::{Error, Result};
 /// defaultAPI object. Note that the global version of the API
 /// may be phased out in the future.
 pub struct API {
-    pub(crate) setting_engine: SettingEngine,
+    pub(crate) setting_engine: Arc<SettingEngine>,
     pub(crate) media_engine: MediaEngine,
     //TODO: pub(crate) interceptor_registry: Registry,
 }
@@ -179,7 +180,7 @@ impl API {
 
 #[derive(Default)]
 pub struct APIBuilder {
-    setting_engine: Option<SettingEngine>,
+    setting_engine: Option<Arc<SettingEngine>>,
     media_engine: Option<MediaEngine>,
     //TODO: interceptor_registry: Option<Registry>,
 }
@@ -194,7 +195,7 @@ impl APIBuilder {
             setting_engine: if let Some(setting_engine) = self.setting_engine.take() {
                 setting_engine
             } else {
-                SettingEngine::default()
+                Arc::new(SettingEngine::default())
             },
             media_engine: if let Some(media_engine) = self.media_engine.take() {
                 media_engine
@@ -213,7 +214,7 @@ impl APIBuilder {
 
     /// WithSettingEngine allows providing a SettingEngine to the API.
     /// Settings should not be changed after passing the engine to an API.
-    pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
+    pub fn with_setting_engine(mut self, setting_engine: Arc<SettingEngine>) -> Self {
         self.setting_engine = Some(setting_engine);
         self
     }

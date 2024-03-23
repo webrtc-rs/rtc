@@ -1,8 +1,8 @@
-use crate::ice_transport::ice_server::RTCIceServer;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::policy::bundle_policy::RTCBundlePolicy;
 use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::peer_connection::policy::rtcp_mux_policy::RTCRtcpMuxPolicy;
+use crate::transports::ice_transport::ice_server::RTCIceServer;
 
 /// A Configuration defines how peer-to-peer communication via PeerConnection
 /// is established or re-established.

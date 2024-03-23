@@ -9,6 +9,7 @@ pub mod data_channel_state;
 use crate::api::setting_engine::SettingEngine;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::{DataChannelStats, StatsReportType};
+use std::sync::Arc;
 //use bytes::Bytes;
 //use data_channel_message::*;
 use data_channel_parameters::*;
@@ -19,7 +20,7 @@ use datachannel::data_channel::DataChannel;
 use std::time::SystemTime;
 
 //todo:use sctp::stream::OnBufferedAmountLowFn;
-//TODO:use crate::sctp_transport::RTCSctpTransport;
+//TODO:use crate::transports::sctp_transport::RTCSctpTransport;
 
 /// message size limit for Chromium
 const DATA_CHANNEL_BUFFER_SIZE: u16 = u16::MAX;
@@ -51,12 +52,12 @@ pub struct RTCDataChannel {
     pub(crate) data_channel: Option<DataChannel>,
 
     // A reference to the associated api object used by this datachannel
-    pub(crate) setting_engine: SettingEngine,
+    pub(crate) setting_engine: Arc<SettingEngine>,
 }
 
 impl RTCDataChannel {
     // create the DataChannel object before the networking is set up.
-    pub(crate) fn new(params: DataChannelParameters, setting_engine: SettingEngine) -> Self {
+    pub(crate) fn new(params: DataChannelParameters, setting_engine: Arc<SettingEngine>) -> Self {
         // the id value if non-negotiated doesn't matter, since it will be overwritten
         // on opening
         let id = params.negotiated.unwrap_or(0);

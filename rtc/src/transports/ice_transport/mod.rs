@@ -7,11 +7,11 @@ use ice_gatherer::RTCIceGatherer;
 use ice_role::RTCIceRole;
 use std::collections::VecDeque;
 
-//use crate::ice_transport::ice_parameters::RTCIceParameters;
-use crate::ice_transport::ice_transport_state::RTCIceTransportState;
+//use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::ICETransportStats;
 use crate::stats::StatsReportType::Transport;
+use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
 use shared::error::{Error, Result};
 
 /*TODO:#[cfg(test)]

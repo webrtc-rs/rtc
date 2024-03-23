@@ -9,17 +9,18 @@ pub mod sctp_transport_state;
 use sctp::Association;
 use sctp_transport_state::RTCSctpTransportState;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api::setting_engine::SettingEngine;
-//use crate::data_channel::data_channel_parameters::DataChannelParameters;
-use crate::data_channel::data_channel_state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannel;
-use crate::dtls_transport::dtls_role::DTLSRole;
-//use crate::dtls_transport::*;
-use crate::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
+//use crate::transports::data_channel::data_channel_parameters::DataChannelParameters;
+use crate::transports::data_channel::data_channel_state::RTCDataChannelState;
+use crate::transports::data_channel::RTCDataChannel;
+use crate::transports::dtls_transport::dtls_role::DTLSRole;
+//use crate::transports::dtls_transport::*;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::PeerConnectionStats;
 use crate::stats::StatsReportType::PeerConnection;
+use crate::transports::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
 use shared::error::*;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
@@ -58,11 +59,11 @@ pub struct RTCSctpTransport {
     pub(crate) data_channels_requested: u32,
     data_channels_accepted: u32,
 
-    setting_engine: SettingEngine,
+    setting_engine: Arc<SettingEngine>,
 }
 
 impl RTCSctpTransport {
-    pub(crate) fn new(setting_engine: SettingEngine) -> Self {
+    pub(crate) fn new(setting_engine: Arc<SettingEngine>) -> Self {
         RTCSctpTransport {
             //dtls_transport,
             state: RTCSctpTransportState::Connecting,
