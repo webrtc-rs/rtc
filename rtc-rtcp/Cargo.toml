@@ -13,4 +13,3 @@ repository = "https://github.com/webrtc-rs/rtc"
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 
 bytes = "1.5.0"
-thiserror = "1.0.57"

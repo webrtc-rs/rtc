@@ -6,7 +6,6 @@ use crate::checks::*;
 use crate::message::*;
 use shared::error::*;
 
-use md5::{Digest, Md5};
 use ring::hmac;
 use std::fmt;
 
@@ -68,11 +67,8 @@ impl MessageIntegrity {
     // credentials. Password, username, and realm must be SASL-prepared.
     pub fn new_long_term_integrity(username: String, realm: String, password: String) -> Self {
         let s = [username, realm, password].join(CREDENTIALS_SEP);
-
-        let mut h = Md5::new();
-        h.update(s.as_bytes());
-
-        MessageIntegrity(h.finalize().as_slice().to_vec())
+        let h = md5::compute(s.as_bytes());
+        MessageIntegrity(h.to_vec())
     }
 
     // new_short_term_integrity returns new MessageIntegrity with key for short-term

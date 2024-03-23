@@ -15,7 +15,6 @@ sctp = { version = "0.2.0", path = "../rtc-sctp", package = "rtc-sctp" }
 
 bytes = "1.5.0"
 log = "0.4.21"
-thiserror = "1.0.57"
 
 [dev-dependencies]
 env_logger = "0.11.3"

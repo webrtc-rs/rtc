@@ -16,13 +16,11 @@ rtcp = { version = "0.2.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
 
 byteorder = "1.5.0"
 bytes = "1.5.0"
-thiserror = "1.0.57"
 hmac = { version = "0.12.1", features = ["std", "reset"] }
 sha1 = "0.10.6"
 ctr = "0.9.2"
 aes = "0.8.4"
 subtle = "2.5.0"
-log = "0.4.21"
 aead = { version = "0.5.2", features = ["std"] }
 aes-gcm = { version = "0.10.3", features = ["std"] }
 
