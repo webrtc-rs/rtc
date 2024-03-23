@@ -66,6 +66,7 @@ use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
+use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 //use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 //use crate::peer_connection::sdp::*;
@@ -160,7 +161,6 @@ struct NegotiationNeededParams {
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
 /// browser, or to another endpoint implementing the required protocols.
-#[derive(Default)]
 pub struct RTCPeerConnection {
     pub(super) sdp_origin: Origin,
     pub(crate) configuration: RTCConfiguration,
@@ -177,13 +177,12 @@ pub struct RTCPeerConnection {
     pub(super) pending_local_description: Option<RTCSessionDescription>,
     pub(super) pending_remote_description: Option<RTCSessionDescription>,
 
+    pub(super) ice_agent: ice::Agent,
+
     /// ops is an operations queue which will ensure the enqueued actions are
     /// executed in order. It is used for asynchronously, but serially processing
     /// remote and local descriptions
     /*TODO:pub(crate) ops: Arc<Operations>,
-    pub(super) ice_transport: Arc<RTCIceTransport>,
-    pub(super) dtls_transport: Arc<RTCDtlsTransport>,
-    pub(super) sctp_transport: Arc<RTCSctpTransport>,
     pub(super) rtp_transceivers: Arc<Mutex<Vec<Arc<RTCRtpTransceiver>>>>,
     pub(super) ice_gatherer: Arc<RTCIceGatherer>,
     interceptor_rtcp_writer: Arc<dyn RTCPWriter + Send + Sync>,
@@ -229,52 +228,42 @@ impl RTCPeerConnection {
     pub(crate) fn new(api: &API, mut configuration: RTCConfiguration) -> Result<Self> {
         RTCPeerConnection::init_configuration(&mut configuration)?;
 
-        /*let (interceptor, stats_interceptor): (Arc<dyn Interceptor + Send + Sync>, _) = {
-            let mut chain = api.interceptor_registry.build_chain("")?;
-            let stats_interceptor = stats::make_stats_interceptor("");
-            chain.add(stats_interceptor.clone());
+        let mut candidate_types = vec![];
+        if api.setting_engine.candidates.ice_lite {
+            candidate_types.push(ice::candidate::CandidateType::Host);
+        } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
+            candidate_types.push(ice::candidate::CandidateType::Relay);
+        }
 
-            (Arc::new(chain), stats_interceptor)
-        };*/
+        let mut validated_servers = vec![];
+        for server in configuration.get_ice_servers() {
+            let url = server.urls()?;
+            validated_servers.extend(url);
+        }
 
-        /*
-        // Create the ice gatherer
-        pc.ice_gatherer = Arc::new(api.new_ice_gatherer(RTCIceGatherOptions {
-            ice_servers: configuration.get_ice_servers(),
-            ice_gather_policy: configuration.ice_transport_policy,
-        })?);
+        let ice_agent_config = ice::AgentConfig {
+            lite: api.setting_engine.candidates.ice_lite,
+            urls: validated_servers,
+            disconnected_timeout: api.setting_engine.timeout.ice_disconnected_timeout,
+            failed_timeout: api.setting_engine.timeout.ice_failed_timeout,
+            keepalive_interval: api.setting_engine.timeout.ice_keepalive_interval,
+            candidate_types,
+            host_acceptance_min_wait: api.setting_engine.timeout.ice_host_acceptance_min_wait,
+            srflx_acceptance_min_wait: api.setting_engine.timeout.ice_srflx_acceptance_min_wait,
+            prflx_acceptance_min_wait: api.setting_engine.timeout.ice_prflx_acceptance_min_wait,
+            relay_acceptance_min_wait: api.setting_engine.timeout.ice_relay_acceptance_min_wait,
+            local_ufrag: api.setting_engine.candidates.username_fragment.clone(),
+            local_pwd: api.setting_engine.candidates.password.clone(),
+            ..Default::default()
+        };
 
-        // Create the ice transport
-        pc.ice_transport = pc.create_ice_transport(api).await;
-
-        // Create the DTLS transport
-        let certificates = configuration.certificates.drain(..).collect();
-        pc.dtls_transport =
-            Arc::new(api.new_dtls_transport(Arc::clone(&pc.ice_transport), certificates)?);
-
-        // Create the SCTP transport
-        pc.sctp_transport = Arc::new(api.new_sctp_transport(Arc::clone(&pc.dtls_transport))?);
-
-        // Wire up the on datachannel handler
-        let on_data_channel_handler = Arc::clone(&pc.on_data_channel_handler);
-        pc.sctp_transport
-            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-                let on_data_channel_handler2 = Arc::clone(&on_data_channel_handler);
-                Box::pin(async move {
-                    if let Some(handler) = &*on_data_channel_handler2.load() {
-                        let mut f = handler.lock().await;
-                        f(d).await;
-                    }
-                })
-            }));*/
-
-        //let internal_rtcp_writer = Arc::clone(&internal) as Arc<dyn RTCPWriter + Send + Sync>;
-        //let interceptor_rtcp_writer = interceptor.bind_rtcp_writer(internal_rtcp_writer).await;
+        let ice_agent = ice::Agent::new(Arc::new(ice_agent_config))?;
 
         // <https://w3c.github.io/webrtc-pc/#constructor> (Step #2)
         // Some variables defined explicitly despite their implicit zero values to
         // allow better readability to understand what is happening.
         Ok(RTCPeerConnection {
+            sdp_origin: Default::default(),
             stats_id: format!(
                 "PeerConnection-{}",
                 SystemTime::now()
@@ -285,17 +274,25 @@ impl RTCPeerConnection {
 
             configuration,
 
+            is_closed: false,
             greater_mid: -1,
 
             negotiation_needed_state: NegotiationNeededState::Empty,
+            last_offer: "".to_string(),
+            last_answer: "".to_string(),
             signaling_state: RTCSignalingState::Stable,
             ice_connection_state: RTCIceConnectionState::New,
+            current_local_description: None,
+            current_remote_description: None,
+            pending_local_description: None,
+            pending_remote_description: None,
             peer_connection_state: RTCPeerConnectionState::New,
 
             setting_engine: api.setting_engine.clone(),
             media_engine: api.media_engine.clone(),
-
-            ..Default::default()
+            is_negotiation_needed: false,
+            ice_agent,
+            events: Default::default(),
         })
     }
 

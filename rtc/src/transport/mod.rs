@@ -1,7 +1,6 @@
 use crate::transport::data_channel::RTCDataChannel;
 use retty::transport::{FiveTuple, FourTuple};
 use sctp::{Association, AssociationHandle};
-use shared::error::Result;
 use srtp::context::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,9 +15,6 @@ pub struct RTCTransport {
     pub(crate) last_activity: Instant,
 
     pub(crate) five_tuple: FiveTuple,
-
-    // ICE
-    pub(crate) ice_agent: ice::Agent,
 
     // DTLS
     pub(crate) dtls_endpoint: dtls::endpoint::Endpoint,
@@ -38,17 +34,13 @@ pub struct RTCTransport {
 impl RTCTransport {
     pub fn new(
         five_tuple: FiveTuple,
-        ice_agent_config: Arc<ice::AgentConfig>,
         dtls_handshake_config: Arc<dtls::config::HandshakeConfig>,
         sctp_endpoint_config: Arc<sctp::EndpointConfig>,
         sctp_server_config: Arc<sctp::ServerConfig>,
-    ) -> Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             last_activity: Instant::now(),
-
             five_tuple,
-
-            ice_agent: ice::Agent::new(ice_agent_config)?,
 
             dtls_endpoint: dtls::endpoint::Endpoint::new(
                 five_tuple.local_addr,
@@ -67,7 +59,7 @@ impl RTCTransport {
 
             local_srtp_context: None,
             remote_srtp_context: None,
-        })
+        }
     }
 
     pub fn four_tuple(&self) -> FourTuple {
@@ -79,14 +71,6 @@ impl RTCTransport {
 
     pub fn five_tuple(&self) -> FiveTuple {
         self.five_tuple
-    }
-
-    pub fn get_ice_agent(&self) -> &ice::Agent {
-        &self.ice_agent
-    }
-
-    pub fn get_mut_ice_agent(&mut self) -> &mut ice::Agent {
-        &mut self.ice_agent
     }
 
     pub fn get_mut_dtls_endpoint(&mut self) -> &mut dtls::endpoint::Endpoint {
