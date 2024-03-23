@@ -10,10 +10,10 @@ use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::SourceStatsType::*;
 use crate::stats::{ICECandidatePairStats, StatsReportType};
-use crate::transports::ice_transport::ice_candidate::*;
-use crate::transports::ice_transport::ice_gatherer_state::RTCIceGathererState;
-use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
-use crate::transports::ice_transport::ice_server::RTCIceServer;
+use crate::transport::ice_transport::ice_candidate::*;
+use crate::transport::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use crate::transport::ice_transport::ice_parameters::RTCIceParameters;
+use crate::transport::ice_transport::ice_server::RTCIceServer;
 use shared::error::{Error, Result};
 
 /// ICEGatherOptions provides options relating to the gathering of ICE candidates.

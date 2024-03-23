@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::transports::ice_transport::ice_credential_type::RTCIceCredentialType;
+use crate::transport::ice_transport::ice_credential_type::RTCIceCredentialType;
 use shared::error::{Error, Result};
 
 /// ICEServer describes a single STUN and TURN server that can be used by

@@ -48,7 +48,7 @@ use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportSta
 //use crate::transports::dtls_transport::RTCDtlsTransport;
 use shared::error::{flatten_errs, Error, Result};
 //use crate::transports::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
-use crate::transports::ice_transport::ice_connection_state::RTCIceConnectionState;
+use crate::transport::ice_transport::ice_connection_state::RTCIceConnectionState;
 /*use crate::transports::ice_transport::ice_gatherer::{
     OnGatheringCompleteHdlrFn, OnICEGathererStateChangeHdlrFn, OnLocalCandidateHdlrFn,
     RTCIceGatherOptions, RTCIceGatherer,

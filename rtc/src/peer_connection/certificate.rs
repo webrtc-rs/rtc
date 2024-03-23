@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::peer_connection::math_rand_alpha;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::{CertificateStats, StatsReportType};
-use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use shared::error::{Error, Result};
 
 /// Certificate represents a X.509 certificate used to authenticate WebRTC communications.

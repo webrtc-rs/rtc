@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::ICETransportStats;
 use crate::stats::StatsReportType::Transport;
-use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
+use crate::transport::ice_transport::ice_transport_state::RTCIceTransportState;
 use shared::error::{Error, Result};
 
 /*TODO:#[cfg(test)]

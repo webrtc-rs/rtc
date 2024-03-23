@@ -6,13 +6,13 @@
 extern crate lazy_static;
 */
 pub mod api;
-pub(crate) mod constants;
-pub(crate) mod handlers;
-mod messages;
+pub mod constants;
+pub mod handlers;
+pub mod messages;
 pub mod peer_connection;
 pub mod rtp_transceiver;
 pub mod stats;
-pub mod transports;
+pub mod transport;
 
 /*pub mod track;
 

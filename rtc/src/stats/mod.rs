@@ -11,10 +11,10 @@ use std::time::SystemTime;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
-use crate::transports::data_channel::data_channel_state::RTCDataChannelState;
-use crate::transports::data_channel::RTCDataChannel;
-use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
-use crate::transports::sctp_transport::RTCSctpTransport;
+use crate::transport::data_channel::data_channel_state::RTCDataChannelState;
+use crate::transport::data_channel::RTCDataChannel;
+use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::transport::sctp_transport::RTCSctpTransport;
 
 mod serialize;
 pub mod stats_collector;

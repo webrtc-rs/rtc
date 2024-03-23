@@ -107,8 +107,8 @@ impl Endpoint {
         Ok(())
     }
 
-    /// Process close
-    pub fn close(&mut self, remote: SocketAddr) -> Option<DTLSConn> {
+    /// Process stop remote
+    pub fn stop(&mut self, remote: SocketAddr) -> Option<DTLSConn> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
@@ -125,6 +125,28 @@ impl Endpoint {
             }
         }
         self.connections.remove(&remote)
+    }
+
+    /// Process close
+    pub fn close(&mut self) -> Result<()> {
+        for (remote_addr, conn) in self.connections.iter_mut() {
+            conn.close();
+            while let Some(payload) = conn.outgoing_raw_packet() {
+                self.transmits.push_back(Transmit {
+                    now: Instant::now(),
+                    transport: TransportContext {
+                        local_addr: self.local_addr,
+                        peer_addr: *remote_addr,
+                        ecn: None,
+                        protocol: self.protocol,
+                    },
+                    message: payload,
+                });
+            }
+        }
+        self.connections.clear();
+
+        Ok(())
     }
 
     /// Process an incoming UDP datagram

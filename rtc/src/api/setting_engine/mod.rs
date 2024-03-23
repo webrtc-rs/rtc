@@ -11,8 +11,8 @@ use ice::udp_network::UDPNetwork;*/
 use ice::network_type::NetworkType;
 
 use crate::constants::RECEIVE_MTU;
-use crate::transports::dtls_transport::dtls_role::DTLSRole;
-use crate::transports::ice_transport::ice_candidate_type::RTCIceCandidateType;
+use crate::transport::dtls_transport::dtls_role::DTLSRole;
+use crate::transport::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use shared::error::{Error, Result};
 
 #[derive(Default, Clone)]
