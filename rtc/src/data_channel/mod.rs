@@ -1,11 +1,17 @@
 //todo:#[cfg(test)]
 //todo:mod data_channel_test;
 
+use crate::api::setting_engine::SettingEngine;
+use crate::data_channel::data_channel_state::RTCDataChannelState;
+
 pub mod data_channel_init;
 pub mod data_channel_message;
 pub mod data_channel_parameters;
 pub mod data_channel_state;
 
+use crate::stats::stats_collector::StatsCollector;
+use crate::stats::{DataChannelStats, StatsReportType};
+use datachannel::data_channel::DataChannel;
 /*use bytes::Bytes;
 use data_channel_message::*;
 use data_channel_parameters::*;
@@ -26,9 +32,9 @@ pub enum DataChannelEvent {
     OnMessage,
     OnOpen,
     OnClose,
+    OnError,
+    OnBufferedAmountLow,
 }
-
-/*
 /// DataChannel represents a WebRTC DataChannel
 /// The DataChannel interface represents a network channel
 /// which can be used for bidirectional peer-to-peer transfers of arbitrary data
@@ -41,35 +47,19 @@ pub struct RTCDataChannel {
     pub(crate) max_retransmits: u16,
     pub(crate) protocol: String,
     pub(crate) negotiated: bool,
-    pub(crate) id: AtomicU16,
-    pub(crate) ready_state: Arc<AtomicU8>, // DataChannelState
-    pub(crate) buffered_amount_low_threshold: AtomicUsize,
-    pub(crate) detach_called: Arc<AtomicBool>,
-
-    // The binaryType represents attribute MUST, on getting, return the value to
-    // which it was last set. On setting, if the new value is either the string
-    // "blob" or the string "arraybuffer", then set the IDL attribute to this
-    // new value. Otherwise, throw a SyntaxError. When an DataChannel object
-    // is created, the binaryType attribute MUST be initialized to the string
-    // "blob". This attribute controls how binary data is exposed to scripts.
-    // binaryType                 string
-    pub(crate) on_message_handler: Arc<ArcSwapOption<Mutex<OnMessageHdlrFn>>>,
-    pub(crate) on_open_handler: SyncMutex<Option<OnOpenHdlrFn>>,
-    pub(crate) on_close_handler: Arc<ArcSwapOption<Mutex<OnCloseHdlrFn>>>,
-    pub(crate) on_error_handler: Arc<ArcSwapOption<Mutex<OnErrorHdlrFn>>>,
-
-    pub(crate) on_buffered_amount_low: Mutex<Option<OnBufferedAmountLowFn>>,
-
-    pub(crate) sctp_transport: Mutex<Option<Weak<RTCSctpTransport>>>,
-    pub(crate) data_channel: Mutex<Option<Arc<data::data_channel::DataChannel>>>,
-
-    pub(crate) notify_tx: Arc<Notify>,
+    pub(crate) id: u16,
+    pub(crate) ready_state: RTCDataChannelState,
+    pub(crate) buffered_amount_low_threshold: usize,
+    pub(crate) detach_called: bool,
+    //TODO: pub(crate) sctp_transport: Mutex<Option<Weak<RTCSctpTransport>>>,
+    pub(crate) data_channel: Option<DataChannel>,
 
     // A reference to the associated api object used by this datachannel
-    pub(crate) setting_engine: Arc<SettingEngine>,
+    pub(crate) setting_engine: SettingEngine,
 }
 
 impl RTCDataChannel {
+    /*
     // create the DataChannel object before the networking is set up.
     pub(crate) fn new(params: DataChannelParameters, setting_engine: Arc<SettingEngine>) -> Self {
         // the id value if non-negotiated doesn't matter, since it will be overwritten
@@ -451,7 +441,7 @@ impl RTCDataChannel {
     /// application (true), or not (false).
     pub fn negotiated(&self) -> bool {
         self.negotiated
-    }
+    }*/
 
     /// ID represents the ID for this DataChannel. The value is initially
     /// null, which is what will be returned if the ID was not provided at
@@ -460,14 +450,15 @@ impl RTCDataChannel {
     /// selected by the script or generated. After the ID is set to a non-null
     /// value, it will not change.
     pub fn id(&self) -> u16 {
-        self.id.load(Ordering::SeqCst)
+        self.id
     }
 
     /// ready_state represents the state of the DataChannel object.
     pub fn ready_state(&self) -> RTCDataChannelState {
-        self.ready_state.load(Ordering::SeqCst).into()
+        self.ready_state
     }
 
+    /*
     /// buffered_amount represents the number of bytes of application data
     /// (UTF-8 text and binary data) that have been queued using send(). Even
     /// though the data transmission can occur in parallel, the returned value
@@ -478,9 +469,8 @@ impl RTCDataChannel {
     /// increase with each call to the send() method as long as the ready_state is
     /// open; however, buffered_amount does not reset to zero once the channel
     /// closes.
-    pub async fn buffered_amount(&self) -> usize {
-        let data_channel = self.data_channel.lock().await;
-        if let Some(dc) = &*data_channel {
+    pub fn buffered_amount(&self) -> usize {
+        if let Some(dc) = &self.data_channel {
             dc.buffered_amount()
         } else {
             0
@@ -505,38 +495,23 @@ impl RTCDataChannel {
     /// set_buffered_amount_low_threshold is used to update the threshold.
     /// See buffered_amount_low_threshold().
     pub async fn set_buffered_amount_low_threshold(&self, th: usize) {
-        self.buffered_amount_low_threshold
-            .store(th, Ordering::SeqCst);
+        self.buffered_amount_low_threshold = th;
         let data_channel = self.data_channel.lock().await;
         if let Some(dc) = &*data_channel {
             dc.set_buffered_amount_low_threshold(th);
         }
-    }
-
-    /// on_buffered_amount_low sets an event handler which is invoked when
-    /// the number of bytes of outgoing data becomes lower than the
-    /// buffered_amount_low_threshold.
-    pub async fn on_buffered_amount_low(&self, f: OnBufferedAmountLowFn) {
-        let data_channel = self.data_channel.lock().await;
-        if let Some(dc) = &*data_channel {
-            dc.on_buffered_amount_low(f);
-        } else {
-            let mut on_buffered_amount_low = self.on_buffered_amount_low.lock().await;
-            *on_buffered_amount_low = Some(f);
-        }
-    }
+    }*/
 
     pub(crate) fn get_stats_id(&self) -> &str {
         self.stats_id.as_str()
     }
 
-    pub(crate) async fn collect_stats(&self, collector: &StatsCollector) {
-        let stats = DataChannelStats::from(self).await;
+    pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
+        let stats = DataChannelStats::from(self);
         collector.insert(self.stats_id.clone(), StatsReportType::DataChannel(stats));
     }
 
-    pub(crate) fn set_ready_state(&self, r: RTCDataChannelState) {
-        self.ready_state.store(r as u8, Ordering::SeqCst);
+    pub(crate) fn set_ready_state(&mut self, r: RTCDataChannelState) {
+        self.ready_state = r;
     }
 }
-*/

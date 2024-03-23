@@ -9,12 +9,12 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use crate::data_channel::data_channel_state::RTCDataChannelState;
-//TODO: use crate::data_channel::RTCDataChannel;
+use crate::data_channel::RTCDataChannel;
 use crate::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
-//TODO:use crate::sctp_transport::RTCSctpTransport;
+use crate::sctp_transport::RTCSctpTransport;
 
 mod serialize;
 pub mod stats_collector;
@@ -364,9 +364,8 @@ pub struct DataChannelStats {
     pub state: RTCDataChannelState,
 }
 
-/*TODO:
 impl DataChannelStats {
-    pub(crate) async fn from(data_channel: &RTCDataChannel) -> Self {
+    pub(crate) fn from(data_channel: &RTCDataChannel) -> Self {
         let state = data_channel.ready_state();
 
         let mut bytes_received = 0;
@@ -374,9 +373,7 @@ impl DataChannelStats {
         let mut messages_received = 0;
         let mut messages_sent = 0;
 
-        let lock = data_channel.data_channel.lock().await;
-
-        if let Some(internal) = &*lock {
+        if let Some(internal) = &data_channel.data_channel {
             bytes_received = internal.bytes_received();
             bytes_sent = internal.bytes_sent();
             messages_received = internal.messages_received();
@@ -398,7 +395,6 @@ impl DataChannelStats {
         }
     }
 }
-*/
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -419,7 +415,6 @@ pub struct PeerConnectionStats {
     pub data_channels_requested: u32,
 }
 
-/*todo:
 impl PeerConnectionStats {
     pub fn new(transport: &RTCSctpTransport, stats_id: String, data_channels_closed: u32) -> Self {
         PeerConnectionStats {
@@ -432,7 +427,7 @@ impl PeerConnectionStats {
             timestamp: Instant::now(),
         }
     }
-}*/
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

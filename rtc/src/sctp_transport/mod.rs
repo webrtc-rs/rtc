@@ -4,63 +4,43 @@
 pub mod sctp_transport_capabilities;
 pub mod sctp_transport_state;
 
-/*use std::collections::{HashMap, HashSet};
-use data::data_channel::DataChannel;
-use data::message::message_channel_open::ChannelType;
-use sctp::association::Association;
+//use datachannel::data_channel::DataChannel;
+//use datachannel::message::message_channel_open::ChannelType;
+use sctp::Association;
 use sctp_transport_state::RTCSctpTransportState;
-use tokio::sync::{Mutex, Notify};
-use util::Conn;*/
+use std::collections::{HashMap, HashSet};
 
-/*use crate::api::setting_engine::SettingEngine;
-use crate::data_channel::data_channel_parameters::DataChannelParameters;
+use crate::api::setting_engine::SettingEngine;
+//use crate::data_channel::data_channel_parameters::DataChannelParameters;
 use crate::data_channel::data_channel_state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannel;
 use crate::dtls_transport::dtls_role::DTLSRole;
-use crate::dtls_transport::*;
+//use crate::dtls_transport::*;
 use crate::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
 use crate::stats::stats_collector::StatsCollector;
-use crate::stats::StatsReportType::{PeerConnection, SCTPTransport};
-use crate::stats::{ICETransportStats, PeerConnectionStats};
-use shared::error::*;*/
+use crate::stats::PeerConnectionStats;
+use crate::stats::StatsReportType::PeerConnection;
+use shared::error::*;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
-/*
-pub type OnDataChannelHdlrFn = Box<
-    dyn (FnMut(Arc<RTCDataChannel>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
 
-pub type OnDataChannelOpenedHdlrFn = Box<
-    dyn (FnMut(Arc<RTCDataChannel>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
-        + Send
-        + Sync,
->;
-
-struct AcceptDataChannelParams {
-    notify_rx: Arc<Notify>,
-    sctp_association: Arc<Association>,
-    data_channels: Arc<Mutex<Vec<Arc<RTCDataChannel>>>>,
-    on_error_handler: Arc<ArcSwapOption<Mutex<OnErrorHdlrFn>>>,
-    on_data_channel_handler: Arc<ArcSwapOption<Mutex<OnDataChannelHdlrFn>>>,
-    on_data_channel_opened_handler: Arc<ArcSwapOption<Mutex<OnDataChannelOpenedHdlrFn>>>,
-    data_channels_opened: Arc<AtomicU32>,
-    data_channels_accepted: Arc<AtomicU32>,
-    setting_engine: Arc<SettingEngine>,
+pub enum SctpTransportEvent {
+    OnError,
+    OnDataChannel(RTCDataChannel),
+    OnDataChannelOpened(RTCDataChannel),
 }
 
 /// SCTPTransport provides details about the SCTP transport.
 #[derive(Default)]
 pub struct RTCSctpTransport {
-    pub(crate) dtls_transport: Arc<RTCDtlsTransport>,
+    //todo: pub(crate) dtls_transport: Arc<RTCDtlsTransport>,
 
     // State represents the current state of the SCTP transport.
-    state: AtomicU8, // RTCSctpTransportState
+    state: RTCSctpTransportState,
 
     // SCTPTransportState doesn't have an enum to distinguish between New/Connecting
     // so we need a dedicated field
-    is_started: AtomicBool,
+    is_started: bool,
 
     // max_message_size represents the maximum size of data that can be passed to
     // DataChannel's send() method.
@@ -70,66 +50,47 @@ pub struct RTCSctpTransport {
     // be used simultaneously.
     max_channels: u16,
 
-    sctp_association: Mutex<Option<Arc<Association>>>,
-
-    on_error_handler: Arc<ArcSwapOption<Mutex<OnErrorHdlrFn>>>,
-    on_data_channel_handler: Arc<ArcSwapOption<Mutex<OnDataChannelHdlrFn>>>,
-    on_data_channel_opened_handler: Arc<ArcSwapOption<Mutex<OnDataChannelOpenedHdlrFn>>>,
+    sctp_association: Option<Association>,
 
     // DataChannels
-    pub(crate) data_channels: Arc<Mutex<Vec<Arc<RTCDataChannel>>>>,
-    pub(crate) data_channels_opened: Arc<AtomicU32>,
-    pub(crate) data_channels_requested: Arc<AtomicU32>,
-    data_channels_accepted: Arc<AtomicU32>,
+    pub(crate) data_channels: Vec<RTCDataChannel>,
+    pub(crate) data_channels_opened: u32,
+    pub(crate) data_channels_requested: u32,
+    data_channels_accepted: u32,
 
-    notify_tx: Arc<Notify>,
-
-    setting_engine: Arc<SettingEngine>,
+    setting_engine: SettingEngine,
 }
 
 impl RTCSctpTransport {
-    pub(crate) fn new(
-        dtls_transport: Arc<RTCDtlsTransport>,
-        setting_engine: Arc<SettingEngine>,
-    ) -> Self {
+    pub(crate) fn new(setting_engine: SettingEngine) -> Self {
         RTCSctpTransport {
-            dtls_transport,
-            state: AtomicU8::new(RTCSctpTransportState::Connecting as u8),
-            is_started: AtomicBool::new(false),
+            //dtls_transport,
+            state: RTCSctpTransportState::Connecting,
+            is_started: false,
             max_message_size: RTCSctpTransport::calc_message_size(65536, 65536),
             max_channels: SCTP_MAX_CHANNELS,
-            sctp_association: Mutex::new(None),
-            on_error_handler: Arc::new(ArcSwapOption::empty()),
-            on_data_channel_handler: Arc::new(ArcSwapOption::empty()),
-            on_data_channel_opened_handler: Arc::new(ArcSwapOption::empty()),
+            sctp_association: None,
 
-            data_channels: Arc::new(Mutex::new(vec![])),
-            data_channels_opened: Arc::new(AtomicU32::new(0)),
-            data_channels_requested: Arc::new(AtomicU32::new(0)),
-            data_channels_accepted: Arc::new(AtomicU32::new(0)),
-
-            notify_tx: Arc::new(Notify::new()),
+            data_channels: vec![],
+            data_channels_opened: 0,
+            data_channels_requested: 0,
+            data_channels_accepted: 0,
 
             setting_engine,
         }
     }
 
-    /// transport returns the DTLSTransport instance the SCTPTransport is sending over.
-    pub fn transport(&self) -> Arc<RTCDtlsTransport> {
-        Arc::clone(&self.dtls_transport)
-    }
-
     /// get_capabilities returns the SCTPCapabilities of the SCTPTransport.
     pub fn get_capabilities(&self) -> SCTPTransportCapabilities {
         SCTPTransportCapabilities {
-            max_message_size: 0,
+            max_message_size: self.max_message_size as u32,
         }
     }
 
     /// Start the SCTPTransport. Since both local and remote parties must mutually
     /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
     /// a connection over SCTP.
-    pub async fn start(&self, _remote_caps: SCTPTransportCapabilities) -> Result<()> {
+    /*TODO:pub async fn start(&self, _remote_caps: SCTPTransportCapabilities) -> Result<()> {
         if self.is_started.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -184,26 +145,15 @@ impl RTCSctpTransport {
         } else {
             Err(Error::ErrSCTPTransportDTLS)
         }
-    }
+    }*/
 
     /// Stop stops the SCTPTransport
-    pub async fn stop(&self) -> Result<()> {
-        {
-            let mut sctp_association = self.sctp_association.lock().await;
-            if let Some(sa) = sctp_association.take() {
-                sa.close().await?;
-            }
-        }
-
-        self.state
-            .store(RTCSctpTransportState::Closed as u8, Ordering::SeqCst);
-
-        self.notify_tx.notify_waiters();
-
+    pub fn stop(&mut self) -> Result<()> {
+        self.state = RTCSctpTransportState::Closed;
         Ok(())
     }
 
-    async fn accept_data_channels(param: AcceptDataChannelParams) {
+    /*todo: fn accept_data_channels(param: AcceptDataChannelParams) {
         let dcs = param.data_channels.lock().await;
         let mut existing_data_channels = Vec::new();
         for dc in dcs.iter() {
@@ -302,27 +252,7 @@ impl RTCSctpTransport {
                 param.data_channels_opened.fetch_add(1, Ordering::SeqCst);
             }
         }
-    }
-
-    /// on_error sets an event handler which is invoked when
-    /// the SCTP connection error occurs.
-    pub fn on_error(&self, f: OnErrorHdlrFn) {
-        self.on_error_handler.store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    /// on_data_channel sets an event handler which is invoked when a data
-    /// channel message arrives from a remote peer.
-    pub fn on_data_channel(&self, f: OnDataChannelHdlrFn) {
-        self.on_data_channel_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
-
-    /// on_data_channel_opened sets an event handler which is invoked when a data
-    /// channel is opened
-    pub fn on_data_channel_opened(&self, f: OnDataChannelOpenedHdlrFn) {
-        self.on_data_channel_opened_handler
-            .store(Some(Arc::new(Mutex::new(f))));
-    }
+    }*/
 
     fn calc_message_size(remote_max_message_size: usize, can_send_size: usize) -> usize {
         if remote_max_message_size == 0 && can_send_size == 0 {
@@ -347,29 +277,26 @@ impl RTCSctpTransport {
 
     /// state returns the current state of the SCTPTransport
     pub fn state(&self) -> RTCSctpTransportState {
-        self.state.load(Ordering::SeqCst).into()
+        self.state
     }
 
-    pub(crate) async fn collect_stats(
-        &self,
-        collector: &StatsCollector,
+    pub(crate) fn collect_stats(
+        &mut self,
+        collector: &mut StatsCollector,
         peer_connection_id: String,
     ) {
-        let dtls_transport = self.transport();
-
-        // TODO: should this be collected?
-        dtls_transport.collect_stats(collector).await;
+        //TODO: let dtls_transport = self.transport();
+        //TODO": dtls_transport.collect_stats(collector);
 
         // data channels
         let mut data_channels_closed = 0;
-        let data_channels = self.data_channels.lock().await;
-        for data_channel in &*data_channels {
+        for data_channel in &mut self.data_channels {
             match data_channel.ready_state() {
                 RTCDataChannelState::Connecting => (),
                 RTCDataChannelState::Open => (),
                 _ => data_channels_closed += 1,
             }
-            data_channel.collect_stats(collector).await;
+            data_channel.collect_stats(collector);
         }
 
         let mut reports = HashMap::new();
@@ -377,19 +304,15 @@ impl RTCSctpTransport {
             PeerConnectionStats::new(self, peer_connection_id.clone(), data_channels_closed);
         reports.insert(peer_connection_id, PeerConnection(peer_connection_stats));
 
-        // conn
-        if let Some(agent) = dtls_transport.ice_transport.gatherer.get_agent().await {
+        /*TODO: if let Some(agent) = dtls_transport.ice_transport.gatherer.get_agent().await {
             let stats = ICETransportStats::new("sctp_transport".to_owned(), agent);
             reports.insert(stats.id.clone(), SCTPTransport(stats));
-        }
+        }*/
 
         collector.merge(reports);
     }
 
-    pub(crate) async fn generate_and_set_data_channel_id(
-        &self,
-        dtls_role: DTLSRole,
-    ) -> Result<u16> {
+    pub(crate) fn generate_and_set_data_channel_id(&self, dtls_role: DTLSRole) -> Result<u16> {
         let mut id = 0u16;
         if dtls_role != DTLSRole::Client {
             id += 1;
@@ -398,8 +321,7 @@ impl RTCSctpTransport {
         // Create map of ids so we can compare without double-looping each time.
         let mut ids_map = HashSet::new();
         {
-            let data_channels = self.data_channels.lock().await;
-            for dc in &*data_channels {
+            for dc in &self.data_channels {
                 ids_map.insert(dc.id());
             }
         }
@@ -416,21 +338,19 @@ impl RTCSctpTransport {
         Err(Error::ErrMaxDataChannelID)
     }
 
-    pub(crate) async fn association(&self) -> Option<Arc<Association>> {
-        let sctp_association = self.sctp_association.lock().await;
-        sctp_association.clone()
+    pub(crate) fn association(&self) -> Option<&Association> {
+        self.sctp_association.as_ref()
     }
 
     pub(crate) fn data_channels_accepted(&self) -> u32 {
-        self.data_channels_accepted.load(Ordering::SeqCst)
+        self.data_channels_accepted
     }
 
     pub(crate) fn data_channels_opened(&self) -> u32 {
-        self.data_channels_opened.load(Ordering::SeqCst)
+        self.data_channels_opened
     }
 
     pub(crate) fn data_channels_requested(&self) -> u32 {
-        self.data_channels_requested.load(Ordering::SeqCst)
+        self.data_channels_requested
     }
 }
-*/
