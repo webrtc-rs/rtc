@@ -77,7 +77,7 @@ impl fmt::Display for RTCIceCandidateType {
             RTCIceCandidateType::Srflx => write!(f, "{ICE_CANDIDATE_TYPE_SRFLX_STR}"),
             RTCIceCandidateType::Prflx => write!(f, "{ICE_CANDIDATE_TYPE_PRFLX_STR}"),
             RTCIceCandidateType::Relay => write!(f, "{ICE_CANDIDATE_TYPE_RELAY_STR}"),
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::constants::UNSPECIFIED_STR),
         }
     }
 }

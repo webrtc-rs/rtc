@@ -69,7 +69,7 @@ impl fmt::Display for RTCDtlsTransportState {
             RTCDtlsTransportState::Connected => DTLS_TRANSPORT_STATE_CONNECTED_STR,
             RTCDtlsTransportState::Closed => DTLS_TRANSPORT_STATE_CLOSED_STR,
             RTCDtlsTransportState::Failed => DTLS_TRANSPORT_STATE_FAILED_STR,
-            RTCDtlsTransportState::Unspecified => crate::UNSPECIFIED_STR,
+            RTCDtlsTransportState::Unspecified => crate::constants::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }
@@ -82,7 +82,10 @@ mod test {
     #[test]
     fn test_new_dtls_transport_state() {
         let tests = vec![
-            (crate::UNSPECIFIED_STR, RTCDtlsTransportState::Unspecified),
+            (
+                crate::constants::UNSPECIFIED_STR,
+                RTCDtlsTransportState::Unspecified,
+            ),
             ("new", RTCDtlsTransportState::New),
             ("connecting", RTCDtlsTransportState::Connecting),
             ("connected", RTCDtlsTransportState::Connected),
@@ -102,7 +105,10 @@ mod test {
     #[test]
     fn test_dtls_transport_state_string() {
         let tests = vec![
-            (RTCDtlsTransportState::Unspecified, crate::UNSPECIFIED_STR),
+            (
+                RTCDtlsTransportState::Unspecified,
+                crate::constants::UNSPECIFIED_STR,
+            ),
             (RTCDtlsTransportState::New, "new"),
             (RTCDtlsTransportState::Connecting, "connecting"),
             (RTCDtlsTransportState::Connected, "connected"),

@@ -43,7 +43,7 @@ impl fmt::Display for RTPCodecType {
         let s = match *self {
             RTPCodecType::Audio => "audio",
             RTPCodecType::Video => "video",
-            RTPCodecType::Unspecified => crate::UNSPECIFIED_STR,
+            RTPCodecType::Unspecified => crate::constants::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

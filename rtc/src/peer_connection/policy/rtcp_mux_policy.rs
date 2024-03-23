@@ -31,7 +31,7 @@ impl fmt::Display for RTCRtcpMuxPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
             RTCRtcpMuxPolicy::Require => RTCP_MUX_POLICY_REQUIRE_STR,
-            RTCRtcpMuxPolicy::Unspecified => crate::UNSPECIFIED_STR,
+            RTCRtcpMuxPolicy::Unspecified => crate::constants::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

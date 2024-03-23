@@ -51,7 +51,7 @@ impl fmt::Display for RTCSdpSemantics {
             RTCSdpSemantics::UnifiedPlanWithFallback => SDP_SEMANTICS_UNIFIED_PLAN_WITH_FALLBACK,
             RTCSdpSemantics::UnifiedPlan => SDP_SEMANTICS_UNIFIED_PLAN,
             RTCSdpSemantics::PlanB => SDP_SEMANTICS_PLAN_B,
-            RTCSdpSemantics::Unspecified => crate::UNSPECIFIED_STR,
+            RTCSdpSemantics::Unspecified => crate::constants::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

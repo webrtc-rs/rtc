@@ -66,7 +66,7 @@ impl fmt::Display for RTCRtpTransceiverDirection {
             RTCRtpTransceiverDirection::Inactive => {
                 write!(f, "{RTP_TRANSCEIVER_DIRECTION_INACTIVE_STR}")
             }
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::constants::UNSPECIFIED_STR),
         }
     }
 }

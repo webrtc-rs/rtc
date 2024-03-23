@@ -98,7 +98,7 @@ impl fmt::Display for RTCIceConnectionState {
             RTCIceConnectionState::Disconnected => ICE_CONNECTION_STATE_DISCONNECTED_STR,
             RTCIceConnectionState::Failed => ICE_CONNECTION_STATE_FAILED_STR,
             RTCIceConnectionState::Closed => ICE_CONNECTION_STATE_CLOSED_STR,
-            RTCIceConnectionState::Unspecified => crate::UNSPECIFIED_STR,
+            RTCIceConnectionState::Unspecified => crate::constants::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }
@@ -111,7 +111,10 @@ mod test {
     #[test]
     fn test_new_ice_connection_state() {
         let tests = vec![
-            (crate::UNSPECIFIED_STR, RTCIceConnectionState::Unspecified),
+            (
+                crate::constants::UNSPECIFIED_STR,
+                RTCIceConnectionState::Unspecified,
+            ),
             ("new", RTCIceConnectionState::New),
             ("checking", RTCIceConnectionState::Checking),
             ("connected", RTCIceConnectionState::Connected),
@@ -133,7 +136,10 @@ mod test {
     #[test]
     fn test_ice_connection_state_string() {
         let tests = vec![
-            (RTCIceConnectionState::Unspecified, crate::UNSPECIFIED_STR),
+            (
+                RTCIceConnectionState::Unspecified,
+                crate::constants::UNSPECIFIED_STR,
+            ),
             (RTCIceConnectionState::New, "new"),
             (RTCIceConnectionState::Checking, "checking"),
             (RTCIceConnectionState::Connected, "connected"),

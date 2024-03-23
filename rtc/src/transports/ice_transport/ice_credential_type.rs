@@ -29,7 +29,7 @@ impl fmt::Display for RTCIceCredentialType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             RTCIceCredentialType::Password => write!(f, "{ICE_CREDENTIAL_TYPE_PASSWORD_STR}"),
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::constants::UNSPECIFIED_STR),
         }
     }
 }
