@@ -1,29 +1,25 @@
 //todo:#[cfg(test)]
 //todo:mod data_channel_test;
 
-use crate::api::setting_engine::SettingEngine;
-use crate::data_channel::data_channel_state::RTCDataChannelState;
-
 pub mod data_channel_init;
 pub mod data_channel_message;
 pub mod data_channel_parameters;
 pub mod data_channel_state;
 
+use crate::api::setting_engine::SettingEngine;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::{DataChannelStats, StatsReportType};
-use datachannel::data_channel::DataChannel;
-/*use bytes::Bytes;
-use data_channel_message::*;
+//use bytes::Bytes;
+//use data_channel_message::*;
 use data_channel_parameters::*;
 use data_channel_state::RTCDataChannelState;
-use datachannel::message::message_channel_open::ChannelType;*/
-//todo:use sctp::stream::OnBufferedAmountLowFn;
-
-//use crate::api::setting_engine::SettingEngine;
-//TODO:use crate::sctp_transport::RTCSctpTransport;
-/*TODO:use crate::stats::stats_collector::StatsCollector;
-use crate::stats::{DataChannelStats, StatsReportType};*/
+use datachannel::data_channel::DataChannel;
+//use datachannel::message::message_channel_open::ChannelType;
 //use shared::error::{Error, Result};
+use std::time::SystemTime;
+
+//todo:use sctp::stream::OnBufferedAmountLowFn;
+//TODO:use crate::sctp_transport::RTCSctpTransport;
 
 /// message size limit for Chromium
 const DATA_CHANNEL_BUFFER_SIZE: u16 = u16::MAX;
@@ -59,9 +55,8 @@ pub struct RTCDataChannel {
 }
 
 impl RTCDataChannel {
-    /*
     // create the DataChannel object before the networking is set up.
-    pub(crate) fn new(params: DataChannelParameters, setting_engine: Arc<SettingEngine>) -> Self {
+    pub(crate) fn new(params: DataChannelParameters, setting_engine: SettingEngine) -> Self {
         // the id value if non-negotiated doesn't matter, since it will be overwritten
         // on opening
         let id = params.negotiated.unwrap_or(0);
@@ -75,20 +70,19 @@ impl RTCDataChannel {
             label: params.label,
             protocol: params.protocol,
             negotiated: params.negotiated.is_some(),
-            id: AtomicU16::new(id),
+            id,
             ordered: params.ordered,
             max_packet_lifetime: params.max_packet_life_time,
             max_retransmits: params.max_retransmits,
-            ready_state: Arc::new(AtomicU8::new(RTCDataChannelState::Connecting as u8)),
-            detach_called: Arc::new(AtomicBool::new(false)),
-
-            notify_tx: Arc::new(Notify::new()),
+            ready_state: RTCDataChannelState::Connecting,
+            detach_called: false,
 
             setting_engine,
             ..Default::default()
         }
     }
 
+    /*
     /// open opens the datachannel over the sctp transport
     pub(crate) async fn open(&self, sctp_transport: Arc<RTCSctpTransport>) -> Result<()> {
         if let Some(association) = sctp_transport.association().await {
