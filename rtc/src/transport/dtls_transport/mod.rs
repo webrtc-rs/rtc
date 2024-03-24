@@ -80,7 +80,6 @@ impl RTCDtlsTransport {
             certificates,
             setting_engine,
             state: RTCDtlsTransportState::New,
-            events: VecDeque::new(),
             ..Default::default()
         }
     }

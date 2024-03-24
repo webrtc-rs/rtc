@@ -6,9 +6,9 @@ pub mod sctp_transport_state;
 
 //use datachannel::data_channel::DataChannel;
 //use datachannel::message::message_channel_open::ChannelType;
-use sctp::Association;
+use sctp::{Association, AssociationHandle};
 use sctp_transport_state::RTCSctpTransportState;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::api::setting_engine::SettingEngine;
@@ -17,11 +17,13 @@ use crate::transport::data_channel::data_channel_state::RTCDataChannelState;
 use crate::transport::data_channel::RTCDataChannel;
 use crate::transport::dtls_transport::dtls_role::DTLSRole;
 //use crate::transports::dtls_transport::*;
+use crate::messages::RTCMessage;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::PeerConnectionStats;
 use crate::stats::StatsReportType::PeerConnection;
 use crate::transport::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
 use shared::error::*;
+use shared::Transmit;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
@@ -35,8 +37,6 @@ pub enum SctpTransportEvent {
 /// SCTPTransport provides details about the SCTP transport.
 #[derive(Default)]
 pub struct RTCSctpTransport {
-    //todo: pub(crate) dtls_transport: Arc<RTCDtlsTransport>,
-
     // State represents the current state of the SCTP transport.
     state: RTCSctpTransportState,
 
@@ -46,39 +46,39 @@ pub struct RTCSctpTransport {
 
     // max_message_size represents the maximum size of data that can be passed to
     // DataChannel's send() method.
-    max_message_size: usize,
+    pub(crate) max_message_size: usize,
 
     // max_channels represents the maximum amount of DataChannel's that can
     // be used simultaneously.
     max_channels: u16,
 
-    sctp_association: Option<Association>,
+    pub(crate) sctp_endpoint: Option<sctp::Endpoint>,
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // DataChannels
-    pub(crate) data_channels: Vec<RTCDataChannel>,
+    pub(crate) data_channels: HashMap<AssociationHandle, RTCDataChannel>,
     pub(crate) data_channels_opened: u32,
     pub(crate) data_channels_requested: u32,
     data_channels_accepted: u32,
 
     setting_engine: Arc<SettingEngine>,
+
+    pub(crate) internal_buffer: Vec<u8>,
+    pub(crate) events: VecDeque<SctpTransportEvent>,
+    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCSctpTransport {
     pub(crate) fn new(setting_engine: Arc<SettingEngine>) -> Self {
+        let max_message_size = RTCSctpTransport::calc_message_size(65536, 65536);
         RTCSctpTransport {
             //dtls_transport,
             state: RTCSctpTransportState::Connecting,
-            is_started: false,
-            max_message_size: RTCSctpTransport::calc_message_size(65536, 65536),
+            max_message_size,
             max_channels: SCTP_MAX_CHANNELS,
-            sctp_association: None,
-
-            data_channels: vec![],
-            data_channels_opened: 0,
-            data_channels_requested: 0,
-            data_channels_accepted: 0,
-
             setting_engine,
+            internal_buffer: vec![0u8; max_message_size],
+            ..Default::default()
         }
     }
 
@@ -292,7 +292,7 @@ impl RTCSctpTransport {
 
         // data channels
         let mut data_channels_closed = 0;
-        for data_channel in &mut self.data_channels {
+        for data_channel in self.data_channels.values_mut() {
             match data_channel.ready_state() {
                 RTCDataChannelState::Connecting => (),
                 RTCDataChannelState::Open => (),
@@ -323,7 +323,7 @@ impl RTCSctpTransport {
         // Create map of ids so we can compare without double-looping each time.
         let mut ids_map = HashSet::new();
         {
-            for dc in &self.data_channels {
+            for dc in self.data_channels.values() {
                 ids_map.insert(dc.id());
             }
         }
@@ -340,8 +340,11 @@ impl RTCSctpTransport {
         Err(Error::ErrMaxDataChannelID)
     }
 
-    pub(crate) fn association(&self) -> Option<&Association> {
-        self.sctp_association.as_ref()
+    pub(crate) fn association(
+        &self,
+        association_handle: &AssociationHandle,
+    ) -> Option<&Association> {
+        self.sctp_associations.get(association_handle)
     }
 
     pub(crate) fn data_channels_accepted(&self) -> u32 {
