@@ -3,7 +3,7 @@ use shared::error::Error;
 use shared::Transmit;
 use std::time::Instant;
 
-//pub mod demuxer;
+pub mod demuxer;
 pub mod dtls;
 //pub mod stun;
 

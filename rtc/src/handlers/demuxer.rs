@@ -1,5 +1,5 @@
 use crate::handlers::RTCHandler;
-use crate::messages::{DTLSMessageEvent, RTCMessageEvent, RTPMessageEvent, STUNMessageEvent};
+use crate::messages::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage};
 use log::{debug, error};
 use shared::Transmit;
 
@@ -39,76 +39,54 @@ fn match_srtp(b: &[u8]) -> bool {
 
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
 #[derive(Default)]
-pub struct DemuxerHandler {
-    next: Option<Box<dyn RTCHandler>>,
-}
+pub struct Demuxer;
 
-impl DemuxerHandler {
+impl Demuxer {
     pub fn new() -> Self {
-        DemuxerHandler::default()
+        Demuxer
     }
 }
 
-impl RTCHandler for DemuxerHandler {
-    fn chain(mut self: Box<Self>, next: Box<dyn RTCHandler>) -> Box<dyn RTCHandler> {
-        self.next = Some(next);
-        self
-    }
-
-    fn next(&mut self) -> Option<&mut Box<dyn RTCHandler>> {
-        self.next.as_mut()
-    }
-
-    fn handle_transmit(&mut self, msg: Transmit<RTCMessageEvent>) {
-        if let RTCMessageEvent::Raw(message) = msg.message {
+impl RTCHandler for Demuxer {
+    fn handle_transmit(&mut self, msg: Transmit<RTCMessage>) -> Vec<Transmit<RTCMessage>> {
+        if let RTCMessage::Raw(message) = msg.message {
             if message.is_empty() {
                 error!("drop invalid packet due to zero length");
-                return;
-            }
-
-            let next_msg = if match_dtls(&message) {
-                Transmit {
+                vec![]
+            } else if match_dtls(&message) {
+                vec![Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(message)),
-                }
+                    message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
+                }]
             } else if match_srtp(&message) {
-                Transmit {
+                vec![Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessageEvent::Rtp(RTPMessageEvent::Raw(message)),
-                }
+                    message: RTCMessage::Rtp(RTPMessage::Raw(message)),
+                }]
             } else {
-                Transmit {
+                vec![Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessageEvent::Stun(STUNMessageEvent::Raw(message)),
-                }
-            };
-
-            if let Some(next) = self.next() {
-                next.handle_transmit(next_msg);
+                    message: RTCMessage::Stun(STUNMessage::Raw(message)),
+                }]
             }
         } else {
             debug!("drop non-RAW packet {:?}", msg.message);
+            vec![]
         }
     }
 
-    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessageEvent>> {
-        let transmit = if let Some(next) = self.next() {
-            next.poll_transmit()
-        } else {
-            None
-        };
-
-        if let Some(msg) = transmit {
+    fn poll_transmit(&mut self, msg: Option<Transmit<RTCMessage>>) -> Option<Transmit<RTCMessage>> {
+        if let Some(msg) = msg {
             match msg.message {
-                RTCMessageEvent::Stun(STUNMessageEvent::Raw(message))
-                | RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(message))
-                | RTCMessageEvent::Rtp(RTPMessageEvent::Raw(message)) => Some(Transmit {
+                RTCMessage::Stun(STUNMessage::Raw(message))
+                | RTCMessage::Dtls(DTLSMessage::Raw(message))
+                | RTCMessage::Rtp(RTPMessage::Raw(message)) => Some(Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessageEvent::Raw(message),
+                    message: RTCMessage::Raw(message),
                 }),
                 _ => {
                     debug!("drop non-RAW packet {:?}", msg.message);
