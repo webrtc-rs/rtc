@@ -5,7 +5,7 @@ use std::time::Instant;
 
 pub mod demuxer;
 pub mod dtls;
-//pub mod stun;
+pub mod stun;
 
 pub trait RTCHandler {
     /// Handles input message
