@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::handlers::RTCHandler;
+use crate::handler::RTCHandler;
 use crate::messages::{DTLSMessage, RTCEvent, RTCMessage};
 use crate::transport::dtls_transport::RTCDtlsTransport;
 use dtls::endpoint::EndpointEvent;

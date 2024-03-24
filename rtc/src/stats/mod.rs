@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 use std::time::SystemTime;
 
+use crate::data_channel::data_channel_state::RTCDataChannelState;
+use crate::data_channel::RTCDataChannel;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
-use crate::transport::data_channel::data_channel_state::RTCDataChannelState;
-use crate::transport::data_channel::RTCDataChannel;
 use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::transport::sctp_transport::RTCSctpTransport;
 

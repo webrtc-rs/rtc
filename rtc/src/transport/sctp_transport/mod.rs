@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::api::setting_engine::SettingEngine;
 //use crate::transports::data_channel::data_channel_parameters::DataChannelParameters;
-use crate::transport::data_channel::data_channel_state::RTCDataChannelState;
-use crate::transport::data_channel::RTCDataChannel;
+use crate::data_channel::data_channel_state::RTCDataChannelState;
+use crate::data_channel::RTCDataChannel;
 use crate::transport::dtls_transport::dtls_role::DTLSRole;
 //use crate::transports::dtls_transport::*;
 use crate::messages::RTCMessage;

@@ -1,4 +1,4 @@
-use crate::handlers::RTCHandler;
+use crate::handler::RTCHandler;
 use crate::messages::{
     DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCEvent,
     RTCMessage,

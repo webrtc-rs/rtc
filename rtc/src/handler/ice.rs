@@ -1,4 +1,4 @@
-use crate::handlers::RTCHandler;
+use crate::handler::RTCHandler;
 use crate::messages::{RTCEvent, RTCMessage, STUNMessage};
 use crate::transport::ice_transport::ice_candidate_pair::RTCIceCandidatePair;
 use crate::transport::ice_transport::{IceTransportEvent, RTCIceTransport};

@@ -7,7 +7,8 @@ extern crate lazy_static;
 */
 pub mod api;
 pub mod constants;
-pub mod handlers;
+pub mod data_channel;
+pub mod handler;
 pub mod messages;
 pub mod peer_connection;
 pub mod rtp_transceiver;

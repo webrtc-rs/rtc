@@ -1,4 +1,4 @@
-use crate::transport::data_channel::DataChannelEvent;
+use crate::data_channel::DataChannelEvent;
 use crate::transport::dtls_transport::DtlsTransportEvent;
 use crate::transport::ice_transport::IceTransportEvent;
 use crate::transport::sctp_transport::SctpTransportEvent;
