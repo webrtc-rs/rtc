@@ -4,7 +4,7 @@ use shared::Transmit;
 use std::time::Instant;
 
 //pub mod demuxer;
-//pub mod dtls;
+pub mod dtls;
 //pub mod stun;
 
 pub trait RTCHandler {
@@ -14,8 +14,8 @@ pub trait RTCHandler {
     }
 
     /// Polls output message from internal transmit queue
-    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessage>> {
-        None
+    fn poll_transmit(&mut self, msg: Option<Transmit<RTCMessage>>) -> Option<Transmit<RTCMessage>> {
+        msg
     }
 
     fn poll_event(&mut self) -> Option<RTCEvent> {
@@ -26,9 +26,7 @@ pub trait RTCHandler {
     fn handle_timeout(&mut self, _now: Instant) {}
 
     /// Polls a timeout event
-    fn poll_timeout(&mut self) -> Option<Instant> {
-        None
-    }
+    fn poll_timeout(&mut self, _eto: &mut Instant) {}
 
     /// Handle an error event
     fn handle_error(&mut self, _err: Error) {}

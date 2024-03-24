@@ -24,8 +24,11 @@ use crate::transports::ice_transport::RTCIceTransport;*/
 use crate::peer_connection::certificate::RTCCertificate;
 //use crate::rtp_transceiver::SSRC;
 use crate::constants::DEFAULT_DTLS_REPLAY_PROTECTION_WINDOW;
+use crate::messages::RTCMessage;
 use crate::stats::stats_collector::StatsCollector;
 use shared::error::{Error, Result};
+use shared::Transmit;
+use srtp::context::Context;
 
 //TODO:#[cfg(test)]
 //TODO:mod dtls_transport_test;
@@ -58,9 +61,14 @@ pub struct RTCDtlsTransport {
     pub(crate) remote_parameters: DTLSParameters,
     pub(crate) remote_certificate: Bytes,
     pub(crate) state: RTCDtlsTransportState,
-    pub(crate) events: VecDeque<DtlsTransportEvent>,
     pub(crate) srtp_protection_profile: ProtectionProfile,
+    pub(crate) local_srtp_context: Option<Context>,
+    pub(crate) remote_srtp_context: Option<Context>,
+
     pub(crate) dtls_endpoint: Option<dtls::endpoint::Endpoint>,
+
+    pub(crate) events: VecDeque<DtlsTransportEvent>,
+    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCDtlsTransport {
@@ -173,6 +181,14 @@ impl RTCDtlsTransport {
             .build(self.role() == DTLSRole::Client, None)?;
 
         Ok(handshake_config)
+    }
+
+    pub(crate) fn set_local_srtp_context(&mut self, local_srtp_context: Context) {
+        self.local_srtp_context = Some(local_srtp_context);
+    }
+
+    pub(crate) fn set_remote_srtp_context(&mut self, remote_srtp_context: Context) {
+        self.remote_srtp_context = Some(remote_srtp_context);
     }
 
     /// stop the DTLSTransport object.

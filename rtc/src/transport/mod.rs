@@ -1,16 +1,9 @@
-use crate::transport::data_channel::RTCDataChannel;
-use sctp::{Association, AssociationHandle};
-use shared::{FiveTuple, FourTuple};
-use srtp::context::Context;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
-
 pub mod data_channel;
 pub mod dtls_transport;
 pub mod ice_transport;
 pub mod sctp_transport;
 
+/*TODO: to be removed
 pub struct RTCTransport {
     pub(crate) last_activity: Instant,
 
@@ -152,3 +145,4 @@ impl RTCTransport {
         self.last_activity
     }
 }
+*/
