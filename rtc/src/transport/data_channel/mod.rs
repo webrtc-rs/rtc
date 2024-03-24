@@ -25,6 +25,7 @@ use std::time::SystemTime;
 /// message size limit for Chromium
 const DATA_CHANNEL_BUFFER_SIZE: u16 = u16::MAX;
 
+#[derive(Debug)]
 pub enum DataChannelEvent {
     OnMessage,
     OnOpen,
@@ -35,7 +36,7 @@ pub enum DataChannelEvent {
 /// DataChannel represents a WebRTC DataChannel
 /// The DataChannel interface represents a network channel
 /// which can be used for bidirectional peer-to-peer transfers of arbitrary data
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RTCDataChannel {
     pub(crate) stats_id: String,
     pub(crate) label: String,

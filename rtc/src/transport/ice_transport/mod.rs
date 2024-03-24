@@ -31,6 +31,7 @@ pub mod ice_role;
 pub mod ice_server;
 pub mod ice_transport_state;
 
+#[derive(Debug)]
 pub enum IceTransportEvent {
     OnConnectionStateChange(RTCIceTransportState),
     OnSelectedCandidatePairChange(Box<RTCIceCandidatePair>),

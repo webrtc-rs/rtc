@@ -1,6 +1,7 @@
 //TODO:#[cfg(test)]
 //TODO:mod setting_engine_test;
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,12 +16,12 @@ use crate::transport::dtls_transport::dtls_role::DTLSRole;
 use crate::transport::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use shared::error::{Error, Result};
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Detach {
     pub data_channels: bool,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Timeout {
     pub ice_disconnected_timeout: Option<Duration>,
     pub ice_failed_timeout: Option<Duration>,
@@ -31,7 +32,7 @@ pub struct Timeout {
     pub ice_relay_acceptance_min_wait: Option<Duration>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Candidates {
     pub ice_lite: bool,
     pub ice_network_types: Vec<NetworkType>,
@@ -45,7 +46,7 @@ pub struct Candidates {
     pub password: String,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct ReplayProtection {
     pub dtls: usize,
     pub srtp: usize,
@@ -72,6 +73,41 @@ pub struct SettingEngine {
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) receive_mtu: usize,
     pub(crate) mid_generator: Option<Arc<dyn Fn(isize) -> String + Send + Sync>>,
+}
+
+impl fmt::Debug for SettingEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SettingEngine")
+            .field("detach", &self.detach)
+            .field("timeout", &self.timeout)
+            .field("candidates", &self.candidates)
+            .field("replay_protection", &self.replay_protection)
+            .field(
+                "sdp_media_level_fingerprints",
+                &self.sdp_media_level_fingerprints,
+            )
+            .field("answering_dtls_role", &self.answering_dtls_role)
+            .field(
+                "disable_certificate_fingerprint_verification",
+                &self.disable_certificate_fingerprint_verification,
+            )
+            .field(
+                "allow_insecure_verification_algorithm",
+                &self.allow_insecure_verification_algorithm,
+            )
+            .field(
+                "disable_srtp_replay_protection",
+                &self.disable_srtp_replay_protection,
+            )
+            .field(
+                "disable_srtcp_replay_protection",
+                &self.disable_srtcp_replay_protection,
+            )
+            .field("disable_media_engine_copy", &self.disable_media_engine_copy)
+            .field("srtp_protection_profiles", &self.srtp_protection_profiles)
+            .field("receive_mtu", &self.receive_mtu)
+            .finish()
+    }
 }
 
 impl SettingEngine {

@@ -1,4 +1,4 @@
-use crate::messages::RTCMessageEvent;
+use crate::messages::{RTCEvent, RTCMessage};
 use shared::error::Error;
 use shared::Transmit;
 use std::time::Instant;
@@ -9,15 +9,16 @@ use std::time::Instant;
 
 pub trait RTCHandler {
     /// Handles input message
-    fn handle_transmit(
-        &mut self,
-        msg: Transmit<RTCMessageEvent>,
-    ) -> Vec<Transmit<RTCMessageEvent>> {
+    fn handle_transmit(&mut self, msg: Transmit<RTCMessage>) -> Vec<Transmit<RTCMessage>> {
         vec![msg]
     }
 
     /// Polls output message from internal transmit queue
-    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessageEvent>> {
+    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessage>> {
+        None
+    }
+
+    fn poll_event(&mut self) -> Option<RTCEvent> {
         None
     }
 

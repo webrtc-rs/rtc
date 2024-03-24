@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::api::setting_engine::SettingEngine;
 use crate::handlers::RTCHandler;
 use crate::messages::{DTLSMessageEvent, RTCMessageEvent};
+use crate::transport::dtls_transport::RTCDtlsTransport;
 use crate::transport::RTCTransport;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
@@ -16,44 +17,11 @@ use shared::Transmit;
 use srtp::option::{srtcp_replay_protection, srtp_no_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 
-/// DtlsHandler implements DTLS Protocol handling
-pub struct DtlsHandler<'a> {
-    next: Option<Box<dyn RTCHandler>>,
-
-    local_addr: SocketAddr,
-    setting_engine: Arc<SettingEngine>,
-    transport: &'a mut RTCTransport,
-    transmits: VecDeque<Transmit<RTCMessageEvent>>,
-}
-
-impl<'a> DtlsHandler<'a> {
-    pub fn new(
-        local_addr: SocketAddr,
-        setting_engine: Arc<SettingEngine>,
-        transport: &'a mut RTCTransport,
-    ) -> Self {
-        DtlsHandler {
-            next: None,
-
-            local_addr,
-            setting_engine,
-            transport,
-            transmits: VecDeque::new(),
-        }
-    }
-}
-
-impl<'a> RTCHandler for DtlsHandler<'a> {
-    fn chain(mut self: Box<Self>, next: Box<dyn RTCHandler>) -> Box<dyn RTCHandler> {
-        self.next = Some(next);
-        self
-    }
-
-    fn next(&mut self) -> Option<&mut Box<dyn RTCHandler>> {
-        self.next.as_mut()
-    }
-
-    fn handle_transmit(&mut self, msg: Transmit<RTCMessageEvent>) {
+impl RTCHandler for RTCDtlsTransport {
+    fn handle_transmit(
+        &mut self,
+        msg: Transmit<RTCMessageEvent>,
+    ) -> Vec<Transmit<RTCMessageEvent>> {
         let next_msgs = if let RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) =
             msg.message
         {

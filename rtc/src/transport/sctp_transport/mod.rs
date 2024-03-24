@@ -25,10 +25,11 @@ use shared::error::*;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
+#[derive(Debug)]
 pub enum SctpTransportEvent {
     OnError,
-    OnDataChannel(RTCDataChannel),
-    OnDataChannelOpened(RTCDataChannel),
+    OnDataChannel(Box<RTCDataChannel>),
+    OnDataChannelOpened(Box<RTCDataChannel>),
 }
 
 /// SCTPTransport provides details about the SCTP transport.

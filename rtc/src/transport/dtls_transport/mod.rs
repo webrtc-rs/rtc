@@ -42,6 +42,7 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
     ]
 }
 
+#[derive(Debug)]
 pub enum DtlsTransportEvent {
     OnDtlsTransportStateChange(RTCDtlsTransportState),
 }
