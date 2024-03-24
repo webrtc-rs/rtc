@@ -1,7 +1,5 @@
 use bytes::BytesMut;
-use retty::transport::TransportContext;
 use sctp::ReliabilityType;
-use std::time::Instant;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelMessageType {
@@ -62,14 +60,9 @@ pub enum RTPMessageEvent {
 }
 
 #[derive(Debug)]
-pub enum MessageEvent {
+pub enum RTCMessageEvent {
+    Raw(BytesMut),
     Stun(STUNMessageEvent),
     Dtls(DTLSMessageEvent),
     Rtp(RTPMessageEvent),
-}
-
-pub struct TaggedMessageEvent {
-    pub now: Instant,
-    pub transport: TransportContext,
-    pub message: MessageEvent,
 }

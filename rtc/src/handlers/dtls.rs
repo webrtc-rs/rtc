@@ -1,38 +1,40 @@
 use bytes::BytesMut;
-use retty::channel::{Context, Handler};
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::messages::{DTLSMessageEvent, MessageEvent, TaggedMessageEvent};
+use crate::handlers::RTCHandler;
+use crate::messages::{DTLSMessageEvent, RTCMessageEvent};
 use crate::transport::RTCTransport;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, error, warn};
 use shared::error::{Error, Result};
+use shared::Transmit;
 use srtp::option::{srtcp_replay_protection, srtp_no_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 
 /// DtlsHandler implements DTLS Protocol handling
-pub struct DtlsHandler {
+pub struct DtlsHandler<'a> {
+    next: Option<Box<dyn RTCHandler>>,
+
     local_addr: SocketAddr,
     setting_engine: Arc<SettingEngine>,
-    transport: Rc<RefCell<RTCTransport>>,
-    transmits: VecDeque<TaggedMessageEvent>,
+    transport: &'a mut RTCTransport,
+    transmits: VecDeque<Transmit<RTCMessageEvent>>,
 }
 
-impl DtlsHandler {
+impl<'a> DtlsHandler<'a> {
     pub fn new(
         local_addr: SocketAddr,
         setting_engine: Arc<SettingEngine>,
-        transport: Rc<RefCell<RTCTransport>>,
+        transport: &'a mut RTCTransport,
     ) -> Self {
         DtlsHandler {
+            next: None,
+
             local_addr,
             setting_engine,
             transport,
@@ -41,27 +43,24 @@ impl DtlsHandler {
     }
 }
 
-impl Handler for DtlsHandler {
-    type Rin = TaggedMessageEvent;
-    type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
-    type Wout = Self::Win;
-
-    fn name(&self) -> &str {
-        "DtlsHandler"
+impl<'a> RTCHandler for DtlsHandler<'a> {
+    fn chain(mut self: Box<Self>, next: Box<dyn RTCHandler>) -> Box<dyn RTCHandler> {
+        self.next = Some(next);
+        self
     }
 
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
-        if let MessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) = msg.message {
+    fn next(&mut self) -> Option<&mut Box<dyn RTCHandler>> {
+        self.next.as_mut()
+    }
+
+    fn handle_transmit(&mut self, msg: Transmit<RTCMessageEvent>) {
+        let next_msgs = if let RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) =
+            msg.message
+        {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
             let try_read = || -> Result<Vec<BytesMut>> {
-                let mut transport = self.transport.borrow_mut();
-                let dtls_endpoint = transport.get_mut_dtls_endpoint();
+                let dtls_endpoint = self.transport.get_mut_dtls_endpoint();
                 let mut messages = vec![];
                 let mut contexts = vec![];
 
@@ -79,10 +78,7 @@ impl Handler for DtlsHandler {
                                 {
                                     debug!("recv dtls handshake complete");
                                     let (local_context, remote_context) =
-                                        DtlsHandler::update_srtp_contexts(
-                                            state,
-                                            &self.setting_engine,
-                                        )?;
+                                        update_srtp_contexts(state, &self.setting_engine)?;
                                     contexts.push((local_context, remote_context));
                                 } else {
                                     warn!(
@@ -99,51 +95,59 @@ impl Handler for DtlsHandler {
                     }
 
                     while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(TaggedMessageEvent {
+                        self.transmits.push_back(Transmit {
                             now: transmit.now,
                             transport: transmit.transport,
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(transmit.message)),
+                            message: RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(transmit.message)),
                         });
                     }
                 }
 
                 for (local_context, remote_context) in contexts {
-                    transport.set_local_srtp_context(local_context);
-                    transport.set_remote_srtp_context(remote_context);
+                    self.transport.set_local_srtp_context(local_context);
+                    self.transport.set_remote_srtp_context(remote_context);
                 }
 
                 Ok(messages)
             };
 
+            let mut next_msgs = vec![];
             match try_read() {
                 Ok(messages) => {
                     for message in messages {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        ctx.fire_read(TaggedMessageEvent {
+                        next_msgs.push(Transmit {
                             now: msg.now,
                             transport: msg.transport,
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(message)),
+                            message: RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(message)),
                         });
                     }
                 }
                 Err(err) => {
                     error!("try_read with error {}", err);
                     if err == Error::ErrAlertFatalOrClose {
-                        let mut transport = self.transport.borrow_mut();
-                        let dtls_endpoint = transport.get_mut_dtls_endpoint();
+                        let dtls_endpoint = self.transport.get_mut_dtls_endpoint();
                         let _ = dtls_endpoint.close();
                     } else {
-                        ctx.fire_exception(Box::new(err))
+                        self.handle_error(err);
                     }
                 }
             };
+            next_msgs
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);
-            ctx.fire_read(msg);
+            vec![msg]
+        };
+
+        if let Some(next) = self.next() {
+            for next_msg in next_msgs {
+                next.handle_transmit(next_msg);
+            }
         }
     }
 
+    /*
     fn handle_timeout(
         &mut self,
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
@@ -230,64 +234,62 @@ impl Handler for DtlsHandler {
         }
 
         self.transmits.pop_front()
-    }
+    }*/
 }
 
-impl DtlsHandler {
-    pub(crate) fn update_srtp_contexts(
-        state: &State,
-        setting_engine: &Arc<SettingEngine>,
-    ) -> Result<(srtp::context::Context, srtp::context::Context)> {
-        let profile = match state.srtp_protection_profile() {
-            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
-                ProtectionProfile::Aes128CmHmacSha1_80
-            }
-            SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
-            _ => return Err(Error::ErrNoSuchSrtpProfile),
-        };
-
-        let mut srtp_config = srtp::config::Config {
-            profile,
-            ..Default::default()
-        };
-        if setting_engine.replay_protection.srtp != 0 {
-            srtp_config.remote_rtp_options = Some(srtp_replay_protection(
-                setting_engine.replay_protection.srtp,
-            ));
-        } else if setting_engine.disable_srtp_replay_protection {
-            srtp_config.remote_rtp_options = Some(srtp_no_replay_protection());
+pub(crate) fn update_srtp_contexts(
+    state: &State,
+    setting_engine: &Arc<SettingEngine>,
+) -> Result<(srtp::context::Context, srtp::context::Context)> {
+    let profile = match state.srtp_protection_profile() {
+        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
+            ProtectionProfile::Aes128CmHmacSha1_80
         }
+        SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
+        _ => return Err(Error::ErrNoSuchSrtpProfile),
+    };
 
-        srtp_config.extract_session_keys_from_dtls(state, false)?;
-
-        let local_context = srtp::context::Context::new(
-            &srtp_config.keys.local_master_key,
-            &srtp_config.keys.local_master_salt,
-            srtp_config.profile,
-            srtp_config.local_rtp_options,
-            srtp_config.local_rtcp_options,
-        )?;
-
-        let remote_context = srtp::context::Context::new(
-            &srtp_config.keys.remote_master_key,
-            &srtp_config.keys.remote_master_salt,
-            srtp_config.profile,
-            if srtp_config.remote_rtp_options.is_none() {
-                Some(srtp_replay_protection(
-                    crate::constants::DEFAULT_SESSION_SRTP_REPLAY_PROTECTION_WINDOW,
-                ))
-            } else {
-                srtp_config.remote_rtp_options
-            },
-            if srtp_config.remote_rtcp_options.is_none() {
-                Some(srtcp_replay_protection(
-                    crate::constants::DEFAULT_SESSION_SRTCP_REPLAY_PROTECTION_WINDOW,
-                ))
-            } else {
-                srtp_config.remote_rtcp_options
-            },
-        )?;
-
-        Ok((local_context, remote_context))
+    let mut srtp_config = srtp::config::Config {
+        profile,
+        ..Default::default()
+    };
+    if setting_engine.replay_protection.srtp != 0 {
+        srtp_config.remote_rtp_options = Some(srtp_replay_protection(
+            setting_engine.replay_protection.srtp,
+        ));
+    } else if setting_engine.disable_srtp_replay_protection {
+        srtp_config.remote_rtp_options = Some(srtp_no_replay_protection());
     }
+
+    srtp_config.extract_session_keys_from_dtls(state, false)?;
+
+    let local_context = srtp::context::Context::new(
+        &srtp_config.keys.local_master_key,
+        &srtp_config.keys.local_master_salt,
+        srtp_config.profile,
+        srtp_config.local_rtp_options,
+        srtp_config.local_rtcp_options,
+    )?;
+
+    let remote_context = srtp::context::Context::new(
+        &srtp_config.keys.remote_master_key,
+        &srtp_config.keys.remote_master_salt,
+        srtp_config.profile,
+        if srtp_config.remote_rtp_options.is_none() {
+            Some(srtp_replay_protection(
+                crate::constants::DEFAULT_SESSION_SRTP_REPLAY_PROTECTION_WINDOW,
+            ))
+        } else {
+            srtp_config.remote_rtp_options
+        },
+        if srtp_config.remote_rtcp_options.is_none() {
+            Some(srtcp_replay_protection(
+                crate::constants::DEFAULT_SESSION_SRTCP_REPLAY_PROTECTION_WINDOW,
+            ))
+        } else {
+            srtp_config.remote_rtcp_options
+        },
+    )?;
+
+    Ok((local_context, remote_context))
 }

@@ -1,36 +1,35 @@
-use crate::messages::{MessageEvent, STUNMessageEvent, TaggedMessageEvent};
+use crate::handlers::RTCHandler;
+use crate::messages::{RTCMessageEvent, STUNMessageEvent};
 use bytes::BytesMut;
 use log::{debug, warn};
-use retty::channel::{Context, Handler};
 use shared::error::Result;
+use shared::Transmit;
 use stun::message::Message;
 
 /// StunHandler implements STUN Protocol handling
 #[derive(Default)]
-pub struct StunHandler;
+pub struct StunHandler {
+    next: Option<Box<dyn RTCHandler>>,
+}
 
 impl StunHandler {
     pub fn new() -> Self {
-        StunHandler
+        StunHandler::default()
     }
 }
 
-impl Handler for StunHandler {
-    type Rin = TaggedMessageEvent;
-    type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
-    type Wout = Self::Win;
-
-    fn name(&self) -> &str {
-        "StunHandler"
+impl RTCHandler for StunHandler {
+    fn chain(mut self: Box<Self>, next: Box<dyn RTCHandler>) -> Box<dyn RTCHandler> {
+        self.next = Some(next);
+        self
     }
 
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
-        if let MessageEvent::Stun(STUNMessageEvent::Raw(message)) = msg.message {
+    fn next(&mut self) -> Option<&mut Box<dyn RTCHandler>> {
+        self.next.as_mut()
+    }
+
+    fn handle_transmit(&mut self, msg: Transmit<RTCMessageEvent>) {
+        let next_msg = if let RTCMessageEvent::Stun(STUNMessageEvent::Raw(message)) = msg.message {
             let try_read = || -> Result<Message> {
                 let mut stun_message = Message {
                     raw: message.to_vec(),
@@ -45,40 +44,46 @@ impl Handler for StunHandler {
             };
 
             match try_read() {
-                Ok(stun_message) => {
-                    ctx.fire_read(TaggedMessageEvent {
-                        now: msg.now,
-                        transport: msg.transport,
-                        message: MessageEvent::Stun(STUNMessageEvent::Stun(stun_message)),
-                    });
-                }
+                Ok(stun_message) => Transmit {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageEvent::Stun(STUNMessageEvent::Stun(stun_message)),
+                },
                 Err(err) => {
                     warn!("try_read got error {}", err);
-                    ctx.fire_exception(Box::new(err));
+                    self.handle_error(err);
+                    return;
                 }
             }
         } else {
             debug!("bypass StunHandler read for {}", msg.transport.peer_addr);
-            ctx.fire_read(msg);
+            msg
+        };
+
+        if let Some(next) = self.next() {
+            next.handle_transmit(next_msg);
         }
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Stun(STUNMessageEvent::Stun(mut stun_message)) = msg.message {
+    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessageEvent>> {
+        let transmit = if let Some(next) = self.next() {
+            next.poll_transmit()
+        } else {
+            None
+        };
+
+        if let Some(msg) = transmit {
+            if let RTCMessageEvent::Stun(STUNMessageEvent::Stun(mut stun_message)) = msg.message {
                 debug!(
                     "StunMessage type {} sent to {}",
                     stun_message.typ, msg.transport.peer_addr
                 );
                 stun_message.encode();
                 let message = BytesMut::from(&stun_message.raw[..]);
-                Some(TaggedMessageEvent {
+                Some(Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message: MessageEvent::Stun(STUNMessageEvent::Raw(message)),
+                    message: RTCMessageEvent::Stun(STUNMessageEvent::Raw(message)),
                 })
             } else {
                 debug!("bypass StunHandler write for {}", msg.transport.peer_addr);

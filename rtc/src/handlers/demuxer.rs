@@ -1,9 +1,7 @@
-use crate::messages::{
-    DTLSMessageEvent, MessageEvent, RTPMessageEvent, STUNMessageEvent, TaggedMessageEvent,
-};
+use crate::handlers::RTCHandler;
+use crate::messages::{DTLSMessageEvent, RTCMessageEvent, RTPMessageEvent, STUNMessageEvent};
 use log::{debug, error};
-use retty::channel::{Context, Handler};
-use retty::transport::TaggedBytesMut;
+use shared::Transmit;
 
 /// match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]
 fn match_range(lower: u8, upper: u8, buf: &[u8]) -> bool {
@@ -41,64 +39,76 @@ fn match_srtp(b: &[u8]) -> bool {
 
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
 #[derive(Default)]
-pub struct DemuxerHandler;
+pub struct DemuxerHandler {
+    next: Option<Box<dyn RTCHandler>>,
+}
 
 impl DemuxerHandler {
     pub fn new() -> Self {
-        DemuxerHandler
+        DemuxerHandler::default()
     }
 }
 
-impl Handler for DemuxerHandler {
-    type Rin = TaggedBytesMut;
-    type Rout = TaggedMessageEvent;
-    type Win = TaggedMessageEvent;
-    type Wout = TaggedBytesMut;
-
-    fn name(&self) -> &str {
-        "DemuxerHandler"
+impl RTCHandler for DemuxerHandler {
+    fn chain(mut self: Box<Self>, next: Box<dyn RTCHandler>) -> Box<dyn RTCHandler> {
+        self.next = Some(next);
+        self
     }
 
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
-        if msg.message.is_empty() {
-            error!("drop invalid packet due to zero length");
-        } else if match_dtls(&msg.message) {
-            ctx.fire_read(TaggedMessageEvent {
-                now: msg.now,
-                transport: msg.transport,
-                message: MessageEvent::Dtls(DTLSMessageEvent::Raw(msg.message)),
-            });
-        } else if match_srtp(&msg.message) {
-            ctx.fire_read(TaggedMessageEvent {
-                now: msg.now,
-                transport: msg.transport,
-                message: MessageEvent::Rtp(RTPMessageEvent::Raw(msg.message)),
-            });
+    fn next(&mut self) -> Option<&mut Box<dyn RTCHandler>> {
+        self.next.as_mut()
+    }
+
+    fn handle_transmit(&mut self, msg: Transmit<RTCMessageEvent>) {
+        if let RTCMessageEvent::Raw(message) = msg.message {
+            if message.is_empty() {
+                error!("drop invalid packet due to zero length");
+                return;
+            }
+
+            let next_msg = if match_dtls(&message) {
+                Transmit {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(message)),
+                }
+            } else if match_srtp(&message) {
+                Transmit {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageEvent::Rtp(RTPMessageEvent::Raw(message)),
+                }
+            } else {
+                Transmit {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageEvent::Stun(STUNMessageEvent::Raw(message)),
+                }
+            };
+
+            if let Some(next) = self.next() {
+                next.handle_transmit(next_msg);
+            }
         } else {
-            ctx.fire_read(TaggedMessageEvent {
-                now: msg.now,
-                transport: msg.transport,
-                message: MessageEvent::Stun(STUNMessageEvent::Raw(msg.message)),
-            });
+            debug!("drop non-RAW packet {:?}", msg.message);
         }
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
+    fn poll_transmit(&mut self) -> Option<Transmit<RTCMessageEvent>> {
+        let transmit = if let Some(next) = self.next() {
+            next.poll_transmit()
+        } else {
+            None
+        };
+
+        if let Some(msg) = transmit {
             match msg.message {
-                MessageEvent::Stun(STUNMessageEvent::Raw(message))
-                | MessageEvent::Dtls(DTLSMessageEvent::Raw(message))
-                | MessageEvent::Rtp(RTPMessageEvent::Raw(message)) => Some(TaggedBytesMut {
+                RTCMessageEvent::Stun(STUNMessageEvent::Raw(message))
+                | RTCMessageEvent::Dtls(DTLSMessageEvent::Raw(message))
+                | RTCMessageEvent::Rtp(RTPMessageEvent::Raw(message)) => Some(Transmit {
                     now: msg.now,
                     transport: msg.transport,
-                    message,
+                    message: RTCMessageEvent::Raw(message),
                 }),
                 _ => {
                     debug!("drop non-RAW packet {:?}", msg.message);

@@ -1,6 +1,6 @@
 use crate::transport::data_channel::RTCDataChannel;
-use retty::transport::{FiveTuple, FourTuple};
 use sctp::{Association, AssociationHandle};
+use shared::{FiveTuple, FourTuple};
 use srtp::context::Context;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -13,4 +13,6 @@ pub mod replay_detector;
 pub mod error;
 pub mod util;
 
-pub use retty::transport::{EcnCodepoint, Protocol, Transmit, TransportContext};
+pub use retty::transport::{
+    EcnCodepoint, FiveTuple, FourTuple, Protocol, Transmit, TransportContext,
+};
