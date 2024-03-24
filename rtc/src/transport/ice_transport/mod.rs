@@ -8,11 +8,13 @@ use ice_role::RTCIceRole;
 use std::collections::VecDeque;
 
 //use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
+use crate::messages::RTCMessage;
 use crate::stats::stats_collector::StatsCollector;
 use crate::stats::ICETransportStats;
 use crate::stats::StatsReportType::Transport;
 use crate::transport::ice_transport::ice_transport_state::RTCIceTransportState;
 use shared::error::{Error, Result};
+use shared::Transmit;
 
 /*TODO:#[cfg(test)]
 mod ice_transport_test;
@@ -37,26 +39,23 @@ pub enum IceTransportEvent {
     OnSelectedCandidatePairChange(Box<RTCIceCandidatePair>),
 }
 
-#[derive(Default)]
-struct ICETransportInternal {}
-
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
 #[derive(Default)]
 pub struct RTCIceTransport {
     pub(crate) gatherer: RTCIceGatherer,
     state: RTCIceTransportState,
-    events: VecDeque<IceTransportEvent>,
     role: RTCIceRole,
+
+    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCIceTransport {
-    /// creates a new new_icetransport.
+    /// creates a new new_ice_transport.
     pub(crate) fn new(gatherer: RTCIceGatherer) -> Self {
         RTCIceTransport {
             gatherer,
             state: RTCIceTransportState::New,
-            events: VecDeque::new(),
             ..Default::default()
         }
     }
