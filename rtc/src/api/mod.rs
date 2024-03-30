@@ -7,6 +7,8 @@ pub mod setting_engine;
 
 /*TODO: use interceptor::registry::Registry;
 use interceptor::Interceptor;*/
+use crate::peer_connection::configuration::RTCConfiguration;
+use crate::peer_connection::RTCPeerConnection;
 use media_engine::*;
 use setting_engine::*;
 use std::sync::Arc;
@@ -24,9 +26,13 @@ use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::transports::sctp_transport::RTCSctpTransport;
 use crate::track::track_local::TrackLocal;
-use rcgen::KeyPair;
-use shared::error::{Error, Result};
- */
+use rcgen::KeyPair;*/
+use crate::peer_connection::certificate::RTCCertificate;
+use crate::transport::dtls_transport::RTCDtlsTransport;
+use crate::transport::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
+use crate::transport::ice_transport::RTCIceTransport;
+use crate::transport::sctp_transport::RTCSctpTransport;
+use shared::error::Result;
 
 /// API bundles the global functions of the WebRTC and ORTC API.
 /// Some of these functions are also exported globally using the
@@ -39,38 +45,26 @@ pub struct API {
 }
 
 impl API {
-    /*TODO:/// new_peer_connection creates a new PeerConnection with the provided configuration against the received API object
-    pub async fn new_peer_connection(
+    /// new_peer_connection creates a new PeerConnection with the provided configuration against the received API object
+    pub fn new_peer_connection(
         &self,
         configuration: RTCConfiguration,
     ) -> Result<RTCPeerConnection> {
-        RTCPeerConnection::new(self, configuration).await
+        RTCPeerConnection::new(self, configuration)
     }
 
     /// new_ice_gatherer creates a new ice gatherer.
     /// This constructor is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.
     pub fn new_ice_gatherer(&self, opts: RTCIceGatherOptions) -> Result<RTCIceGatherer> {
-        let mut validated_servers = vec![];
-        if !opts.ice_servers.is_empty() {
-            for server in &opts.ice_servers {
-                let url = server.urls()?;
-                validated_servers.extend(url);
-            }
-        }
-
-        Ok(RTCIceGatherer::new(
-            validated_servers,
-            opts.ice_gather_policy,
-            Arc::clone(&self.setting_engine),
-        ))
+        RTCPeerConnection::new_ice_gatherer(opts, &self.setting_engine)
     }
 
     /// new_ice_transport creates a new ice transport.
     /// This constructor is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.
-    pub fn new_ice_transport(&self, gatherer: Arc<RTCIceGatherer>) -> RTCIceTransport {
-        RTCIceTransport::new(gatherer)
+    pub fn new_ice_transport(&self, gatherer: RTCIceGatherer) -> RTCIceTransport {
+        RTCPeerConnection::new_ice_transport(gatherer)
     }
 
     /// new_dtls_transport creates a new dtls_transport transport.
@@ -78,42 +72,19 @@ impl API {
     /// meant to be used together with the basic WebRTC API.
     pub fn new_dtls_transport(
         &self,
-        ice_transport: Arc<RTCIceTransport>,
-        mut certificates: Vec<RTCCertificate>,
+        certificates: Vec<RTCCertificate>,
     ) -> Result<RTCDtlsTransport> {
-        if !certificates.is_empty() {
-            let now = SystemTime::now();
-            for cert in &certificates {
-                cert.expires
-                    .duration_since(now)
-                    .map_err(|_| Error::ErrCertificateExpired)?;
-            }
-        } else {
-            let kp = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-            let cert = RTCCertificate::from_key_pair(kp)?;
-            certificates = vec![cert];
-        };
-
-        Ok(RTCDtlsTransport::new(
-            ice_transport,
-            certificates,
-            Arc::clone(&self.setting_engine),
-        ))
+        RTCPeerConnection::new_dtls_transport(certificates, &self.setting_engine)
     }
 
     /// new_sctp_transport creates a new SCTPTransport.
     /// This constructor is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.
-    pub fn new_sctp_transport(
-        &self,
-        dtls_transport: Arc<RTCDtlsTransport>,
-    ) -> Result<RTCSctpTransport> {
-        Ok(RTCSctpTransport::new(
-            dtls_transport,
-            Arc::clone(&self.setting_engine),
-        ))
+    pub fn new_sctp_transport(&self) -> Result<RTCSctpTransport> {
+        RTCPeerConnection::new_sctp_transport(&self.setting_engine)
     }
 
+    /*
     /// new_data_channel creates a new DataChannel.
     /// This constructor is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.

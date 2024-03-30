@@ -242,7 +242,14 @@ impl RTCPeerConnection {
         let demuxer = Demuxer::new();
 
         // Create the ICE transport
-        let ice_transport = Self::new_ice_transport(api, &configuration)?;
+        let ice_gatherer = Self::new_ice_gatherer(
+            RTCIceGatherOptions {
+                ice_servers: configuration.get_ice_servers(),
+                ice_gather_policy: configuration.ice_transport_policy,
+            },
+            &api.setting_engine,
+        )?;
+        let ice_transport = Self::new_ice_transport(ice_gatherer);
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
@@ -687,11 +694,17 @@ impl RTCPeerConnection {
         self.stats_id.as_str()
     }
 
-    fn new_ice_gatherer(
-        ice_agent: ice::Agent,
+    pub(crate) fn new_ice_gatherer(
         opts: RTCIceGatherOptions,
         setting_engine: &Arc<SettingEngine>,
     ) -> Result<RTCIceGatherer> {
+        let mut candidate_types = vec![];
+        if setting_engine.candidates.ice_lite {
+            candidate_types.push(ice::candidate::CandidateType::Host);
+        } else if opts.ice_gather_policy == RTCIceTransportPolicy::Relay {
+            candidate_types.push(ice::candidate::CandidateType::Relay);
+        }
+
         let mut validated_servers = vec![];
         if !opts.ice_servers.is_empty() {
             for server in &opts.ice_servers {
@@ -699,6 +712,25 @@ impl RTCPeerConnection {
                 validated_servers.extend(url);
             }
         }
+
+        let ice_agent_config = ice::AgentConfig {
+            lite: setting_engine.candidates.ice_lite,
+            urls: validated_servers.clone(),
+            disconnected_timeout: setting_engine.timeout.ice_disconnected_timeout,
+            failed_timeout: setting_engine.timeout.ice_failed_timeout,
+            keepalive_interval: setting_engine.timeout.ice_keepalive_interval,
+            candidate_types,
+            host_acceptance_min_wait: setting_engine.timeout.ice_host_acceptance_min_wait,
+            srflx_acceptance_min_wait: setting_engine.timeout.ice_srflx_acceptance_min_wait,
+            prflx_acceptance_min_wait: setting_engine.timeout.ice_prflx_acceptance_min_wait,
+            relay_acceptance_min_wait: setting_engine.timeout.ice_relay_acceptance_min_wait,
+            local_ufrag: setting_engine.candidates.username_fragment.clone(),
+            local_pwd: setting_engine.candidates.password.clone(),
+            ..Default::default()
+        };
+
+        // Create the ICE transport
+        let ice_agent = ice::Agent::new(Arc::new(ice_agent_config))?;
 
         Ok(RTCIceGatherer::new(
             ice_agent,
@@ -708,51 +740,11 @@ impl RTCPeerConnection {
         ))
     }
 
-    fn new_ice_transport(api: &API, configuration: &RTCConfiguration) -> Result<RTCIceTransport> {
-        let mut candidate_types = vec![];
-        if api.setting_engine.candidates.ice_lite {
-            candidate_types.push(ice::candidate::CandidateType::Host);
-        } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
-            candidate_types.push(ice::candidate::CandidateType::Relay);
-        }
-
-        let mut validated_servers = vec![];
-        for server in configuration.get_ice_servers() {
-            let url = server.urls()?;
-            validated_servers.extend(url);
-        }
-
-        let ice_agent_config = ice::AgentConfig {
-            lite: api.setting_engine.candidates.ice_lite,
-            urls: validated_servers,
-            disconnected_timeout: api.setting_engine.timeout.ice_disconnected_timeout,
-            failed_timeout: api.setting_engine.timeout.ice_failed_timeout,
-            keepalive_interval: api.setting_engine.timeout.ice_keepalive_interval,
-            candidate_types,
-            host_acceptance_min_wait: api.setting_engine.timeout.ice_host_acceptance_min_wait,
-            srflx_acceptance_min_wait: api.setting_engine.timeout.ice_srflx_acceptance_min_wait,
-            prflx_acceptance_min_wait: api.setting_engine.timeout.ice_prflx_acceptance_min_wait,
-            relay_acceptance_min_wait: api.setting_engine.timeout.ice_relay_acceptance_min_wait,
-            local_ufrag: api.setting_engine.candidates.username_fragment.clone(),
-            local_pwd: api.setting_engine.candidates.password.clone(),
-            ..Default::default()
-        };
-
-        // Create the ICE transport
-        let ice_agent = ice::Agent::new(Arc::new(ice_agent_config))?;
-        let ice_gatherer = Self::new_ice_gatherer(
-            ice_agent,
-            RTCIceGatherOptions {
-                ice_servers: configuration.get_ice_servers(),
-                ice_gather_policy: configuration.ice_transport_policy,
-            },
-            &api.setting_engine,
-        )?;
-
-        Ok(RTCIceTransport::new(ice_gatherer))
+    pub(crate) fn new_ice_transport(ice_gatherer: RTCIceGatherer) -> RTCIceTransport {
+        RTCIceTransport::new(ice_gatherer)
     }
 
-    fn new_dtls_transport(
+    pub(crate) fn new_dtls_transport(
         mut certificates: Vec<RTCCertificate>,
         setting_engine: &Arc<SettingEngine>,
     ) -> Result<RTCDtlsTransport> {
@@ -775,7 +767,9 @@ impl RTCPeerConnection {
         ))
     }
 
-    fn new_sctp_transport(setting_engine: &Arc<SettingEngine>) -> Result<RTCSctpTransport> {
+    pub(crate) fn new_sctp_transport(
+        setting_engine: &Arc<SettingEngine>,
+    ) -> Result<RTCSctpTransport> {
         Ok(RTCSctpTransport::new(Arc::clone(setting_engine)))
     }
 
