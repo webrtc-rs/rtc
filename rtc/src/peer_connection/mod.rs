@@ -34,6 +34,7 @@ use rand::{thread_rng, Rng};
 use crate::api::media_engine::MediaEngine;
 use crate::api::setting_engine::SettingEngine;
 use crate::api::API;
+use crate::handler::demuxer::Demuxer;
 /*
 use crate::transports::data_channel::data_channel_init::RTCDataChannelInit;
 use crate::transports::data_channel::data_channel_parameters::DataChannelParameters;
@@ -184,6 +185,7 @@ pub struct RTCPeerConnection {
     pub(super) pending_local_description: Option<RTCSessionDescription>,
     pub(super) pending_remote_description: Option<RTCSessionDescription>,
 
+    pub(super) demuxer: Demuxer,
     pub(super) ice_transport: RTCIceTransport,
     pub(super) dtls_transport: RTCDtlsTransport,
     pub(super) sctp_transport: RTCSctpTransport,
@@ -236,6 +238,9 @@ impl RTCPeerConnection {
     pub(crate) fn new(api: &API, mut configuration: RTCConfiguration) -> Result<Self> {
         RTCPeerConnection::init_configuration(&mut configuration)?;
 
+        // Create the demuxer
+        let demuxer = Demuxer::new();
+
         // Create the ICE transport
         let ice_transport = Self::new_ice_transport(api, &configuration)?;
 
@@ -279,11 +284,12 @@ impl RTCPeerConnection {
             media_engine: api.media_engine.clone(),
             is_negotiation_needed: false,
 
+            events: Default::default(),
+
+            demuxer,
             ice_transport,
             dtls_transport,
             sctp_transport,
-
-            events: Default::default(),
         })
     }
 
