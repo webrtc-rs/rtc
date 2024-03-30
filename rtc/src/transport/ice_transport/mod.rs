@@ -13,7 +13,7 @@ use crate::stats::stats_collector::StatsCollector;
 use crate::stats::ICETransportStats;
 use crate::stats::StatsReportType::Transport;
 use crate::transport::ice_transport::ice_transport_state::RTCIceTransportState;
-use shared::error::{Error, Result};
+use shared::error::Result;
 use shared::Transmit;
 
 /*TODO:#[cfg(test)]
@@ -41,7 +41,6 @@ pub enum IceTransportEvent {
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
-#[derive(Default)]
 pub struct RTCIceTransport {
     pub(crate) gatherer: RTCIceGatherer,
     state: RTCIceTransportState,
@@ -56,21 +55,23 @@ impl RTCIceTransport {
         RTCIceTransport {
             gatherer,
             state: RTCIceTransportState::New,
-            ..Default::default()
+            role: Default::default(),
+            transmits: Default::default(),
         }
     }
 
     /// get_selected_candidate_pair returns the selected candidate pair on which packets are sent
     /// if there is no selected pair nil is returned
     pub fn get_selected_candidate_pair(&self) -> Option<RTCIceCandidatePair> {
-        if let Some(agent) = self.gatherer.get_agent() {
-            if let Some((ice_pair_local, ice_pair_remote)) = agent.get_selected_candidate_pair() {
-                let local = RTCIceCandidate::from(&ice_pair_local);
-                let remote = RTCIceCandidate::from(&ice_pair_remote);
-                return Some(RTCIceCandidatePair::new(local, remote));
-            }
+        if let Some((ice_pair_local, ice_pair_remote)) =
+            self.gatherer.agent.get_selected_candidate_pair()
+        {
+            let local = RTCIceCandidate::from(&ice_pair_local);
+            let remote = RTCIceCandidate::from(&ice_pair_remote);
+            Some(RTCIceCandidatePair::new(local, remote))
+        } else {
+            None
         }
-        None
     }
 
     /*TODO: /// Start incoming connectivity checks based on its configured role.
@@ -174,14 +175,6 @@ impl RTCIceTransport {
     }
     */
 
-    pub(crate) fn ensure_gatherer(&mut self) -> Result<()> {
-        if self.gatherer.get_agent().is_none() {
-            self.gatherer.create_agent()
-        } else {
-            Ok(())
-        }
-    }
-
     /// restart is not exposed currently because ORTC has users create a whole new ICETransport
     /// so for now lets keep it private so we don't cause ORTC users to depend on non-standard APIs
     pub(crate) fn restart(&mut self) -> Result<()> {
@@ -193,11 +186,8 @@ impl RTCIceTransport {
                 .clone(),
             self.gatherer.setting_engine.candidates.password.clone(),
         );
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            agent.restart(ufrag, pwd, false)?;
-        } else {
-            return Err(Error::ErrICEAgentNotExist);
-        }
+        self.gatherer.agent.restart(ufrag, pwd, false)?;
+
         //TODO: self.gatherer.gather()
         Ok(())
     }
@@ -215,45 +205,27 @@ impl RTCIceTransport {
 
     /// add_local_candidates sets the sequence of candidates associated with the local ICETransport.
     pub fn add_local_candidates(&mut self, local_candidates: &[RTCIceCandidate]) -> Result<()> {
-        self.ensure_gatherer()?;
-
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            for rc in local_candidates {
-                agent.add_local_candidate(rc.to_ice()?)?;
-            }
-            Ok(())
-        } else {
-            Err(Error::ErrICEAgentNotExist)
+        for rc in local_candidates {
+            self.gatherer.agent.add_local_candidate(rc.to_ice()?)?;
         }
+        Ok(())
     }
 
     /// adds a candidate associated with the local ICETransport.
     pub fn add_local_candidate(&mut self, local_candidate: Option<RTCIceCandidate>) -> Result<()> {
-        self.ensure_gatherer()?;
-
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            if let Some(r) = local_candidate {
-                agent.add_local_candidate(r.to_ice()?)?;
-            }
-
-            Ok(())
-        } else {
-            Err(Error::ErrICEAgentNotExist)
+        if let Some(r) = local_candidate {
+            self.gatherer.agent.add_local_candidate(r.to_ice()?)?;
         }
+
+        Ok(())
     }
 
     /// add_remote_candidates sets the sequence of candidates associated with the remote ICETransport.
     pub fn add_remote_candidates(&mut self, remote_candidates: &[RTCIceCandidate]) -> Result<()> {
-        self.ensure_gatherer()?;
-
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            for rc in remote_candidates {
-                agent.add_remote_candidate(rc.to_ice()?)?;
-            }
-            Ok(())
-        } else {
-            Err(Error::ErrICEAgentNotExist)
+        for rc in remote_candidates {
+            self.gatherer.agent.add_remote_candidate(rc.to_ice()?)?;
         }
+        Ok(())
     }
 
     /// adds a candidate associated with the remote ICETransport.
@@ -261,17 +233,11 @@ impl RTCIceTransport {
         &mut self,
         remote_candidate: Option<RTCIceCandidate>,
     ) -> Result<()> {
-        self.ensure_gatherer()?;
-
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            if let Some(r) = remote_candidate {
-                agent.add_remote_candidate(r.to_ice()?)?;
-            }
-
-            Ok(())
-        } else {
-            Err(Error::ErrICEAgentNotExist)
+        if let Some(r) = remote_candidate {
+            self.gatherer.agent.add_remote_candidate(r.to_ice()?)?;
         }
+
+        Ok(())
     }
 
     /// State returns the current ice transport state.
@@ -284,11 +250,9 @@ impl RTCIceTransport {
     }
 
     pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
-        if let Some(agent) = self.gatherer.get_agent() {
-            let stats = ICETransportStats::new("ice_transport".to_string(), agent);
+        let stats = ICETransportStats::new("ice_transport".to_string(), &self.gatherer.agent);
 
-            collector.insert("ice_transport".to_string(), Transport(stats));
-        }
+        collector.insert("ice_transport".to_string(), Transport(stats));
     }
 
     pub(crate) fn have_remote_credentials_change(
@@ -296,12 +260,8 @@ impl RTCIceTransport {
         new_ufrag: &str,
         new_pwd: &str,
     ) -> bool {
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            if let Some(Credentials { ufrag, pwd }) = agent.get_remote_credentials() {
-                ufrag != new_ufrag || pwd != new_pwd
-            } else {
-                false
-            }
+        if let Some(Credentials { ufrag, pwd }) = self.gatherer.agent.get_remote_credentials() {
+            ufrag != new_ufrag || pwd != new_pwd
         } else {
             false
         }
@@ -312,10 +272,8 @@ impl RTCIceTransport {
         new_ufrag: String,
         new_pwd: String,
     ) -> Result<()> {
-        if let Some(agent) = self.gatherer.get_mut_agent() {
-            Ok(agent.set_remote_credentials(new_ufrag, new_pwd)?)
-        } else {
-            Err(Error::ErrICEAgentNotExist)
-        }
+        self.gatherer
+            .agent
+            .set_remote_credentials(new_ufrag, new_pwd)
     }
 }

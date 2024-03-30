@@ -14,7 +14,7 @@ use crate::transport::ice_transport::ice_candidate::*;
 use crate::transport::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use crate::transport::ice_transport::ice_parameters::RTCIceParameters;
 use crate::transport::ice_transport::ice_server::RTCIceServer;
-use shared::error::{Error, Result};
+use shared::error::Result;
 
 /// ICEGatherOptions provides options relating to the gathering of ICE candidates.
 #[derive(Default, Debug, Clone)]
@@ -33,7 +33,6 @@ pub enum IceGathererEvent {
 /// candidates, as well as enabling the retrieval of local Interactive
 /// Connectivity Establishment (ICE) parameters which can be
 /// exchanged in signaling.
-#[derive(Default)]
 pub struct RTCIceGatherer {
     pub(crate) validated_servers: Vec<Url>,
     pub(crate) gather_policy: RTCIceTransportPolicy,
@@ -42,87 +41,25 @@ pub struct RTCIceGatherer {
     pub(crate) state: RTCIceGathererState,
     pub(crate) events: VecDeque<IceGathererEvent>,
 
-    pub(crate) agent: Option<Agent>,
+    pub(crate) agent: Agent,
 }
 
 impl RTCIceGatherer {
     pub(crate) fn new(
+        agent: Agent,
         validated_servers: Vec<Url>,
         gather_policy: RTCIceTransportPolicy,
         setting_engine: Arc<SettingEngine>,
     ) -> Self {
         RTCIceGatherer {
+            agent,
             gather_policy,
             validated_servers,
             setting_engine,
 
             state: RTCIceGathererState::New,
             events: VecDeque::new(),
-
-            agent: None,
         }
-    }
-
-    pub(crate) fn create_agent(&mut self) -> Result<()> {
-        if self.agent.is_some() || self.state() != RTCIceGathererState::New {
-            return Ok(());
-        }
-
-        let mut candidate_types = vec![];
-        if self.setting_engine.candidates.ice_lite {
-            candidate_types.push(ice::candidate::CandidateType::Host);
-        } else if self.gather_policy == RTCIceTransportPolicy::Relay {
-            candidate_types.push(ice::candidate::CandidateType::Relay);
-        }
-
-        /*let nat_1to1_cand_type = match self.setting_engine.candidates.nat_1to1_ip_candidate_type {
-            RTCIceCandidateType::Host => CandidateType::Host,
-            RTCIceCandidateType::Srflx => CandidateType::ServerReflexive,
-            _ => CandidateType::Unspecified,
-        };*/
-
-        //TOOD: let mdns_mode = self.setting_engine.candidates.multicast_dns_mode;
-
-        let config = ice::agent::agent_config::AgentConfig {
-            //TODO: udp_network: self.setting_engine.udp_network.clone(),
-            lite: self.setting_engine.candidates.ice_lite,
-            urls: self.validated_servers.clone(),
-            disconnected_timeout: self.setting_engine.timeout.ice_disconnected_timeout,
-            failed_timeout: self.setting_engine.timeout.ice_failed_timeout,
-            keepalive_interval: self.setting_engine.timeout.ice_keepalive_interval,
-            candidate_types,
-            host_acceptance_min_wait: self.setting_engine.timeout.ice_host_acceptance_min_wait,
-            srflx_acceptance_min_wait: self.setting_engine.timeout.ice_srflx_acceptance_min_wait,
-            prflx_acceptance_min_wait: self.setting_engine.timeout.ice_prflx_acceptance_min_wait,
-            relay_acceptance_min_wait: self.setting_engine.timeout.ice_relay_acceptance_min_wait,
-            /*TODO: interface_filter: self.setting_engine.candidates.interface_filter.clone(),
-            ip_filter: self.setting_engine.candidates.ip_filter.clone(),
-            nat_1to1_ips: self.setting_engine.candidates.nat_1to1_ips.clone(),
-            nat_1to1_ip_candidate_type: nat_1to1_cand_type,
-            net: self.setting_engine.vnet.clone(),
-            multicast_dns_mode: mdns_mode,
-            multicast_dns_host_name: self
-                .setting_engine
-                .candidates
-                .multicast_dns_host_name
-                .clone(),*/
-            local_ufrag: self.setting_engine.candidates.username_fragment.clone(),
-            local_pwd: self.setting_engine.candidates.password.clone(),
-            ..Default::default()
-        };
-
-        /*TODO: let requested_network_types = if self.setting_engine.candidates.ice_network_types.is_empty()
-        {
-            ice::network_type::supported_network_types()
-        } else {
-            self.setting_engine.candidates.ice_network_types.clone()
-        };
-
-        config.network_types.extend(requested_network_types);*/
-
-        self.agent = Some(Agent::new(Arc::new(config))?);
-
-        Ok(())
     }
 
     /*TODO:/// Gather ICE candidates.
@@ -181,21 +118,13 @@ impl RTCIceGatherer {
     /// Close prunes all local candidates, and closes the ports.
     pub fn close(&mut self) -> Result<()> {
         self.set_state(RTCIceGathererState::Closed);
-        if let Some(mut agent) = self.agent.take() {
-            agent.close()?;
-        }
+        self.agent.close()?;
         Ok(())
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.
     pub fn get_local_parameters(&mut self) -> Result<RTCIceParameters> {
-        self.create_agent()?;
-
-        let Credentials { ufrag, pwd } = if let Some(agent) = self.get_agent() {
-            agent.get_local_credentials()
-        } else {
-            return Err(Error::ErrICEAgentNotExist);
-        };
+        let Credentials { ufrag, pwd } = self.agent.get_local_credentials();
 
         Ok(RTCIceParameters {
             username_fragment: ufrag.to_string(),
@@ -205,16 +134,9 @@ impl RTCIceGatherer {
     }
 
     /// get_local_candidates returns the sequence of valid local candidates associated with the ICEGatherer.
-    pub fn get_local_candidates(&mut self) -> Result<Vec<RTCIceCandidate>> {
-        self.create_agent()?;
-
-        let ice_candidates = if let Some(agent) = self.get_agent() {
-            agent.get_local_candidates()
-        } else {
-            return Err(Error::ErrICEAgentNotExist);
-        };
-
-        Ok(rtc_ice_candidates_from_ice_candidates(ice_candidates))
+    pub fn get_local_candidates(&mut self) -> Vec<RTCIceCandidate> {
+        let ice_candidates = self.agent.get_local_candidates();
+        rtc_ice_candidates_from_ice_candidates(ice_candidates)
     }
 
     /// State indicates the current state of the ICE gatherer.
@@ -228,39 +150,29 @@ impl RTCIceGatherer {
             .push_back(IceGathererEvent::OnICEGathererState(s));
     }
 
-    pub(crate) fn get_agent(&self) -> Option<&Agent> {
-        self.agent.as_ref()
-    }
-
-    pub(crate) fn get_mut_agent(&mut self) -> Option<&mut Agent> {
-        self.agent.as_mut()
-    }
-
     pub(crate) fn collect_stats(&self, collector: &mut StatsCollector) {
-        if let Some(agent) = self.get_agent() {
-            let mut reports = HashMap::new();
+        let mut reports = HashMap::new();
 
-            for stats in agent.get_candidate_pairs_stats() {
-                let stats: ICECandidatePairStats = stats.into();
-                reports.insert(stats.id.clone(), StatsReportType::CandidatePair(stats));
-            }
-
-            for stats in agent.get_local_candidates_stats() {
-                reports.insert(
-                    stats.id.clone(),
-                    StatsReportType::from(LocalCandidate(stats)),
-                );
-            }
-
-            for stats in agent.get_remote_candidates_stats() {
-                reports.insert(
-                    stats.id.clone(),
-                    StatsReportType::from(RemoteCandidate(stats)),
-                );
-            }
-
-            collector.merge(reports);
+        for stats in self.agent.get_candidate_pairs_stats() {
+            let stats: ICECandidatePairStats = stats.into();
+            reports.insert(stats.id.clone(), StatsReportType::CandidatePair(stats));
         }
+
+        for stats in self.agent.get_local_candidates_stats() {
+            reports.insert(
+                stats.id.clone(),
+                StatsReportType::from(LocalCandidate(stats)),
+            );
+        }
+
+        for stats in self.agent.get_remote_candidates_stats() {
+            reports.insert(
+                stats.id.clone(),
+                StatsReportType::from(RemoteCandidate(stats)),
+            );
+        }
+
+        collector.merge(reports);
     }
 }
 

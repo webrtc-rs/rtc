@@ -5,7 +5,7 @@ use crate::transport::ice_transport::{IceTransportEvent, RTCIceTransport};
 use bytes::BytesMut;
 use ice::Event;
 use log::{debug, error, warn};
-use shared::error::{Error, Result};
+use shared::error::Result;
 use shared::Transmit;
 use std::time::Instant;
 
@@ -18,15 +18,7 @@ impl RTCHandler for RTCIceTransport {
                 message,
             };
 
-            let try_read = || -> Result<()> {
-                let ice_agent = self
-                    .gatherer
-                    .agent
-                    .as_mut()
-                    .ok_or(Error::ErrICEAgentNotExist)?;
-
-                ice_agent.handle_read(stun_transmit)
-            };
+            let try_read = || -> Result<()> { self.gatherer.agent.handle_read(stun_transmit) };
 
             if let Err(err) = try_read() {
                 warn!("try_read got error {}", err);
@@ -63,22 +55,18 @@ impl RTCHandler for RTCIceTransport {
     }
 
     fn poll_event(&mut self) -> Option<RTCEvent> {
-        if let Some(ice_agent) = self.gatherer.agent.as_mut() {
-            if let Some(event) = ice_agent.poll_event() {
-                match event {
-                    Event::ConnectionStateChange(state) => Some(RTCEvent::IceTransportEvent(
-                        IceTransportEvent::OnConnectionStateChange(state.into()),
-                    )),
-                    Event::SelectedCandidatePairChange(local, remote) => {
-                        Some(RTCEvent::IceTransportEvent(
-                            IceTransportEvent::OnSelectedCandidatePairChange(Box::new(
-                                RTCIceCandidatePair::new((&*local).into(), (&*remote).into()),
-                            )),
-                        ))
-                    }
+        if let Some(event) = self.gatherer.agent.poll_event() {
+            match event {
+                Event::ConnectionStateChange(state) => Some(RTCEvent::IceTransportEvent(
+                    IceTransportEvent::OnConnectionStateChange(state.into()),
+                )),
+                Event::SelectedCandidatePairChange(local, remote) => {
+                    Some(RTCEvent::IceTransportEvent(
+                        IceTransportEvent::OnSelectedCandidatePairChange(Box::new(
+                            RTCIceCandidatePair::new((&*local).into(), (&*remote).into()),
+                        )),
+                    ))
                 }
-            } else {
-                None
             }
         } else {
             None
@@ -88,14 +76,8 @@ impl RTCHandler for RTCIceTransport {
     /// Handles a timeout event
     fn handle_timeout(&mut self, now: Instant) {
         let mut try_timeout = || -> Result<()> {
-            let ice_agent = self
-                .gatherer
-                .agent
-                .as_mut()
-                .ok_or(Error::ErrICEAgentNotExist)?;
-
-            ice_agent.handle_timeout(now);
-            while let Some(transmit) = ice_agent.poll_transmit() {
+            self.gatherer.agent.handle_timeout(now);
+            while let Some(transmit) = self.gatherer.agent.poll_transmit() {
                 self.transmits.push_back(Transmit {
                     now: transmit.now,
                     transport: transmit.transport,
@@ -116,11 +98,9 @@ impl RTCHandler for RTCIceTransport {
 
     /// Polls a timeout event
     fn poll_timeout(&mut self, eto: &mut Instant) {
-        if let Some(ice_agent) = self.gatherer.agent.as_mut() {
-            if let Some(timeout) = ice_agent.poll_timeout() {
-                if timeout < *eto {
-                    *eto = timeout;
-                }
+        if let Some(timeout) = self.gatherer.agent.poll_timeout() {
+            if timeout < *eto {
+                *eto = timeout;
             }
         }
     }
