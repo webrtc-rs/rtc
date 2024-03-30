@@ -45,7 +45,6 @@ use crate::transports::dtls_transport::dtls_role::{
     DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
 };
 use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
-//use crate::transports::dtls_transport::RTCDtlsTransport;
 use shared::error::{flatten_errs, Error, Result};
 //use crate::transports::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
 use crate::transport::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -58,7 +57,7 @@ use crate::transports::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use crate::transports::ice_transport::ice_parameters::RTCIceParameters;
 use crate::transports::ice_transport::ice_role::RTCIceRole;
 use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
-//use crate::transports::ice_transport::RTCIceTransport;*/
+*/
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
 //use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
@@ -73,9 +72,13 @@ use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::signaling_state::{
     /*check_next_signaling_state,*/ RTCSignalingState, //StateChangeOp,
 };
-//use crate::transport::dtls_transport::RTCDtlsTransport;
-use crate::transport::ice_transport::ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer};
-use crate::transport::ice_transport::RTCIceTransport;
+use crate::transport::dtls_transport::RTCDtlsTransport;
+use crate::transport::ice_transport::{
+    ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer},
+    RTCIceTransport,
+};
+use crate::transport::sctp_transport::RTCSctpTransport;
+
 //use crate::transport::sctp_transport::RTCSctpTransport;
 /*use crate::rtp_transceiver::rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType};
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -182,8 +185,8 @@ pub struct RTCPeerConnection {
     pub(super) pending_remote_description: Option<RTCSessionDescription>,
 
     pub(super) ice_transport: RTCIceTransport,
-    //pub(super) dtls_transport: RTCDtlsTransport,
-    //pub(super) sctp_transport: RTCSctpTransport,
+    pub(super) dtls_transport: RTCDtlsTransport,
+    pub(super) sctp_transport: RTCSctpTransport,
     /// ops is an operations queue which will ensure the enqueued actions are
     /// executed in order. It is used for asynchronously, but serially processing
     /// remote and local descriptions
@@ -234,14 +237,14 @@ impl RTCPeerConnection {
         RTCPeerConnection::init_configuration(&mut configuration)?;
 
         // Create the ICE transport
-        let ice_transport = Self::create_ice_transport(api, &configuration)?;
+        let ice_transport = Self::new_ice_transport(api, &configuration)?;
 
         // Create the DTLS transport
-        //let certificates = configuration.certificates.drain(..).collect();
-        //let dtls_transport = api.new_dtls_transport(Arc::clone(&pc.ice_transport), certificates)?);
+        let certificates = configuration.certificates.drain(..).collect();
+        let dtls_transport = Self::new_dtls_transport(certificates, &api.setting_engine)?;
 
         // Create the SCTP transport
-        //let sctp_transport = Arc::new(api.new_sctp_transport(Arc::clone(&pc.dtls_transport))?);
+        let sctp_transport = Self::new_sctp_transport(&api.setting_engine)?;
 
         // <https://w3c.github.io/webrtc-pc/#constructor> (Step #2)
         // Some variables defined explicitly despite their implicit zero values to
@@ -277,6 +280,8 @@ impl RTCPeerConnection {
             is_negotiation_needed: false,
 
             ice_transport,
+            dtls_transport,
+            sctp_transport,
 
             events: Default::default(),
         })
@@ -676,7 +681,7 @@ impl RTCPeerConnection {
         self.stats_id.as_str()
     }
 
-    fn create_ice_gatherer(
+    fn new_ice_gatherer(
         ice_agent: ice::Agent,
         opts: RTCIceGatherOptions,
         setting_engine: &Arc<SettingEngine>,
@@ -697,10 +702,7 @@ impl RTCPeerConnection {
         ))
     }
 
-    fn create_ice_transport(
-        api: &API,
-        configuration: &RTCConfiguration,
-    ) -> Result<RTCIceTransport> {
+    fn new_ice_transport(api: &API, configuration: &RTCConfiguration) -> Result<RTCIceTransport> {
         let mut candidate_types = vec![];
         if api.setting_engine.candidates.ice_lite {
             candidate_types.push(ice::candidate::CandidateType::Host);
@@ -732,7 +734,7 @@ impl RTCPeerConnection {
 
         // Create the ICE transport
         let ice_agent = ice::Agent::new(Arc::new(ice_agent_config))?;
-        let ice_gatherer = Self::create_ice_gatherer(
+        let ice_gatherer = Self::new_ice_gatherer(
             ice_agent,
             RTCIceGatherOptions {
                 ice_servers: configuration.get_ice_servers(),
@@ -742,6 +744,33 @@ impl RTCPeerConnection {
         )?;
 
         Ok(RTCIceTransport::new(ice_gatherer))
+    }
+
+    fn new_dtls_transport(
+        mut certificates: Vec<RTCCertificate>,
+        setting_engine: &Arc<SettingEngine>,
+    ) -> Result<RTCDtlsTransport> {
+        if !certificates.is_empty() {
+            let now = SystemTime::now();
+            for cert in &certificates {
+                cert.expires
+                    .duration_since(now)
+                    .map_err(|_| Error::ErrCertificateExpired)?;
+            }
+        } else {
+            let kp = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+            let cert = RTCCertificate::from_key_pair(kp)?;
+            certificates = vec![cert];
+        };
+
+        Ok(RTCDtlsTransport::new(
+            certificates,
+            Arc::clone(setting_engine),
+        ))
+    }
+
+    fn new_sctp_transport(setting_engine: &Arc<SettingEngine>) -> Result<RTCSctpTransport> {
+        Ok(RTCSctpTransport::new(Arc::clone(setting_engine)))
     }
 
     /*
