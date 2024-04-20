@@ -13,7 +13,7 @@ pub mod policy;
 pub mod sdp;
 pub mod signaling_state;
 
-use ::sdp::description::session::Origin;
+use ::sdp::description::session::{Origin, ATTR_KEY_ICELITE};
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -46,7 +46,7 @@ use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::transports::dtls_transport::dtls_parameters::DTLSParameters;
 */
 use crate::transport::dtls_transport::dtls_role::{
-    /*DTLSRole, DEFAULT_DTLS_ROLE_ANSWER,*/ DEFAULT_DTLS_ROLE_OFFER,
+    DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
 };
 /*use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
 use shared::error::{flatten_errs, Error, Result};
@@ -64,7 +64,7 @@ use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
 */
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
-use crate::peer_connection::offer_answer_options::RTCOfferOptions;
+use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 //use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 //use crate::peer_connection::operation::{Operation, Operations};
 use crate::peer_connection::peer_connection_state::{
@@ -875,6 +875,52 @@ impl RTCPeerConnection {
         Ok(offer)
     }
 
+    /// create_answer starts the PeerConnection and generates the localDescription
+    pub fn create_answer(
+        &mut self,
+        _options: Option<RTCAnswerOptions>,
+    ) -> Result<RTCSessionDescription> {
+        let remote_description = if let Some(desc) = self.remote_description().cloned() {
+            desc
+        } else {
+            return Err(Error::ErrNoRemoteDescription);
+        };
+
+        if self.is_closed {
+            return Err(Error::ErrConnectionClosed);
+        } else if self.signaling_state() != RTCSignalingState::HaveRemoteOffer
+            && self.signaling_state() != RTCSignalingState::HaveLocalPranswer
+        {
+            return Err(Error::ErrIncorrectSignalingState);
+        }
+
+        let mut connection_role = self.setting_engine.answering_dtls_role.to_connection_role();
+        if connection_role == ConnectionRole::Unspecified {
+            connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
+            if let Some(parsed) = remote_description.parsed {
+                if Self::is_lite_set(&parsed) && !self.setting_engine.candidates.ice_lite {
+                    connection_role = DTLSRole::Server.to_connection_role();
+                }
+            }
+        }
+
+        let mut d = self.generate_matched_sdp(false /*includeUnmatched */, connection_role)?;
+
+        update_sdp_origin(&mut self.sdp_origin, &mut d);
+
+        let sdp = d.marshal();
+
+        let answer = RTCSessionDescription {
+            sdp_type: RTCSdpType::Answer,
+            sdp,
+            parsed: Some(d),
+        };
+
+        self.last_answer = answer.sdp.clone();
+
+        Ok(answer)
+    }
+
     /*
     /// Update the PeerConnectionState given the state of relevant transports
     /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
@@ -922,70 +968,6 @@ impl RTCPeerConnection {
             connection_state,
         )
         .await;
-    }
-
-    /// create_answer starts the PeerConnection and generates the localDescription
-    pub async fn create_answer(
-        &self,
-        _options: Option<RTCAnswerOptions>,
-    ) -> Result<RTCSessionDescription> {
-        let remote_desc = self.remote_description().await;
-        let remote_description: RTCSessionDescription;
-        if let Some(desc) = remote_desc {
-            remote_description = desc;
-        } else {
-            return Err(Error::ErrNoRemoteDescription);
-        }
-        if self.internal.is_closed.load(Ordering::SeqCst) {
-            return Err(Error::ErrConnectionClosed);
-        } else if self.signaling_state() != RTCSignalingState::HaveRemoteOffer
-            && self.signaling_state() != RTCSignalingState::HaveLocalPranswer
-        {
-            return Err(Error::ErrIncorrectSignalingState);
-        }
-
-        let mut connection_role = self
-            .internal
-            .setting_engine
-            .answering_dtls_role
-            .to_connection_role();
-        if connection_role == ConnectionRole::Unspecified {
-            connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
-            if let Some(parsed) = remote_description.parsed {
-                if Self::is_lite_set(&parsed) && !self.internal.setting_engine.candidates.ice_lite {
-                    connection_role = DTLSRole::Server.to_connection_role();
-                }
-            }
-        }
-
-        let local_transceivers = self.get_transceivers().await;
-        let mut d = self
-            .internal
-            .generate_matched_sdp(
-                local_transceivers,
-                use_identity,
-                false, /*includeUnmatched */
-                connection_role,
-            )
-            .await?;
-
-        {
-            let mut sdp_origin = self.internal.sdp_origin.lock().await;
-            update_sdp_origin(&mut sdp_origin, &mut d);
-        }
-        let sdp = d.marshal();
-
-        let answer = RTCSessionDescription {
-            sdp_type: RTCSdpType::Answer,
-            sdp,
-            parsed: Some(d),
-        };
-
-        {
-            let mut last_answer = self.internal.last_answer.lock().await;
-            *last_answer = answer.sdp.clone();
-        }
-        Ok(answer)
     }
 
     // 4.4.1.6 Set the SessionDescription
@@ -1324,7 +1306,7 @@ impl RTCPeerConnection {
             return Some(pending_local_description);
         }
         self.current_local_description().await
-    }
+    }*/
 
     pub fn is_lite_set(desc: &SessionDescription) -> bool {
         for a in &desc.attributes {
@@ -1334,7 +1316,6 @@ impl RTCPeerConnection {
         }
         false
     }
-     */
 
     /*
     /// set_remote_description sets the SessionDescription of the remote peer
@@ -2035,13 +2016,14 @@ impl RTCPeerConnection {
         let pending_remote_description = self.internal.pending_remote_description.lock().await;
         pending_remote_description.clone()
     }
-
+    */
     /// signaling_state attribute returns the signaling state of the
     /// PeerConnection instance.
     pub fn signaling_state(&self) -> RTCSignalingState {
-        self.internal.signaling_state.load(Ordering::SeqCst).into()
+        self.signaling_state
     }
 
+    /*
     /// icegathering_state attribute returns the ICE gathering state of the
     /// PeerConnection instance.
     pub fn ice_gathering_state(&self) -> RTCIceGatheringState {
