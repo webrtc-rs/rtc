@@ -16,7 +16,7 @@ pub mod signaling_state;
 use ::sdp::description::session::Origin;
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 /*
@@ -28,6 +28,8 @@ use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use interceptor::{stats, Attributes, Interceptor, RTCPWriter};
 use peer_connection_internal::*;*/
+use ::sdp::util::ConnectionRole;
+use ::sdp::SessionDescription;
 use rand::{thread_rng, Rng};
 //use srtp::stream::Stream;
 
@@ -42,10 +44,11 @@ use crate::transports::data_channel::data_channel_state::RTCDataChannelState;
 use crate::transports::data_channel::RTCDataChannel;
 use crate::transports::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::transports::dtls_transport::dtls_parameters::DTLSParameters;
-use crate::transports::dtls_transport::dtls_role::{
-    DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
+*/
+use crate::transport::dtls_transport::dtls_role::{
+    /*DTLSRole, DEFAULT_DTLS_ROLE_ANSWER,*/ DEFAULT_DTLS_ROLE_OFFER,
 };
-use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
+/*use crate::transports::dtls_transport::dtls_transport_state::RTCDtlsTransportState;
 use shared::error::{flatten_errs, Error, Result};
 //use crate::transports::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};*/
 use crate::transport::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -61,23 +64,31 @@ use crate::transports::ice_transport::ice_transport_state::RTCIceTransportState;
 */
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::RTCConfiguration;
+use crate::peer_connection::offer_answer_options::RTCOfferOptions;
 //use crate::peer_connection::offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 //use crate::peer_connection::operation::{Operation, Operations};
 use crate::peer_connection::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
-//use crate::peer_connection::sdp::sdp_type::RTCSdpType;
-//use crate::peer_connection::sdp::{get_mid_value, get_peer_direction};
-//use crate::peer_connection::sdp::sdp_type::RTCSdpType;
+use crate::peer_connection::sdp::populate_sdp;
+use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
+use crate::peer_connection::sdp::{
+    get_mid_value, get_peer_direction, get_rids, update_sdp_origin, MediaSection, PopulateSdpParams,
+};
 //use crate::peer_connection::sdp::*;
 use crate::peer_connection::signaling_state::{
     /*check_next_signaling_state,*/ RTCSignalingState, //StateChangeOp,
 };
+use crate::rtp_transceiver::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::{find_by_mid, Mid, RTCRtpTransceiver};
 //use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 //use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::transport::dtls_transport::RTCDtlsTransport;
+use crate::transport::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use crate::transport::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice_transport::{
     ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer},
     RTCIceTransport,
@@ -196,9 +207,9 @@ pub struct RTCPeerConnection {
     /// ops is an operations queue which will ensure the enqueued actions are
     /// executed in order. It is used for asynchronously, but serially processing
     /// remote and local descriptions
-    /*TODO:pub(crate) ops: Arc<Operations>,
-    pub(super) rtp_transceivers: Arc<Mutex<Vec<Arc<RTCRtpTransceiver>>>>,
-    pub(super) ice_gatherer: Arc<RTCIceGatherer>,
+    //TODO:pub(crate) ops: Arc<Operations>,
+    pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
+    /*pub(super) ice_gatherer: Arc<RTCIceGatherer>,
     interceptor_rtcp_writer: Arc<dyn RTCPWriter + Send + Sync>,
     interceptor: Arc<dyn Interceptor + Send + Sync>,
     pub(super) interceptor: Weak<dyn Interceptor + Send + Sync>,
@@ -301,6 +312,7 @@ impl RTCPeerConnection {
             ice_transport,
             dtls_transport,
             sctp_transport,
+            rtp_transceivers: vec![],
         })
     }
 
@@ -777,141 +789,93 @@ impl RTCPeerConnection {
         Ok(RTCSctpTransport::new(Arc::clone(setting_engine)))
     }
 
-    /*
     /// create_offer starts the PeerConnection and generates the localDescription
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createoffer>
-    pub async fn create_offer(
-        &self,
+    pub fn create_offer(
+        &mut self,
         options: Option<RTCOfferOptions>,
     ) -> Result<RTCSessionDescription> {
-        if self.internal.is_closed.load(Ordering::SeqCst) {
+        if self.is_closed {
             return Err(Error::ErrConnectionClosed);
         }
 
         if let Some(options) = options {
             if options.ice_restart {
-                self.internal.ice_transport.restart().await?;
+                self.ice_transport.restart()?;
             }
         }
 
-        // This may be necessary to recompute if, for example, createOffer was called when only an
-        // audio RTCRtpTransceiver was added to connection, but while performing the in-parallel
-        // steps to create an offer, a video RTCRtpTransceiver was added, requiring additional
-        // inspection of video system resources.
-        let mut count = 0;
-        let mut offer;
-
-        loop {
-            // We cache current transceivers to ensure they aren't
-            // mutated during offer generation. We later check if they have
-            // been mutated and recompute the offer if necessary.
-            let current_transceivers = {
-                let rtp_transceivers = self.internal.rtp_transceivers.lock().await;
-                rtp_transceivers.clone()
-            };
-
-            // include unmatched local transceivers
-            // update the greater mid if the remote description provides a greater one
-            {
-                let current_remote_description =
-                    self.internal.current_remote_description.lock().await;
-                if let Some(d) = &*current_remote_description {
-                    if let Some(parsed) = &d.parsed {
-                        for media in &parsed.media_descriptions {
-                            if let Some(mid) = get_mid_value(media) {
-                                if mid.is_empty() {
-                                    continue;
-                                }
-                                let numeric_mid = match mid.parse::<isize>() {
-                                    Ok(n) => n,
-                                    Err(_) => continue,
-                                };
-                                if numeric_mid > self.internal.greater_mid.load(Ordering::SeqCst) {
-                                    self.internal
-                                        .greater_mid
-                                        .store(numeric_mid, Ordering::SeqCst);
-                                }
-                            }
+        // include unmatched local transceivers
+        // update the greater mid if the remote description provides a greater one
+        if let Some(d) = &self.current_remote_description {
+            if let Some(parsed) = &d.parsed {
+                for media in &parsed.media_descriptions {
+                    if let Some(mid) = get_mid_value(media) {
+                        if mid.is_empty() {
+                            continue;
+                        }
+                        let numeric_mid = match mid.parse::<isize>() {
+                            Ok(n) => n,
+                            Err(_) => continue,
+                        };
+                        if numeric_mid > self.greater_mid {
+                            self.greater_mid = numeric_mid;
                         }
                     }
                 }
             }
-            for t in &current_transceivers {
-                if t.mid().is_some() {
-                    continue;
-                }
+        }
 
-                if let Some(gen) = &self.internal.setting_engine.mid_generator {
-                    let current_greatest = self.internal.greater_mid.load(Ordering::SeqCst);
-                    let mid = (gen)(current_greatest);
-
-                    // If it's possible to parse the returned mid as numeric, we will update the greater_mid field.
-                    if let Ok(numeric_mid) = mid.parse::<isize>() {
-                        if numeric_mid > self.internal.greater_mid.load(Ordering::SeqCst) {
-                            self.internal
-                                .greater_mid
-                                .store(numeric_mid, Ordering::SeqCst);
-                        }
-                    }
-
-                    t.set_mid(SmolStr::from(mid))?;
-                } else {
-                    let greater_mid = self.internal.greater_mid.fetch_add(1, Ordering::SeqCst);
-                    t.set_mid(SmolStr::from(format!("{}", greater_mid + 1)))?;
-                }
+        for t in &mut self.rtp_transceivers {
+            if t.mid().is_some() {
+                continue;
             }
 
-            let current_remote_description_is_none = {
-                let current_remote_description =
-                    self.internal.current_remote_description.lock().await;
-                current_remote_description.is_none()
-            };
+            if let Some(gen) = &self.setting_engine.mid_generator {
+                let current_greatest = self.greater_mid;
+                let mid = (gen)(current_greatest);
 
-            let mut d = if current_remote_description_is_none {
-                self.internal
-                    .generate_unmatched_sdp(current_transceivers, use_identity)
-                    .await?
+                // If it's possible to parse the returned mid as numeric, we will update the greater_mid field.
+                if let Ok(numeric_mid) = mid.parse::<isize>() {
+                    if numeric_mid > self.greater_mid {
+                        self.greater_mid = numeric_mid;
+                    }
+                }
+
+                t.set_mid(mid)?;
             } else {
-                self.internal
-                    .generate_matched_sdp(
-                        current_transceivers,
-                        use_identity,
-                        true, /*includeUnmatched */
-                        DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
-                    )
-                    .await?
-            };
-
-            {
-                let mut sdp_origin = self.internal.sdp_origin.lock().await;
-                update_sdp_origin(&mut sdp_origin, &mut d);
-            }
-            let sdp = d.marshal();
-
-            offer = RTCSessionDescription {
-                sdp_type: RTCSdpType::Offer,
-                sdp,
-                parsed: Some(d),
-            };
-
-            // Verify local media hasn't changed during offer
-            // generation. Recompute if necessary
-            if !self.internal.has_local_description_changed(&offer).await {
-                break;
-            }
-            count += 1;
-            if count >= 128 {
-                return Err(Error::ErrExcessiveRetries);
+                self.greater_mid += 1;
+                t.set_mid(format!("{}", self.greater_mid))?;
             }
         }
 
-        {
-            let mut last_offer = self.internal.last_offer.lock().await;
-            *last_offer = offer.sdp.clone();
-        }
+        let current_remote_description_is_none = self.current_remote_description.is_none();
+
+        let mut d = if current_remote_description_is_none {
+            self.generate_unmatched_sdp()?
+        } else {
+            self.generate_matched_sdp(
+                true, /*includeUnmatched */
+                DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
+            )?
+        };
+
+        update_sdp_origin(&mut self.sdp_origin, &mut d);
+
+        let sdp = d.marshal();
+
+        let offer = RTCSessionDescription {
+            sdp_type: RTCSdpType::Offer,
+            sdp,
+            parsed: Some(d),
+        };
+
+        self.last_offer = offer.sdp.clone();
+
         Ok(offer)
     }
 
+    /*
     /// Update the PeerConnectionState given the state of relevant transports
     /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
     async fn update_connection_state(
@@ -2148,4 +2112,206 @@ impl RTCPeerConnection {
     pub async fn add_transceiver(&self, t: Arc<RTCRtpTransceiver>) {
         self.internal.add_rtp_transceiver(t).await
     }*/
+
+    fn remote_description(&self) -> Option<&RTCSessionDescription> {
+        if self.pending_remote_description.is_some() {
+            self.pending_remote_description.as_ref()
+        } else {
+            self.current_remote_description.as_ref()
+        }
+    }
+
+    fn ice_gathering_state(&self) -> RTCIceGatheringState {
+        match self.ice_transport.gatherer.state() {
+            RTCIceGathererState::New => RTCIceGatheringState::New,
+            RTCIceGathererState::Gathering => RTCIceGatheringState::Gathering,
+            _ => RTCIceGatheringState::Complete,
+        }
+    }
+
+    /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
+    /// This is used for the initial call for CreateOffer
+    pub(super) fn generate_unmatched_sdp(&mut self) -> Result<SessionDescription> {
+        let d = SessionDescription::new_jsep_session_description(false /*use_identity*/);
+
+        let ice_params = self.ice_transport.gatherer.get_local_parameters()?;
+
+        let candidates = self.ice_transport.gatherer.get_local_candidates();
+
+        let mut media_sections = vec![];
+        let mut mid2index: HashMap<Mid, usize> = HashMap::new();
+
+        for (index, t) in self.rtp_transceivers.iter_mut().enumerate() {
+            if t.stopped {
+                // An "m=" section is generated for each
+                // RtpTransceiver that has been added to the PeerConnection, excluding
+                // any stopped RtpTransceivers;
+                continue;
+            }
+
+            if let Some(mid) = t.mid().cloned() {
+                // TODO: This is dubious because of rollbacks.
+                t.sender_mut().set_negotiated();
+                media_sections.push(MediaSection {
+                    id: mid.clone(),
+                    //TODO: transceivers: vec![Arc::clone(t)],
+                    ..Default::default()
+                });
+                mid2index.insert(mid, index);
+            } else {
+                return Err(Error::ErrPeerConnTransceiverMidNil);
+            }
+        }
+
+        if self.sctp_transport.data_channels_requested != 0 {
+            media_sections.push(MediaSection {
+                id: format!("{}", media_sections.len()),
+                data: true,
+                ..Default::default()
+            });
+        }
+
+        let dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
+            cert.get_fingerprints()
+        } else {
+            return Err(Error::ErrNonCertificate);
+        };
+
+        let params = PopulateSdpParams {
+            media_description_fingerprint: self.setting_engine.sdp_media_level_fingerprints,
+            is_icelite: self.setting_engine.candidates.ice_lite,
+            connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
+            ice_gathering_state: self.ice_gathering_state(),
+        };
+        populate_sdp(
+            d,
+            &dtls_fingerprints,
+            &mut self.media_engine,
+            &candidates,
+            &ice_params,
+            &media_sections,
+            params,
+            &mut self.rtp_transceivers,
+            &mid2index,
+        )
+    }
+
+    /// generate_matched_sdp generates a SDP and takes the remote state into account
+    /// this is used everytime we have a remote_description
+    pub(super) fn generate_matched_sdp(
+        &mut self,
+        include_unmatched: bool,
+        connection_role: ConnectionRole,
+    ) -> Result<SessionDescription> {
+        let d = SessionDescription::new_jsep_session_description(false /*use_identity*/);
+
+        let ice_params = self.ice_transport.gatherer.get_local_parameters()?;
+        let candidates = self.ice_transport.gatherer.get_local_candidates();
+
+        let mut media_sections = vec![];
+        let mut already_have_application_media_section = false;
+        let mut matched: HashSet<Mid> = HashSet::new();
+        let mut mid2index: HashMap<Mid, usize> = HashMap::new();
+        if let Some(remote_description) = self.remote_description().cloned() {
+            if let Some(parsed) = &remote_description.parsed {
+                for media in &parsed.media_descriptions {
+                    if let Some(mid_value) = get_mid_value(media) {
+                        if mid_value.is_empty() {
+                            return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
+                        }
+
+                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                            media_sections.push(MediaSection {
+                                id: mid_value.to_owned(),
+                                data: true,
+                                ..Default::default()
+                            });
+                            already_have_application_media_section = true;
+                            continue;
+                        }
+
+                        let kind = RTPCodecType::from(media.media_name.media.as_str());
+                        let direction = get_peer_direction(media);
+                        if kind == RTPCodecType::Unspecified
+                            || direction == RTCRtpTransceiverDirection::Unspecified
+                        {
+                            continue;
+                        }
+
+                        if let Some((index, t)) = find_by_mid(mid_value, &mut self.rtp_transceivers)
+                        {
+                            t.sender_mut().set_negotiated();
+
+                            // NB: The below could use `then_some`, but with our current MSRV
+                            // it's not possible to actually do this. The clippy version that
+                            // ships with 1.64.0 complains about this so we disable it for now.
+                            #[allow(clippy::unnecessary_lazy_evaluations)]
+                            media_sections.push(MediaSection {
+                                id: mid_value.to_owned(),
+                                //TODO: transceivers: media_transceivers,
+                                rid_map: get_rids(media),
+                                offered_direction: (!include_unmatched).then(|| direction),
+                                ..Default::default()
+                            });
+                            matched.insert(mid_value.to_string());
+                            mid2index.insert(mid_value.to_string(), index);
+                        } else {
+                            return Err(Error::ErrPeerConnTransceiverMidNil);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we are offering also include unmatched local transceivers
+        if include_unmatched {
+            for (index, t) in self.rtp_transceivers.iter_mut().enumerate() {
+                if let Some(mid) = t.mid().cloned() {
+                    if !matched.contains(&mid) {
+                        t.sender_mut().set_negotiated();
+                        media_sections.push(MediaSection {
+                            id: mid.clone(),
+                            //TODO: transceivers: vec![Arc::clone(t)],
+                            ..Default::default()
+                        });
+                        mid2index.insert(mid, index);
+                    }
+                }
+            }
+
+            if self.sctp_transport.data_channels_requested != 0
+                && !already_have_application_media_section
+            {
+                media_sections.push(MediaSection {
+                    id: format!("{}", media_sections.len()),
+                    data: true,
+                    ..Default::default()
+                });
+            }
+        }
+
+        let dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
+            cert.get_fingerprints()
+        } else {
+            return Err(Error::ErrNonCertificate);
+        };
+
+        let params = PopulateSdpParams {
+            media_description_fingerprint: self.setting_engine.sdp_media_level_fingerprints,
+            is_icelite: self.setting_engine.candidates.ice_lite,
+            connection_role,
+            ice_gathering_state: self.ice_gathering_state(),
+        };
+        populate_sdp(
+            d,
+            &dtls_fingerprints,
+            &mut self.media_engine,
+            &candidates,
+            &ice_params,
+            &media_sections,
+            params,
+            &mut self.rtp_transceivers,
+            &mid2index,
+        )
+    }
 }

@@ -1,9 +1,9 @@
-#[cfg(test)]
-mod rtp_receiver_test;
+/*#[cfg(test)]
+mod rtp_receiver_test;*/
 
 use std::fmt;
-use std::sync::Arc;
 
+/*
 use arc_swap::ArcSwapOption;
 use interceptor::stream_info::RTPHeaderExtension;
 use interceptor::{Attributes, Interceptor};
@@ -23,8 +23,11 @@ use crate::rtp_transceiver::{
 };
 use crate::track::track_remote::TrackRemote;
 use crate::track::{TrackStream, TrackStreams};
-use crate::transports::dtls_transport::RTCDtlsTransport;
-use shared::error::{flatten_errs, Error, Result};
+use crate::transports::dtls_transport::RTCDtlsTransport;*/
+use crate::api::media_engine::MediaEngine;
+use crate::rtp_transceiver::rtp_codec::{
+    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodecParameters, RTPCodecType,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -73,6 +76,7 @@ impl fmt::Display for State {
     }
 }
 
+/*
 impl State {
     fn transition(to: Self, tx: &watch::Sender<State>) -> Result<()> {
         let current = *tx.borrow();
@@ -143,24 +147,10 @@ impl State {
         matches!(self, Self::Started | Self::Paused)
     }
 }
+*/
 
-pub struct RTPReceiverInternal {
-    pub(crate) kind: RTPCodecType,
-
-    // State is stored within the channel
-    state_tx: watch::Sender<State>,
-    state_rx: watch::Receiver<State>,
-
-    tracks: RwLock<Vec<TrackStreams>>,
-
-    transceiver_codecs: ArcSwapOption<Mutex<Vec<RTCRtpCodecParameters>>>,
-
-    transport: Arc<RTCDtlsTransport>,
-    media_engine: Arc<MediaEngine>,
-    interceptor: Arc<dyn Interceptor + Send + Sync>,
-}
-
-impl RTPReceiverInternal {
+impl RTCRtpReceiver {
+    /*
     /// read reads incoming RTCP for this RTPReceiver
     async fn read(
         &self,
@@ -330,11 +320,11 @@ impl RTPReceiverInternal {
 
         parameters
     }
-
+    */
     pub(crate) fn get_codecs(
         codecs: &mut [RTCRtpCodecParameters],
         kind: RTPCodecType,
-        media_engine: &Arc<MediaEngine>,
+        media_engine: &MediaEngine,
     ) -> Vec<RTCRtpCodecParameters> {
         let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
         if codecs.is_empty() {
@@ -353,53 +343,66 @@ impl RTPReceiverInternal {
 
         filtered_codecs
     }
+    /*
+       // State
 
-    // State
+       /// Get the current state and a receiver for the next state change.
+       pub(crate) fn current_state(&self) -> State {
+           *self.state_rx.borrow()
+       }
 
-    /// Get the current state and a receiver for the next state change.
-    pub(crate) fn current_state(&self) -> State {
-        *self.state_rx.borrow()
-    }
+       pub(crate) fn start(&self) -> Result<()> {
+           State::transition(State::Started, &self.state_tx)
+       }
 
-    pub(crate) fn start(&self) -> Result<()> {
-        State::transition(State::Started, &self.state_tx)
-    }
+       pub(crate) fn pause(&self) -> Result<()> {
+           let current = self.current_state();
 
-    pub(crate) fn pause(&self) -> Result<()> {
-        let current = self.current_state();
+           match current {
+               State::Unstarted => State::transition(State::UnstartedPaused, &self.state_tx),
+               State::Started => State::transition(State::Paused, &self.state_tx),
+               _ => Ok(()),
+           }
+       }
 
-        match current {
-            State::Unstarted => State::transition(State::UnstartedPaused, &self.state_tx),
-            State::Started => State::transition(State::Paused, &self.state_tx),
-            _ => Ok(()),
-        }
-    }
+       pub(crate) fn resume(&self) -> Result<()> {
+           let current = self.current_state();
 
-    pub(crate) fn resume(&self) -> Result<()> {
-        let current = self.current_state();
+           match current {
+               State::UnstartedPaused => State::transition(State::Unstarted, &self.state_tx),
+               State::Paused => State::transition(State::Started, &self.state_tx),
+               _ => Ok(()),
+           }
+       }
 
-        match current {
-            State::UnstartedPaused => State::transition(State::Unstarted, &self.state_tx),
-            State::Paused => State::transition(State::Started, &self.state_tx),
-            _ => Ok(()),
-        }
-    }
+       pub(crate) fn close(&self) -> Result<()> {
+           State::transition(State::Stopped, &self.state_tx)
+       }
 
-    pub(crate) fn close(&self) -> Result<()> {
-        State::transition(State::Stopped, &self.state_tx)
-    }
+    */
 }
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
 pub struct RTCRtpReceiver {
     receive_mtu: usize,
     kind: RTPCodecType,
-    transport: Arc<RTCDtlsTransport>,
+    //transport: Arc<RTCDtlsTransport>,
+    //pub internal: Arc<RTPReceiverInternal>,
 
-    pub internal: Arc<RTPReceiverInternal>,
+    // State is stored within the channel
+    /*state_tx: watch::Sender<State>,
+    state_rx: watch::Receiver<State>,
+
+    tracks: RwLock<Vec<TrackStreams>>,
+
+    transceiver_codecs: ArcSwapOption<Mutex<Vec<RTCRtpCodecParameters>>>,
+
+    transport: Arc<RTCDtlsTransport>,
+    media_engine: Arc<MediaEngine>,
+    interceptor: Arc<dyn Interceptor + Send + Sync>,*/
 }
 
-impl std::fmt::Debug for RTCRtpReceiver {
+impl fmt::Debug for RTCRtpReceiver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RTCRtpReceiver")
             .field("kind", &self.kind)
@@ -407,6 +410,7 @@ impl std::fmt::Debug for RTCRtpReceiver {
     }
 }
 
+/*
 impl RTCRtpReceiver {
     pub fn new(
         receive_mtu: usize,
@@ -859,3 +863,4 @@ impl RTCRtpReceiver {
         Ok(())
     }
 }
+*/

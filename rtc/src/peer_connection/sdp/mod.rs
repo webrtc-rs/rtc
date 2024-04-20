@@ -13,7 +13,7 @@ use crate::rtp_transceiver::rtp_codec::{
     RTCRtpCodecParameters, //, RTPCodecType,
 };
 use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::rtp_transceiver::{PayloadType, RTCPFeedback /*RTCRtpTransceiver, SSRC*/};
+use crate::rtp_transceiver::{Mid, PayloadType, RTCPFeedback, RTCRtpTransceiver};
 
 use shared::error::{Error, Result};
 
@@ -22,20 +22,29 @@ pub mod session_description;
 
 use std::collections::HashMap;
 //use std::convert::From;
+use ice::candidate::Candidate;
+use sdp::description::common::{Address, ConnectionInformation};
 use std::io::BufReader;
 /*use std::sync::Arc;
 
 use ice::candidate::candidate_base::unmarshal_candidate;
 use ice::candidate::Candidate;
 use sdp::description::common::{Address, ConnectionInformation};*/
-use sdp::description::media::{MediaDescription /*, MediaName, RangedPort*/};
+use crate::api::media_engine::MediaEngine;
+use crate::constants::{SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
+use sdp::description::media::{MediaDescription, MediaName, RangedPort};
 use sdp::description::session::*;
 use sdp::extmap::ExtMap;
+use sdp::util::ConnectionRole;
 /*use sdp::util::ConnectionRole;
-use smol_str::SmolStr;
+use smol_str::SmolStr;*/
 use url::Url;
-*/
+
 use crate::peer_connection::MEDIA_SECTION_APPLICATION;
+use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::transport::ice_transport::ice_candidate::RTCIceCandidate;
+use crate::transport::ice_transport::ice_gathering_state::RTCIceGatheringState;
+use crate::transport::ice_transport::ice_parameters::RTCIceParameters;
 /*use crate::{SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
 
 /// TrackDetails represents any media source that can be represented in a SDP
@@ -241,7 +250,7 @@ pub(crate) fn track_details_from_sdp(
 
     incoming_tracks
 }
-
+*/
 pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
     let mut rids = vec![];
     let mut simulcast_attr: Option<String> = None;
@@ -288,12 +297,12 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
     rids
 }
 
-pub(crate) async fn add_candidates_to_media_descriptions(
+pub(crate) fn add_candidates_to_media_descriptions(
     candidates: &[RTCIceCandidate],
     mut m: MediaDescription,
     ice_gathering_state: RTCIceGatheringState,
 ) -> Result<MediaDescription> {
-    let append_candidate_if_new = |c: &dyn Candidate, m: MediaDescription| -> MediaDescription {
+    let append_candidate_if_new = |c: &Candidate, m: MediaDescription| -> MediaDescription {
         let marshaled = c.marshal();
         for a in &m.attributes {
             if let Some(value) = &a.value {
@@ -307,7 +316,7 @@ pub(crate) async fn add_candidates_to_media_descriptions(
     };
 
     for c in candidates {
-        let candidate = c.to_ice()?;
+        let mut candidate = c.to_ice()?;
 
         candidate.set_component(1);
         m = append_candidate_if_new(&candidate, m);
@@ -336,7 +345,7 @@ pub(crate) struct AddDataMediaSectionParams {
     ice_gathering_state: RTCIceGatheringState,
 }
 
-pub(crate) async fn add_data_media_section(
+pub(crate) fn add_data_media_section(
     d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
     candidates: &[RTCIceCandidate],
@@ -383,16 +392,16 @@ pub(crate) async fn add_data_media_section(
     }
 
     if params.should_add_candidates {
-        media = add_candidates_to_media_descriptions(candidates, media, params.ice_gathering_state)
-            .await?;
+        media =
+            add_candidates_to_media_descriptions(candidates, media, params.ice_gathering_state)?;
     }
 
     Ok(d.with_media(media))
 }
-
-pub(crate) async fn populate_local_candidates(
+/*
+pub(crate) fn populate_local_candidates(
     session_description: Option<&session_description::RTCSessionDescription>,
-    ice_gatherer: Option<&Arc<RTCIceGatherer>>,
+    ice_gatherer: &RTCIceGatherer,
     ice_gathering_state: RTCIceGatheringState,
 ) -> Option<session_description::RTCSessionDescription> {
     if session_description.is_none() || ice_gatherer.is_none() {
@@ -400,7 +409,7 @@ pub(crate) async fn populate_local_candidates(
     }
 
     if let (Some(sd), Some(ice)) = (session_description, ice_gatherer) {
-        let candidates = match ice.get_local_candidates().await {
+        let candidates = match ice.get_local_candidates() {
             Ok(candidates) => candidates,
             Err(_) => return Some(sd.clone()),
         };
@@ -412,9 +421,7 @@ pub(crate) async fn populate_local_candidates(
 
         if !parsed.media_descriptions.is_empty() {
             let mut m = parsed.media_descriptions.remove(0);
-            m = match add_candidates_to_media_descriptions(&candidates, m, ice_gathering_state)
-                .await
-            {
+            m = match add_candidates_to_media_descriptions(&candidates, m, ice_gathering_state) {
                 Ok(m) => m,
                 Err(_) => return Some(sd.clone()),
             };
@@ -429,7 +436,7 @@ pub(crate) async fn populate_local_candidates(
     } else {
         None
     }
-}
+}*/
 
 pub(crate) struct AddTransceiverSdpParams {
     should_add_candidates: bool,
@@ -439,18 +446,17 @@ pub(crate) struct AddTransceiverSdpParams {
     offered_direction: Option<RTCRtpTransceiverDirection>,
 }
 
-pub(crate) async fn add_transceiver_sdp(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_transceiver_sdp(
     mut d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
-    media_engine: &Arc<MediaEngine>,
+    media_engine: &mut MediaEngine,
     ice_params: &RTCIceParameters,
     candidates: &[RTCIceCandidate],
     media_section: &MediaSection,
     params: AddTransceiverSdpParams,
+    transceiver: &mut RTCRtpTransceiver,
 ) -> Result<(SessionDescription, bool)> {
-    if media_section.transceivers.is_empty() {
-        return Err(Error::ErrSDPZeroTransceivers);
-    }
     let (should_add_candidates, mid_value, dtls_role, ice_gathering_state) = (
         params.should_add_candidates,
         params.mid_value,
@@ -458,20 +464,19 @@ pub(crate) async fn add_transceiver_sdp(
         params.ice_gathering_state,
     );
 
-    let transceivers = &media_section.transceivers;
     // Use the first transceiver to generate the section attributes
-    let t = &transceivers[0];
-    let mut media = MediaDescription::new_jsep_media_description(t.kind.to_string(), vec![])
-        .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
-        .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value.clone())
-        .with_ice_credentials(
-            ice_params.username_fragment.clone(),
-            ice_params.password.clone(),
-        )
-        .with_property_attribute(ATTR_KEY_RTCPMUX.to_owned())
-        .with_property_attribute(ATTR_KEY_RTCPRSIZE.to_owned());
+    let mut media =
+        MediaDescription::new_jsep_media_description(transceiver.kind.to_string(), vec![])
+            .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
+            .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value.clone())
+            .with_ice_credentials(
+                ice_params.username_fragment.clone(),
+                ice_params.password.clone(),
+            )
+            .with_property_attribute(ATTR_KEY_RTCPMUX.to_owned())
+            .with_property_attribute(ATTR_KEY_RTCPRSIZE.to_owned());
 
-    let codecs = t.get_codecs().await;
+    let codecs = transceiver.get_codecs(media_engine);
     for codec in &codecs {
         let name = codec
             .capability
@@ -499,14 +504,14 @@ pub(crate) async fn add_transceiver_sdp(
     }
     if codecs.is_empty() {
         // If we are sender and we have no codecs throw an error early
-        if t.sender().await.track().await.is_some() {
+        if transceiver.sender().track().is_some() {
             return Err(Error::ErrSenderWithNoCodecs);
         }
 
         // Explicitly reject track if we don't have the codec
         d = d.with_media(MediaDescription {
             media_name: sdp::description::media::MediaName {
-                media: t.kind.to_string(),
+                media: transceiver.kind.to_string(),
                 port: RangedPort {
                     value: 0,
                     range: None,
@@ -540,7 +545,8 @@ pub(crate) async fn add_transceiver_sdp(
         return Ok((d, false));
     }
 
-    let parameters = media_engine.get_rtp_parameters_by_kind(t.kind, t.direction());
+    let parameters =
+        media_engine.get_rtp_parameters_by_kind(transceiver.kind, transceiver.direction());
     for rtp_extension in &parameters.header_extensions {
         let ext_url = Url::parse(rtp_extension.uri.as_str())?;
         media = media.with_extmap(sdp::extmap::ExtMap {
@@ -589,9 +595,9 @@ pub(crate) async fn add_transceiver_sdp(
         media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
     }
 
-    for mt in transceivers {
-        let sender = mt.sender().await;
-        if let Some(track) = sender.track().await {
+    {
+        let sender = transceiver.sender_mut();
+        if let Some(track) = sender.track() {
             media = media.with_media_source(
                 sender.ssrc,
                 track.stream_id().to_owned(), /* cname */
@@ -609,7 +615,6 @@ pub(crate) async fn add_transceiver_sdp(
                 }
 
                 sender.set_initial_track_id(track.id().to_string())?;
-                break;
             }
         }
 
@@ -628,15 +633,13 @@ pub(crate) async fn add_transceiver_sdp(
             for stream_id in sender.associated_media_stream_ids() {
                 media = media.with_property_attribute(format!("msid:{stream_id} {track_id}"));
             }
-
-            break;
         }
     }
 
     let direction = match params.offered_direction {
         Some(offered_direction) => {
             use RTCRtpTransceiverDirection::*;
-            let transceiver_direction = t.direction();
+            let transceiver_direction = transceiver.direction();
 
             match offered_direction {
                 Sendonly | Recvonly => {
@@ -653,7 +656,7 @@ pub(crate) async fn add_transceiver_sdp(
                 // media or session level, in which case the stream is sendrecv by
                 // default), the corresponding stream in the answer MAY be marked as
                 // sendonly, recvonly, sendrecv, or inactive
-                Sendrecv | Unspecified => t.direction(),
+                Sendrecv | Unspecified => transceiver.direction(),
                 // If an offered media
                 // stream is listed as inactive, it MUST be marked as inactive in the
                 // answer.
@@ -668,7 +671,7 @@ pub(crate) async fn add_transceiver_sdp(
             //
             //    When creating offers, the transceiver direction is directly reflected
             //    in the output, even for re-offers.
-            t.direction()
+            transceiver.direction()
         }
     };
     media = media.with_property_attribute(direction.to_string());
@@ -681,8 +684,7 @@ pub(crate) async fn add_transceiver_sdp(
     }
 
     if should_add_candidates {
-        media =
-            add_candidates_to_media_descriptions(candidates, media, ice_gathering_state).await?;
+        media = add_candidates_to_media_descriptions(candidates, media, ice_gathering_state)?;
     }
 
     Ok((d.with_media(media), true))
@@ -750,7 +752,7 @@ impl TryFrom<&String> for SimulcastRid {
 #[derive(Default)]
 pub(crate) struct MediaSection {
     pub(crate) id: String,
-    pub(crate) transceivers: Vec<Arc<RTCRtpTransceiver>>,
+    //TODO: pub(crate) transceivers: Vec<Arc<RTCRtpTransceiver>>,
     pub(crate) data: bool,
     pub(crate) rid_map: Vec<SimulcastRid>,
     pub(crate) offered_direction: Option<RTCRtpTransceiverDirection>,
@@ -764,14 +766,17 @@ pub(crate) struct PopulateSdpParams {
 }
 
 /// populate_sdp serializes a PeerConnections state into an SDP
-pub(crate) async fn populate_sdp(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn populate_sdp(
     mut d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
-    media_engine: &Arc<MediaEngine>,
+    media_engine: &mut MediaEngine,
     candidates: &[RTCIceCandidate],
     ice_params: &RTCIceParameters,
     media_sections: &[MediaSection],
     params: PopulateSdpParams,
+    transceivers: &mut [RTCRtpTransceiver],
+    mid2index: &HashMap<Mid, usize>,
 ) -> Result<SessionDescription> {
     let media_dtls_fingerprints = if params.media_description_fingerprint {
         dtls_fingerprints.to_vec()
@@ -787,10 +792,8 @@ pub(crate) async fn populate_sdp(
     };
 
     for (i, m) in media_sections.iter().enumerate() {
-        if m.data && !m.transceivers.is_empty() {
+        if m.data && mid2index.contains_key(&m.id) {
             return Err(Error::ErrSDPMediaSectionMediaDataChanInvalid);
-        } else if m.transceivers.len() > 1 {
-            return Err(Error::ErrSDPMediaSectionMultipleTrackInvalid);
         }
 
         let should_add_candidates = i == 0;
@@ -803,7 +806,7 @@ pub(crate) async fn populate_sdp(
                 dtls_role: params.connection_role,
                 ice_gathering_state: params.ice_gathering_state,
             };
-            d = add_data_media_section(d, &media_dtls_fingerprints, candidates, params).await?;
+            d = add_data_media_section(d, &media_dtls_fingerprints, candidates, params)?;
             true
         } else {
             let params = AddTransceiverSdpParams {
@@ -821,8 +824,8 @@ pub(crate) async fn populate_sdp(
                 candidates,
                 m,
                 params,
-            )
-            .await?;
+                &mut transceivers[*mid2index.get(&m.id).ok_or(Error::ErrSDPZeroTransceivers)?],
+            )?;
             d = d1;
             should_add_id
         };
@@ -848,7 +851,7 @@ pub(crate) async fn populate_sdp(
 
     Ok(d.with_value_attribute(ATTR_KEY_GROUP.to_owned(), bundle_value))
 }
-*/
+
 pub(crate) fn get_mid_value(media: &MediaDescription) -> Option<&String> {
     for attr in &media.attributes {
         if attr.key == "mid" {

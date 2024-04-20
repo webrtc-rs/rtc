@@ -1,16 +1,16 @@
-use std::collections::HashMap;
+//use std::collections::HashMap;
 
-use bytes::BytesMut;
-use shared::marshal::{Marshal, MarshalSize};
+//use bytes::BytesMut;
+//use shared::marshal::{Marshal , MarshalSize};
 
 use super::*;
-use shared::error::flatten_errs;
+//use shared::error::flatten_errs;
 
 /// TrackLocalStaticRTP  is a TrackLocal that has a pre-set codec and accepts RTP Packets.
 /// If you wish to send a media.Sample use TrackLocalStaticSample
 #[derive(Debug)]
 pub struct TrackLocalStaticRTP {
-    pub(crate) bindings: Mutex<Vec<Arc<TrackBinding>>>,
+    //TODO: pub(crate) bindings: Mutex<Vec<Arc<TrackBinding>>>,
     codec: RTCRtpCodecCapability,
     id: String,
     stream_id: String,
@@ -21,7 +21,7 @@ impl TrackLocalStaticRTP {
     pub fn new(codec: RTCRtpCodecCapability, id: String, stream_id: String) -> Self {
         TrackLocalStaticRTP {
             codec,
-            bindings: Mutex::new(vec![]),
+            //TODO: bindings: Mutex::new(vec![]),
             id,
             stream_id,
         }
@@ -32,7 +32,7 @@ impl TrackLocalStaticRTP {
         self.codec.clone()
     }
 
-    pub async fn any_binding_paused(&self) -> bool {
+    /*pub async fn any_binding_paused(&self) -> bool {
         let bindings = self.bindings.lock().await;
         bindings
             .iter()
@@ -129,14 +129,14 @@ impl TrackLocalStaticRTP {
 
         flatten_errs(write_errs)?;
         Ok(n)
-    }
+    }*/
 }
 
 impl TrackLocal for TrackLocalStaticRTP {
     /// bind is called by the PeerConnection after negotiation is complete
     /// This asserts that the code requested is supported by the remote peer.
     /// If so it setups all the state (SSRC and PayloadType) to have a call
-    fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+    /*todo: fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),
             ..Default::default()
@@ -179,7 +179,7 @@ impl TrackLocal for TrackLocalStaticRTP {
         } else {
             Err(Error::ErrUnbindFailed)
         }
-    }
+    }*/
 
     /// id is the unique identifier for this Track. This should be unique for the
     /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
@@ -209,6 +209,7 @@ impl TrackLocal for TrackLocalStaticRTP {
     }
 }
 
+/*
 #[async_trait]
 impl TrackLocalWriter for TrackLocalStaticRTP {
     /// write_rtp writes a RTP Packet to the TrackLocalStaticRTP
@@ -234,3 +235,4 @@ impl TrackLocalWriter for TrackLocalStaticRTP {
         Ok(b.len())
     }
 }
+*/
