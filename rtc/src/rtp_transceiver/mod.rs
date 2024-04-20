@@ -2,20 +2,12 @@
 mod rtp_transceiver_test;
 
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
 
 use interceptor::stream_info::{RTPHeaderExtension, StreamInfo};
 use interceptor::Attributes;
 use log::trace;*/
 use serde::{Deserialize, Serialize};
 /*
-use smol_str::SmolStr;
-use tokio::sync::{Mutex, OnceCell};
-use util::Unmarshal;
-
 use crate::api::media_engine::MediaEngine;*/
 use crate::rtp_transceiver::rtp_codec::*;
 /*
@@ -27,9 +19,9 @@ use crate::track::track_local::TrackLocal;
 */
 pub(crate) mod fmtp;
 pub mod rtp_codec;
-/*
-pub mod rtp_receiver;
-pub mod rtp_sender;*/
+
+//pub mod rtp_receiver;
+//pub mod rtp_sender;
 pub mod rtp_transceiver_direction;
 /*pub(crate) mod srtp_writer_future;
 */
@@ -477,13 +469,14 @@ impl fmt::Debug for RTCRtpTransceiver {
             .finish()
     }
 }
-
-pub(crate) async fn find_by_mid(
+*/
+/*
+pub(crate) fn find_by_mid(
     mid: &str,
-    local_transceivers: &mut Vec<Arc<RTCRtpTransceiver>>,
-) -> Option<Arc<RTCRtpTransceiver>> {
+    local_transceivers: &mut Vec<RTCRtpTransceiver>,
+) -> Option<RTCRtpTransceiver> {
     for (i, t) in local_transceivers.iter().enumerate() {
-        if t.mid() == Some(SmolStr::from(mid)) {
+        if t.mid() == Some(mid) {
             return Some(local_transceivers.remove(i));
         }
     }
@@ -493,11 +486,11 @@ pub(crate) async fn find_by_mid(
 
 /// Given a direction+type pluck a transceiver from the passed list
 /// if no entry satisfies the requested type+direction return a inactive Transceiver
-pub(crate) async fn satisfy_type_and_direction(
+pub(crate) fn satisfy_type_and_direction(
     remote_kind: RTPCodecType,
     remote_direction: RTCRtpTransceiverDirection,
-    local_transceivers: &mut Vec<Arc<RTCRtpTransceiver>>,
-) -> Option<Arc<RTCRtpTransceiver>> {
+    local_transceivers: &mut Vec<RTCRtpTransceiver>,
+) -> Option<RTCRtpTransceiver> {
     // Get direction order from most preferred to least
     let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
         match remote_direction {
@@ -561,4 +554,5 @@ pub(crate) fn handle_unknown_rtp_packet(
     };
 
     Ok((mid, rid, srid, payload_type))
-}*/
+}
+*/

@@ -68,11 +68,15 @@ use crate::peer_connection::peer_connection_state::{
 };
 use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 //use crate::peer_connection::sdp::sdp_type::RTCSdpType;
+//use crate::peer_connection::sdp::{get_mid_value, get_peer_direction};
+//use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 //use crate::peer_connection::sdp::*;
 use crate::peer_connection::signaling_state::{
     /*check_next_signaling_state,*/ RTCSignalingState, //StateChangeOp,
 };
+//use crate::rtp_transceiver::rtp_codec::RTPCodecType;
+//use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::transport::dtls_transport::RTCDtlsTransport;
 use crate::transport::ice_transport::{
     ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer},
@@ -1366,30 +1370,25 @@ impl RTCPeerConnection {
         }
         false
     }
+     */
 
+    /*
     /// set_remote_description sets the SessionDescription of the remote peer
-    pub async fn set_remote_description(&self, mut desc: RTCSessionDescription) -> Result<()> {
-        if self.internal.is_closed.load(Ordering::SeqCst) {
+    pub fn set_remote_description(&mut self, mut desc: RTCSessionDescription) -> Result<()> {
+        if self.is_closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let is_renegotiation = {
-            let current_remote_description = self.internal.current_remote_description.lock().await;
-            current_remote_description.is_some()
-        };
+        let is_renegotiation = self.current_remote_description.is_some();
 
         desc.parsed = Some(desc.unmarshal()?);
-        self.set_description(&desc, StateChangeOp::SetRemote)
-            .await?;
+        self.set_description(&desc, StateChangeOp::SetRemote)?;
 
         if let Some(parsed) = &desc.parsed {
-            self.internal
-                .media_engine
-                .update_from_remote_description(parsed)
-                .await?;
+            self.media_engine.update_from_remote_description(parsed)?;
 
-            let mut local_transceivers = self.get_transceivers().await;
-            let remote_description = self.remote_description().await;
+            let mut local_transceivers = self.get_transceivers();
+            let remote_description = self.remote_description();
             let we_offer = desc.sdp_type == RTCSdpType::Answer;
 
             if !we_offer {
@@ -1418,13 +1417,10 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        let t = if let Some(t) =
-                            find_by_mid(mid_value, &mut local_transceivers).await
-                        {
+                        let t = if let Some(t) = find_by_mid(mid_value, &mut local_transceivers) {
                             Some(t)
                         } else {
                             satisfy_type_and_direction(kind, direction, &mut local_transceivers)
-                                .await
                         };
 
                         if let Some(t) = t {
@@ -1644,8 +1640,9 @@ impl RTCPeerConnection {
         }
 
         Ok(())
-    }
+    }*/
 
+    /*
     /// start_rtp_senders starts all outbound RTP streams
     pub(crate) async fn start_rtp_senders(&self) -> Result<()> {
         let current_transceivers = self.internal.rtp_transceivers.lock().await;

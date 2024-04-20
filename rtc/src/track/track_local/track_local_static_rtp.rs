@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
 use bytes::BytesMut;
-use tokio::sync::Mutex;
-use util::{Marshal, MarshalSize};
+use shared::marshal::{Marshal, MarshalSize};
 
 use super::*;
-use crate::error::flatten_errs;
+use shared::error::flatten_errs;
 
 /// TrackLocalStaticRTP  is a TrackLocal that has a pre-set codec and accepts RTP Packets.
 /// If you wish to send a media.Sample use TrackLocalStaticSample
@@ -133,12 +132,11 @@ impl TrackLocalStaticRTP {
     }
 }
 
-#[async_trait]
 impl TrackLocal for TrackLocalStaticRTP {
     /// bind is called by the PeerConnection after negotiation is complete
     /// This asserts that the code requested is supported by the remote peer.
     /// If so it setups all the state (SSRC and PayloadType) to have a call
-    async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+    fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),
             ..Default::default()

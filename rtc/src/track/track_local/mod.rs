@@ -1,31 +1,28 @@
-#[cfg(test)]
-mod track_local_static_test;
+//TODO:#[cfg(test)]
+//mod track_local_static_test;
 
-pub mod track_local_static_rtp;
-pub mod track_local_static_sample;
+//TODO:pub mod track_local_static_rtp;
+//TOOD:pub mod track_local_static_sample;
 
 use std::any::Any;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use interceptor::{Attributes, RTPWriter};
-use tokio::sync::Mutex;
-use util::Unmarshal;
+//use interceptor::{Attributes, RTPWriter};
+//use shared::marshal::Unmarshal;
 
-use crate::error::{Error, Result};
 use crate::rtp_transceiver::rtp_codec::*;
 use crate::rtp_transceiver::*;
+use shared::error::Result;
 
 /// TrackLocalWriter is the Writer for outbound RTP Packets
-#[async_trait]
 pub trait TrackLocalWriter: fmt::Debug {
     /// write_rtp encrypts a RTP packet and writes to the connection
-    async fn write_rtp(&self, p: &rtp::packet::Packet) -> Result<usize>;
+    fn write_rtp(&self, p: &rtp::packet::Packet) -> Result<usize>;
 
     /// write encrypts and writes a full RTP packet
-    async fn write(&self, b: &[u8]) -> Result<usize>;
+    fn write(&self, b: &[u8]) -> Result<usize>;
 }
 
 /// TrackLocalContext is the Context passed when a TrackLocal has been Binded/Unbinded from a PeerConnection, and used
@@ -72,16 +69,15 @@ impl TrackLocalContext {
 /// TrackLocal is an interface that controls how the user can send media
 /// The user can provide their own TrackLocal implementations, or use
 /// the implementations in pkg/media
-#[async_trait]
 pub trait TrackLocal {
     /// bind should implement the way how the media data flows from the Track to the PeerConnection
     /// This will be called internally after signaling is complete and the list of available
     /// codecs has been determined
-    async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
+    fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
 
     /// unbind should implement the teardown logic when the track is no longer needed. This happens
     /// because a track has been stopped.
-    async fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
+    fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
 
     /// id is the unique identifier for this Track. This should be unique for the
     /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
@@ -116,15 +112,16 @@ impl TrackBinding {
     }
 }
 
+/*TODO:
 pub(crate) struct InterceptorToTrackLocalWriter {
-    pub(crate) interceptor_rtp_writer: Mutex<Option<Arc<dyn RTPWriter + Send + Sync>>>,
+    pub(crate) interceptor_rtp_writer: Option<Arc<dyn RTPWriter + Send + Sync>>,
     sender_paused: Arc<AtomicBool>,
 }
 
 impl InterceptorToTrackLocalWriter {
     pub(crate) fn new(paused: Arc<AtomicBool>) -> Self {
         InterceptorToTrackLocalWriter {
-            interceptor_rtp_writer: Mutex::new(None),
+            interceptor_rtp_writer: None,
             sender_paused: paused,
         }
     }
@@ -140,9 +137,8 @@ impl std::fmt::Debug for InterceptorToTrackLocalWriter {
     }
 }
 
-#[async_trait]
 impl TrackLocalWriter for InterceptorToTrackLocalWriter {
-    async fn write_rtp(&self, pkt: &rtp::packet::Packet) -> Result<usize> {
+    fn write_rtp(&self, pkt: &rtp::packet::Packet) -> Result<usize> {
         if self.is_sender_paused() {
             return Ok(0);
         }
@@ -161,3 +157,4 @@ impl TrackLocalWriter for InterceptorToTrackLocalWriter {
         self.write_rtp(&pkt).await
     }
 }
+*/
