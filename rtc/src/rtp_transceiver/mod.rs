@@ -176,7 +176,7 @@ pub type TriggerNegotiationNeededFnOption =
 pub struct RTCRtpTransceiver {
     mid: Option<String>,
     sender: RTCRtpSender,
-    //todo: receiver: RTCRtpReceiver,
+    receiver: RTCRtpReceiver,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
 
@@ -382,16 +382,16 @@ impl RTCRtpTransceiver {
             );
         }
     }
-    /*
+
     /// Perform any subsequent actions after altering the transceiver's direction.
     ///
     /// After changing the transceiver's direction this method should be called to perform any
     /// side-effects that results from the new direction, such as pausing/resuming the RTP receiver.
-    pub(crate) async fn process_new_current_direction(
-        &self,
+    pub(crate) fn process_new_current_direction(
+        &mut self,
         previous_direction: RTCRtpTransceiverDirection,
     ) -> Result<()> {
-        if self.stopped.load(Ordering::SeqCst) {
+        if self.stopped {
             return Ok(());
         }
 
@@ -409,26 +409,21 @@ impl RTCRtpTransceiver {
             return Ok(());
         }
 
-        {
-            let receiver = self.receiver.lock().await;
-            let pause_receiver = !current_direction.has_recv();
+        let pause_receiver = !current_direction.has_recv();
 
-            if pause_receiver {
-                receiver.pause().await?;
-            } else {
-                receiver.resume().await?;
-            }
+        if pause_receiver {
+            self.receiver.pause()?;
+        } else {
+            self.receiver.resume()?;
         }
 
         let pause_sender = !current_direction.has_send();
-        {
-            let sender = &*self.sender.lock().await;
-            sender.set_paused(pause_sender);
-        }
+        self.sender.set_paused(pause_sender);
 
         Ok(())
     }
 
+    /*
     /// stop irreversibly stops the RTPTransceiver
     pub async fn stop(&self) -> Result<()> {
         if self.stopped.load(Ordering::SeqCst) {

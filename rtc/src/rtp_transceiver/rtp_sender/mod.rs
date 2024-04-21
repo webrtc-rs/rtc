@@ -229,11 +229,12 @@ impl RTCRtpSender {
         let mut tr = self.rtp_transceiver.lock();
         *tr = rtp_transceiver;
     }
-
-    pub(crate) fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::SeqCst);
+    */
+    pub(crate) fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
+    /*
     /// transport returns the currently-configured DTLSTransport
     /// if one has not yet been configured
     pub fn transport(&self) -> Arc<RTCDtlsTransport> {

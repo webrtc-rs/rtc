@@ -71,15 +71,15 @@ use crate::peer_connection::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
-use crate::peer_connection::sdp::populate_sdp;
 use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     get_mid_value, get_peer_direction, get_rids, update_sdp_origin, MediaSection, PopulateSdpParams,
 };
+use crate::peer_connection::sdp::{populate_local_candidates, populate_sdp};
 //use crate::peer_connection::sdp::*;
 use crate::peer_connection::signaling_state::{
-    /*check_next_signaling_state,*/ RTCSignalingState, //StateChangeOp,
+    check_next_signaling_state, RTCSignalingState, StateChangeOp,
 };
 use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
@@ -969,14 +969,51 @@ impl RTCPeerConnection {
         )
         .await;
     }
+    */
+
+    // Helper to trigger a negotiation needed.
+    fn trigger_negotiation_needed(&self) {
+        //TODO: RTCPeerConnection::do_negotiation_needed(self.create_negotiation_needed_params());
+    }
+
+    /// Creates the parameters needed to trigger a negotiation needed.
+    fn create_negotiation_needed_params(&self) -> NegotiationNeededParams {
+        NegotiationNeededParams {
+            //TODO: on_negotiation_needed_handler: Arc::clone(&self.on_negotiation_needed_handler),
+            is_closed: self.is_closed,
+            //todo: ops: Arc::clone(&self.ops),
+            negotiation_needed_state: self.negotiation_needed_state,
+            is_negotiation_needed: self.is_negotiation_needed,
+            signaling_state: self.signaling_state,
+            /*check_negotiation_needed_params: CheckNegotiationNeededParams {
+                sctp_transport: Arc::clone(&self.sctp_transport),
+                rtp_transceivers: Arc::clone(&self.rtp_transceivers),
+                current_local_description: Arc::clone(&self.current_local_description),
+                current_remote_description: Arc::clone(&self.current_remote_description),
+            },*/
+        }
+    }
+
+    /*fn make_negotiation_needed_trigger(
+        &self,
+    ) -> impl Fn() -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync {
+        let params = self.create_negotiation_needed_params();
+        move || {
+            let params = params.clone();
+            Box::pin(async move {
+                let params = params.clone();
+                RTCPeerConnection::do_negotiation_needed(params).await;
+            })
+        }
+    }*/
 
     // 4.4.1.6 Set the SessionDescription
-    pub(crate) async fn set_description(
-        &self,
+    pub(crate) fn set_description(
+        &mut self,
         sd: &RTCSessionDescription,
         op: StateChangeOp,
     ) -> Result<()> {
-        if self.internal.is_closed.load(Ordering::SeqCst) {
+        if self.is_closed {
             return Err(Error::ErrConnectionClosed);
         } else if sd.sdp_type == RTCSdpType::Unspecified {
             return Err(Error::ErrPeerConnSDPTypeInvalidValue);
@@ -992,11 +1029,7 @@ impl RTCPeerConnection {
                     match sd.sdp_type {
                         // stable->SetLocal(offer)->have-local-offer
                         RTCSdpType::Offer => {
-                            let check = {
-                                let last_offer = self.internal.last_offer.lock().await;
-                                sd.sdp != *last_offer
-                            };
-                            if check {
+                            if sd.sdp != self.last_offer {
                                 Err(new_sdpdoes_not_match_offer)
                             } else {
                                 let next_state = check_next_signaling_state(
@@ -1006,9 +1039,7 @@ impl RTCPeerConnection {
                                     sd.sdp_type,
                                 );
                                 if next_state.is_ok() {
-                                    let mut pending_local_description =
-                                        self.internal.pending_local_description.lock().await;
-                                    *pending_local_description = Some(sd.clone());
+                                    self.pending_local_description = Some(sd.clone());
                                 }
                                 next_state
                             }
@@ -1016,11 +1047,7 @@ impl RTCPeerConnection {
                         // have-remote-offer->SetLocal(answer)->stable
                         // have-local-pranswer->SetLocal(answer)->stable
                         RTCSdpType::Answer => {
-                            let check = {
-                                let last_answer = self.internal.last_answer.lock().await;
-                                sd.sdp != *last_answer
-                            };
-                            if check {
+                            if sd.sdp != self.last_answer {
                                 Err(new_sdpdoes_not_match_answer)
                             } else {
                                 let next_state = check_next_signaling_state(
@@ -1030,27 +1057,12 @@ impl RTCPeerConnection {
                                     sd.sdp_type,
                                 );
                                 if next_state.is_ok() {
-                                    let pending_remote_description = {
-                                        let mut pending_remote_description =
-                                            self.internal.pending_remote_description.lock().await;
-                                        pending_remote_description.take()
-                                    };
-                                    let _pending_local_description = {
-                                        let mut pending_local_description =
-                                            self.internal.pending_local_description.lock().await;
-                                        pending_local_description.take()
-                                    };
+                                    let pending_remote_description =
+                                        self.pending_remote_description.take();
+                                    self.pending_local_description.take();
 
-                                    {
-                                        let mut current_local_description =
-                                            self.internal.current_local_description.lock().await;
-                                        *current_local_description = Some(sd.clone());
-                                    }
-                                    {
-                                        let mut current_remote_description =
-                                            self.internal.current_remote_description.lock().await;
-                                        *current_remote_description = pending_remote_description;
-                                    }
+                                    self.current_local_description = Some(sd.clone());
+                                    self.current_remote_description = pending_remote_description;
                                 }
                                 next_state
                             }
@@ -1063,19 +1075,13 @@ impl RTCPeerConnection {
                                 sd.sdp_type,
                             );
                             if next_state.is_ok() {
-                                let mut pending_local_description =
-                                    self.internal.pending_local_description.lock().await;
-                                *pending_local_description = None;
+                                self.pending_local_description = None;
                             }
                             next_state
                         }
                         // have-remote-offer->SetLocal(pranswer)->have-local-pranswer
                         RTCSdpType::Pranswer => {
-                            let check = {
-                                let last_answer = self.internal.last_answer.lock().await;
-                                sd.sdp != *last_answer
-                            };
-                            if check {
+                            if sd.sdp != self.last_answer {
                                 Err(new_sdpdoes_not_match_answer)
                             } else {
                                 let next_state = check_next_signaling_state(
@@ -1085,9 +1091,7 @@ impl RTCPeerConnection {
                                     sd.sdp_type,
                                 );
                                 if next_state.is_ok() {
-                                    let mut pending_local_description =
-                                        self.internal.pending_local_description.lock().await;
-                                    *pending_local_description = Some(sd.clone());
+                                    self.pending_local_description = Some(sd.clone());
                                 }
                                 next_state
                             }
@@ -1106,9 +1110,7 @@ impl RTCPeerConnection {
                                 sd.sdp_type,
                             );
                             if next_state.is_ok() {
-                                let mut pending_remote_description =
-                                    self.internal.pending_remote_description.lock().await;
-                                *pending_remote_description = Some(sd.clone());
+                                self.pending_remote_description = Some(sd.clone());
                             }
                             next_state
                         }
@@ -1122,28 +1124,13 @@ impl RTCPeerConnection {
                                 sd.sdp_type,
                             );
                             if next_state.is_ok() {
-                                let pending_local_description = {
-                                    let mut pending_local_description =
-                                        self.internal.pending_local_description.lock().await;
-                                    pending_local_description.take()
-                                };
+                                let pending_local_description =
+                                    self.pending_local_description.take();
 
-                                let _pending_remote_description = {
-                                    let mut pending_remote_description =
-                                        self.internal.pending_remote_description.lock().await;
-                                    pending_remote_description.take()
-                                };
+                                self.pending_remote_description.take();
 
-                                {
-                                    let mut current_remote_description =
-                                        self.internal.current_remote_description.lock().await;
-                                    *current_remote_description = Some(sd.clone());
-                                }
-                                {
-                                    let mut current_local_description =
-                                        self.internal.current_local_description.lock().await;
-                                    *current_local_description = pending_local_description;
-                                }
+                                self.current_remote_description = Some(sd.clone());
+                                self.current_local_description = pending_local_description;
                             }
                             next_state
                         }
@@ -1155,9 +1142,7 @@ impl RTCPeerConnection {
                                 sd.sdp_type,
                             );
                             if next_state.is_ok() {
-                                let mut pending_remote_description =
-                                    self.internal.pending_remote_description.lock().await;
-                                *pending_remote_description = None;
+                                self.pending_remote_description = None;
                             }
                             next_state
                         }
@@ -1170,9 +1155,7 @@ impl RTCPeerConnection {
                                 sd.sdp_type,
                             );
                             if next_state.is_ok() {
-                                let mut pending_remote_description =
-                                    self.internal.pending_remote_description.lock().await;
-                                *pending_remote_description = Some(sd.clone());
+                                self.pending_remote_description = Some(sd.clone());
                             }
                             next_state
                         }
@@ -1184,16 +1167,12 @@ impl RTCPeerConnection {
 
         match next_state {
             Ok(next_state) => {
-                self.internal
-                    .signaling_state
-                    .store(next_state as u8, Ordering::SeqCst);
+                self.signaling_state = next_state;
                 if self.signaling_state() == RTCSignalingState::Stable {
-                    self.internal
-                        .is_negotiation_needed
-                        .store(false, Ordering::SeqCst);
-                    self.internal.trigger_negotiation_needed().await;
+                    self.is_negotiation_needed = false;
+                    self.trigger_negotiation_needed();
                 }
-                self.update_signaling_state_change(next_state).await;
+                self.update_signaling_state_change(next_state);
                 Ok(())
             }
             Err(err) => Err(err),
@@ -1201,37 +1180,31 @@ impl RTCPeerConnection {
     }
 
     /// set_local_description sets the SessionDescription of the local peer
-    pub async fn set_local_description(&self, mut desc: RTCSessionDescription) -> Result<()> {
-        if self.internal.is_closed.load(Ordering::SeqCst) {
+    pub fn set_local_description(&mut self, mut desc: RTCSessionDescription) -> Result<()> {
+        if self.is_closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let have_local_description = {
-            let current_local_description = self.internal.current_local_description.lock().await;
-            current_local_description.is_some()
-        };
+        let _have_local_description = self.current_local_description.is_some();
 
         // JSEP 5.4
         if desc.sdp.is_empty() {
             match desc.sdp_type {
                 RTCSdpType::Answer | RTCSdpType::Pranswer => {
-                    let last_answer = self.internal.last_answer.lock().await;
-                    desc.sdp = last_answer.clone();
+                    desc.sdp = self.last_answer.clone();
                 }
                 RTCSdpType::Offer => {
-                    let last_offer = self.internal.last_offer.lock().await;
-                    desc.sdp = last_offer.clone();
+                    desc.sdp = self.last_offer.clone();
                 }
                 _ => return Err(Error::ErrPeerConnSDPTypeInvalidValueSetLocalDescription),
             }
         }
 
         desc.parsed = Some(desc.unmarshal()?);
-        self.set_description(&desc, StateChangeOp::SetLocal).await?;
+        self.set_description(&desc, StateChangeOp::SetLocal)?;
 
         let we_answer = desc.sdp_type == RTCSdpType::Answer;
-        let remote_description = self.remote_description().await;
-        let mut local_transceivers = self.get_transceivers().await;
+        let remote_description = self.remote_description().cloned();
         if we_answer {
             if let Some(parsed) = desc.parsed {
                 // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
@@ -1254,8 +1227,8 @@ impl RTCPeerConnection {
                         _ => continue,
                     };
 
-                    let t = match find_by_mid(mid_value, &mut local_transceivers).await {
-                        Some(t) => t,
+                    let t = match find_by_mid(mid_value, &mut self.rtp_transceivers) {
+                        Some((_, t)) => t,
                         None => continue,
                     };
                     let previous_direction = t.current_direction();
@@ -1264,14 +1237,14 @@ impl RTCPeerConnection {
 
                     // TODO: Also set FiredDirection here.
                     t.set_current_direction(direction);
-                    t.process_new_current_direction(previous_direction).await?;
+                    t.process_new_current_direction(previous_direction)?;
                 }
             }
 
-            if let Some(remote_desc) = remote_description {
-                self.start_rtp_senders().await?;
+            if let Some(_remote_desc) = remote_description {
+                //TODO: self.start_rtp_senders().await?;
 
-                let pci = Arc::clone(&self.internal);
+                /*TODO: let pci = Arc::clone(&self.internal);
                 let remote_desc = Arc::new(remote_desc);
                 self.internal
                     .ops
@@ -1286,12 +1259,12 @@ impl RTCPeerConnection {
                         },
                         "set_local_description",
                     ))
-                    .await?;
+                    .await?;*/
             }
         }
 
-        if self.internal.ice_gatherer.state() == RTCIceGathererState::New {
-            self.internal.ice_gatherer.gather().await
+        if self.ice_transport.gatherer.state() == RTCIceGathererState::New {
+            self.ice_transport.gatherer.gather()
         } else {
             Ok(())
         }
@@ -1301,12 +1274,12 @@ impl RTCPeerConnection {
     /// otherwise it returns CurrentLocalDescription. This property is used to
     /// determine if set_local_description has already been called.
     /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-localdescription>
-    pub async fn local_description(&self) -> Option<RTCSessionDescription> {
-        if let Some(pending_local_description) = self.pending_local_description().await {
+    pub fn local_description(&self) -> Option<RTCSessionDescription> {
+        if let Some(pending_local_description) = self.pending_local_description() {
             return Some(pending_local_description);
         }
-        self.current_local_description().await
-    }*/
+        self.current_local_description()
+    }
 
     pub fn is_lite_set(desc: &SessionDescription) -> bool {
         for a in &desc.attributes {
@@ -1967,44 +1940,43 @@ impl RTCPeerConnection {
 
         flatten_errs(close_errs)
     }
-
+    */
     /// CurrentLocalDescription represents the local description that was
     /// successfully negotiated the last time the PeerConnection transitioned
     /// into the stable state plus any local candidates that have been generated
     /// by the ICEAgent since the offer or answer was created.
-    pub async fn current_local_description(&self) -> Option<RTCSessionDescription> {
-        let local_description = {
-            let current_local_description = self.internal.current_local_description.lock().await;
-            current_local_description.clone()
-        };
-        let ice_gather = Some(&self.internal.ice_gatherer);
+    pub fn current_local_description(&self) -> Option<RTCSessionDescription> {
+        let local_description = self.current_local_description.clone();
         let ice_gathering_state = self.ice_gathering_state();
 
-        populate_local_candidates(local_description.as_ref(), ice_gather, ice_gathering_state).await
+        populate_local_candidates(
+            local_description.as_ref(),
+            &self.ice_transport.gatherer,
+            ice_gathering_state,
+        )
     }
 
     /// PendingLocalDescription represents a local description that is in the
     /// process of being negotiated plus any local candidates that have been
     /// generated by the ICEAgent since the offer or answer was created. If the
     /// PeerConnection is in the stable state, the value is null.
-    pub async fn pending_local_description(&self) -> Option<RTCSessionDescription> {
-        let local_description = {
-            let pending_local_description = self.internal.pending_local_description.lock().await;
-            pending_local_description.clone()
-        };
-        let ice_gather = Some(&self.internal.ice_gatherer);
+    pub fn pending_local_description(&self) -> Option<RTCSessionDescription> {
+        let local_description = self.pending_local_description.clone();
         let ice_gathering_state = self.ice_gathering_state();
 
-        populate_local_candidates(local_description.as_ref(), ice_gather, ice_gathering_state).await
+        populate_local_candidates(
+            local_description.as_ref(),
+            &self.ice_transport.gatherer,
+            ice_gathering_state,
+        )
     }
 
     /// current_remote_description represents the last remote description that was
     /// successfully negotiated the last time the PeerConnection transitioned
     /// into the stable state plus any remote candidates that have been supplied
     /// via add_icecandidate() since the offer or answer was created.
-    pub async fn current_remote_description(&self) -> Option<RTCSessionDescription> {
-        let current_remote_description = self.internal.current_remote_description.lock().await;
-        current_remote_description.clone()
+    pub fn current_remote_description(&self) -> Option<RTCSessionDescription> {
+        self.current_remote_description.clone()
     }
 
     /// pending_remote_description represents a remote description that is in the
@@ -2012,11 +1984,10 @@ impl RTCPeerConnection {
     /// have been supplied via add_icecandidate() since the offer or answer was
     /// created. If the PeerConnection is in the stable state, the value is
     /// null.
-    pub async fn pending_remote_description(&self) -> Option<RTCSessionDescription> {
-        let pending_remote_description = self.internal.pending_remote_description.lock().await;
-        pending_remote_description.clone()
+    pub fn pending_remote_description(&self) -> Option<RTCSessionDescription> {
+        self.pending_remote_description.clone()
     }
-    */
+
     /// signaling_state attribute returns the signaling state of the
     /// PeerConnection instance.
     pub fn signaling_state(&self) -> RTCSignalingState {

@@ -62,8 +62,8 @@ impl RTCIceGatherer {
         }
     }
 
-    /*TODO:/// Gather ICE candidates.
     pub fn gather(&self) -> Result<()> {
+        /*TODO:/// Gather ICE candidates.
         self.create_agent().await?;
         self.set_state(RTCIceGathererState::Gathering).await;
 
@@ -111,9 +111,9 @@ impl RTCIceGatherer {
             ));
 
             agent.gather_candidates()?;
-        }
+        }*/
         Ok(())
-    }*/
+    }
 
     /// Close prunes all local candidates, and closes the ports.
     pub fn close(&mut self) -> Result<()> {
@@ -123,7 +123,7 @@ impl RTCIceGatherer {
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.
-    pub fn get_local_parameters(&mut self) -> Result<RTCIceParameters> {
+    pub fn get_local_parameters(&self) -> Result<RTCIceParameters> {
         let Credentials { ufrag, pwd } = self.agent.get_local_credentials();
 
         Ok(RTCIceParameters {
@@ -134,7 +134,7 @@ impl RTCIceGatherer {
     }
 
     /// get_local_candidates returns the sequence of valid local candidates associated with the ICEGatherer.
-    pub fn get_local_candidates(&mut self) -> Vec<RTCIceCandidate> {
+    pub fn get_local_candidates(&self) -> Vec<RTCIceCandidate> {
         let ice_candidates = self.agent.get_local_candidates();
         rtc_ice_candidates_from_ice_candidates(ice_candidates)
     }

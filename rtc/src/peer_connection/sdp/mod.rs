@@ -43,6 +43,7 @@ use url::Url;
 use crate::peer_connection::MEDIA_SECTION_APPLICATION;
 use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 use crate::transport::ice_transport::ice_candidate::RTCIceCandidate;
+use crate::transport::ice_transport::ice_gatherer::RTCIceGatherer;
 use crate::transport::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice_transport::ice_parameters::RTCIceParameters;
 /*use crate::{SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
@@ -398,21 +399,18 @@ pub(crate) fn add_data_media_section(
 
     Ok(d.with_media(media))
 }
-/*
+
 pub(crate) fn populate_local_candidates(
     session_description: Option<&session_description::RTCSessionDescription>,
     ice_gatherer: &RTCIceGatherer,
     ice_gathering_state: RTCIceGatheringState,
 ) -> Option<session_description::RTCSessionDescription> {
-    if session_description.is_none() || ice_gatherer.is_none() {
+    if session_description.is_none() {
         return session_description.cloned();
     }
 
-    if let (Some(sd), Some(ice)) = (session_description, ice_gatherer) {
-        let candidates = match ice.get_local_candidates() {
-            Ok(candidates) => candidates,
-            Err(_) => return Some(sd.clone()),
-        };
+    if let Some(sd) = session_description {
+        let candidates = ice_gatherer.get_local_candidates();
 
         let mut parsed = match sd.unmarshal() {
             Ok(parsed) => parsed,
@@ -436,7 +434,7 @@ pub(crate) fn populate_local_candidates(
     } else {
         None
     }
-}*/
+}
 
 pub(crate) struct AddTransceiverSdpParams {
     should_add_candidates: bool,
