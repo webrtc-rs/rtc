@@ -22,7 +22,7 @@ pub mod session_description;
 
 use std::collections::HashMap;
 //use std::convert::From;
-use ice::candidate::Candidate;
+use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use std::io::BufReader;
 /*use std::sync::Arc;
@@ -900,8 +900,7 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
     Ok((parts[1].to_owned(), parts[0].to_owned()))
 }
 
-/*TODO:
-pub(crate) async fn extract_ice_details(
+pub(crate) fn extract_ice_details(
     desc: &SessionDescription,
 ) -> Result<(String, String, Vec<RTCIceCandidate>)> {
     let mut candidates = vec![];
@@ -909,10 +908,10 @@ pub(crate) async fn extract_ice_details(
     let mut remote_ufrags = vec![];
 
     if let Some(ufrag) = desc.attribute("ice-ufrag") {
-        remote_ufrags.push(ufrag.clone());
+        remote_ufrags.push(ufrag.to_owned());
     }
     if let Some(pwd) = desc.attribute("ice-pwd") {
-        remote_pwds.push(pwd.clone());
+        remote_pwds.push(pwd.to_owned());
     }
 
     for m in &desc.media_descriptions {
@@ -926,7 +925,7 @@ pub(crate) async fn extract_ice_details(
         for a in &m.attributes {
             if a.is_ice_candidate() {
                 if let Some(value) = &a.value {
-                    let c: Arc<dyn Candidate + Send + Sync> = Arc::new(unmarshal_candidate(value)?);
+                    let c = unmarshal_candidate(value)?;
                     let candidate = RTCIceCandidate::from(&c);
                     candidates.push(candidate);
                 }
@@ -954,7 +953,7 @@ pub(crate) async fn extract_ice_details(
 
     Ok((remote_ufrags[0].clone(), remote_pwds[0].clone(), candidates))
 }
-*/
+
 pub(crate) fn have_application_media_section(desc: &SessionDescription) -> bool {
     for m in &desc.media_descriptions {
         if m.media_name.media == MEDIA_SECTION_APPLICATION {

@@ -74,7 +74,8 @@ use crate::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use crate::peer_connection::sdp::sdp_type::RTCSdpType;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    get_mid_value, get_peer_direction, get_rids, update_sdp_origin, MediaSection, PopulateSdpParams,
+    extract_fingerprint, extract_ice_details, get_mid_value, get_peer_direction, get_rids,
+    update_sdp_origin, MediaSection, PopulateSdpParams,
 };
 use crate::peer_connection::sdp::{populate_local_candidates, populate_sdp};
 //use crate::peer_connection::sdp::*;
@@ -83,12 +84,13 @@ use crate::peer_connection::signaling_state::{
 };
 use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::rtp_transceiver::{find_by_mid, Mid, RTCRtpTransceiver};
+use crate::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, Mid, RTCRtpTransceiver};
 //use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 //use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::transport::dtls_transport::RTCDtlsTransport;
 use crate::transport::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use crate::transport::ice_transport::ice_gathering_state::RTCIceGatheringState;
+use crate::transport::ice_transport::ice_role::RTCIceRole;
 use crate::transport::ice_transport::{
     ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer},
     RTCIceTransport,
@@ -1290,7 +1292,6 @@ impl RTCPeerConnection {
         false
     }
 
-    /*
     /// set_remote_description sets the SessionDescription of the remote peer
     pub fn set_remote_description(&mut self, mut desc: RTCSessionDescription) -> Result<()> {
         if self.is_closed {
@@ -1305,8 +1306,7 @@ impl RTCPeerConnection {
         if let Some(parsed) = &desc.parsed {
             self.media_engine.update_from_remote_description(parsed)?;
 
-            let mut local_transceivers = self.get_transceivers();
-            let remote_description = self.remote_description();
+            let remote_description = self.remote_description().cloned();
             let we_offer = desc.sdp_type == RTCSdpType::Answer;
 
             if !we_offer {
@@ -1335,26 +1335,33 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        let t = if let Some(t) = find_by_mid(mid_value, &mut local_transceivers) {
+                        let t = if let Some((_, t)) =
+                            find_by_mid(mid_value, &mut self.rtp_transceivers)
+                        {
                             Some(t)
+                        } else if let Some(i) =
+                            satisfy_type_and_direction(kind, direction, &self.rtp_transceivers)
+                        {
+                            Some(&mut self.rtp_transceivers[i])
                         } else {
-                            satisfy_type_and_direction(kind, direction, &mut local_transceivers)
+                            None
                         };
 
                         if let Some(t) = t {
                             if t.mid().is_none() {
-                                t.set_mid(SmolStr::from(mid_value))?;
+                                t.set_mid(mid_value.to_string())?;
                             }
                         } else {
-                            let local_direction =
+                            let _local_direction =
                                 if direction == RTCRtpTransceiverDirection::Recvonly {
                                     RTCRtpTransceiverDirection::Sendonly
                                 } else {
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            let receive_mtu = self.internal.setting_engine.get_receive_mtu();
+                            let _receive_mtu = self.setting_engine.get_receive_mtu();
 
+                            /*TODO:
                             let receiver = Arc::new(RTCRtpReceiver::new(
                                 receive_mtu,
                                 kind,
@@ -1389,8 +1396,8 @@ impl RTCPeerConnection {
                             self.internal.add_rtp_transceiver(Arc::clone(&t)).await;
 
                             if t.mid().is_none() {
-                                t.set_mid(SmolStr::from(mid_value))?;
-                            }
+                                t.set_mid(mid_value.to_string())?;
+                            }*/
                         }
                     }
                 }
@@ -1424,7 +1431,7 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        if let Some(t) = find_by_mid(mid_value, &mut local_transceivers).await {
+                        if let Some((_, t)) = find_by_mid(mid_value, &mut self.rtp_transceivers) {
                             let previous_direction = t.current_direction();
 
                             // 4.5.9.2.9
@@ -1443,42 +1450,35 @@ impl RTCPeerConnection {
                             // change to remove the setting of transceiver.[[Direction]].
                             // See https://github.com/w3c/webrtc-pc/issues/2751#issuecomment-1185901962
                             // t.set_direction_internal(reversed_direction);
-                            t.process_new_current_direction(previous_direction).await?;
+                            t.process_new_current_direction(previous_direction)?;
                         }
                     }
                 }
             }
 
-            let (remote_ufrag, remote_pwd, candidates) = extract_ice_details(parsed).await?;
+            let (remote_ufrag, remote_pwd, candidates) = extract_ice_details(parsed)?;
 
             if is_renegotiation
                 && self
-                    .internal
                     .ice_transport
                     .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
-                    .await
             {
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
                 if !we_offer {
-                    self.internal.ice_transport.restart().await?;
+                    self.ice_transport.restart()?;
                 }
 
-                self.internal
-                    .ice_transport
-                    .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())
-                    .await?;
+                self.ice_transport
+                    .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())?;
             }
 
             for candidate in candidates {
-                self.internal
-                    .ice_transport
-                    .add_remote_candidate(Some(candidate))
-                    .await?;
+                self.ice_transport.add_remote_candidate(Some(candidate))?;
             }
 
             if is_renegotiation {
                 if we_offer {
-                    self.start_rtp_senders().await?;
+                    /*TODO: self.start_rtp_senders().await?;
 
                     let pci = Arc::clone(&self.internal);
                     let remote_desc = Arc::new(desc);
@@ -1495,21 +1495,21 @@ impl RTCPeerConnection {
                             },
                             "set_remote_description renegotiation",
                         ))
-                        .await?;
+                        .await?;*/
                 }
                 return Ok(());
             }
 
             let remote_is_lite = Self::is_lite_set(parsed);
 
-            let (fingerprint, fingerprint_hash) = extract_fingerprint(parsed)?;
+            let (_fingerprint, _fingerprint_hash) = extract_fingerprint(parsed)?;
 
             // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
             // If both or neither agents are lite the offering agent is controlling.
             // RFC 8445 S6.1.1
-            let ice_role = if (we_offer
-                && remote_is_lite == self.internal.setting_engine.candidates.ice_lite)
-                || (remote_is_lite && !self.internal.setting_engine.candidates.ice_lite)
+            let _ice_role = if (we_offer
+                && remote_is_lite == self.setting_engine.candidates.ice_lite)
+                || (remote_is_lite && !self.setting_engine.candidates.ice_lite)
             {
                 RTCIceRole::Controlling
             } else {
@@ -1519,12 +1519,12 @@ impl RTCPeerConnection {
             // Start the networking in a new routine since it will block until
             // the connection is actually established.
             if we_offer {
-                self.start_rtp_senders().await?;
+                //TODO: self.start_rtp_senders()?;
             }
 
             //log::trace!("start_transports: parsed={:?}", parsed);
 
-            let pci = Arc::clone(&self.internal);
+            /*TODO: let pci = Arc::clone(&self.internal);
             let dtls_role = DTLSRole::from(parsed);
             let remote_desc = Arc::new(desc);
             self.internal
@@ -1554,11 +1554,11 @@ impl RTCPeerConnection {
                     },
                     "set_remote_description",
                 ))
-                .await?;
+                .await?;*/
         }
 
         Ok(())
-    }*/
+    }
 
     /*
     /// start_rtp_senders starts all outbound RTP streams

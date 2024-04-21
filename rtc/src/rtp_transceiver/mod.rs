@@ -496,14 +496,14 @@ pub(crate) fn find_by_mid<'a>(
 
     None
 }
-/*
+
 /// Given a direction+type pluck a transceiver from the passed list
 /// if no entry satisfies the requested type+direction return a inactive Transceiver
 pub(crate) fn satisfy_type_and_direction(
     remote_kind: RTPCodecType,
     remote_direction: RTCRtpTransceiverDirection,
-    local_transceivers: &mut Vec<RTCRtpTransceiver>,
-) -> Option<RTCRtpTransceiver> {
+    local_transceivers: &[RTCRtpTransceiver],
+) -> Option<usize> {
     // Get direction order from most preferred to least
     let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
         match remote_direction {
@@ -523,14 +523,14 @@ pub(crate) fn satisfy_type_and_direction(
     for possible_direction in get_preferred_directions() {
         for (i, t) in local_transceivers.iter().enumerate() {
             if t.mid().is_none() && t.kind == remote_kind && possible_direction == t.direction() {
-                return Some(local_transceivers.remove(i));
+                return Some(i);
             }
         }
     }
 
     None
 }
-
+/*
 /// handle_unknown_rtp_packet consumes a single RTP Packet and returns information that is helpful
 /// for demuxing and handling an unknown SSRC (usually for Simulcast)
 pub(crate) fn handle_unknown_rtp_packet(
