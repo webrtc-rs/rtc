@@ -30,6 +30,7 @@ use interceptor::{stats, Attributes, Interceptor, RTCPWriter};
 use peer_connection_internal::*;*/
 use ::sdp::util::ConnectionRole;
 use ::sdp::SessionDescription;
+use ice::candidate::unmarshal_candidate;
 use rand::{thread_rng, Rng};
 //use srtp::stream::Stream;
 
@@ -88,6 +89,7 @@ use crate::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, Mid, RTCRt
 //use crate::rtp_transceiver::rtp_codec::RTPCodecType;
 //use crate::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::transport::dtls_transport::RTCDtlsTransport;
+use crate::transport::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use crate::transport::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use crate::transport::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice_transport::ice_role::RTCIceRole;
@@ -1573,19 +1575,12 @@ impl RTCPeerConnection {
 
         Ok(())
     }
-
-    /// remote_description returns pending_remote_description if it is not null and
-    /// otherwise it returns current_remote_description. This property is used to
-    /// determine if setRemoteDescription has already been called.
-    /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-remotedescription>
-    pub async fn remote_description(&self) -> Option<RTCSessionDescription> {
-        self.internal.remote_description().await
-    }
+    */
 
     /// add_ice_candidate accepts an ICE candidate string and adds it
     /// to the existing set of candidates.
-    pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<()> {
-        if self.remote_description().await.is_none() {
+    pub fn add_ice_candidate(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+        if self.remote_description().is_none() {
             return Err(Error::ErrNoRemoteDescription);
         }
 
@@ -1595,29 +1590,23 @@ impl RTCPeerConnection {
         };
 
         let ice_candidate = if !candidate_value.is_empty() {
-            let candidate: Arc<dyn Candidate + Send + Sync> =
-                Arc::new(unmarshal_candidate(candidate_value)?);
+            let candidate = unmarshal_candidate(candidate_value)?;
 
             Some(RTCIceCandidate::from(&candidate))
         } else {
             None
         };
 
-        self.internal
-            .ice_transport
-            .add_remote_candidate(ice_candidate)
-            .await
+        self.ice_transport.add_remote_candidate(ice_candidate)
     }
 
     /// ice_connection_state returns the ICE connection state of the
     /// PeerConnection instance.
     pub fn ice_connection_state(&self) -> RTCIceConnectionState {
-        self.internal
-            .ice_connection_state
-            .load(Ordering::SeqCst)
-            .into()
+        self.ice_connection_state
     }
 
+    /*
     /// get_senders returns the RTPSender that are currently attached to this PeerConnection
     pub async fn get_senders(&self) -> Vec<Arc<RTCRtpSender>> {
         let mut senders = vec![];
@@ -1994,22 +1983,13 @@ impl RTCPeerConnection {
         self.signaling_state
     }
 
-    /*
-    /// icegathering_state attribute returns the ICE gathering state of the
-    /// PeerConnection instance.
-    pub fn ice_gathering_state(&self) -> RTCIceGatheringState {
-        self.internal.ice_gathering_state()
-    }
-
     /// connection_state attribute returns the connection state of the
     /// PeerConnection instance.
     pub fn connection_state(&self) -> RTCPeerConnectionState {
-        self.internal
-            .peer_connection_state
-            .load(Ordering::SeqCst)
-            .into()
+        self.peer_connection_state
     }
 
+    /*
     pub async fn get_stats(&self) -> StatsReport {
         self.internal
             .get_stats(self.get_stats_id().to_owned())
@@ -2066,6 +2046,10 @@ impl RTCPeerConnection {
         self.internal.add_rtp_transceiver(t).await
     }*/
 
+    /// remote_description returns pending_remote_description if it is not null and
+    /// otherwise it returns current_remote_description. This property is used to
+    /// determine if setRemoteDescription has already been called.
+    /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-remotedescription>
     fn remote_description(&self) -> Option<&RTCSessionDescription> {
         if self.pending_remote_description.is_some() {
             self.pending_remote_description.as_ref()
@@ -2074,7 +2058,9 @@ impl RTCPeerConnection {
         }
     }
 
-    fn ice_gathering_state(&self) -> RTCIceGatheringState {
+    /// ice gathering_state attribute returns the ICE gathering state of the
+    /// PeerConnection instance.
+    pub fn ice_gathering_state(&self) -> RTCIceGatheringState {
         match self.ice_transport.gatherer.state() {
             RTCIceGathererState::New => RTCIceGatheringState::New,
             RTCIceGathererState::Gathering => RTCIceGatheringState::Gathering,
