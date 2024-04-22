@@ -1118,6 +1118,11 @@ pub enum Error {
     #[error("data channel not open")]
     ErrDataChannelNotOpen,
 
+    /// ErrDataChannelExist indicates an operation executed when the data
+    /// channel exists.
+    #[error("data channel exist")]
+    ErrDataChannelExist,
+
     /// ErrCertificateExpired indicates that an x509 certificate has expired.
     #[error("x509Cert expired")]
     ErrCertificateExpired,

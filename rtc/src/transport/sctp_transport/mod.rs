@@ -56,7 +56,7 @@ pub struct RTCSctpTransport {
     pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // DataChannels
-    pub(crate) data_channels: HashMap<AssociationHandle, RTCDataChannel>,
+    pub(crate) data_channels: HashMap<String, RTCDataChannel>,
     pub(crate) data_channels_opened: u32,
     pub(crate) data_channels_requested: u32,
     data_channels_accepted: u32,

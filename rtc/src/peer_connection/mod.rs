@@ -37,6 +37,9 @@ use rand::{thread_rng, Rng};
 use crate::api::media_engine::MediaEngine;
 use crate::api::setting_engine::SettingEngine;
 use crate::api::API;
+use crate::data_channel::data_channel_init::RTCDataChannelInit;
+use crate::data_channel::data_channel_parameters::DataChannelParameters;
+use crate::data_channel::RTCDataChannel;
 use crate::handler::demuxer::Demuxer;
 /*
 use crate::transports::data_channel::data_channel_init::RTCDataChannelInit;
@@ -97,6 +100,7 @@ use crate::transport::ice_transport::{
     ice_gatherer::{RTCIceGatherOptions, RTCIceGatherer},
     RTCIceTransport,
 };
+use crate::transport::sctp_transport::sctp_transport_state::RTCSctpTransportState;
 use crate::transport::sctp_transport::RTCSctpTransport;
 
 //use crate::transport::sctp_transport::RTCSctpTransport;
@@ -1752,18 +1756,22 @@ impl RTCPeerConnection {
 
         Ok(t)
     }
-
+    */
     /// create_data_channel creates a new DataChannel object with the given label
     /// and optional DataChannelInit used to configure properties of the
     /// underlying channel such as data reliability.
-    pub async fn create_data_channel(
-        &self,
+    pub fn create_data_channel(
+        &mut self,
         label: &str,
         options: Option<RTCDataChannelInit>,
-    ) -> Result<Arc<RTCDataChannel>> {
+    ) -> Result<()> {
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
-        if self.internal.is_closed.load(Ordering::SeqCst) {
+        if self.is_closed {
             return Err(Error::ErrConnectionClosed);
+        }
+
+        if self.sctp_transport.data_channels.contains_key(label) {
+            return Err(Error::ErrDataChannelExist);
         }
 
         let mut params = DataChannelParameters {
@@ -1805,35 +1813,28 @@ impl RTCPeerConnection {
             params.negotiated = options.negotiated;
         }
 
-        let d = Arc::new(RTCDataChannel::new(
-            params,
-            Arc::clone(&self.internal.setting_engine),
-        ));
+        let d = RTCDataChannel::new(params, Arc::clone(&self.setting_engine));
 
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
         if d.max_packet_lifetime != 0 && d.max_retransmits != 0 {
             return Err(Error::ErrRetransmitsOrPacketLifeTime);
         }
 
-        {
-            let mut data_channels = self.internal.sctp_transport.data_channels.lock().await;
-            data_channels.push(Arc::clone(&d));
-        }
-        self.internal
-            .sctp_transport
-            .data_channels_requested
-            .fetch_add(1, Ordering::SeqCst);
+        self.sctp_transport
+            .data_channels
+            .insert(label.to_string(), d);
+        self.sctp_transport.data_channels_requested += 1;
 
         // If SCTP already connected open all the channels
-        if self.internal.sctp_transport.state() == RTCSctpTransportState::Connected {
-            d.open(Arc::clone(&self.internal.sctp_transport)).await?;
+        if self.sctp_transport.state() == RTCSctpTransportState::Connected {
+            //TODO: d.open(Arc::clone(&self.sctp_transport))?;
         }
 
-        self.internal.trigger_negotiation_needed().await;
+        self.trigger_negotiation_needed();
 
-        Ok(d)
+        Ok(())
     }
-
+    /*
     /// set_identity_provider is used to configure an identity provider to generate identity assertions
     pub fn set_identity_provider(&self, _provider: &str) -> Result<()> {
         Err(Error::ErrPeerConnSetIdentityProviderNotImplemented)
