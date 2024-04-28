@@ -11,7 +11,7 @@ use crate::chunk::{
     chunk_reconfig::ChunkReconfig, chunk_selective_ack::ChunkSelectiveAck,
     chunk_shutdown::ChunkShutdown, chunk_shutdown_ack::ChunkShutdownAck,
     chunk_shutdown_complete::ChunkShutdownComplete, chunk_type::CT_FORWARD_TSN, Chunk,
-    ErrorCauseUnrecognizedChunkType,
+    ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
 };
 use crate::config::{ServerConfig, TransportConfig, COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE};
 use crate::packet::{CommonHeader, Packet};
@@ -834,6 +834,11 @@ impl Association {
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkAbort>() {
             let mut err_str = String::new();
             for e in &c.error_causes {
+                if matches!(e.code, USER_INITIATED_ABORT) {
+                    debug!("User initiated abort received");
+                    let _ = self.close();
+                    return Ok(());
+                }
                 err_str += &format!("({})", e);
             }
             return Err(Error::ErrAbortChunk(err_str));
