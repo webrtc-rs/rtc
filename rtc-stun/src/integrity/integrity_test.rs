@@ -6,6 +6,18 @@ use crate::textattrs::TextAttribute;
 
 #[test]
 fn test_message_integrity_add_to_simple() -> Result<()> {
+    {
+        let i = MessageIntegrity::new_long_term_integrity(
+            "user".to_owned(),
+            "realm".to_owned(),
+            "passsss".to_owned(),
+        );
+        let expected = vec![
+            104, 228, 91, 113, 61, 154, 222, 34, 101, 61, 181, 146, 177, 90, 4, 29,
+        ];
+        assert_eq!(i.0, expected, "{}", Error::ErrIntegrityMismatch);
+    }
+
     let i = MessageIntegrity::new_long_term_integrity(
         "user".to_owned(),
         "realm".to_owned(),

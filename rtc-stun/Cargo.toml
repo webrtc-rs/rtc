@@ -27,7 +27,7 @@ ring = "0.17.8"
 md5 = "0.7.0"
 
 [dev-dependencies]
-clap = "4.5.2"
+clap = { version = "4.5.2", features = ["derive"] }
 criterion = "0.5.1"
 
 [[bench]]
