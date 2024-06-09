@@ -387,7 +387,7 @@ fn test_rfc_8285_one_byte_multiple_extension() -> Result<()> {
                 },
                 Extension {
                     id: 3,
-                    payload: Bytes::from_static(&[0xCC, 0xCC]),
+                    payload: Bytes::from_static(&[0xCC, 0xCC, 0xCC, 0xCC]),
                 },
             ],
             version: 2,
