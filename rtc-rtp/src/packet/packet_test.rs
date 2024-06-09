@@ -1044,7 +1044,7 @@ fn test_rfc8285_two_byte_set_extension_should_error_when_payload_too_large() {
         header: Header {
             marker: true,
             extension: true,
-            extension_profile: 0xBEDE,
+            extension_profile: 0x1000,
             extensions: vec![Extension {
                 id: 1,
                 payload: Bytes::from_static(&[0xAA]),
