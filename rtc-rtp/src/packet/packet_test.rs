@@ -955,7 +955,7 @@ fn test_rfc8285_two_bytes_set_extension_should_enable_extension_when_adding() ->
     let mut p = Packet {
         header: Header {
             marker: true,
-            extension: true,
+            extension: false,
             extension_profile: 0xBEDE,
             version: 2,
             payload_type: 96,
