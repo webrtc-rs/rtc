@@ -103,7 +103,7 @@ impl Flight for Flight4 {
                 }
             };
 
-            state.peer_certificates = h.certificate.clone();
+            state.peer_certificates.clone_from(&h.certificate);
             debug!(
                 "[handshake] PeerCertificates4 {}",
                 state.peer_certificates.len()
@@ -300,7 +300,9 @@ impl Flight for Flight4 {
                             }
                         };
 
-                        state.identity_hint = client_key_exchange.identity_hint.clone();
+                        state
+                            .identity_hint
+                            .clone_from(&client_key_exchange.identity_hint);
                         pre_master_secret = prf_psk_pre_master_secret(&psk);
                     } else if let Some(local_keypair) = &state.local_keypair {
                         pre_master_secret = match prf_pre_master_secret(

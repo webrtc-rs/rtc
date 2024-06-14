@@ -466,7 +466,7 @@ pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
             }
 
             // RelatedAddress
-            rel_addr = split2[1].to_owned();
+            split2[1].clone_into(&mut rel_addr);
 
             // RelatedPort
             rel_port = split2[3].parse()?;

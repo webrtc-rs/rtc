@@ -316,7 +316,7 @@ impl ConfigBuilder {
                 server_name = remote_addr.ip().to_string();
             } else {
                 warn!("conn.remote_addr is empty, please set explicitly server_name in Config! Use default \"localhost\" as server_name now");
-                server_name = "localhost".to_owned();
+                "localhost".clone_into(&mut server_name);
             }
         }
 

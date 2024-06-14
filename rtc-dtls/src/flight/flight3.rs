@@ -84,7 +84,7 @@ impl Flight for Flight3 {
                     ));
                 }
 
-                state.cookie = h.cookie.clone();
+                state.cookie.clone_from(&h.cookie);
                 state.handshake_recv_sequence = seq;
                 return Ok(Box::new(Flight3 {}) as Box<dyn Flight>);
             }
@@ -292,7 +292,7 @@ impl Flight for Flight3 {
                     ))
                 }
             };
-            state.peer_certificates = h.certificate.clone();
+            state.peer_certificates.clone_from(&h.certificate);
         }
 
         if let Some(message) = msgs.get(&HandshakeType::ServerKeyExchange) {
@@ -420,7 +420,7 @@ pub(crate) fn handle_server_key_exchange(
             }
         };
 
-        state.identity_hint = h.identity_hint.clone();
+        state.identity_hint.clone_from(&h.identity_hint);
         state.pre_master_secret = prf_psk_pre_master_secret(&psk);
     } else {
         let local_keypair = match h.named_curve.generate_keypair() {

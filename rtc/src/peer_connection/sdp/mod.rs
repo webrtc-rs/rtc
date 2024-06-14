@@ -261,7 +261,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
                 log::warn!("Failed to parse RID: {}", err);
             }
         } else if attr.key.as_str() == SDP_ATTRIBUTE_SIMULCAST {
-            simulcast_attr = attr.value.clone();
+            simulcast_attr.clone_from(&attr.value);
         }
     }
 

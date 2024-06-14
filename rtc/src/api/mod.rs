@@ -168,11 +168,7 @@ impl APIBuilder {
             } else {
                 Arc::new(SettingEngine::default())
             },
-            media_engine: if let Some(media_engine) = self.media_engine.take() {
-                media_engine
-            } else {
-                MediaEngine::default()
-            },
+            media_engine: self.media_engine.take().unwrap_or_default(),
             /*TODO:interceptor_registry: if let Some(interceptor_registry) =
                 self.interceptor_registry.take()
             {

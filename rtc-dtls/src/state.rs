@@ -160,7 +160,7 @@ impl State {
         self.is_client = serialized.is_client;
 
         // Set master secret
-        self.master_secret = serialized.master_secret.clone();
+        self.master_secret.clone_from(&serialized.master_secret);
 
         // Set cipher suite
         self.cipher_suite = Some(cipher_suite_for_id(serialized.cipher_suite_id.into())?);
@@ -168,8 +168,9 @@ impl State {
         self.srtp_protection_profile = serialized.srtp_protection_profile.into();
 
         // Set remote certificate
-        self.peer_certificates = serialized.peer_certificates.clone();
-        self.identity_hint = serialized.identity_hint.clone();
+        self.peer_certificates
+            .clone_from(&serialized.peer_certificates);
+        self.identity_hint.clone_from(&serialized.identity_hint);
 
         Ok(())
     }

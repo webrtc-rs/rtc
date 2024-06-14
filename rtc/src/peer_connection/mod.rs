@@ -878,7 +878,7 @@ impl RTCPeerConnection {
             parsed: Some(d),
         };
 
-        self.last_offer = offer.sdp.clone();
+        self.last_offer.clone_from(&offer.sdp);
 
         Ok(offer)
     }
@@ -924,7 +924,7 @@ impl RTCPeerConnection {
             parsed: Some(d),
         };
 
-        self.last_answer = answer.sdp.clone();
+        self.last_answer.clone_from(&answer.sdp);
 
         Ok(answer)
     }
@@ -1199,10 +1199,10 @@ impl RTCPeerConnection {
         if desc.sdp.is_empty() {
             match desc.sdp_type {
                 RTCSdpType::Answer | RTCSdpType::Pranswer => {
-                    desc.sdp = self.last_answer.clone();
+                    desc.sdp.clone_from(&self.last_answer);
                 }
                 RTCSdpType::Offer => {
-                    desc.sdp = self.last_offer.clone();
+                    desc.sdp.clone_from(&self.last_offer);
                 }
                 _ => return Err(Error::ErrPeerConnSDPTypeInvalidValueSetLocalDescription),
             }
