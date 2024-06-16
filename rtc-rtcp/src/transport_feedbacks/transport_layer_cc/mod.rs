@@ -328,7 +328,7 @@ impl MarshalSize for RecvDelta {
         // big delta
         if self.type_tcc_packet == SymbolTypeTcc::PacketReceivedLargeDelta
             && delta >= i16::MIN as i64
-            && delta <= u16::MAX as i64
+            && delta <= i16::MAX as i64
         {
             return 2;
         }
@@ -355,10 +355,10 @@ impl Marshal for RecvDelta {
         // big delta
         if self.type_tcc_packet == SymbolTypeTcc::PacketReceivedLargeDelta
             && delta >= i16::MIN as i64
-            && delta <= u16::MAX as i64
+            && delta <= i16::MAX as i64
             && buf.remaining_mut() >= 2
         {
-            buf.put_u16(delta as u16);
+            buf.put_i16(delta as i16);
             return Ok(2);
         }
 
