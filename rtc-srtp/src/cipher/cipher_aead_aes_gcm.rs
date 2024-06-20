@@ -176,7 +176,7 @@ impl CipherAeadAesGcm {
             master_key,
             master_salt,
             0,
-            master_key.len(),
+            master_salt.len(),
         )?;
 
         let srtcp_session_salt = aes_cm_key_derivation(
@@ -184,7 +184,7 @@ impl CipherAeadAesGcm {
             master_key,
             master_salt,
             0,
-            master_key.len(),
+            master_salt.len(),
         )?;
 
         Ok(CipherAeadAesGcm {
