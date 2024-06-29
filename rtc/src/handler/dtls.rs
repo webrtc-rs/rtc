@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::api::setting_engine::SettingEngine;
-use crate::handler::RTCHandler;
 use crate::messages::{DTLSMessage, RTCEvent, RTCMessage};
 use crate::transport::dtls_transport::RTCDtlsTransport;
 use dtls::endpoint::EndpointEvent;
@@ -12,6 +11,7 @@ use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, error, warn};
 use shared::error::{Error, Result};
+use shared::handler::RTCHandler;
 use shared::Transmit;
 use srtp::option::{srtcp_replay_protection, srtp_no_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;

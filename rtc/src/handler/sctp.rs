@@ -1,4 +1,3 @@
-use crate::handler::RTCHandler;
 use crate::messages::{
     DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCEvent,
     RTCMessage,
@@ -11,6 +10,7 @@ use sctp::{
     PayloadProtocolIdentifier, StreamEvent,
 };
 use shared::error::{Error, Result};
+use shared::handler::RTCHandler;
 use shared::Transmit;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;

@@ -11,6 +11,7 @@ pub mod marshal;
 pub mod replay_detector;
 
 pub mod error;
+pub mod handler;
 pub mod util;
 
 pub use retty::transport::{

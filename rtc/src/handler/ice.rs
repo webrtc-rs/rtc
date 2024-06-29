@@ -1,4 +1,3 @@
-use crate::handler::RTCHandler;
 use crate::messages::{RTCEvent, RTCMessage, STUNMessage};
 use crate::transport::ice_transport::ice_candidate_pair::RTCIceCandidatePair;
 use crate::transport::ice_transport::{IceTransportEvent, RTCIceTransport};
@@ -6,6 +5,7 @@ use bytes::BytesMut;
 use ice::Event;
 use log::{debug, error, warn};
 use shared::error::Result;
+use shared::handler::RTCHandler;
 use shared::Transmit;
 use std::time::Instant;
 
