@@ -65,7 +65,8 @@ pub struct RTCSctpTransport {
 
     pub(crate) internal_buffer: Vec<u8>,
     pub(crate) events: VecDeque<SctpTransportEvent>,
-    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) routs: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) wouts: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCSctpTransport {
