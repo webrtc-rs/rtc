@@ -10,7 +10,7 @@ pub enum ProtectionProfile {
 }
 
 impl ProtectionProfile {
-    pub(crate) fn key_len(&self) -> usize {
+    pub fn key_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_32
             | ProtectionProfile::Aes128CmHmacSha1_80
@@ -19,14 +19,14 @@ impl ProtectionProfile {
         }
     }
 
-    pub(crate) fn salt_len(&self) -> usize {
+    pub fn salt_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_32 | ProtectionProfile::Aes128CmHmacSha1_80 => 14,
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => 12,
         }
     }
 
-    pub(crate) fn rtp_auth_tag_len(&self) -> usize {
+    pub fn rtp_auth_tag_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_80 => 10,
             ProtectionProfile::Aes128CmHmacSha1_32 => 4,
@@ -34,21 +34,21 @@ impl ProtectionProfile {
         }
     }
 
-    pub(crate) fn rtcp_auth_tag_len(&self) -> usize {
+    pub fn rtcp_auth_tag_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_80 | ProtectionProfile::Aes128CmHmacSha1_32 => 10,
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => 0,
         }
     }
 
-    pub(crate) fn aead_auth_tag_len(&self) -> usize {
+    pub fn aead_auth_tag_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_80 | ProtectionProfile::Aes128CmHmacSha1_32 => 0,
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => 16,
         }
     }
 
-    pub(crate) fn auth_key_len(&self) -> usize {
+    pub fn auth_key_len(&self) -> usize {
         match *self {
             ProtectionProfile::Aes128CmHmacSha1_80 | ProtectionProfile::Aes128CmHmacSha1_32 => 20,
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => 0,
