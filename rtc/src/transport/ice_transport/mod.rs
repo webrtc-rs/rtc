@@ -46,7 +46,8 @@ pub struct RTCIceTransport {
     state: RTCIceTransportState,
     role: RTCIceRole,
 
-    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) routs: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) wouts: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCIceTransport {
@@ -56,7 +57,8 @@ impl RTCIceTransport {
             gatherer,
             state: RTCIceTransportState::New,
             role: Default::default(),
-            transmits: Default::default(),
+            routs: Default::default(),
+            wouts: Default::default(),
         }
     }
 
