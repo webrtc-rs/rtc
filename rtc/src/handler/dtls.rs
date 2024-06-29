@@ -1,7 +1,7 @@
 use bytes::BytesMut;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::api::setting_engine::SettingEngine;
 use crate::messages::{DTLSMessage, RTCEvent, RTCMessage};
@@ -17,7 +17,14 @@ use srtp::option::{srtcp_replay_protection, srtp_no_replay_protection, srtp_repl
 use srtp::protection_profile::ProtectionProfile;
 
 impl RTCHandler for RTCDtlsTransport {
-    fn handle_transmit(&mut self, msg: Transmit<RTCMessage>) -> Vec<Transmit<RTCMessage>> {
+    type Ein = ();
+    type Eout = RTCEvent;
+    type Rin = RTCMessage;
+    type Rout = RTCMessage;
+    type Win = RTCMessage;
+    type Wout = RTCMessage;
+
+    fn handle_read(&mut self, msg: Transmit<Self::Rin>) -> Result<()> {
         if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
@@ -60,7 +67,7 @@ impl RTCHandler for RTCDtlsTransport {
                     }
 
                     while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(Transmit {
+                        self.wouts.push_back(Transmit {
                             now: transmit.now,
                             transport: transmit.transport,
                             message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
@@ -76,12 +83,11 @@ impl RTCHandler for RTCDtlsTransport {
                 Ok(messages)
             };
 
-            let mut next_msgs = vec![];
             match try_read() {
                 Ok(messages) => {
                     for message in messages {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        next_msgs.push(Transmit {
+                        self.routs.push_back(Transmit {
                             now: msg.now,
                             transport: msg.transport,
                             message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
@@ -95,61 +101,67 @@ impl RTCHandler for RTCDtlsTransport {
                             let _ = dtls_endpoint.close();
                         }
                     } else {
-                        self.handle_error(err);
+                        return Err(err);
                     }
                 }
             };
-            next_msgs
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);
-            vec![msg]
+            self.routs.push_back(msg);
+        }
+
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Transmit<Self::Rout>> {
+        self.routs.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: Transmit<Self::Win>) -> Result<()> {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+            debug!("send dtls RAW {:?}", msg.transport.peer_addr);
+            let mut try_write = || -> Result<()> {
+                let dtls_endpoint = self
+                    .dtls_endpoint
+                    .as_mut()
+                    .ok_or(Error::ErrInvalidDTLSStart)?;
+                dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
+                while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                    self.wouts.push_back(Transmit {
+                        now: transmit.now,
+                        transport: transmit.transport,
+                        message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                    });
+                }
+
+                Ok(())
+            };
+
+            match try_write() {
+                Ok(_) => Ok(()),
+                Err(err) => {
+                    error!("try_write with error {}", err);
+                    Err(err)
+                }
+            }
+        } else {
+            // Bypass
+            debug!("Bypass dtls write {:?}", msg.transport.peer_addr);
+            self.wouts.push_back(msg);
+            Ok(())
         }
     }
 
-    fn poll_transmit(&mut self, msg: Option<Transmit<RTCMessage>>) -> Option<Transmit<RTCMessage>> {
-        if let Some(msg) = msg {
-            if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
-                debug!("send dtls RAW {:?}", msg.transport.peer_addr);
-                let mut try_write = || -> Result<()> {
-                    let dtls_endpoint = self
-                        .dtls_endpoint
-                        .as_mut()
-                        .ok_or(Error::ErrInvalidDTLSStart)?;
-                    dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
-                    while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(Transmit {
-                            now: transmit.now,
-                            transport: transmit.transport,
-                            message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
-                        });
-                    }
-
-                    Ok(())
-                };
-
-                match try_write() {
-                    Ok(_) => {}
-                    Err(err) => {
-                        error!("try_write with error {}", err);
-                        self.handle_error(err);
-                    }
-                }
-            } else {
-                // Bypass
-                debug!("Bypass dtls write {:?}", msg.transport.peer_addr);
-                self.transmits.push_back(msg);
-            }
-        }
-
-        self.transmits.pop_front()
+    fn poll_write(&mut self) -> Option<Transmit<RTCMessage>> {
+        self.wouts.pop_front()
     }
 
     fn poll_event(&mut self) -> Option<RTCEvent> {
         self.events.pop_front().map(RTCEvent::DtlsTransportEvent)
     }
 
-    fn handle_timeout(&mut self, now: Instant) {
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
         let mut try_timeout = || -> Result<()> {
             let dtls_endpoint = self
                 .dtls_endpoint
@@ -160,7 +172,7 @@ impl RTCHandler for RTCDtlsTransport {
                 let _ = dtls_endpoint.handle_timeout(remote, now);
             }
             while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                self.transmits.push_back(Transmit {
+                self.wouts.push_back(Transmit {
                     now: transmit.now,
                     transport: transmit.transport,
                     message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
@@ -170,20 +182,24 @@ impl RTCHandler for RTCDtlsTransport {
             Ok(())
         };
         match try_timeout() {
-            Ok(_) => {}
+            Ok(_) => Ok(()),
             Err(err) => {
                 error!("try_timeout with error {}", err);
-                self.handle_error(err);
+                Err(err)
             }
         }
     }
 
-    fn poll_timeout(&mut self, eto: &mut Instant) {
+    fn poll_timeout(&mut self) -> Option<Instant> {
         if let Some(dtls_endpoint) = self.dtls_endpoint.as_mut() {
             let remotes = dtls_endpoint.get_connections_keys();
+            let mut eto = Instant::now() + Duration::from_secs(86400); // 1 day
             for remote in remotes {
-                let _ = dtls_endpoint.poll_timeout(*remote, eto);
+                let _ = dtls_endpoint.poll_timeout(*remote, &mut eto);
             }
+            Some(eto)
+        } else {
+            None
         }
     }
 }

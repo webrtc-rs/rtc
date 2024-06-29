@@ -68,7 +68,8 @@ pub struct RTCDtlsTransport {
     pub(crate) dtls_endpoint: Option<dtls::endpoint::Endpoint>,
 
     pub(crate) events: VecDeque<DtlsTransportEvent>,
-    pub(crate) transmits: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) routs: VecDeque<Transmit<RTCMessage>>,
+    pub(crate) wouts: VecDeque<Transmit<RTCMessage>>,
 }
 
 impl RTCDtlsTransport {
