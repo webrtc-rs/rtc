@@ -928,8 +928,8 @@ pub enum Error {
     #[error("raw is too small for error cause")]
     ErrErrorCauseTooSmall,
 
-    #[error("unhandled ParamType")]
-    ErrParamTypeUnhandled,
+    #[error("unhandled ParamType: {typ}")]
+    ErrParamTypeUnhandled { typ: u16 },
 
     #[error("unexpected ParamType")]
     ErrParamTypeUnexpected,
@@ -1095,7 +1095,7 @@ pub enum Error {
 
     //Data Channel
     #[error(
-    "DataChannel message is not long enough to determine type: (expected: {expected}, actual: {actual})"
+        "DataChannel message is not long enough to determine type: (expected: {expected}, actual: {actual})"
     )]
     UnexpectedEndOfBuffer { expected: usize, actual: usize },
     #[error("Unknown MessageType {0}")]
@@ -1309,7 +1309,8 @@ pub enum Error {
 
     /// ErrRegisterHeaderExtensionNoFreeID indicates that there was no extension ID available which
     /// in turn means that all 15 available id(1 through 14) have been used.
-    #[error("no header extension ID was free to use(this means the maximum of 15 extensions have been registered)")]
+    #[error("no header extension ID was free to use(this means the maximum of 15 extensions have been registered)"
+    )]
     ErrRegisterHeaderExtensionNoFreeID,
 
     /// ErrSimulcastProbeOverflow indicates that too many Simulcast probe streams are in flight and the requested SSRC was ignored
@@ -1478,7 +1479,8 @@ pub enum Error {
     SdpEmptyTimeDescription,
     #[error("parse extmap: {0}")]
     ParseExtMap(String),
-    #[error("{} --> {} <-- {}", .s.substring(0,*.p), .s.substring(*.p, *.p+1), .s.substring(*.p+1, .s.len()))]
+    #[error("{} --> {} <-- {}", .s.substring(0,*.p), .s.substring(*.p, *.p+1), .s.substring(*.p+1, .s.len())
+    )]
     SyntaxError { s: String, p: usize },
 
     //Third Party Error
