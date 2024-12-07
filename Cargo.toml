@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "ortc",
     "rtc",
     "rtc-datachannel",
     "rtc-dtls",
@@ -13,6 +12,7 @@ members = [
     "rtc-srtp",
     "rtc-stun",
     "rtc-turn",
+    "reserved/ortc",
     "reserved/rtc-interceptor",
     "reserved/rtc-mdns",
     "reserved/rtc-media",

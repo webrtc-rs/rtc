@@ -7,7 +7,7 @@ description = "RTC SDP in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-sdp"
 homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/ortc"
+repository = "https://github.com/webrtc-rs/ortc/tree/master/rtc-sdp"
 
 [dependencies]
 shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }

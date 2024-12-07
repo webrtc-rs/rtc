@@ -7,7 +7,7 @@ description = "RTC RTCP in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-rtcp"
 homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/ortc"
+repository = "https://github.com/webrtc-rs/ortc/tree/master/rtc-rtcp"
 
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }

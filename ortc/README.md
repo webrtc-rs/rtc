@@ -1,2 +1,0 @@
-# ortc
-OpenRTC or ObjectRTC?

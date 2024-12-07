@@ -7,7 +7,7 @@ description = "RTC in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc"
 homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/ortc"
+repository = "https://github.com/webrtc-rs/ortc/tree/master/rtc"
 readme = "../README.md"
 
 [dependencies]
