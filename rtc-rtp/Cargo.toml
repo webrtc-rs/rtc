@@ -6,8 +6,8 @@ edition = "2021"
 description = "RTC RTP in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-rtp"
-homepage = "https://webrtc.rs"
-repository = "https://github.com/webrtc-rs/rtc"
+homepage = "https://ortc.rs"
+repository = "https://github.com/webrtc-rs/ortc"
 
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
