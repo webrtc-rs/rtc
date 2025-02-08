@@ -7,7 +7,7 @@ description = "RTC Media in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-media"
 homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/ortc/tree/master/reserved/rtc-media"
+repository = "https://github.com/webrtc-rs/rtc/tree/master/reserved/rtc-media"
 
 [dependencies]
 

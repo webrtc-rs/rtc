@@ -7,7 +7,7 @@ description = "RTC SRTP in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-srtp"
 homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/ortc/tree/master/rtc-srtp"
+repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-srtp"
 
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }

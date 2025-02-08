@@ -23,7 +23,7 @@
  </a>
 </p>
 <p align="center">
- ORTC in Rust with Sans-IO
+ RTC in Rust with Sans-IO
 </p>
 
 ## RTC Crates
