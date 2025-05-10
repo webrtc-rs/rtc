@@ -1,19 +1,20 @@
 use crate::peer::certificate::RTCCertificate;
 
+#[derive(Default, Debug, Clone)]
 pub struct RTCIceServer {
     urls: Vec<String>,
     username: String,
     credential: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum RTCIceTransportPolicy {
     Relay,
     #[default]
     All,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum RTCBundlePolicy {
     #[default]
     Balanced,
@@ -21,25 +22,21 @@ pub enum RTCBundlePolicy {
     MaxBundle,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum RTCRtcpMuxPolicy {
     #[default]
     Require,
 }
 
-pub trait RTCOfferAnswerOptions {}
-
+#[derive(Default, Debug, Copy, Clone)]
 pub struct RTCOfferOptions {
     pub ice_restart: bool,
 }
 
-impl RTCOfferAnswerOptions for RTCOfferOptions {}
+#[derive(Default, Debug, Copy, Clone)]
+pub struct RTCAnswerOptions;
 
-pub struct RTCAnswerOptions {}
-
-impl RTCOfferAnswerOptions for RTCAnswerOptions {}
-
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct RTCConfiguration {
     pub ice_servers: Vec<RTCIceServer>,
     pub ice_transport_policy: RTCIceTransportPolicy,
