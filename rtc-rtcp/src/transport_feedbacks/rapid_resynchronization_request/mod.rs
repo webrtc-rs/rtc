@@ -62,7 +62,7 @@ impl Packet for RapidResynchronizationRequest {
         other
             .as_any()
             .downcast_ref::<RapidResynchronizationRequest>()
-            .map_or(false, |a| self == a)
+            == Some(self)
     }
 
     fn cloned(&self) -> Box<dyn Packet> {

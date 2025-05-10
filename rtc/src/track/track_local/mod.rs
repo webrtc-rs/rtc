@@ -70,13 +70,13 @@ impl TrackLocalContext {
 /// The user can provide their own TrackLocal implementations, or use
 /// the implementations in pkg/media
 pub trait TrackLocal {
-    /// bind should implement the way how the media data flows from the Track to the PeerConnection
-    /// This will be called internally after signaling is complete and the list of available
-    /// codecs has been determined
+    // bind should implement the way how the media data flows from the Track to the PeerConnection
+    // This will be called internally after signaling is complete and the list of available
+    // codecs has been determined
     //TODO: fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
 
-    /// unbind should implement the teardown logic when the track is no longer needed. This happens
-    /// because a track has been stopped.
+    // unbind should implement the teardown logic when the track is no longer needed. This happens
+    // because a track has been stopped.
     //TODO: fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
 
     /// id is the unique identifier for this Track. This should be unique for the

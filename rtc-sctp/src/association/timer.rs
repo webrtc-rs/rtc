@@ -113,7 +113,7 @@ impl TimerTable {
     }
 
     pub fn is_expired(&mut self, timer: Timer, after: Instant) -> (bool, bool, usize) {
-        let expired = self.data[timer as usize].map_or(false, |x| x <= after);
+        let expired = self.data[timer as usize].is_some_and(|x| x <= after);
         let mut failure = false;
         if expired {
             self.retrans[timer as usize] += 1;

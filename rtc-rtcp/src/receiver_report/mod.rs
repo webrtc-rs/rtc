@@ -76,10 +76,7 @@ impl Packet for ReceiverReport {
     }
 
     fn equal(&self, other: &(dyn Packet)) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<ReceiverReport>()
-            .map_or(false, |a| self == a)
+        other.as_any().downcast_ref::<ReceiverReport>() == Some(self)
     }
 
     fn cloned(&self) -> Box<dyn Packet> {

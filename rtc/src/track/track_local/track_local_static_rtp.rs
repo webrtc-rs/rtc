@@ -133,9 +133,9 @@ impl TrackLocalStaticRTP {
 }
 
 impl TrackLocal for TrackLocalStaticRTP {
-    /// bind is called by the PeerConnection after negotiation is complete
-    /// This asserts that the code requested is supported by the remote peer.
-    /// If so it setups all the state (SSRC and PayloadType) to have a call
+    // bind is called by the PeerConnection after negotiation is complete
+    // This asserts that the code requested is supported by the remote peer.
+    // If so it setups all the state (SSRC and PayloadType) to have a call
     /*todo: fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),

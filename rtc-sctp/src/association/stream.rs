@@ -90,7 +90,7 @@ pub struct Stream<'a> {
     pub(crate) association: &'a mut Association,
 }
 
-impl<'a> Stream<'a> {
+impl Stream<'_> {
     /// read reads a packet of len(p) bytes, dropping the Payload Protocol Identifier.
     /// Returns EOF when the stream is reset or an error if the stream is closed
     /// otherwise.

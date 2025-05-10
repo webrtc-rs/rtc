@@ -238,7 +238,6 @@ pub struct SessionDescription {
 impl SessionDescription {
     /// API to match draft-ietf-rtcweb-jsep
     /// Move to webrtc or its own package?
-
     /// NewJSEPSessionDescription creates a new SessionDescription with
     /// some settings that are required by the JSEP spec.
     pub fn new_jsep_session_description(identity: bool) -> Self {

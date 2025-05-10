@@ -82,7 +82,7 @@ impl Packet for ReceiverEstimatedMaximumBitrate {
         other
             .as_any()
             .downcast_ref::<ReceiverEstimatedMaximumBitrate>()
-            .map_or(false, |a| self == a)
+            == Some(self)
     }
 
     fn cloned(&self) -> Box<dyn Packet> {

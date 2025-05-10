@@ -119,7 +119,7 @@ impl<'a> BytesArray<'a> {
     }
 }
 
-impl<'a> BytesSource for BytesArray<'a> {
+impl BytesSource for BytesArray<'_> {
     fn pop_chunk(&mut self, limit: usize) -> (Bytes, usize) {
         // The loop exists to skip empty chunks while still marking them as
         // consumed
@@ -172,7 +172,7 @@ impl<'a> ByteSlice<'a> {
     }
 }
 
-impl<'a> BytesSource for ByteSlice<'a> {
+impl BytesSource for ByteSlice<'_> {
     fn pop_chunk(&mut self, limit: usize) -> (Bytes, usize) {
         let limit = limit.min(self.data.len());
         if limit == 0 {

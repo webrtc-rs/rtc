@@ -1350,7 +1350,7 @@ impl Association {
     }
 
     fn handle_forward_tsn(&mut self, c: &ChunkForwardTsn) -> Result<Vec<Packet>> {
-        trace!("[{}] FwdTSN: {}", self.side, c.to_string());
+        trace!("[{}] FwdTSN: {}", self.side, c);
 
         if !self.use_forward_tsn {
             warn!("[{}] received FwdTSN but not enabled", self.side);

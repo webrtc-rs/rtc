@@ -90,9 +90,9 @@ impl RTCSctpTransport {
         }
     }
 
-    /// Start the SCTPTransport. Since both local and remote parties must mutually
-    /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
-    /// a connection over SCTP.
+    // Start the SCTPTransport. Since both local and remote parties must mutually
+    // create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
+    // a connection over SCTP.
     /*TODO:pub async fn start(&self, _remote_caps: SCTPTransportCapabilities) -> Result<()> {
         if self.is_started.load(Ordering::SeqCst) {
             return Ok(());

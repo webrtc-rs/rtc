@@ -77,8 +77,8 @@ impl DTLSConn {
             debug!(
                 "[handshake:{}] {}: {}",
                 srv_cli_str(self.state.is_client),
-                self.current_flight.to_string(),
-                self.current_handshake_state.to_string()
+                self.current_flight,
+                self.current_handshake_state
             );
 
             if self.current_handshake_state == HandshakeState::Finished
@@ -177,7 +177,7 @@ impl DTLSConn {
             debug!(
                 "[handshake:{}] {} received handshake packets",
                 srv_cli_str(self.state.is_client),
-                self.current_flight.to_string()
+                self.current_flight
             );
             self.current_retransmit_timer = None;
             let result = self.current_flight.parse(
@@ -190,7 +190,7 @@ impl DTLSConn {
                     debug!(
                         "[handshake:{}] {} result alert:{:?}, err:{:?}",
                         srv_cli_str(self.state.is_client),
-                        self.current_flight.to_string(),
+                        self.current_flight,
                         alert,
                         err
                     );
@@ -206,8 +206,8 @@ impl DTLSConn {
                     debug!(
                         "[handshake:{}] {} -> {}",
                         srv_cli_str(self.state.is_client),
-                        self.current_flight.to_string(),
-                        next_flight.to_string()
+                        self.current_flight,
+                        next_flight
                     );
                     if next_flight.is_last_recv_flight()
                         && self.current_flight.to_string() == next_flight.to_string()
@@ -227,7 +227,7 @@ impl DTLSConn {
             debug!(
                 "[handshake:{}] {} received handshake packets",
                 srv_cli_str(self.state.is_client),
-                self.current_flight.to_string()
+                self.current_flight
             );
             self.current_retransmit_timer = None;
             let result = self.current_flight.parse(
@@ -253,12 +253,12 @@ impl DTLSConn {
             debug!(
                 "[handshake:{}] {} retransmit_timer",
                 srv_cli_str(self.state.is_client),
-                self.current_flight.to_string()
+                self.current_flight
             );
             debug!(
                 "[handshake:{}] {} current_retransmit_count {} vs maximum_retransmit_number {}",
                 srv_cli_str(self.state.is_client),
-                self.current_flight.to_string(),
+                self.current_flight,
                 self.current_retransmit_count,
                 self.maximum_retransmit_number,
             );

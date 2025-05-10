@@ -1034,7 +1034,7 @@ impl Agent {
     // remote candidate.
     pub(crate) fn validate_non_stun_traffic(&mut self, remote_addr: SocketAddr) -> bool {
         self.find_remote_candidate(remote_addr)
-            .map_or(false, |remote_index| {
+            .is_some_and(|remote_index| {
                 self.remote_candidates[remote_index].seen(false);
                 true
             })

@@ -77,10 +77,7 @@ impl Packet for DLRRReportBlock {
         self
     }
     fn equal(&self, other: &(dyn Packet)) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<DLRRReportBlock>()
-            .map_or(false, |a| self == a)
+        other.as_any().downcast_ref::<DLRRReportBlock>() == Some(self)
     }
     fn cloned(&self) -> Box<dyn Packet> {
         Box::new(self.clone())

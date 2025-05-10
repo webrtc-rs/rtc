@@ -37,8 +37,7 @@ use std::fmt;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// |           recv delta          |  recv delta   | zero padding  |
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-// for packet status chunk
+/// for packet status chunk
 /// type of packet status chunk
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 #[repr(u16)]
@@ -500,10 +499,7 @@ impl Packet for TransportLayerCc {
     }
 
     fn equal(&self, other: &(dyn Packet)) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<TransportLayerCc>()
-            .map_or(false, |a| self == a)
+        other.as_any().downcast_ref::<TransportLayerCc>() == Some(self)
     }
 
     fn cloned(&self) -> Box<dyn Packet> {

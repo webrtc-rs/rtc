@@ -74,7 +74,7 @@ pub struct Relay<'a> {
     pub(crate) client: &'a mut Client,
 }
 
-impl<'a> Relay<'a> {
+impl Relay<'_> {
     pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<Option<TransactionId>> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             relay

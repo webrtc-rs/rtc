@@ -259,7 +259,7 @@ impl DTLSConn {
                 debug!(
                     "Send [handshake:{}] -> {} (epoch: {}, seq: {})",
                     srv_cli_str(self.is_client),
-                    h.handshake_header.handshake_type.to_string(),
+                    h.handshake_header.handshake_type,
                     p.record.record_layer_header.epoch,
                     h.handshake_header.message_sequence
                 );
@@ -637,7 +637,7 @@ impl DTLSConn {
                         debug!(
                             "Recv [handshake:{}] -> {} (epoch: {}, seq: {})",
                             srv_cli_str(self.is_client),
-                            rh.handshake_header.handshake_type.to_string(),
+                            rh.handshake_header.handshake_type,
                             h.epoch,
                             rh.handshake_header.message_sequence
                         );
@@ -682,7 +682,7 @@ impl DTLSConn {
 
         match r.content {
             Content::Alert(mut a) => {
-                debug!("{}: <- {}", srv_cli_str(self.is_client), a.to_string());
+                debug!("{}: <- {}", srv_cli_str(self.is_client), a);
                 if a.alert_description == AlertDescription::CloseNotify {
                     // Respond with a close_notify [RFC5246 Section 7.2.1]
                     a = Alert {
