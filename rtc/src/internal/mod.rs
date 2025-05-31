@@ -1,3 +1,4 @@
+pub(crate) mod transport;
 pub(crate) mod utils;
 
 pub(crate) const MAX_NUMERICNODE_LEN: usize = 48; // Max IPv6 string representation length
