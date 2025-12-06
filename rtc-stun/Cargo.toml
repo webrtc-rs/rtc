@@ -19,12 +19,12 @@ shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", de
 bytes = "1.5.0"
 lazy_static = "1.4.0"
 url = "2.5.0"
-rand = "0.8.5"
+rand = "0.9"
 base64 = "0.22.0"
 subtle = "2.5.0"
 crc = "3.0.1"
-ring = "0.17.8"
-md5 = "0.7.0"
+ring = "0.17.14"
+md-5 = "0.10"
 
 [dev-dependencies]
 clap = { version = "4.5.2", features = ["derive"] }
