@@ -45,7 +45,7 @@ impl Binding {
         self.refreshed_at
     }
 }
-// Thread-safe Binding map
+/// Thread-safe Binding map.
 #[derive(Default)]
 pub(crate) struct BindingManager {
     chan_map: HashMap<u16, String>,
@@ -94,19 +94,13 @@ impl BindingManager {
     }
 
     pub(crate) fn find_by_number(&self, number: u16) -> Option<&Binding> {
-        if let Some(s) = self.chan_map.get(&number) {
-            self.addr_map.get(s)
-        } else {
-            None
-        }
+        let s = self.chan_map.get(&number)?;
+        self.addr_map.get(s)
     }
 
     pub(crate) fn get_by_number(&mut self, number: u16) -> Option<&mut Binding> {
-        if let Some(s) = self.chan_map.get(&number) {
-            self.addr_map.get_mut(s)
-        } else {
-            None
-        }
+        let s = self.chan_map.get(&number)?;
+        self.addr_map.get_mut(s)
     }
 
     pub(crate) fn delete_by_addr(&mut self, addr: &SocketAddr) -> bool {
