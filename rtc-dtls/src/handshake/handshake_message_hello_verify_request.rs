@@ -21,9 +21,12 @@ use std::io::{Read, Write};
    MAY respond with a HelloVerifyRequest message.  This message contains
    a stateless cookie generated using the technique of [PHOTURIS].  The
    client MUST retransmit the ClientHello with the cookie added.
-
-   https://tools.ietf.org/html/rfc6347#section-4.2.1
 */
+/// ## Specifications
+///
+/// * [RFC 6347 §4.2.1]
+///
+/// [RFC 6347 §4.2.1]: https://tools.ietf.org/html/rfc6347#section-4.2.1
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeMessageHelloVerifyRequest {
     pub(crate) version: ProtocolVersion,

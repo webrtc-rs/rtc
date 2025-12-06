@@ -7,7 +7,11 @@ use std::time::{Duration, SystemTime};
 pub const RANDOM_BYTES_LENGTH: usize = 28;
 pub const HANDSHAKE_RANDOM_LENGTH: usize = RANDOM_BYTES_LENGTH + 4;
 
-// https://tools.ietf.org/html/rfc4346#section-7.4.1.2
+/// ## Specifications
+///
+/// * [RFC 4346 §7.4.1.2]
+///
+/// [RFC 4346 §7.4.1.2]: https://tools.ietf.org/html/rfc4346#section-7.4.1.2
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeRandom {
     pub gmt_unix_time: SystemTime,
@@ -62,6 +66,6 @@ impl HandshakeRandom {
     // may be called multiple times
     pub fn populate(&mut self) {
         self.gmt_unix_time = SystemTime::now();
-        rand::thread_rng().fill(&mut self.random_bytes);
+        rand::rng().fill(&mut self.random_bytes);
     }
 }

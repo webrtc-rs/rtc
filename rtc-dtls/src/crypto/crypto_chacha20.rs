@@ -1,36 +1,36 @@
-// AES-GCM (Galois Counter Mode)
-// The most widely used block cipher worldwide.
-// Mandatory as of TLS 1.2 (2008) and used by default by most clients.
-// RFC 5288 year 2008 https://tools.ietf.org/html/rfc5288
-
-// https://github.com/RustCrypto/AEADs
-// https://docs.rs/aes-gcm/0.8.0/aes_gcm/
-
 use std::io::Cursor;
 
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::AeadInPlace;
-use aes_gcm::{Aes128Gcm, KeyInit};
-use rand::Rng;
+use chacha20poly1305::aead::generic_array::GenericArray;
+use chacha20poly1305::aead::AeadInPlace;
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 
 use super::*;
 use crate::content::*;
-use crate::record_layer::record_layer_header::*;
-use shared::error::*; // what about Aes256Gcm?
+use crate::record_layer::record_layer_header::*; // what about Aes256Gcm?
 
-const CRYPTO_GCM_TAG_LENGTH: usize = 16;
-const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
+const CRYPTO_CHACHA20_TAG_LENGTH: usize = 16;
+const CRYPTO_CHACHA20_NONCE_LENGTH: usize = 12;
 
 // State needed to handle encrypted input/output
 #[derive(Clone)]
-pub struct CryptoGcm {
-    local_gcm: Aes128Gcm,
-    remote_gcm: Aes128Gcm,
+pub struct CryptoChaCha20 {
+    local_cc: ChaCha20Poly1305,
+    remote_cc: ChaCha20Poly1305,
+    local_key: Vec<u8>,
+    remote_key: Vec<u8>,
     local_write_iv: Vec<u8>,
     remote_write_iv: Vec<u8>,
 }
 
-impl CryptoGcm {
+fn noncegen(nonce: &mut [u8], epoch: u16, seqnum: u64) {
+    let epoch: u64 = epoch.into();
+    let seqnum = (seqnum & 0xFFFFFFFFFFFF) | (epoch << 48);
+    for i in 0..8 {
+        nonce[i + 4] ^= ((seqnum >> (8 * (7 - i))) & 0xFF) as u8;
+    }
+}
+
+impl CryptoChaCha20 {
     pub fn new(
         local_key: &[u8],
         local_write_iv: &[u8],
@@ -38,15 +38,17 @@ impl CryptoGcm {
         remote_write_iv: &[u8],
     ) -> Self {
         let key = GenericArray::from_slice(local_key);
-        let local_gcm = Aes128Gcm::new(key);
+        let local_cc = ChaCha20Poly1305::new(key);
 
         let key = GenericArray::from_slice(remote_key);
-        let remote_gcm = Aes128Gcm::new(key);
+        let remote_cc = ChaCha20Poly1305::new(key);
 
-        CryptoGcm {
-            local_gcm,
+        CryptoChaCha20 {
+            local_cc,
             local_write_iv: local_write_iv.to_vec(),
-            remote_gcm,
+            remote_cc,
+            local_key: local_key.to_vec(),
+            remote_key: remote_key.to_vec(),
             remote_write_iv: remote_write_iv.to_vec(),
         }
     }
@@ -55,9 +57,11 @@ impl CryptoGcm {
         let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
 
-        let mut nonce = vec![0u8; CRYPTO_GCM_NONCE_LENGTH];
-        nonce[..4].copy_from_slice(&self.local_write_iv[..4]);
-        rand::rng().fill(&mut nonce[4..]);
+        let mut nonce = vec![0u8; CRYPTO_CHACHA20_NONCE_LENGTH];
+        nonce[..CRYPTO_CHACHA20_NONCE_LENGTH]
+            .copy_from_slice(&self.local_write_iv[..CRYPTO_CHACHA20_NONCE_LENGTH]);
+
+        noncegen(&mut nonce[..], pkt_rlh.epoch, pkt_rlh.sequence_number);
         let nonce = GenericArray::from_slice(&nonce);
 
         let additional_data = generate_aead_additional_data(pkt_rlh, payload.len());
@@ -65,14 +69,15 @@ impl CryptoGcm {
         let mut buffer: Vec<u8> = Vec::new();
         buffer.extend_from_slice(payload);
 
-        self.local_gcm
-            .encrypt_in_place(nonce, &additional_data, &mut buffer)
+        let tag = self
+            .local_cc
+            .encrypt_in_place_detached(nonce, &additional_data, &mut buffer)
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        let mut r = Vec::with_capacity(raw.len() + nonce.len() + buffer.len());
+        let mut r = Vec::with_capacity(raw.len() + buffer.len() + tag.len());
         r.extend_from_slice(raw);
-        r.extend_from_slice(&nonce[4..]);
         r.extend_from_slice(&buffer);
+        r.extend_from_slice(&tag);
 
         // Update recordLayer size to include explicit nonce
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
@@ -90,23 +95,21 @@ impl CryptoGcm {
             return Ok(r.to_vec());
         }
 
-        if r.len() <= (RECORD_LAYER_HEADER_SIZE + 8) {
-            return Err(Error::ErrNotEnoughRoomForNonce);
-        }
-
         let mut nonce = vec![];
-        nonce.extend_from_slice(&self.remote_write_iv[..4]);
-        nonce.extend_from_slice(&r[RECORD_LAYER_HEADER_SIZE..RECORD_LAYER_HEADER_SIZE + 8]);
+        nonce.extend_from_slice(&self.remote_write_iv[..]);
+
+        noncegen(&mut nonce[..], h.epoch, h.sequence_number);
         let nonce = GenericArray::from_slice(&nonce);
 
-        let out = &r[RECORD_LAYER_HEADER_SIZE + 8..];
+        let out = &r[RECORD_LAYER_HEADER_SIZE..];
 
-        let additional_data = generate_aead_additional_data(&h, out.len() - CRYPTO_GCM_TAG_LENGTH);
+        let additional_data =
+            generate_aead_additional_data(&h, out.len() - CRYPTO_CHACHA20_TAG_LENGTH);
 
         let mut buffer: Vec<u8> = Vec::new();
         buffer.extend_from_slice(out);
 
-        self.remote_gcm
+        self.remote_cc
             .decrypt_in_place(nonce, &additional_data, &mut buffer)
             .map_err(|e| Error::Other(e.to_string()))?;
 

@@ -1,37 +1,37 @@
 use super::*;
-use crate::crypto::crypto_gcm::*;
+use crate::crypto::crypto_chacha20::*;
 use crate::prf::*;
 
 #[derive(Clone)]
-pub struct CipherSuiteAes128GcmSha256 {
-    gcm: Option<CryptoGcm>,
+pub struct CipherSuiteChaCha20Poly1305Sha256 {
     rsa: bool,
+    cipher: Option<CryptoChaCha20>,
 }
 
-impl CipherSuiteAes128GcmSha256 {
+impl CipherSuiteChaCha20Poly1305Sha256 {
     const PRF_MAC_LEN: usize = 0;
-    const PRF_KEY_LEN: usize = 16;
-    const PRF_IV_LEN: usize = 4;
+    const PRF_KEY_LEN: usize = 32;
+    const PRF_IV_LEN: usize = 12;
 
     pub fn new(rsa: bool) -> Self {
-        CipherSuiteAes128GcmSha256 { gcm: None, rsa }
+        CipherSuiteChaCha20Poly1305Sha256 { rsa, cipher: None }
     }
 }
 
-impl CipherSuite for CipherSuiteAes128GcmSha256 {
+impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
     fn to_string(&self) -> String {
         if self.rsa {
-            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256".to_owned()
+            "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256".to_owned()
         } else {
-            "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_owned()
+            "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256".to_owned()
         }
     }
 
     fn id(&self) -> CipherSuiteId {
         if self.rsa {
-            CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256
+            CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256
         } else {
-            CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256
+            CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256
         }
     }
 
@@ -52,7 +52,7 @@ impl CipherSuite for CipherSuiteAes128GcmSha256 {
     }
 
     fn is_initialized(&self) -> bool {
-        self.gcm.is_some()
+        self.cipher.is_some()
     }
 
     fn init(
@@ -66,21 +66,21 @@ impl CipherSuite for CipherSuiteAes128GcmSha256 {
             master_secret,
             client_random,
             server_random,
-            CipherSuiteAes128GcmSha256::PRF_MAC_LEN,
-            CipherSuiteAes128GcmSha256::PRF_KEY_LEN,
-            CipherSuiteAes128GcmSha256::PRF_IV_LEN,
+            CipherSuiteChaCha20Poly1305Sha256::PRF_MAC_LEN,
+            CipherSuiteChaCha20Poly1305Sha256::PRF_KEY_LEN,
+            CipherSuiteChaCha20Poly1305Sha256::PRF_IV_LEN,
             self.hash_func(),
         )?;
 
         if is_client {
-            self.gcm = Some(CryptoGcm::new(
+            self.cipher = Some(CryptoChaCha20::new(
                 &keys.client_write_key,
                 &keys.client_write_iv,
                 &keys.server_write_key,
                 &keys.server_write_iv,
             ));
         } else {
-            self.gcm = Some(CryptoGcm::new(
+            self.cipher = Some(CryptoChaCha20::new(
                 &keys.server_write_key,
                 &keys.server_write_iv,
                 &keys.client_write_key,
@@ -92,14 +92,14 @@ impl CipherSuite for CipherSuiteAes128GcmSha256 {
     }
 
     fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.gcm.as_ref().ok_or(Error::Other(
+        let cg = self.cipher.as_ref().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to encrypt".to_owned(),
         ))?;
         cg.encrypt(pkt_rlh, raw)
     }
 
     fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.gcm.as_ref().ok_or(Error::Other(
+        let cg = self.cipher.as_ref().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to decrypt".to_owned(),
         ))?;
         cg.decrypt(input)
