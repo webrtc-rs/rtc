@@ -11,9 +11,10 @@ pub mod marshal;
 pub mod replay_detector;
 
 pub mod error;
-pub mod handler;
 pub mod util;
 
-pub use retty::transport::{
-    EcnCodepoint, FiveTuple, FourTuple, Protocol, Transmit, TransportContext,
+pub use sansio::{Context, Handler, InboundPipeline, OutboundPipeline, Pipeline, Protocol};
+
+pub use sansio_transport::{
+    EcnCodepoint, FiveTuple, FourTuple, TransportContext, TransportMessage, TransportProtocol,
 };

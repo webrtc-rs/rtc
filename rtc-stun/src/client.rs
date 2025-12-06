@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::agent::*;
 use crate::message::*;
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 
 const DEFAULT_TIMEOUT_RATE: Duration = Duration::from_millis(5);
 const DEFAULT_RTO: Duration = Duration::from_millis(300);
@@ -100,7 +100,7 @@ impl ClientBuilder {
         self,
         local: SocketAddr,
         remote: SocketAddr,
-        protocol: Protocol,
+        protocol: TransportProtocol,
     ) -> Result<Client> {
         Ok(Client::new(local, remote, protocol, self.settings))
     }
@@ -110,24 +110,24 @@ impl ClientBuilder {
 pub struct Client {
     local: SocketAddr,
     remote: SocketAddr,
-    protocol: Protocol,
+    transport_protocol: TransportProtocol,
     agent: Agent,
     settings: ClientSettings,
     transactions: HashMap<TransactionId, ClientTransaction>,
-    transmits: VecDeque<Transmit<BytesMut>>,
+    transmits: VecDeque<TransportMessage<BytesMut>>,
 }
 
 impl Client {
     fn new(
         local: SocketAddr,
         remote: SocketAddr,
-        protocol: Protocol,
+        transport_protocol: TransportProtocol,
         settings: ClientSettings,
     ) -> Self {
         Self {
             local,
             remote,
-            protocol,
+            transport_protocol,
             agent: Agent::new(),
             settings,
             transactions: HashMap::new(),
@@ -143,7 +143,7 @@ impl Client {
     /// - a call was made to `handle_write`
     /// - a call was made to `handle_timeout`
     #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -180,13 +180,13 @@ impl Client {
             }
 
             // Writing message to connection again.
-            self.transmits.push_back(Transmit {
+            self.transmits.push_back(TransportMessage {
                 now: Instant::now(),
                 transport: TransportContext {
                     local_addr: self.local,
                     peer_addr: self.remote,
                     ecn: None,
-                    protocol: self.protocol,
+                    transport_protocol: self.transport_protocol,
                 },
                 message: payload,
             });
@@ -221,13 +221,13 @@ impl Client {
         self.agent
             .handle_event(ClientAgent::Start(m.transaction_id, deadline))?;
 
-        self.transmits.push_back(Transmit {
+        self.transmits.push_back(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr: self.local,
                 peer_addr: self.remote,
                 ecn: None,
-                protocol: self.protocol,
+                transport_protocol: self.transport_protocol,
             },
             message: payload,
         });

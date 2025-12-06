@@ -32,7 +32,7 @@ use crate::proto::reqtrans::RequestedTransport;
 use crate::proto::{PROTO_TCP, PROTO_UDP};
 use shared::error::{Error, Result};
 use shared::util::lookup_host;
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 use stun::error_code::ErrorCodeAttribute;
 use stun::fingerprint::FINGERPRINT;
 
@@ -80,7 +80,7 @@ pub struct ClientConfig {
     pub stun_serv_addr: String, // STUN server address (e.g. "stun.abc.com:3478")
     pub turn_serv_addr: String, // TURN server address (e.g. "turn.abc.com:3478")
     pub local_addr: SocketAddr,
-    pub protocol: Protocol,
+    pub transport_protocol: TransportProtocol,
     pub username: String,
     pub password: String,
     pub realm: String,
@@ -93,7 +93,7 @@ pub struct Client {
     stun_serv_addr: Option<SocketAddr>,
     turn_serv_addr: Option<SocketAddr>,
     local_addr: SocketAddr,
-    protocol: Protocol,
+    transport_protocol: TransportProtocol,
     username: Username,
     password: String,
     realm: Realm,
@@ -104,7 +104,7 @@ pub struct Client {
     rto_in_ms: u64,
 
     relays: HashMap<RelayedAddr, RelayState>,
-    transmits: VecDeque<Transmit<BytesMut>>,
+    transmits: VecDeque<TransportMessage<BytesMut>>,
     events: VecDeque<Event>,
 }
 
@@ -133,7 +133,7 @@ impl Client {
             stun_serv_addr,
             turn_serv_addr,
             local_addr: config.local_addr,
-            protocol: config.protocol,
+            transport_protocol: config.transport_protocol,
             username: Username::new(ATTR_USERNAME, config.username),
             password: config.password,
             realm: Realm::new(ATTR_REALM, config.realm),
@@ -192,14 +192,14 @@ impl Client {
         }
     }
 
-    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         while let Some(transmit) = self.tr_map.poll_transmit() {
             self.transmits.push_back(transmit);
         }
         self.transmits.pop_front()
     }
 
-    pub fn handle_transmit(&mut self, msg: Transmit<BytesMut>) -> Result<()> {
+    pub fn handle_transmit(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
         self.handle_inbound(&msg.message[..], msg.transport.peer_addr)
     }
 
@@ -498,7 +498,7 @@ impl Client {
             Box::new(TransactionId::new()),
             Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
             Box::new(RequestedTransport {
-                protocol: if self.protocol == Protocol::UDP {
+                protocol: if self.transport_protocol == TransportProtocol::UDP {
                     PROTO_UDP
                 } else {
                     PROTO_TCP
@@ -560,7 +560,7 @@ impl Client {
                     Box::new(tid),
                     Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_REQUEST)),
                     Box::new(RequestedTransport {
-                        protocol: if self.protocol == Protocol::UDP {
+                        protocol: if self.transport_protocol == TransportProtocol::UDP {
                             PROTO_UDP
                         } else {
                             PROTO_TCP
@@ -633,12 +633,12 @@ impl Client {
 
     /// WriteTo sends data to the specified destination using the base socket.
     fn write_to(&mut self, data: &[u8], remote: SocketAddr) {
-        self.transmits.push_back(Transmit {
+        self.transmits.push_back(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr: self.local_addr,
                 peer_addr: remote,
-                protocol: self.protocol,
+                transport_protocol: self.transport_protocol,
                 ecn: None,
             },
             message: BytesMut::from(data),
@@ -658,7 +658,7 @@ impl Client {
             raw: BytesMut::from(&msg.raw[..]),
             local_addr: self.local_addr,
             peer_addr: to,
-            protocol: self.protocol,
+            transport_protocol: self.transport_protocol,
             interval: self.rto_in_ms,
         });
 

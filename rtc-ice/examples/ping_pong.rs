@@ -10,7 +10,7 @@ use rtc_ice::candidate::*;
 use rtc_ice::state::*;
 use rtc_ice::{Credentials, Event};
 use shared::error::Error;
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 use std::io;
 use std::io::Write;
 use std::str::FromStr;
@@ -336,13 +336,13 @@ async fn main() -> Result<(), Error> {
                     }
 
                     if stun::message::is_message(&buf[0..n]) {
-                        ice_agent.handle_read(Transmit::<BytesMut>{
+                        ice_agent.handle_read(TransportMessage::<BytesMut>{
                             now: Instant::now(),
                             transport: TransportContext{
                                 local_addr: udp_socket.local_addr()?,
                                 peer_addr: remote_addr,
                                 ecn: None,
-                                protocol: Protocol::UDP,
+                                transport_protocol: TransportProtocol::UDP,
                             },
                             message: BytesMut::from(&buf[0..n]),
                         })?;

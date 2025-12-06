@@ -1,5 +1,5 @@
 use crate::Payload;
-use ::shared::Transmit;
+use ::shared::TransportMessage;
 use std::fmt::{Debug, Formatter};
 
 /// Events sent from an Endpoint to an Association
@@ -8,7 +8,7 @@ pub struct AssociationEvent(pub(crate) AssociationEventInner);
 
 pub(crate) enum AssociationEventInner {
     /// A datagram has been received for the Association
-    Datagram(Transmit<Payload>),
+    Datagram(TransportMessage<Payload>),
     // New Association identifiers have been issued for the Association
     //NewIdentifiers(Vec<IssuedAid>, Instant),
 }

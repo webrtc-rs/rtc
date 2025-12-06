@@ -26,7 +26,7 @@ use crate::rand::*;
 use crate::state::*;
 use crate::url::*;
 use shared::error::*;
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 
 const ZERO_DURATION: Duration = Duration::from_secs(0);
 
@@ -134,7 +134,7 @@ pub struct Agent {
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
 
-    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
+    pub(crate) transmits: VecDeque<TransportMessage<BytesMut>>,
     pub(crate) events: VecDeque<Event>,
 }
 
@@ -347,9 +347,9 @@ impl Agent {
         &self.ufrag_pwd.local_credentials
     }
 
-    pub fn handle_read(&mut self, msg: Transmit<BytesMut>) -> Result<()> {
+    pub fn handle_read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
         if let Some(local_index) =
-            self.find_local_candidate(msg.transport.local_addr, msg.transport.protocol)
+            self.find_local_candidate(msg.transport.local_addr, msg.transport.transport_protocol)
         {
             self.handle_inbound_candidate_msg(
                 local_index,
@@ -361,14 +361,14 @@ impl Agent {
             warn!(
                 "[{}]: Discarded message, not a valid local candidate from {:?}:{}",
                 self.get_name(),
-                msg.transport.protocol,
+                msg.transport.transport_protocol,
                 msg.transport.local_addr,
             );
             Err(Error::ErrUnhandledStunpacket)
         }
     }
 
-    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -750,10 +750,10 @@ impl Agent {
     pub(crate) fn find_local_candidate(
         &self,
         addr: SocketAddr,
-        protocol: Protocol,
+        transport_protocol: TransportProtocol,
     ) -> Option<usize> {
         for (index, c) in self.local_candidates.iter().enumerate() {
-            if c.addr() == addr && c.network_type().to_protocol() == protocol {
+            if c.addr() == addr && c.network_type().to_protocol() == transport_protocol {
                 return Some(index);
             }
         }
@@ -1043,19 +1043,19 @@ impl Agent {
     pub(crate) fn send_stun(&mut self, msg: &Message, local_index: usize, remote_index: usize) {
         let peer_addr = self.remote_candidates[remote_index].addr();
         let local_addr = self.local_candidates[local_index].addr();
-        let protocol = if self.local_candidates[local_index].network_type().is_tcp() {
-            Protocol::TCP
+        let transport_protocol = if self.local_candidates[local_index].network_type().is_tcp() {
+            TransportProtocol::TCP
         } else {
-            Protocol::UDP
+            TransportProtocol::UDP
         };
 
-        self.transmits.push_back(Transmit {
+        self.transmits.push_back(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr,
                 peer_addr,
                 ecn: None,
-                protocol,
+                transport_protocol,
             },
             message: BytesMut::from(&msg.raw[..]),
         });

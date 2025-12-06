@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use stun::message::*;
 
 use crate::client::{Event, RelayedAddr};
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 use stun::textattrs::TextAttribute;
 
 const MAX_RTX_INTERVAL_IN_MS: u64 = 1600;
@@ -30,7 +30,7 @@ pub(crate) struct TransactionConfig {
     pub(crate) raw: BytesMut,
     pub(crate) local_addr: SocketAddr,
     pub(crate) peer_addr: SocketAddr,
-    pub(crate) protocol: Protocol,
+    pub(crate) transport_protocol: TransportProtocol,
     pub(crate) interval: u64,
 }
 
@@ -41,11 +41,11 @@ pub(crate) struct Transaction {
     pub(crate) raw: BytesMut,
     pub(crate) local_addr: SocketAddr,
     pub(crate) peer_addr: SocketAddr,
-    pub(crate) protocol: Protocol,
+    pub(crate) transport_protocol: TransportProtocol,
     pub(crate) n_rtx: u16,
     pub(crate) interval: u64,
     pub(crate) timeout: Instant,
-    pub(crate) transmits: VecDeque<Transmit<BytesMut>>,
+    pub(crate) transmits: VecDeque<TransportMessage<BytesMut>>,
 }
 
 impl Transaction {
@@ -57,7 +57,7 @@ impl Transaction {
             raw: config.raw,
             local_addr: config.local_addr,
             peer_addr: config.peer_addr,
-            protocol: config.protocol,
+            transport_protocol: config.transport_protocol,
             n_rtx: 0,
             interval: config.interval,
             timeout: Instant::now().add(Duration::from_millis(config.interval)),
@@ -87,7 +87,7 @@ impl Transaction {
         }
     }
 
-    pub(crate) fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub(crate) fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -103,12 +103,12 @@ impl Transaction {
             self.n_rtx
         );
 
-        self.transmits.push_back(Transmit {
+        self.transmits.push_back(TransportMessage {
             now,
             transport: TransportContext {
                 local_addr: self.local_addr,
                 peer_addr: self.peer_addr,
-                protocol: self.protocol,
+                transport_protocol: self.transport_protocol,
                 ecn: None,
             },
             message: self.raw.clone(),
@@ -125,7 +125,7 @@ impl Transaction {
 #[derive(Default)]
 pub(crate) struct TransactionMap {
     tr_map: HashMap<TransactionId, Transaction>,
-    transmits: VecDeque<Transmit<BytesMut>>,
+    transmits: VecDeque<TransportMessage<BytesMut>>,
     events: VecDeque<Event>,
 }
 
@@ -166,7 +166,7 @@ impl TransactionMap {
         }
     }
 
-    pub(crate) fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub(crate) fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         for tr in self.tr_map.values_mut() {
             while let Some(transmit) = tr.poll_transmit() {
                 self.transmits.push_back(transmit);

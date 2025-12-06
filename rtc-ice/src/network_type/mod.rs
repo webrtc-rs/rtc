@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use shared::error::*;
-use shared::Protocol;
+use shared::TransportProtocol;
 
 pub(crate) const UDP: &str = "udp";
 pub(crate) const TCP: &str = "tcp";
@@ -85,11 +85,11 @@ impl NetworkType {
     }
 
     #[must_use]
-    pub fn to_protocol(self) -> Protocol {
+    pub fn to_protocol(self) -> TransportProtocol {
         if self.is_tcp() {
-            Protocol::TCP
+            TransportProtocol::TCP
         } else {
-            Protocol::UDP
+            TransportProtocol::UDP
         }
     }
 

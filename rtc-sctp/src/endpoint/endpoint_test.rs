@@ -47,11 +47,11 @@ fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
 /// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
 const MAX_DATAGRAMS: usize = 10;
 
-fn split_transmit(transmit: Transmit<Payload>) -> Vec<Transmit<Payload>> {
+fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<Payload>> {
     let mut transmits = Vec::new();
     if let Payload::RawEncode(contents) = transmit.message {
         for content in contents {
-            transmits.push(Transmit {
+            transmits.push(TransportMessage {
                 now: transmit.now,
                 transport: transmit.transport,
                 message: Payload::RawEncode(vec![content]),
@@ -75,8 +75,8 @@ struct TestEndpoint {
     addr: SocketAddr,
     socket: Option<UdpSocket>,
     timeout: Option<Instant>,
-    outbound: VecDeque<Transmit<Payload>>,
-    delayed: VecDeque<Transmit<Payload>>,
+    outbound: VecDeque<TransportMessage<Payload>>,
+    delayed: VecDeque<TransportMessage<Payload>>,
     inbound: VecDeque<(Instant, Option<EcnCodepoint>, Bytes)>,
     accepted: Option<AssociationHandle>,
     associations: HashMap<AssociationHandle, Association>,
@@ -217,11 +217,11 @@ impl Pair {
 
         let server = Endpoint::new(
             server_addr,
-            Protocol::UDP,
+            TransportProtocol::UDP,
             Arc::clone(&endpoint_config),
             Some(Arc::new(server_config)),
         );
-        let client = Endpoint::new(client_addr, Protocol::UDP, endpoint_config, None);
+        let client = Endpoint::new(client_addr, TransportProtocol::UDP, endpoint_config, None);
 
         Pair::new_from_endpoint(client, server, client_addr, server_addr)
     }
@@ -1991,13 +1991,13 @@ fn test_assoc_abort() -> Result<()> {
             .create_packet(vec![Box::new(abort)])
             .marshal()?;
 
-        Transmit {
+        TransportMessage {
             now: pair.time,
             transport: TransportContext {
                 local_addr: pair.client.addr,
                 peer_addr: pair.server.addr,
                 ecn: None,
-                protocol: Default::default(),
+                transport_protocol: Default::default(),
             },
             message: Payload::RawEncode(vec![packet]),
         }
@@ -2208,19 +2208,19 @@ fn test_association_handle_packet_before_init() -> Result<()> {
             0,
             remote,
             local,
-            Protocol::UDP,
+            TransportProtocol::UDP,
             Instant::now(),
         );
 
         let packet = packet.marshal()?;
         a.handle_event(AssociationEvent(AssociationEventInner::Datagram(
-            Transmit {
+            TransportMessage {
                 now: Instant::now(),
                 transport: TransportContext {
                     local_addr: local,
                     peer_addr: remote,
                     ecn: None,
-                    protocol: Default::default(),
+                    transport_protocol: Default::default(),
                 },
                 message: Payload::RawEncode(vec![packet]),
             },

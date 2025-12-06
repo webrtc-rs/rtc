@@ -19,7 +19,7 @@ use crate::shared::{
 };
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 use crate::Payload;
-use shared::{EcnCodepoint, Protocol, Transmit, TransportContext};
+use shared::{EcnCodepoint, TransportContext, TransportMessage, TransportProtocol};
 
 use bytes::Bytes;
 use fxhash::FxHashMap;
@@ -35,7 +35,7 @@ use thiserror::Error;
 /// `handle_event`.
 pub struct Endpoint {
     local_addr: SocketAddr,
-    protocol: Protocol,
+    transport_protocol: TransportProtocol,
     rng: StdRng,
     /// Identifies associations based on the INIT Dst AID the peer utilized
     ///
@@ -76,13 +76,13 @@ impl Endpoint {
     /// Returns `Err` if the configuration is invalid.
     pub fn new(
         local_addr: SocketAddr,
-        protocol: Protocol,
+        transport_protocol: TransportProtocol,
         endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Self {
         Self {
             local_addr,
-            protocol,
+            transport_protocol,
             rng: StdRng::from_entropy(),
             association_ids_init: HashMap::default(),
             association_ids: FxHashMap::default(),
@@ -151,13 +151,13 @@ impl Endpoint {
             return Some((
                 ch,
                 DatagramEvent::AssociationEvent(AssociationEvent(AssociationEventInner::Datagram(
-                    Transmit {
+                    TransportMessage {
                         now,
                         transport: TransportContext {
                             local_addr: self.local_addr,
                             peer_addr: remote,
                             ecn,
-                            protocol: self.protocol,
+                            transport_protocol: self.transport_protocol,
                         },
                         message: Payload::PartialDecode(partial_decode),
                     },
@@ -249,13 +249,13 @@ impl Endpoint {
         );
 
         conn.handle_event(AssociationEvent(AssociationEventInner::Datagram(
-            Transmit {
+            TransportMessage {
                 now,
                 transport: TransportContext {
                     local_addr: self.local_addr,
                     peer_addr: remote,
                     ecn,
-                    protocol: self.protocol,
+                    transport_protocol: self.transport_protocol,
                 },
                 message: Payload::PartialDecode(partial_decode),
             },
@@ -281,7 +281,7 @@ impl Endpoint {
             local_aid,
             remote_addr,
             self.local_addr,
-            self.protocol,
+            self.transport_protocol,
             now,
         );
 

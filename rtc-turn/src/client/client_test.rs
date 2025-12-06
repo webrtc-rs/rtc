@@ -9,7 +9,7 @@ fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
         stun_serv_addr: String::new(),
         turn_serv_addr: String::new(),
         local_addr: udp_socket.local_addr()?,
-        protocol: Protocol::UDP,
+        transport_protocol: TransportProtocol::UDP,
         username: String::new(),
         password: String::new(),
         realm: String::new(),
@@ -27,7 +27,7 @@ fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> 
         stun_serv_addr: "stun1.l.google.com:19302".to_owned(),
         turn_serv_addr: String::new(),
         local_addr: udp_socket.local_addr()?,
-        protocol: Protocol::UDP,
+        transport_protocol: TransportProtocol::UDP,
         username: String::new(),
         password: String::new(),
         realm: String::new(),
@@ -53,12 +53,12 @@ fn test_client_with_stun_send_binding_request() -> Result<()> {
 
     let mut buffer = vec![0u8; 2048];
     let (n, peer_addr) = conn.recv_from(&mut buffer)?;
-    client.handle_transmit(Transmit {
+    client.handle_transmit(TransportMessage {
         now: Instant::now(),
         transport: TransportContext {
             local_addr,
             peer_addr,
-            protocol: Protocol::UDP,
+            transport_protocol: TransportProtocol::UDP,
             ecn: None,
         },
         message: BytesMut::from(&buffer[..n]),
@@ -101,12 +101,12 @@ fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
     let mut buffer = vec![0u8; 2048];
     for _ in 0..2 {
         let (n, peer_addr) = conn.recv_from(&mut buffer)?;
-        client.handle_transmit(Transmit {
+        client.handle_transmit(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr,
                 peer_addr,
-                protocol: Protocol::UDP,
+                transport_protocol: TransportProtocol::UDP,
                 ecn: None,
             },
             message: BytesMut::from(&buffer[..n]),

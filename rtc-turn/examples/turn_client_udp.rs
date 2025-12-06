@@ -3,7 +3,7 @@ use clap::Parser;
 use log::trace;
 use rtc_turn::client::*;
 use shared::error::{Error, Result};
-use shared::{Protocol, Transmit, TransportContext};
+use shared::{TransportContext, TransportMessage, TransportProtocol};
 use std::io::{ErrorKind, Write};
 use std::net::UdpSocket;
 use std::str::FromStr;
@@ -76,7 +76,7 @@ fn main() -> Result<()> {
         stun_serv_addr: turn_server_addr.clone(),
         turn_serv_addr: turn_server_addr,
         local_addr,
-        protocol: Protocol::UDP,
+        transport_protocol: TransportProtocol::UDP,
         username: cred[0].to_string(),
         password: cred[1].to_string(),
         realm: realm.to_string(),
@@ -206,15 +206,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn read_socket_input(socket: &UdpSocket, buf: &mut [u8]) -> Option<Transmit<BytesMut>> {
+fn read_socket_input(socket: &UdpSocket, buf: &mut [u8]) -> Option<TransportMessage<BytesMut>> {
     match socket.recv_from(buf) {
         Ok((n, peer_addr)) => {
-            return Some(Transmit {
+            return Some(TransportMessage {
                 now: Instant::now(),
                 transport: TransportContext {
                     local_addr: socket.local_addr().unwrap(),
                     peer_addr,
-                    protocol: Protocol::UDP,
+                    transport_protocol: TransportProtocol::UDP,
                     ecn: None,
                 },
                 message: BytesMut::from(&buf[..n]),

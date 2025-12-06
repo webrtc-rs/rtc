@@ -4,7 +4,7 @@ use rtc_stun::xoraddr::*;
 
 use clap::Parser;
 use shared::error::Error;
-use shared::Protocol;
+use shared::TransportProtocol;
 use std::net::UdpSocket;
 
 #[derive(Parser)]
@@ -28,8 +28,11 @@ fn main() -> Result<(), Error> {
     println!("Connecting to: {server}");
     conn.connect(server)?;
 
-    let mut client =
-        ClientBuilder::new().build(conn.local_addr()?, conn.peer_addr()?, Protocol::UDP)?;
+    let mut client = ClientBuilder::new().build(
+        conn.local_addr()?,
+        conn.peer_addr()?,
+        TransportProtocol::UDP,
+    )?;
 
     let mut msg = Message::new();
     msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;

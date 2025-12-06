@@ -1,7 +1,7 @@
 use crate::conn::DTLSConn;
 use shared::error::{Error, Result};
 use shared::{EcnCodepoint, TransportContext};
-use shared::{Protocol, Transmit};
+use shared::{TransportMessage, TransportProtocol};
 
 use crate::config::HandshakeConfig;
 use crate::state::State;
@@ -24,8 +24,8 @@ pub enum EndpointEvent {
 /// `handle_event`.
 pub struct Endpoint {
     local_addr: SocketAddr,
-    protocol: Protocol,
-    transmits: VecDeque<Transmit<BytesMut>>,
+    transport_protocol: TransportProtocol,
+    transmits: VecDeque<TransportMessage<BytesMut>>,
     connections: HashMap<SocketAddr, DTLSConn>,
     server_config: Option<Arc<HandshakeConfig>>,
 }
@@ -36,12 +36,12 @@ impl Endpoint {
     /// Returns `Err` if the configuration is invalid.
     pub fn new(
         local_addr: SocketAddr,
-        protocol: Protocol,
+        protocol: TransportProtocol,
         server_config: Option<Arc<HandshakeConfig>>,
     ) -> Self {
         Self {
             local_addr,
-            protocol,
+            transport_protocol: protocol,
             transmits: VecDeque::new(),
             connections: HashMap::new(),
             server_config,
@@ -55,7 +55,7 @@ impl Endpoint {
 
     /// Get the next packet to transmit
     #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit<BytesMut>> {
+    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
         self.transmits.pop_front()
     }
 
@@ -89,13 +89,13 @@ impl Endpoint {
             conn.handshake()?;
 
             while let Some(payload) = conn.outgoing_raw_packet() {
-                self.transmits.push_back(Transmit {
+                self.transmits.push_back(TransportMessage {
                     now: Instant::now(),
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
                         ecn: None,
-                        protocol: self.protocol,
+                        transport_protocol: self.transport_protocol,
                     },
                     message: payload,
                 });
@@ -112,13 +112,13 @@ impl Endpoint {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
-                self.transmits.push_back(Transmit {
+                self.transmits.push_back(TransportMessage {
                     now: Instant::now(),
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
                         ecn: None,
-                        protocol: self.protocol,
+                        transport_protocol: self.transport_protocol,
                     },
                     message: payload,
                 });
@@ -132,13 +132,13 @@ impl Endpoint {
         for (remote_addr, conn) in self.connections.iter_mut() {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
-                self.transmits.push_back(Transmit {
+                self.transmits.push_back(TransportMessage {
                     now: Instant::now(),
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: *remote_addr,
                         ecn: None,
-                        protocol: self.protocol,
+                        transport_protocol: self.transport_protocol,
                     },
                     message: payload,
                 });
@@ -183,13 +183,13 @@ impl Endpoint {
                 messages.push(EndpointEvent::ApplicationData(message));
             }
             while let Some(payload) = conn.outgoing_raw_packet() {
-                self.transmits.push_back(Transmit {
+                self.transmits.push_back(TransportMessage {
                     now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
                         ecn,
-                        protocol: self.protocol,
+                        transport_protocol: self.transport_protocol,
                     },
                     message: payload,
                 });
@@ -203,13 +203,13 @@ impl Endpoint {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.write(data)?;
             while let Some(payload) = conn.outgoing_raw_packet() {
-                self.transmits.push_back(Transmit {
+                self.transmits.push_back(TransportMessage {
                     now: Instant::now(),
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
                         ecn: None,
-                        protocol: self.protocol,
+                        transport_protocol: self.transport_protocol,
                     },
                     message: payload,
                 });
@@ -230,13 +230,13 @@ impl Endpoint {
                         conn.handshake_timeout(now)?;
                     }
                     while let Some(payload) = conn.outgoing_raw_packet() {
-                        self.transmits.push_back(Transmit {
+                        self.transmits.push_back(TransportMessage {
                             now,
                             transport: TransportContext {
                                 local_addr: self.local_addr,
                                 peer_addr: remote,
                                 ecn: None,
-                                protocol: self.protocol,
+                                transport_protocol: self.transport_protocol,
                             },
                             message: payload,
                         });
