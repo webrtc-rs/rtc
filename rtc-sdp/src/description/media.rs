@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+
 use url::Url;
 
 use crate::description::common::*;
@@ -20,7 +21,12 @@ fn ext_map_uri() -> HashMap<isize, &'static str> {
 }
 
 /// MediaDescription represents a media type.
-/// <https://tools.ietf.org/html/rfc4566#section-5.14>
+///
+/// ## Specifications
+///
+/// * [RFC 4566 §5.14]
+///
+/// [RFC 4566 §5.14]: https://tools.ietf.org/html/rfc4566#section-5.14
 #[derive(Debug, Default, Clone)]
 pub struct MediaDescription {
     /// `m=<media> <port>/<number of ports> <proto> <fmt> ...`
@@ -59,6 +65,11 @@ pub struct MediaDescription {
 }
 
 impl MediaDescription {
+    /// Returns whether an attribute exists
+    pub fn has_attribute(&self, key: &str) -> bool {
+        self.attributes.iter().any(|a| a.key == key)
+    }
+
     /// attribute returns the value of an attribute and if it exists
     pub fn attribute(&self, key: &str) -> Option<Option<&str>> {
         for a in &self.attributes {
@@ -136,10 +147,11 @@ impl MediaDescription {
         fmtp: String,
     ) -> Self {
         self.media_name.formats.push(payload_type.to_string());
-        let mut rtpmap = format!("{payload_type} {name}/{clockrate}");
-        if channels > 0 {
-            rtpmap += format!("/{channels}").as_str();
-        }
+        let rtpmap = if channels > 0 {
+            format!("{payload_type} {name}/{clockrate}/{channels}")
+        } else {
+            format!("{payload_type} {name}/{clockrate}")
+        };
 
         if !fmtp.is_empty() {
             self.with_value_attribute("rtpmap".to_string(), rtpmap)
@@ -198,7 +210,7 @@ impl MediaDescription {
 
 /// RangedPort supports special format for the media field "m=" port value. If
 /// it may be necessary to specify multiple transport ports, the protocol allows
-/// to write it as: <port>/<number of ports> where number of ports is a an
+/// to write it as: `<port>/<number of ports>` where number of ports is a an
 /// offsetting range.
 #[derive(Debug, Default, Clone)]
 pub struct RangedPort {
@@ -227,13 +239,23 @@ pub struct MediaName {
 
 impl fmt::Display for MediaName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = [
-            self.media.clone(),
-            self.port.to_string(),
-            self.protos.join("/"),
-            self.formats.join(" "),
-        ];
-        write!(f, "{}", s.join(" "))
+        write!(f, "{} {}", self.media, self.port)?;
+
+        let mut first = true;
+        for part in &self.protos {
+            if first {
+                first = false;
+                write!(f, " {part}")?;
+            } else {
+                write!(f, "/{part}")?;
+            }
+        }
+
+        for part in &self.formats {
+            write!(f, " {part}")?;
+        }
+
+        Ok(())
     }
 }
 
