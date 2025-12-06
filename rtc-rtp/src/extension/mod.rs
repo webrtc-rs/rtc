@@ -8,6 +8,7 @@ use shared::{
 
 pub mod abs_send_time_extension;
 pub mod audio_level_extension;
+pub mod playout_delay_extension;
 pub mod transport_cc_extension;
 pub mod video_orientation_extension;
 
@@ -15,6 +16,7 @@ pub mod video_orientation_extension;
 pub enum HeaderExtension {
     AbsSendTime(abs_send_time_extension::AbsSendTimeExtension),
     AudioLevel(audio_level_extension::AudioLevelExtension),
+    PlayoutDelay(playout_delay_extension::PlayoutDelayExtension),
     TransportCc(transport_cc_extension::TransportCcExtension),
     VideoOrientation(video_orientation_extension::VideoOrientationExtension),
 
@@ -32,6 +34,7 @@ impl HeaderExtension {
         match self {
             AbsSendTime(_) => "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time".into(),
             AudioLevel(_) => "urn:ietf:params:rtp-hdrext:ssrc-audio-level".into(),
+            PlayoutDelay(_) => "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay".into(),
             TransportCc(_) => {
                 "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01".into()
             }
@@ -59,6 +62,7 @@ impl MarshalSize for HeaderExtension {
         match self {
             AbsSendTime(ext) => ext.marshal_size(),
             AudioLevel(ext) => ext.marshal_size(),
+            PlayoutDelay(ext) => ext.marshal_size(),
             TransportCc(ext) => ext.marshal_size(),
             VideoOrientation(ext) => ext.marshal_size(),
             Custom { extension: ext, .. } => ext.marshal_size(),
@@ -72,6 +76,7 @@ impl Marshal for HeaderExtension {
         match self {
             AbsSendTime(ext) => ext.marshal_to(buf),
             AudioLevel(ext) => ext.marshal_to(buf),
+            PlayoutDelay(ext) => ext.marshal_to(buf),
             TransportCc(ext) => ext.marshal_to(buf),
             VideoOrientation(ext) => ext.marshal_to(buf),
             Custom { extension: ext, .. } => ext.marshal_to(buf),
@@ -86,6 +91,7 @@ impl fmt::Debug for HeaderExtension {
         match self {
             AbsSendTime(ext) => f.debug_tuple("AbsSendTime").field(ext).finish(),
             AudioLevel(ext) => f.debug_tuple("AudioLevel").field(ext).finish(),
+            PlayoutDelay(ext) => f.debug_tuple("PlayoutDelay").field(ext).finish(),
             TransportCc(ext) => f.debug_tuple("TransportCc").field(ext).finish(),
             VideoOrientation(ext) => f.debug_tuple("VideoOrientation").field(ext).finish(),
             Custom { uri, extension: _ } => f.debug_struct("Custom").field("uri", uri).finish(),

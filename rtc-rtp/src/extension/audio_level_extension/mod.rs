@@ -31,6 +31,12 @@ pub const AUDIO_LEVEL_EXTENSION_SIZE: usize = 1;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// |      ID       |     len=1     |V|    level    |    0 (pad)    |
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///
+/// ## Specifications
+///
+/// * [RFC 6464]
+///
+/// [RFC 6464]: https://tools.ietf.org/html/rfc6464
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct AudioLevelExtension {
     pub level: u8,
