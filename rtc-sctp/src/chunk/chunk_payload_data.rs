@@ -238,7 +238,7 @@ impl Chunk for ChunkPayloadData {
         PAYLOAD_DATA_HEADER_SIZE + self.user_data.len()
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

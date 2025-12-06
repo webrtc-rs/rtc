@@ -125,10 +125,10 @@ impl Packet for StatisticsSummaryReportBlock {
         XR_HEADER_LENGTH + SSR_REPORT_BLOCK_LENGTH as usize
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other
             .as_any()
             .downcast_ref::<StatisticsSummaryReportBlock>()

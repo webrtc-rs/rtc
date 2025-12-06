@@ -23,8 +23,8 @@ pub trait Packet: Marshal + Unmarshal + fmt::Display + fmt::Debug {
     fn header(&self) -> Header;
     fn destination_ssrc(&self) -> Vec<u32>;
     fn raw_size(&self) -> usize;
-    fn as_any(&self) -> &(dyn Any);
-    fn equal(&self, other: &(dyn Packet)) -> bool;
+    fn as_any(&self) -> &dyn Any;
+    fn equal(&self, other: &dyn Packet) -> bool;
     fn cloned(&self) -> Box<dyn Packet>;
 }
 

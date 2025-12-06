@@ -55,7 +55,7 @@ pub trait Depacketizer {
 //TODO: SystemTime vs Instant?
 // non-monotonic clock vs monotonically non-decreasing clock
 /// FnTimeGen provides current SystemTime
-pub type FnTimeGen = Arc<dyn (Fn() -> SystemTime)>;
+pub type FnTimeGen = Arc<dyn Fn() -> SystemTime>;
 
 #[derive(Clone)]
 pub(crate) struct PacketizerImpl {

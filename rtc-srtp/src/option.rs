@@ -1,6 +1,6 @@
 use shared::replay_detector::*;
 
-pub type ContextOption = Box<dyn (Fn() -> Box<dyn ReplayDetector>)>;
+pub type ContextOption = Box<dyn Fn() -> Box<dyn ReplayDetector>>;
 
 pub(crate) const MAX_SEQUENCE_NUMBER: u16 = 65535;
 pub(crate) const MAX_SRTCP_INDEX: usize = 0x7FFFFFFF;

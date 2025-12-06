@@ -59,7 +59,7 @@ impl Chunk for ChunkCookieEcho {
         self.cookie.len()
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

@@ -52,7 +52,7 @@ impl Chunk for ChunkShutdownComplete {
         0
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

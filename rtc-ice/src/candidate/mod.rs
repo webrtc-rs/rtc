@@ -39,8 +39,9 @@ pub(crate) const COMPONENT_RTP: u16 = 1;
 pub(crate) const COMPONENT_RTCP: u16 = 0;
 
 /// Represents the type of candidate `CandidateType` enum.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum CandidateType {
+    #[default]
     #[serde(rename = "unspecified")]
     Unspecified,
     #[serde(rename = "host")]
@@ -64,12 +65,6 @@ impl fmt::Display for CandidateType {
             CandidateType::Unspecified => "Unknown candidate type",
         };
         write!(f, "{s}")
-    }
-}
-
-impl Default for CandidateType {
-    fn default() -> Self {
-        Self::Unspecified
     }
 }
 

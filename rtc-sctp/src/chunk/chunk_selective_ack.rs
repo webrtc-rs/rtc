@@ -157,7 +157,7 @@ impl Chunk for ChunkSelectiveAck {
         SELECTIVE_ACK_HEADER_SIZE + self.gap_ack_blocks.len() * 4 + self.duplicate_tsn.len() * 4
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

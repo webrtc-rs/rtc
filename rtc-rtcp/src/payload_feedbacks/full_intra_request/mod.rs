@@ -63,11 +63,11 @@ impl Packet for FullIntraRequest {
         HEADER_LENGTH + FIR_OFFSET + self.fir.len() * 8
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<FullIntraRequest>() == Some(self)
     }
 

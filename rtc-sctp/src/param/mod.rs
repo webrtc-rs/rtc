@@ -38,7 +38,7 @@ pub(crate) trait Param: fmt::Display + fmt::Debug {
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize>;
     fn value_length(&self) -> usize;
     fn clone_to(&self) -> Box<dyn Param>;
-    fn as_any(&self) -> &(dyn Any);
+    fn as_any(&self) -> &dyn Any;
 
     fn marshal(&self) -> Result<Bytes> {
         let capacity = PARAM_HEADER_LENGTH + self.value_length();

@@ -54,11 +54,11 @@ impl Packet for RapidResynchronizationRequest {
         HEADER_LENGTH + RRR_HEADER_LENGTH
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other
             .as_any()
             .downcast_ref::<RapidResynchronizationRequest>()

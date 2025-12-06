@@ -90,7 +90,7 @@ impl Chunk for ChunkHeartbeat {
         })
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

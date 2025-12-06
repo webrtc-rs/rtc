@@ -73,10 +73,10 @@ impl Packet for DLRRReportBlock {
         XR_HEADER_LENGTH + self.reports.len() * 4 * 3
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<DLRRReportBlock>() == Some(self)
     }
     fn cloned(&self) -> Box<dyn Packet> {

@@ -123,7 +123,7 @@ impl Chunk for ChunkReconfig {
         l
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

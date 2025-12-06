@@ -82,10 +82,10 @@ impl Packet for VoIPMetricsReportBlock {
         XR_HEADER_LENGTH + VM_REPORT_BLOCK_LENGTH as usize
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<VoIPMetricsReportBlock>() == Some(self)
     }
     fn cloned(&self) -> Box<dyn Packet> {

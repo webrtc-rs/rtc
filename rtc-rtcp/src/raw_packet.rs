@@ -35,11 +35,11 @@ impl Packet for RawPacket {
         self.0.len()
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<RawPacket>() == Some(self)
     }
 

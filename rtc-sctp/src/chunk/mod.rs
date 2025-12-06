@@ -33,7 +33,7 @@ pub(crate) trait Chunk: fmt::Display + fmt::Debug {
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize>;
     fn check(&self) -> Result<()>;
     fn value_length(&self) -> usize;
-    fn as_any(&self) -> &(dyn Any);
+    fn as_any(&self) -> &dyn Any;
 
     fn marshal(&self) -> Result<Bytes> {
         let capacity = CHUNK_HEADER_SIZE + self.value_length();

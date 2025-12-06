@@ -55,11 +55,11 @@ impl Packet for Goodbye {
         HEADER_LENGTH + srcs_length + reason_length
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<Goodbye>() == Some(self)
     }
 

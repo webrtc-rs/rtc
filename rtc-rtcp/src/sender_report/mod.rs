@@ -108,11 +108,11 @@ impl Packet for SenderReport {
         HEADER_LENGTH + SR_HEADER_LENGTH + reps_length + self.profile_extensions.len()
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<SenderReport>() == Some(self)
     }
 

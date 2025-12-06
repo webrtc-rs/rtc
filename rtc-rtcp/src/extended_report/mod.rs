@@ -193,11 +193,11 @@ impl Packet for ExtendedReport {
         HEADER_LENGTH + SSRC_LENGTH + reps_length
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<ExtendedReport>() == Some(self)
     }
 

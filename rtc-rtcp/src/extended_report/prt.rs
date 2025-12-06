@@ -64,10 +64,10 @@ impl Packet for PacketReceiptTimesReportBlock {
         XR_HEADER_LENGTH + PRT_REPORT_BLOCK_MIN_LENGTH as usize + self.receipt_time.len() * 4
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other
             .as_any()
             .downcast_ref::<PacketReceiptTimesReportBlock>()
@@ -120,7 +120,7 @@ impl Unmarshal for PacketReceiptTimesReportBlock {
         let xr_header = XRHeader::unmarshal(raw_packet)?;
         let block_length = xr_header.block_length * 4;
         if block_length < PRT_REPORT_BLOCK_MIN_LENGTH
-            || (block_length - PRT_REPORT_BLOCK_MIN_LENGTH) % 4 != 0
+            || !(block_length - PRT_REPORT_BLOCK_MIN_LENGTH).is_multiple_of(4)
             || raw_packet.remaining() < block_length as usize
         {
             return Err(Error::PacketTooShort);

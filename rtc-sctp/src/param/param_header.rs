@@ -57,7 +57,7 @@ impl Param for ParamHeader {
         Box::new(self.clone())
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

@@ -89,7 +89,7 @@ impl Chunk for ChunkError {
             .fold(0, |length, ec| length + ec.length())
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

@@ -37,10 +37,10 @@ impl Packet for UnknownReportBlock {
         XR_HEADER_LENGTH + self.bytes.len()
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<UnknownReportBlock>() == Some(self)
     }
     fn cloned(&self) -> Box<dyn Packet> {

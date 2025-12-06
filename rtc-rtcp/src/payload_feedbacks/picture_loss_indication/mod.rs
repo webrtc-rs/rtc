@@ -52,11 +52,11 @@ impl Packet for PictureLossIndication {
         HEADER_LENGTH + SSRC_LENGTH * 2
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<PictureLossIndication>() == Some(self)
     }
 

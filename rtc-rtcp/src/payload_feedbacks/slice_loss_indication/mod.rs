@@ -67,11 +67,11 @@ impl Packet for SliceLossIndication {
         HEADER_LENGTH + SLI_OFFSET + self.sli_entries.len() * 4
     }
 
-    fn as_any(&self) -> &(dyn Any) {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn equal(&self, other: &(dyn Packet)) -> bool {
+    fn equal(&self, other: &dyn Packet) -> bool {
         other.as_any().downcast_ref::<SliceLossIndication>() == Some(self)
     }
 
