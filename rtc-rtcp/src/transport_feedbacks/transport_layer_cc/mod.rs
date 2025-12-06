@@ -37,8 +37,14 @@ use std::fmt;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// |           recv delta          |  recv delta   | zero padding  |
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-/// for packet status chunk
+// for packet status chunk
 /// type of packet status chunk
+///
+/// ## Specifications
+///
+/// * [draft-holmer-rmcat-transport-wide-cc-extensions-01, page 5]
+///
+/// [draft-holmer-rmcat-transport-wide-cc-extensions-01, page 5]: https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 #[repr(u16)]
 pub enum StatusChunkTypeTcc {
@@ -202,7 +208,7 @@ impl Unmarshal for RunLengthChunk {
     }
 }
 
-/// StatusVectorChunk T=typeStatusVecotrChunk
+/// StatusVectorChunk T=typeStatusVectorChunk
 /// 0                   1
 /// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+

@@ -12,7 +12,12 @@ use std::any::Any;
 use std::fmt;
 
 /// ReceiverEstimatedMaximumBitrate contains the receiver's estimated maximum bitrate.
-/// see: https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03
+///
+/// ## Specifications
+///
+/// * [draft-alvestrand-rmcat-remb-03]
+///
+/// [draft-alvestrand-rmcat-remb-03]: https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct ReceiverEstimatedMaximumBitrate {
     /// SSRC of sender
