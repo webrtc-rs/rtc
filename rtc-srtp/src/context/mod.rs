@@ -5,29 +5,32 @@ mod srtcp_test;
 #[cfg(test)]
 mod srtp_test;
 
-use crate::{
-    cipher::cipher_aead_aes_gcm::*, cipher::cipher_aes_cm_hmac_sha1::*, cipher::*, option::*,
-    protection_profile::*,
-};
-use shared::{
-    error::{Error, Result},
-    replay_detector::*,
-};
-
 use std::collections::HashMap;
+
+use aes::Aes128;
+use aes::Aes256;
+use shared::replay_detector::*;
+
+use crate::cipher::cipher_aead_aes_gcm::*;
+use crate::cipher::cipher_aes_cm_hmac_sha1::*;
+use crate::cipher::*;
+use crate::option::*;
+use crate::protection_profile::*;
+use shared::error::{Error, Result};
 
 pub mod srtcp;
 pub mod srtp;
 
-const MAX_ROC_DISORDER: u16 = 100;
+const MAX_ROC: u32 = u32::MAX;
+const SEQ_NUM_MEDIAN: u16 = 1 << 15;
+const SEQ_NUM_MAX: u16 = u16::MAX;
 
 /// Encrypt/Decrypt state for a single SRTP SSRC
 #[derive(Default)]
 pub(crate) struct SrtpSsrcState {
     ssrc: u32,
-    rollover_counter: u32,
+    index: u64,
     rollover_has_processed: bool,
-    last_sequence_number: u16,
     replay_detector: Option<Box<dyn ReplayDetector>>,
 }
 
@@ -40,61 +43,49 @@ pub(crate) struct SrtcpSsrcState {
 }
 
 impl SrtpSsrcState {
-    pub fn next_rollover_count(&self, sequence_number: u16) -> u32 {
-        let mut roc = self.rollover_counter;
+    pub fn next_rollover_count(&self, sequence_number: u16) -> (u32, i32, bool) {
+        let local_roc = (self.index >> 16) as u32;
+        let local_seq = self.index as u16;
 
-        if !self.rollover_has_processed {
-        } else if sequence_number == 0 {
-            // We exactly hit the rollover count
+        let mut guess_roc = local_roc;
 
-            // Only update rolloverCounter if lastSequenceNumber is greater then MAX_ROCDISORDER
-            // otherwise we already incremented for disorder
-            if self.last_sequence_number > MAX_ROC_DISORDER {
-                roc += 1;
+        let diff = if self.rollover_has_processed {
+            let seq = (sequence_number as i32).wrapping_sub(local_seq as i32);
+            // When local_roc is equal to 0, and entering seq-local_seq > SEQ_NUM_MEDIAN
+            // judgment, it will cause guess_roc calculation error
+            if self.index > SEQ_NUM_MEDIAN as _ {
+                if local_seq < SEQ_NUM_MEDIAN {
+                    if seq > SEQ_NUM_MEDIAN as i32 {
+                        guess_roc = local_roc.wrapping_sub(1);
+                        seq.wrapping_sub(SEQ_NUM_MAX as i32 + 1)
+                    } else {
+                        seq
+                    }
+                } else if local_seq - SEQ_NUM_MEDIAN > sequence_number {
+                    guess_roc = local_roc.wrapping_add(1);
+                    seq.wrapping_add(SEQ_NUM_MAX as i32 + 1)
+                } else {
+                    seq
+                }
+            } else {
+                // local_roc is equal to 0
+                seq
             }
-        } else if self.last_sequence_number < MAX_ROC_DISORDER
-            && sequence_number > (MAX_SEQUENCE_NUMBER - MAX_ROC_DISORDER)
-        {
-            // Our last sequence number incremented because we crossed 0, but then our current number was within MAX_ROCDISORDER of the max
-            // So we fell behind, drop to account for jitter
-            roc -= 1;
-        } else if sequence_number < MAX_ROC_DISORDER
-            && self.last_sequence_number > (MAX_SEQUENCE_NUMBER - MAX_ROC_DISORDER)
-        {
-            // our current is within a MAX_ROCDISORDER of 0
-            // and our last sequence number was a high sequence number, increment to account for jitter
-            roc += 1;
-        }
+        } else {
+            0i32
+        };
 
-        roc
+        (guess_roc, diff, (guess_roc == 0 && local_roc == MAX_ROC))
     }
 
     /// https://tools.ietf.org/html/rfc3550#appendix-A.1
-    pub fn update_rollover_count(&mut self, sequence_number: u16) {
+    pub fn update_rollover_count(&mut self, sequence_number: u16, diff: i32) {
         if !self.rollover_has_processed {
+            self.index |= sequence_number as u64;
             self.rollover_has_processed = true;
-        } else if sequence_number == 0 {
-            // We exactly hit the rollover count
-
-            // Only update rolloverCounter if lastSequenceNumber is greater then MAX_ROCDISORDER
-            // otherwise we already incremented for disorder
-            if self.last_sequence_number > MAX_ROC_DISORDER {
-                self.rollover_counter += 1;
-            }
-        } else if self.last_sequence_number < MAX_ROC_DISORDER
-            && sequence_number > (MAX_SEQUENCE_NUMBER - MAX_ROC_DISORDER)
-        {
-            // Our last sequence number incremented because we crossed 0, but then our current number was within MAX_ROCDISORDER of the max
-            // So we fell behind, drop to account for jitter
-            self.rollover_counter -= 1;
-        } else if sequence_number < MAX_ROC_DISORDER
-            && self.last_sequence_number > (MAX_SEQUENCE_NUMBER - MAX_ROC_DISORDER)
-        {
-            // our current is within a MAX_ROCDISORDER of 0
-            // and our last sequence number was a high sequence number, increment to account for jitter
-            self.rollover_counter += 1;
+        } else {
+            self.index = self.index.wrapping_add(diff as _);
         }
-        self.last_sequence_number = sequence_number;
     }
 }
 
@@ -134,9 +125,17 @@ impl Context {
                 Box::new(CipherAesCmHmacSha1::new(profile, master_key, master_salt)?)
             }
 
-            ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => {
-                Box::new(CipherAeadAesGcm::new(profile, master_key, master_salt)?)
-            }
+            ProtectionProfile::AeadAes128Gcm => Box::new(CipherAeadAesGcm::<Aes128>::new(
+                profile,
+                master_key,
+                master_salt,
+            )?),
+
+            ProtectionProfile::AeadAes256Gcm => Box::new(CipherAeadAesGcm::<Aes256>::new(
+                profile,
+                master_key,
+                master_salt,
+            )?),
         };
 
         let srtp_ctx_opt = if let Some(ctx_opt) = srtp_ctx_opt {
@@ -160,37 +159,37 @@ impl Context {
         })
     }
 
-    fn get_srtp_ssrc_state(&mut self, ssrc: u32) -> Option<&mut SrtpSsrcState> {
+    fn get_srtp_ssrc_state(&mut self, ssrc: u32) -> &mut SrtpSsrcState {
         let s = SrtpSsrcState {
             ssrc,
             replay_detector: Some((self.new_srtp_replay_detector)()),
             ..Default::default()
         };
 
-        self.srtp_ssrc_states.entry(ssrc).or_insert(s);
-        self.srtp_ssrc_states.get_mut(&ssrc)
+        self.srtp_ssrc_states.entry(ssrc).or_insert(s)
     }
 
-    fn get_srtcp_ssrc_state(&mut self, ssrc: u32) -> Option<&mut SrtcpSsrcState> {
+    fn get_srtcp_ssrc_state(&mut self, ssrc: u32) -> &mut SrtcpSsrcState {
         let s = SrtcpSsrcState {
             ssrc,
             replay_detector: Some((self.new_srtcp_replay_detector)()),
             ..Default::default()
         };
-        self.srtcp_ssrc_states.entry(ssrc).or_insert(s);
-        self.srtcp_ssrc_states.get_mut(&ssrc)
+        self.srtcp_ssrc_states.entry(ssrc).or_insert(s)
     }
 
     /// roc returns SRTP rollover counter value of specified SSRC.
     fn get_roc(&self, ssrc: u32) -> Option<u32> {
-        self.srtp_ssrc_states.get(&ssrc).map(|s| s.rollover_counter)
+        self.srtp_ssrc_states
+            .get(&ssrc)
+            .map(|s| (s.index >> 16) as _)
     }
 
     /// set_roc sets SRTP rollover counter value of specified SSRC.
     fn set_roc(&mut self, ssrc: u32, roc: u32) {
-        if let Some(s) = self.get_srtp_ssrc_state(ssrc) {
-            s.rollover_counter = roc;
-        }
+        let state = self.get_srtp_ssrc_state(ssrc);
+        state.index = (roc as u64) << 16;
+        state.rollover_has_processed = false;
     }
 
     /// index returns SRTCP index value of specified SSRC.
@@ -200,8 +199,6 @@ impl Context {
 
     /// set_index sets SRTCP index value of specified SSRC.
     fn set_index(&mut self, ssrc: u32, index: usize) {
-        if let Some(s) = self.get_srtcp_ssrc_state(ssrc) {
-            s.srtcp_index = index;
-        }
+        self.get_srtcp_ssrc_state(ssrc).srtcp_index = index % (MAX_SRTCP_INDEX + 1);
     }
 }

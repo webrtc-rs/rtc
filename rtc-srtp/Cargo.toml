@@ -9,6 +9,10 @@ documentation = "https://docs.rs/rtc-srtp"
 homepage = "https://ortc.rs"
 repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-srtp"
 
+[features]
+openssl = ["dep:openssl"]
+vendored-openssl = ["openssl/vendored"]
+
 [dependencies]
 shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
 rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
@@ -23,6 +27,7 @@ aes = "0.8.4"
 subtle = "2.5.0"
 aead = { version = "0.5.2", features = ["std"] }
 aes-gcm = { version = "0.10.3", features = ["std"] }
+openssl = { version = "0.10.72", optional = true }
 
 [dev-dependencies]
 lazy_static = "1.4.0"

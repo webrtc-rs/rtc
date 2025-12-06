@@ -1,6 +1,6 @@
 use super::*;
 use shared::{
-    error::Result,
+    error::{Error, Result},
     marshal::{MarshalSize, Unmarshal},
 };
 
@@ -12,32 +12,29 @@ impl Context {
         encrypted: &[u8],
         header: &rtp::header::Header,
     ) -> Result<BytesMut> {
-        let roc;
-        {
-            if let Some(state) = self.get_srtp_ssrc_state(header.ssrc) {
-                if let Some(replay_detector) = &mut state.replay_detector {
-                    if !replay_detector.check(header.sequence_number as u64) {
-                        return Err(Error::SrtpSsrcDuplicated(
-                            header.ssrc,
-                            header.sequence_number,
-                        ));
-                    }
-                }
+        let auth_tag_len = self.cipher.rtp_auth_tag_len();
+        if encrypted.len() < header.marshal_size() + auth_tag_len {
+            return Err(Error::ErrTooShortRtp);
+        }
 
-                roc = state.next_rollover_count(header.sequence_number);
-            } else {
-                return Err(Error::SsrcMissingFromSrtp(header.ssrc));
+        let state = self.get_srtp_ssrc_state(header.ssrc);
+        let (roc, diff, _) = state.next_rollover_count(header.sequence_number);
+        if let Some(replay_detector) = &mut state.replay_detector {
+            if !replay_detector.check(header.sequence_number as u64) {
+                return Err(Error::SrtpSsrcDuplicated(
+                    header.ssrc,
+                    header.sequence_number,
+                ));
             }
         }
 
         let dst = self.cipher.decrypt_rtp(encrypted, header, roc)?;
         {
-            if let Some(state) = self.get_srtp_ssrc_state(header.ssrc) {
-                if let Some(replay_detector) = &mut state.replay_detector {
-                    replay_detector.accept();
-                }
-                state.update_rollover_count(header.sequence_number);
+            let state = self.get_srtp_ssrc_state(header.ssrc);
+            if let Some(replay_detector) = &mut state.replay_detector {
+                replay_detector.accept();
             }
+            state.update_rollover_count(header.sequence_number, diff);
         }
 
         Ok(dst)
@@ -55,24 +52,21 @@ impl Context {
         plaintext: &[u8],
         header: &rtp::header::Header,
     ) -> Result<BytesMut> {
-        let roc;
-        {
-            if let Some(state) = self.get_srtp_ssrc_state(header.ssrc) {
-                roc = state.next_rollover_count(header.sequence_number);
-            } else {
-                return Err(Error::SsrcMissingFromSrtp(header.ssrc));
-            }
+        let (roc, diff, ovf) = self
+            .get_srtp_ssrc_state(header.ssrc)
+            .next_rollover_count(header.sequence_number);
+        if ovf {
+            // ... when 2^48 SRTP packets or 2^31 SRTCP packets have been secured with the same key
+            // (whichever occurs before), the key management MUST be called to provide new master key(s)
+            // (previously stored and used keys MUST NOT be used again), or the session MUST be terminated.
+            // https://www.rfc-editor.org/rfc/rfc3711#section-9.2
+            return Err(Error::ErrExceededMaxPackets);
         }
 
-        let dst = self
-            .cipher
-            .encrypt_rtp(&plaintext[header.marshal_size()..], header, roc)?;
+        let dst = self.cipher.encrypt_rtp(plaintext, header, roc)?;
 
-        {
-            if let Some(state) = self.get_srtp_ssrc_state(header.ssrc) {
-                state.update_rollover_count(header.sequence_number);
-            }
-        }
+        self.get_srtp_ssrc_state(header.ssrc)
+            .update_rollover_count(header.sequence_number, diff);
 
         Ok(dst)
     }

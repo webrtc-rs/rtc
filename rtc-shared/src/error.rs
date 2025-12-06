@@ -296,7 +296,9 @@ pub enum Error {
     ErrNoConn,
     #[error("failed to verify auth tag")]
     ErrFailedToVerifyAuthTag,
-    #[error("packet is too short to be rtcp packet")]
+    #[error("packet is too short to be RTP packet")]
+    ErrTooShortRtp,
+    #[error("packet is too short to be RTCP packet")]
     ErrTooShortRtcp,
     #[error("payload differs")]
     ErrPayloadDiffers,
@@ -310,9 +312,17 @@ pub enum Error {
     ErrStreamAlreadyInited,
     #[error("failed to cast child")]
     ErrFailedTypeAssertion,
+    #[error("exceeded the maximum number of packets")]
+    ErrExceededMaxPackets,
 
     #[error("index_over_kdr > 0 is not supported yet")]
     UnsupportedIndexOverKdr,
+    #[error("invalid master key length for aes_256_cm")]
+    InvalidMasterKeyLength,
+    #[error("invalid master salt length for aes_256_cm")]
+    InvalidMasterSaltLength,
+    #[error("out_len > 32 is not supported for aes_256_cm")]
+    UnsupportedOutLength,
     #[error("SRTP Master Key must be len {0}, got {1}")]
     SrtpMasterKeyLength(usize, usize),
     #[error("SRTP Salt must be len {0}, got {1}")]
@@ -339,6 +349,8 @@ pub enum Error {
     SrtcpTooSmall(usize, usize),
     #[error("failed to verify rtp auth tag")]
     RtpFailedToVerifyAuthTag,
+    #[error("too short auth tag: only {0} bytes, expected > {1} bytes")]
+    RtcpInvalidLengthAuthTag(usize, usize),
     #[error("failed to verify rtcp auth tag")]
     RtcpFailedToVerifyAuthTag,
     #[error("SessionSRTP has been closed")]

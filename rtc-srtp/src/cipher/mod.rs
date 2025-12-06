@@ -27,6 +27,7 @@ use shared::error::Result;
 ///>                                    aeadAuthTagLen=16
 ///
 ///See https://tools.ietf.org/html/rfc7714 for the full specifications.
+///
 /// Cipher represents a implementation of one
 /// of the SRTP Specific ciphers.
 pub(crate) trait Cipher {
