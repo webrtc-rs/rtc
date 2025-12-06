@@ -22,9 +22,7 @@ use crate::Payload;
 use shared::{EcnCodepoint, TransportContext, TransportMessage, TransportProtocol};
 
 use bytes::Bytes;
-use fxhash::FxHashMap;
 use log::{debug, trace};
-use rand::{rngs::StdRng, SeedableRng};
 use slab::Slab;
 use thiserror::Error;
 
@@ -36,7 +34,6 @@ use thiserror::Error;
 pub struct Endpoint {
     local_addr: SocketAddr,
     transport_protocol: TransportProtocol,
-    rng: StdRng,
     /// Identifies associations based on the INIT Dst AID the peer utilized
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
@@ -44,7 +41,7 @@ pub struct Endpoint {
     /// Identifies associations based on locally created CIDs
     ///
     /// Uses a cheaper hash function since keys are locally created
-    association_ids: FxHashMap<AssociationId, AssociationHandle>,
+    association_ids: HashMap<AssociationId, AssociationHandle>,
 
     associations: Slab<AssociationMeta>,
     local_cid_generator: Box<dyn AssociationIdGenerator>,
@@ -59,7 +56,6 @@ pub struct Endpoint {
 impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
-            .field("rng", &self.rng)
             .field("association_ids_initial", &self.association_ids_init)
             .field("association_ids", &self.association_ids)
             .field("associations", &self.associations)
@@ -83,9 +79,8 @@ impl Endpoint {
         Self {
             local_addr,
             transport_protocol,
-            rng: StdRng::from_entropy(),
             association_ids_init: HashMap::default(),
-            association_ids: FxHashMap::default(),
+            association_ids: HashMap::default(),
             associations: Slab::new(),
             local_cid_generator: (endpoint_config.aid_generator_factory.as_ref())(),
             reject_new_associations: false,
@@ -319,7 +314,7 @@ pub(crate) struct AssociationMeta {
     init_cid: AssociationId,
     /// Number of local association IDs.
     cids_issued: u64,
-    loc_cids: FxHashMap<u64, AssociationId>,
+    loc_cids: HashMap<u64, AssociationId>,
     /// Remote address the association began with
     ///
     /// Only needed to support associations with zero-length AIDs, which cannot migrate, so we don't

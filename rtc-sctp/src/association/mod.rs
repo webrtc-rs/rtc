@@ -34,7 +34,6 @@ use timer::{RtoManager, Timer, TimerTable, ACK_INTERVAL};
 
 use crate::association::stream::RecvSendState;
 use bytes::Bytes;
-use fxhash::FxHashMap;
 use log::{debug, error, trace, warn};
 use rand::random;
 use std::collections::{HashMap, VecDeque};
@@ -141,8 +140,8 @@ pub struct Association {
 
     // Reconfig
     my_next_rsn: u32,
-    reconfigs: FxHashMap<u32, ChunkReconfig>,
-    reconfig_requests: FxHashMap<u32, ParamOutgoingResetRequest>,
+    reconfigs: HashMap<u32, ChunkReconfig>,
+    reconfig_requests: HashMap<u32, ParamOutgoingResetRequest>,
 
     // Non-RFC internal data
     remote_addr: SocketAddr,
@@ -186,7 +185,7 @@ pub struct Association {
     // Chunks stored for retransmission
     stored_init: Option<ChunkInit>,
     stored_cookie_echo: Option<ChunkCookieEcho>,
-    pub(crate) streams: FxHashMap<StreamId, StreamState>,
+    pub(crate) streams: HashMap<StreamId, StreamState>,
 
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
@@ -230,8 +229,8 @@ impl Default for Association {
 
             // Reconfig
             my_next_rsn: 0,
-            reconfigs: FxHashMap::default(),
-            reconfig_requests: FxHashMap::default(),
+            reconfigs: HashMap::default(),
+            reconfig_requests: HashMap::default(),
 
             // Non-RFC internal data
             remote_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
@@ -275,7 +274,7 @@ impl Default for Association {
             // Chunks stored for retransmission
             stored_init: None,
             stored_cookie_echo: None,
-            streams: FxHashMap::default(),
+            streams: HashMap::default(),
 
             events: VecDeque::default(),
             endpoint_events: VecDeque::default(),
@@ -2501,7 +2500,7 @@ impl Association {
         now: Instant,
         use_forward_tsn: bool,
         side: Side,
-        streams: &FxHashMap<u16, StreamState>,
+        streams: &HashMap<u16, StreamState>,
     ) {
         if !use_forward_tsn {
             return;
