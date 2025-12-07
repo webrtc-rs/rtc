@@ -6,13 +6,16 @@ use rcgen::{CertificateParams, KeyPair};
 use ring::rand::SystemRandom;
 use ring::rsa;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::math_rand_alpha;
 //TODO:use crate::stats::stats_collector::StatsCollector;
 //TODO:use crate::stats::{CertificateStats, StatsReportType};
 use shared::error::{Error, Result};
+
+pub(crate) mod dtls_fingerprint;
+
+use dtls_fingerprint::RTCDtlsFingerprint;
 
 /// Certificate represents a X.509 certificate used to authenticate WebRTC communications.
 ///
@@ -219,27 +222,6 @@ impl RTCCertificate {
             );
         }
     }*/
-}
-
-/// DTLSFingerprint specifies the hash function algorithm and certificate
-/// fingerprint as described in [RFC 4572].
-///
-/// ## Specifications
-///
-/// * [W3C]
-///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcdtlsfingerprint
-/// [RFC 4572]: https://tools.ietf.org/html/rfc4572
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct RTCDtlsFingerprint {
-    /// Algorithm specifies one of the the hash function algorithms defined in
-    /// the 'Hash function Textual Names' registry.
-    pub algorithm: String,
-
-    /// Value specifies the value of the certificate fingerprint in lowercase
-    /// hex string as expressed utilizing the syntax of 'fingerprint' in
-    /// <https://tools.ietf.org/html/rfc4572#section-5>.
-    pub value: String,
 }
 
 fn gen_stats_id() -> String {
