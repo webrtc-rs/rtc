@@ -3,6 +3,8 @@ use sctp::ReliabilityType;
 use shared::TransportContext;
 use std::time::Instant;
 
+pub type Mid = String;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelMessageType {
     None,
@@ -34,7 +36,7 @@ pub struct DataChannelMessage {
     pub(crate) payload: BytesMut,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ApplicationMessage {
     pub(crate) association_handle: usize,
     pub(crate) stream_id: u16,
@@ -42,34 +44,34 @@ pub struct ApplicationMessage {
 }
 
 #[derive(Debug)]
-pub enum STUNMessageEvent {
+pub enum STUNMessage {
     Raw(BytesMut),
     Stun(stun::message::Message),
 }
 
 #[derive(Debug)]
-pub enum DTLSMessageEvent {
+pub enum DTLSMessage {
     Raw(BytesMut),
     Sctp(DataChannelMessage),
     DataChannel(ApplicationMessage),
 }
 
 #[derive(Debug)]
-pub enum RTPMessageEvent {
+pub enum RTPMessage {
     Raw(BytesMut),
     Rtp(rtp::packet::Packet),
     Rtcp(Vec<Box<dyn rtcp::packet::Packet>>),
 }
 
 #[derive(Debug)]
-pub enum MessageEvent {
-    Stun(STUNMessageEvent),
-    Dtls(DTLSMessageEvent),
-    Rtp(RTPMessageEvent),
+pub enum RTCMessage {
+    Stun(STUNMessage),
+    Dtls(DTLSMessage),
+    Rtp(RTPMessage),
 }
 
-pub struct TaggedMessageEvent {
+pub struct TaggedRTCMessage {
     pub now: Instant,
     pub transport: TransportContext,
-    pub message: MessageEvent,
+    pub message: RTCMessage,
 }

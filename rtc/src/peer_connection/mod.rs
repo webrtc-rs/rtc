@@ -2,6 +2,8 @@ pub(crate) mod certificate;
 pub(crate) mod configuration;
 pub(crate) mod event;
 pub(crate) mod ice;
+pub(crate) mod message;
+pub(crate) mod proto;
 pub(crate) mod sdp;
 pub(crate) mod state;
 
@@ -18,6 +20,7 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use std::collections::VecDeque;
 
 use crate::peer_connection::ice::ice_candidate::RTCIceCandidateInit;
+use crate::peer_connection::proto::PeerConnectionInternal;
 use shared::error::Result;
 
 /// PeerConnection represents a WebRTC connection that establishes a
@@ -25,6 +28,9 @@ use shared::error::Result;
 /// browser, or to another endpoint implementing the required protocols.
 #[derive(Default, Clone)]
 pub struct RTCPeerConnection {
+    //////////////////////////////////////////////////
+    // PeerConnection WebRTC Spec Interface Definition
+    //////////////////////////////////////////////////
     configuration: RTCConfiguration,
 
     local_description: Option<RTCSessionDescription>,
@@ -41,6 +47,11 @@ pub struct RTCPeerConnection {
     can_trickle_ice_candidates: bool,
 
     events: VecDeque<RTCPeerConnectionEvent>,
+
+    //////////////////////////////////////////////////
+    // PeerConnection Internal State Machine
+    //////////////////////////////////////////////////
+    internal: PeerConnectionInternal,
 }
 
 impl RTCPeerConnection {
