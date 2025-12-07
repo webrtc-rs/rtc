@@ -23,7 +23,6 @@ sha2 = "0.10"
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
 url = { version = "2", features = [] }
 hex = { version = "0.4", features = [] }
-opentelemetry = { version = "0.22.0", features = ["metrics"] }
 
 datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
 dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }

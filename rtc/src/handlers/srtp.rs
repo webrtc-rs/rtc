@@ -10,7 +10,6 @@ use shared::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
 pub struct SrtpHandler {
@@ -54,12 +53,8 @@ impl Handler for SrtpHandler {
                             return Err(Error::Other("empty rtcp_packets".to_string()));
                         }
 
-                        server_states.metrics().record_rtcp_packet_in_count(1, &[]);
                         Ok(MessageEvent::Rtp(RTPMessageEvent::Rtcp(rtcp_packets)))
                     } else {
-                        server_states
-                            .metrics()
-                            .record_remote_srtp_context_not_set_count(1, &[]);
                         Err(Error::Other(format!(
                             "remote_srtp_context is not set yet for four_tuple {:?}",
                             four_tuple
@@ -71,12 +66,8 @@ impl Handler for SrtpHandler {
                         let mut decrypted = context.decrypt_rtp(&message)?;
                         let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
 
-                        server_states.metrics().record_rtp_packet_in_count(1, &[]);
                         Ok(MessageEvent::Rtp(RTPMessageEvent::Rtp(rtp_packet)))
                     } else {
-                        server_states
-                            .metrics()
-                            .record_remote_srtp_context_not_set_count(1, &[]);
                         Err(Error::Other(format!(
                             "remote_srtp_context is not set yet for four_tuple {:?}",
                             four_tuple
@@ -122,19 +113,8 @@ impl Handler for SrtpHandler {
                             let mut local_context = transport.local_srtp_context();
                             if let Some(context) = local_context.as_mut() {
                                 let packet = rtcp::packet::marshal(&rtcp_packets)?;
-                                let rtcp_packet = context.encrypt_rtcp(&packet);
-
-                                server_states.metrics().record_rtcp_packet_out_count(1, &[]);
-                                server_states.metrics().record_rtcp_packet_processing_time(
-                                    Instant::now().duration_since(msg.now).as_micros() as u64,
-                                    &[],
-                                );
-                                rtcp_packet
+                                context.encrypt_rtcp(&packet)
                             } else {
-                                server_states
-                                    .metrics()
-                                    .record_local_srtp_context_not_set_count(1, &[]);
-
                                 Err(Error::Other(format!(
                                     "local_srtp_context is not set yet for four_tuple {:?}",
                                     four_tuple
@@ -145,19 +125,8 @@ impl Handler for SrtpHandler {
                             let mut local_context = transport.local_srtp_context();
                             if let Some(context) = local_context.as_mut() {
                                 let packet = rtp_message.marshal()?;
-                                let rtp_packet = context.encrypt_rtp(&packet);
-
-                                server_states.metrics().record_rtp_packet_out_count(1, &[]);
-                                server_states.metrics().record_rtp_packet_processing_time(
-                                    Instant::now().duration_since(msg.now).as_micros() as u64,
-                                    &[],
-                                );
-                                rtp_packet
+                                context.encrypt_rtp(&packet)
                             } else {
-                                server_states
-                                    .metrics()
-                                    .record_local_srtp_context_not_set_count(1, &[]);
-
                                 Err(Error::Other(format!(
                                     "local_srtp_context is not set yet for four_tuple {:?}",
                                     four_tuple

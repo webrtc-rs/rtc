@@ -7,7 +7,6 @@ pub(crate) mod endpoint;
 pub(crate) mod handlers;
 pub(crate) mod interceptors;
 pub(crate) mod messages;
-pub(crate) mod metrics;
 pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod types;

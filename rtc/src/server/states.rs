@@ -6,11 +6,9 @@ use crate::endpoint::{
     transport::Transport,
     Endpoint,
 };
-use crate::metrics::Metrics;
 use crate::session::Session;
 use crate::types::{EndpointId, FourTuple, SessionId, UserName};
 use log::{debug, info};
-use opentelemetry::metrics::Meter;
 use shared::error::{Error, Result};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -23,7 +21,6 @@ use std::time::Instant;
 pub struct ServerStates {
     server_config: Arc<ServerConfig>,
     local_addr: SocketAddr,
-    metrics: Metrics,
 
     sessions: HashMap<SessionId, Session>,
     endpoints: HashMap<FourTuple, (SessionId, EndpointId)>,
@@ -32,11 +29,7 @@ pub struct ServerStates {
 
 impl ServerStates {
     /// create new server states
-    pub fn new(
-        server_config: Arc<ServerConfig>,
-        local_addr: SocketAddr,
-        meter: Meter,
-    ) -> Result<Self> {
+    pub fn new(server_config: Arc<ServerConfig>, local_addr: SocketAddr) -> Result<Self> {
         let _ = server_config
             .certificates
             .first()
@@ -48,7 +41,6 @@ impl ServerStates {
         Ok(Self {
             server_config,
             local_addr,
-            metrics: Metrics::new(meter),
             sessions: HashMap::new(),
             endpoints: HashMap::new(),
             candidates: HashMap::new(),
@@ -113,10 +105,6 @@ impl ServerStates {
         }
 
         Ok(answer)
-    }
-
-    pub(crate) fn metrics(&self) -> &Metrics {
-        &self.metrics
     }
 
     pub(crate) fn accept_answer(
