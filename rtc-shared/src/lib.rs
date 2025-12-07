@@ -16,5 +16,6 @@ pub mod util;
 pub use sansio::{Context, Handler, InboundPipeline, OutboundPipeline, Pipeline, Protocol};
 
 pub use sansio_transport::{
-    EcnCodepoint, FiveTuple, FourTuple, TransportContext, TransportMessage, TransportProtocol,
+    EcnCodepoint, FiveTuple, FourTuple, TaggedBytesMut, TransportContext, TransportMessage,
+    TransportProtocol,
 };

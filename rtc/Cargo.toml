@@ -11,6 +11,20 @@ repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc"
 readme = "../README.md"
 
 [dependencies]
+bytes = "1.5"
+log = "0.4"
+base64 = "0.22"
+serde = "1"
+serde_json = { version = "1", features = [] }
+rand = "0.8"
+rcgen = { version = "0.12", features = ["pem", "x509-parser"] }
+ring = "0.17"
+sha2 = "0.10"
+rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
+url = { version = "2", features = [] }
+hex = { version = "0.4", features = [] }
+opentelemetry = { version = "0.22.0", features = ["metrics"] }
+
 datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
 dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }
 ice = { version = "0.2.0", path = "../rtc-ice", package = "rtc-ice" }
@@ -25,27 +39,3 @@ shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", de
 srtp = { version = "0.2.0", path = "../rtc-srtp", package = "rtc-srtp" }
 stun = { version = "0.2.0", path = "../rtc-stun", package = "rtc-stun" }
 turn = { version = "0.1.0", path = "../rtc-turn", package = "rtc-turn" }
-
-log = "0.4.27"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-rand = "0.9.1"
-bytes = "1.10.1"
-regex = "1.11.1"
-url = "2.5.4"
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
-rcgen = { version = "0.12.1", features = ["pem", "x509-parser"] }
-ring = "0.17.14"
-sha2 = "0.10.9"
-hex = "0.4.3"
-pem = { version = "3.0.5", optional = true }
-cfg-if = "1.0.0"
-lazy_static = "1.5.0"
-base64 = "0.22.1"
-thiserror = "2.0.12"
-
-[dev-dependencies]
-env_logger = "0.11.8"
-
-[features]
-pem = ["dep:pem", "dtls/pem"]
