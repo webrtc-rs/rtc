@@ -5,7 +5,7 @@ pub mod rtcp_mux_policy;
 pub mod sdp_semantics;
 
 use crate::peer_connection::certificate::RTCCertificate;
-use crate::peer_connection::ice::ice_server::RTCIceServer;
+use crate::transport::ice::server::RTCIceServer;
 use bundle_policy::RTCBundlePolicy;
 use ice_transport_policy::RTCIceTransportPolicy;
 use rtcp_mux_policy::RTCRtcpMuxPolicy;

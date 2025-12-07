@@ -1,3 +1,3 @@
-pub(crate) mod dtls_transport;
-pub(crate) mod ice_transport;
-pub(crate) mod sctp_transport;
+pub(crate) mod dtls;
+pub(crate) mod ice;
+pub(crate) mod sctp;

@@ -19,8 +19,10 @@ use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use std::collections::VecDeque;
 
-use crate::peer_connection::ice::ice_candidate::RTCIceCandidateInit;
+use crate::data_channel::init::RTCDataChannelInit;
+use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::proto::PeerConnectionInternal;
+use crate::transport::ice::candidate::RTCIceCandidateInit;
 use shared::error::Result;
 
 /// PeerConnection represents a WebRTC connection that establishes a
@@ -116,8 +118,14 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    /// close ends the PeerConnection
-    pub fn close(&mut self) -> Result<()> {
-        Ok(())
+    /// create_data_channel creates a new DataChannel object with the given label
+    /// and optional DataChannelInit used to configure properties of the
+    /// underlying channel such as data reliability.
+    pub fn create_data_channel(
+        &mut self,
+        _label: &str,
+        _options: Option<RTCDataChannelInit>,
+    ) -> Result<RTCDataChannelId> {
+        Ok(RTCDataChannelId)
     }
 }

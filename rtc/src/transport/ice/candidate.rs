@@ -7,8 +7,8 @@ use ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use ice::candidate::{Candidate, CandidateConfig};
 use serde::{Deserialize, Serialize};
 
-use super::ice_candidate_type::RTCIceCandidateType;
-use super::ice_protocol::RTCIceProtocol;
+use super::candidate_type::RTCIceCandidateType;
+use super::protocol::RTCIceProtocol;
 use shared::error::{Error, Result};
 
 /// ICECandidate represents a ice candidate

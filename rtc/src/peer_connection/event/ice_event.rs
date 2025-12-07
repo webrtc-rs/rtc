@@ -1,4 +1,4 @@
-use crate::peer_connection::ice::ice_candidate::RTCIceCandidate;
+use crate::transport::ice::candidate::RTCIceCandidate;
 
 #[derive(Default, Clone)]
 pub struct RTCPeerConnectionIceEvent {

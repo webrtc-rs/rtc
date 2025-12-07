@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::ice_candidate::*;
+use super::candidate::*;
 
 /// ICECandidatePair represents an ICE Candidate pair
 ///
