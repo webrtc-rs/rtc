@@ -1,4 +1,4 @@
-use crate::configs::server_config::ServerConfig;
+use crate::config::server_config::ServerConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 

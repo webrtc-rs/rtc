@@ -4,7 +4,7 @@ pub(crate) mod rtp_transceiver;
 pub(crate) mod rtp_transceiver_direction;
 pub(crate) mod sdp_type;
 
-use crate::configs::session_config::SessionConfig;
+use crate::config::session_config::SessionConfig;
 use crate::description::{
     rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTCRtpHeaderExtensionParameters},
     rtp_transceiver::{

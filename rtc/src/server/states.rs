@@ -1,5 +1,5 @@
-use crate::configs::server_config::ServerConfig;
-use crate::configs::session_config::SessionConfig;
+use crate::config::server_config::ServerConfig;
+use crate::config::session_config::SessionConfig;
 use crate::description::RTCSessionDescription;
 use crate::endpoint::{
     candidate::{Candidate, ConnectionCredentials},

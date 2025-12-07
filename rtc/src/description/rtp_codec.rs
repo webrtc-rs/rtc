@@ -1,4 +1,4 @@
-use crate::configs::media_config::*;
+use crate::config::media_config::*;
 use crate::description::{
     fmtp,
     rtp_transceiver::{PayloadType, RTCPFeedback},
