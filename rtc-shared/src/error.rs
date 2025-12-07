@@ -1457,8 +1457,8 @@ pub enum Error {
     ErrSettingEngineSetAnsweringDTLSRole,
     #[error("can't rollback from stable state")]
     ErrSignalingStateCannotRollback,
-    #[error("invalid proposed signaling state transition")]
-    ErrSignalingStateProposedTransitionInvalid,
+    #[error("invalid proposed signaling state transition: {0}")]
+    ErrSignalingStateProposedTransitionInvalid(String),
     #[error("cannot convert to StatsICECandidatePairStateSucceeded invalid ice candidate state")]
     ErrStatsICECandidateStateInvalid,
     #[error("ICETransport can only be called in ICETransportStateNew")]

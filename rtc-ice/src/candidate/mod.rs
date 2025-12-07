@@ -18,7 +18,7 @@ pub mod candidate_server_reflexive;
 use crate::network_type::NetworkType;
 use crate::tcp_type::TcpType;
 use crc::{Crc, CRC_32_ISCSI};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shared::error::*;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
@@ -39,7 +39,7 @@ pub(crate) const COMPONENT_RTP: u16 = 1;
 pub(crate) const COMPONENT_RTCP: u16 = 0;
 
 /// Represents the type of candidate `CandidateType` enum.
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CandidateType {
     #[default]
     #[serde(rename = "unspecified")]

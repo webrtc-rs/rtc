@@ -21,7 +21,7 @@ substring = "1.4.5"
 bytes = "1.5.0"
 aes-gcm = { version = "0.10.3", features = ["std"] }
 url = "2.5.0"
-rcgen = "0.12.1"
+rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
 sec1 = { version = "0.7.3", features = ["std"] }
 p256 = { version = "0.13.2", features = ["default", "ecdh", "ecdsa"] }
 aes = "0.8.4"

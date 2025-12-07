@@ -9,6 +9,6 @@ shared = { path = "../../../rtc-shared", package = "rtc-shared", default-feature
 dtls = { package = "dtls", path = "../../" }
 
 tokio = { version = "1", features = ["full"] }
-rcgen = { version = "0.10", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
 rustls = "0.19"
 thiserror = "1"

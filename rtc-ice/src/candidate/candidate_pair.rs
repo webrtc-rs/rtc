@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Represent the ICE candidate pair state.
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CandidatePairState {
     #[default]
     #[serde(rename = "unspecified")]
