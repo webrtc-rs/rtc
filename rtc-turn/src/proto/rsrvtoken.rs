@@ -10,9 +10,9 @@ use stun::message::*;
 ///
 /// The `RESERVATION-TOKEN` attribute contains a token that uniquely
 /// identifies a relayed transport address being held in reserve by the
-/// server. The server includes this attribute in a success response to
+/// state. The state includes this attribute in a success response to
 /// tell the client about the token, and the client includes this
-/// attribute in a subsequent Allocate request to request the server use
+/// attribute in a subsequent Allocate request to request the state use
 /// that relayed transport address for the allocation.
 ///
 /// [RFC 5766 Section 14.9](https://www.rfc-editor.org/rfc/rfc5766#section-14.9).

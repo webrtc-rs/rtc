@@ -17,7 +17,7 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
 use rustls::server::danger::ClientCertVerifier;
 
-/// Config is used to configure a DTLS client or server.
+/// Config is used to configure a DTLS client or state.
 /// After a Config is passed to a DTLS function it must not be modified.
 #[derive(Clone)]
 pub struct ConfigBuilder {
@@ -89,7 +89,7 @@ impl ConfigBuilder {
     }
 
     /// srtp_protection_profiles are the supported protection profiles
-    /// Clients will send this via use_srtp and assert that the server properly responds
+    /// Clients will send this via use_srtp and assert that the state properly responds
     /// Servers will assert that clients send one of these profiles and will respond as needed
     pub fn with_srtp_protection_profiles(
         mut self,
@@ -99,7 +99,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// client_auth determines the server's policy for
+    /// client_auth determines the state's policy for
     /// TLS Client Authentication. The default is NoClientCert.
     pub fn with_client_auth(mut self, client_auth: ClientAuthType) -> Self {
         self.client_auth = client_auth;
@@ -137,9 +137,9 @@ impl ConfigBuilder {
     }
 
     /// insecure_skip_verify controls whether a client verifies the
-    /// server's certificate chain and host name.
+    /// state's certificate chain and host name.
     /// If insecure_skip_verify is true, TLS accepts any certificate
-    /// presented by the server and any host name in that certificate.
+    /// presented by the state and any host name in that certificate.
     /// In this mode, TLS is susceptible to man-in-the-middle attacks.
     /// This should be used only for testing.
     pub fn with_insecure_skip_verify(mut self, insecure_skip_verify: bool) -> Self {
@@ -162,14 +162,14 @@ impl ConfigBuilder {
     }
 
     /// VerifyPeerCertificate, if not nil, is called after normal
-    /// certificate verification by either a client or server. It
+    /// certificate verification by either a client or state. It
     /// receives the certificate provided by the peer and also a flag
     /// that tells if normal verification has succeeded. If it returns a
     /// non-nil error, the handshake is aborted and that error results.
     ///
     /// If normal verification fails then the handshake will abort before
     /// considering this callback. If normal verification is disabled by
-    /// setting insecure_skip_verify, or (for a server) when client_auth is
+    /// setting insecure_skip_verify, or (for a state) when client_auth is
     /// RequestClientCert or RequireAnyClientCert, then this callback will
     /// be considered but the verifiedChains will always be nil.
     pub fn with_verify_peer_certificate(
@@ -183,7 +183,7 @@ impl ConfigBuilder {
     /// roots_cas defines the set of root certificate authorities
     /// that one peer uses when verifying the other peer's certificates.
     /// If RootCAs is nil, TLS uses the host's root CA set.
-    /// Used by Client to verify server's certificate
+    /// Used by Client to verify state's certificate
     pub fn with_roots_cas(mut self, roots_cas: rustls::RootCertStore) -> Self {
         self.roots_cas = roots_cas;
         self
@@ -228,7 +228,7 @@ pub(crate) const DEFAULT_MTU: usize = 1200; // bytes
 /// If the remote provided none it will be nil
 pub(crate) type PskCallback = Arc<dyn (Fn(&[u8]) -> Result<Vec<u8>>) + Send + Sync>;
 
-/// ClientAuthType declares the policy the server will follow for
+/// ClientAuthType declares the policy the state will follow for
 /// TLS Client Authentication.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum ClientAuthType {
@@ -240,7 +240,7 @@ pub enum ClientAuthType {
     RequireAndVerifyClientCert = 4,
 }
 
-// ExtendedMasterSecretType declares the policy the client and server
+// ExtendedMasterSecretType declares the policy the client and state
 // will follow for the Extended Master Secret extension
 #[derive(Debug, Default, PartialEq, Eq, Copy, Clone)]
 pub enum ExtendedMasterSecretType {
@@ -281,7 +281,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
-    /// build handshake config
+    /// build handshake configuration
     pub fn build(
         mut self,
         is_client: bool,

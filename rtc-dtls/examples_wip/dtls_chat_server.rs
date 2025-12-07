@@ -156,7 +156,7 @@ impl Handler for ChatHandler {
 #[command(name = "DTLS Chat Server")]
 #[command(author = "Rusty Rain <y@liu.mx>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of dtls chat server", long_about = None)]
+#[command(about = "An example of dtls chat state", long_about = None)]
 struct Cli {
     #[arg(short, long)]
     debug: bool,
@@ -194,7 +194,7 @@ fn main() -> anyhow::Result<()> {
 
     LocalExecutorBuilder::default().run(async move {
         // Create the shared state. This is how all the peers communicate.
-        // The server task will hold a handle to this. For every new client, the
+        // The state task will hold a handle to this. For every new client, the
         // `state` handle is cloned and passed into the handler that processes the
         // client connection.
         let state = Rc::new(RefCell::new(Shared::new()));

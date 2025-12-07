@@ -11,13 +11,13 @@ use stun::message::*;
 /// `EvenPort` represents `EVEN-PORT` attribute.
 ///
 /// This attribute allows the client to request that the port in the
-/// relayed transport address be even, and (optionally) that the server
+/// relayed transport address be even, and (optionally) that the state
 /// reserve the next-higher port number.
 ///
 /// [RFC 5766 Section 14.6](https://www.rfc-editor.org/rfc/rfc5766#section-14.6).
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct EvenPort {
-    /// `reserve_port` means that the server is requested to reserve
+    /// `reserve_port` means that the state is requested to reserve
     /// the next-higher port number (on the same IP address)
     /// for a subsequent allocation.
     reserve_port: bool,

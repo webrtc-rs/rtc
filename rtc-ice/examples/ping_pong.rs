@@ -139,14 +139,14 @@ async fn main() -> Result<(), Error> {
         let server = Server::bind(&addr).serve(service);
         tokio::select! {
             _ = done_http_server.changed() => {
-                println!("receive cancel http server!");
+                println!("receive cancel http state!");
             }
             result = server => {
-                // Run this server for... forever!
+                // Run this state for... forever!
                 if let Err(e) = result {
-                    eprintln!("server error: {e}");
+                    eprintln!("state error: {e}");
                 }
-                println!("exit http server!");
+                println!("exit http state!");
             }
         };
     });

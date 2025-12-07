@@ -115,7 +115,7 @@ impl Default for EndpointConfig {
 }
 
 impl EndpointConfig {
-    /// Create a default config
+    /// Create a default configuration
     pub fn new() -> Self {
         let aid_factory: fn() -> Box<dyn AssociationIdGenerator + Send> =
             || Box::<RandomAssociationIdGenerator>::default();
@@ -198,7 +198,7 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    /// Create a default config with a particular handshake token key
+    /// Create a default configuration with a particular handshake token key
     pub fn new() -> Self {
         ServerConfig::default()
     }
@@ -222,7 +222,7 @@ impl Default for ClientConfig {
 }
 
 impl ClientConfig {
-    /// Create a default config with a particular cryptographic config
+    /// Create a default configuration with a particular cryptographic configuration
     pub fn new() -> Self {
         ClientConfig::default()
     }

@@ -1,24 +1,24 @@
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 
-pub(crate) mod config;
+pub(crate) mod configuration;
 pub(crate) mod description;
 pub(crate) mod endpoint;
-pub(crate) mod handlers;
-pub(crate) mod interceptors;
+pub(crate) mod handler;
+pub(crate) mod interceptor;
 pub(crate) mod messages;
-pub(crate) mod server;
 pub(crate) mod session;
+pub(crate) mod state;
 pub(crate) mod types;
 
-pub use config::{
+pub use configuration::{
     client_config::ClientConfig, media_config::MediaConfig, server_config::ServerConfig,
 };
 
 pub use description::RTCSessionDescription;
-pub use handlers::{
+pub use handler::{
     datachannel::DataChannelHandler, demuxer::DemuxerHandler, dtls::DtlsHandler,
     exception::ExceptionHandler, gateway::GatewayHandler, interceptor::InterceptorHandler,
     sctp::SctpHandler, srtp::SrtpHandler, stun::StunHandler,
 };
-pub use server::{certificate::RTCCertificate, states::ServerStates};
+pub use state::{certificate::RTCCertificate, server_states::ServerStates};

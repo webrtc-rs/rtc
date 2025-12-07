@@ -46,12 +46,12 @@ pub trait Interceptor {
     }
 }
 
-/// InterceptorBuilder provides an interface for constructing interceptors
+/// InterceptorBuilder provides an interface for constructing interceptor
 pub trait InterceptorBuilder {
     fn build(&self, id: &str) -> Box<dyn Interceptor>;
 }
 
-/// Registry is a collector for interceptors.
+/// Registry is a collector for interceptor.
 #[derive(Default)]
 pub struct Registry {
     builders: Vec<Box<dyn InterceptorBuilder + Send + Sync>>,
@@ -77,7 +77,7 @@ impl Registry {
     }
 }
 
-/// NoOp is an Interceptor that does not modify any packets. It can be embedded in other interceptors, so it's
+/// NoOp is an Interceptor that does not modify any packets. It can be embedded in other interceptor, so it's
 /// possible to implement only a subset of the methods.
 struct NoOp;
 

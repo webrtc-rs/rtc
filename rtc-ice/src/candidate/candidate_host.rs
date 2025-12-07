@@ -1,7 +1,7 @@
 use super::*;
 use crate::rand::generate_cand_id;
 
-/// The config required to create a new `CandidateHost`.
+/// The configuration required to create a new `CandidateHost`.
 #[derive(Default)]
 pub struct CandidateHostConfig {
     pub base_config: CandidateConfig,

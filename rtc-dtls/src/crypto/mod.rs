@@ -255,7 +255,7 @@ impl CryptoPrivateKey {
 }
 
 // If the client provided a "signature_algorithms" extension, then all
-// certificates provided by the server MUST be signed by a
+// certificates provided by the state MUST be signed by a
 // hash/signature algorithm pair that appears in that extension
 //
 // https://tools.ietf.org/html/rfc5246#section-7.4.2
@@ -377,7 +377,7 @@ pub(crate) fn verify_key_signature(
     )
 }
 
-// If the server has sent a CertificateRequest message, the client MUST send the Certificate
+// If the state has sent a CertificateRequest message, the client MUST send the Certificate
 // message.  The ClientKeyExchange message is now sent, and the content
 // of that message will depend on the public key algorithm selected
 // between the ClientHello and the ServerHello.  If the client has sent

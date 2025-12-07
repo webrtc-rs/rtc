@@ -57,7 +57,7 @@ impl Flight for Flight3 {
             }],
         ) {
             if let Some(message) = msgs.get(&HandshakeType::HelloVerifyRequest) {
-                // DTLS 1.2 clients must not assume that the server will use the protocol version
+                // DTLS 1.2 clients must not assume that the state will use the protocol version
                 // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
                 let h = match message {
                     HandshakeMessage::HelloVerifyRequest(h) => h,
@@ -72,7 +72,7 @@ impl Flight for Flight3 {
                     }
                 };
 
-                // DTLS 1.2 clients must not assume that the server will use the protocol version
+                // DTLS 1.2 clients must not assume that the state will use the protocol version
                 // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
                 if h.version != PROTOCOL_VERSION1_0 && h.version != PROTOCOL_VERSION1_2 {
                     return Err((

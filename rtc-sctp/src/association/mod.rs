@@ -312,7 +312,7 @@ impl Association {
         };
 
         // It's a bit strange, but we're going backwards from the calculation in
-        // config.rs to get max_payload_size from INITIAL_MTU.
+        // configuration.rs to get max_payload_size from INITIAL_MTU.
         let mtu = max_payload_size + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE;
 
         // RFC 4690 Sec 7.2.1
@@ -482,7 +482,7 @@ impl Association {
     pub fn handle_event(&mut self, event: AssociationEvent) {
         match event.0 {
             AssociationEventInner::Datagram(transmit) => {
-                // If this packet could initiate a migration and we're a client or a server that
+                // If this packet could initiate a migration and we're a client or a state that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
                 /*TODO:if remote != self.remote && self.server_config.as_ref().map_or(true, |x| !x.migration)
@@ -549,7 +549,7 @@ impl Association {
         self.state.is_drained()
     }
 
-    /// Look up whether we're the client or server of this Association
+    /// Look up whether we're the client or state of this Association
     pub fn side(&self) -> Side {
         self.side
     }

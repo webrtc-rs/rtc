@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::messages::{DTLSMessageEvent, MessageEvent, TaggedMessageEvent};
-use crate::server::states::ServerStates;
+use crate::state::server_states::ServerStates;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;

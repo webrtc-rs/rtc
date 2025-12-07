@@ -1,5 +1,5 @@
 use crate::description::{RTCSessionDescription, UNSPECIFIED_STR};
-use crate::server::certificate::RTCDtlsFingerprint;
+use crate::state::certificate::RTCDtlsFingerprint;
 use crate::types::{EndpointId, SessionId, UserName};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -18,7 +18,7 @@ pub enum DTLSRole {
 
     /// DTLSRoleAuto defines the DTLS role is determined based on
     /// the resolved ICE role: the ICE controlled role acts as the DTLS
-    /// client and the ICE controlling role acts as the DTLS server.
+    /// client and the ICE controlling role acts as the DTLS state.
     #[serde(rename = "auto")]
     Auto = 1,
 
@@ -26,8 +26,8 @@ pub enum DTLSRole {
     #[serde(rename = "client")]
     Client = 2,
 
-    /// DTLSRoleServer defines the DTLS server role.
-    #[serde(rename = "server")]
+    /// DTLSRoleServer defines the DTLS state role.
+    #[serde(rename = "state")]
     Server = 3,
 }
 
@@ -50,7 +50,7 @@ impl fmt::Display for DTLSRole {
         match *self {
             DTLSRole::Auto => write!(f, "auto"),
             DTLSRole::Client => write!(f, "client"),
-            DTLSRole::Server => write!(f, "server"),
+            DTLSRole::Server => write!(f, "state"),
             _ => write!(f, "{}", UNSPECIFIED_STR),
         }
     }

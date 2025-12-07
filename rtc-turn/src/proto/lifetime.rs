@@ -16,7 +16,7 @@ pub const DEFAULT_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 /// `Lifetime` represents `LIFETIME` attribute.
 ///
-/// The `LIFETIME` attribute represents the duration for which the server
+/// The `LIFETIME` attribute represents the duration for which the state
 /// will maintain an allocation in the absence of a refresh. The value
 /// portion of this attribute is 4-bytes long and consists of a 32-bit
 /// unsigned integral value representing the number of seconds remaining

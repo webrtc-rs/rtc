@@ -13,9 +13,9 @@ use crate::description::{
 //TODO: use crate::stats::stats_collector::StatsCollector;
 //use crate::stats::CodecStats;
 //use crate::stats::StatsReportType::Codec;
-use crate::interceptors::report::receiver_report::ReceiverReport;
-use crate::interceptors::report::sender_report::SenderReport;
-use crate::interceptors::Registry;
+use crate::interceptor::report::receiver_report::ReceiverReport;
+use crate::interceptor::report::sender_report::SenderReport;
+use crate::interceptor::Registry;
 use sdp::description::session::SessionDescription;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
@@ -334,9 +334,9 @@ impl MediaConfig {
         Ok(())
     }
 
-    /// register_default_interceptors will register some useful interceptors.
-    /// If you want to customize which interceptors are loaded, you should copy the
-    /// code from this method and remove unwanted interceptors.
+    /// register_default_interceptors will register some useful interceptor.
+    /// If you want to customize which interceptor are loaded, you should copy the
+    /// code from this method and remove unwanted interceptor.
     pub fn register_default_interceptors(&mut self) -> Result<()> {
         self.configure_rtcp_reports();
 

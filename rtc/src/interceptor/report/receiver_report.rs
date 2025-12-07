@@ -1,6 +1,6 @@
-use crate::interceptors::report::receiver_stream::ReceiverStream;
-use crate::interceptors::report::ReportBuilder;
-use crate::interceptors::{Interceptor, InterceptorEvent};
+use crate::interceptor::report::receiver_stream::ReceiverStream;
+use crate::interceptor::report::ReportBuilder;
+use crate::interceptor::{Interceptor, InterceptorEvent};
 use crate::messages::{MessageEvent, RTPMessageEvent, TaggedMessageEvent};
 use crate::types::FourTuple;
 use shared::{TransportContext, TransportProtocol};

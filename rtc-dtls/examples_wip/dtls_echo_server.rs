@@ -91,7 +91,7 @@ impl Handler for EchoHandler {
 #[command(name = "DTLS Echo Server")]
 #[command(author = "Rusty Rain <y@liu.mx>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of dtls echo server", long_about = None)]
+#[command(about = "An example of dtls echo state", long_about = None)]
 struct Cli {
     #[arg(short, long)]
     debug: bool,

@@ -2,7 +2,7 @@ use crate::messages::{
     DTLSMessageEvent, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType,
     MessageEvent, TaggedMessageEvent,
 };
-use crate::server::states::ServerStates;
+use crate::state::server_states::ServerStates;
 use bytes::BytesMut;
 use log::{debug, error};
 use sctp::{

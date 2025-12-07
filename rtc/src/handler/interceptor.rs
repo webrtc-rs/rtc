@@ -1,4 +1,4 @@
-use crate::interceptors::InterceptorEvent;
+use crate::interceptor::InterceptorEvent;
 use crate::messages::{MessageEvent, RTPMessageEvent, TaggedMessageEvent};
 use crate::types::FourTuple;
 use crate::ServerStates;

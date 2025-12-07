@@ -14,7 +14,7 @@ use std::fmt;
 use std::io::{BufReader, BufWriter};
 
 /*
-The server will send this message in response to a ClientHello
+The state will send this message in response to a ClientHello
 message when it was able to find an acceptable set of algorithms.
 If it cannot find such a match, it will respond with a handshake
 failure alert.

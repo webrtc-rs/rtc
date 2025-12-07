@@ -1,5 +1,5 @@
-use crate::interceptors::report::ReportBuilder;
-use crate::interceptors::{Interceptor, InterceptorEvent};
+use crate::interceptor::report::ReportBuilder;
+use crate::interceptor::{Interceptor, InterceptorEvent};
 use crate::messages::{MessageEvent, RTPMessageEvent, TaggedMessageEvent};
 use rtcp::header::PacketType;
 

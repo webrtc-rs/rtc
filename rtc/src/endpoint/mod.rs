@@ -3,7 +3,7 @@ pub(crate) mod transport;
 
 use crate::description::{rtp_transceiver::RTCRtpTransceiver, RTCSessionDescription};
 use crate::endpoint::transport::Transport;
-use crate::interceptors::Interceptor;
+use crate::interceptor::Interceptor;
 use crate::types::{EndpointId, FourTuple, Mid};
 use std::collections::HashMap;
 

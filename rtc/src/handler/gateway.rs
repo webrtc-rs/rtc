@@ -7,7 +7,7 @@ use crate::messages::{
     ApplicationMessage, DTLSMessageEvent, DataChannelEvent, MessageEvent, RTPMessageEvent,
     STUNMessageEvent, TaggedMessageEvent,
 };
-use crate::server::states::ServerStates;
+use crate::state::server_states::ServerStates;
 use bytes::BytesMut;
 use log::{debug, info, trace, warn};
 use shared::error::{Error, Result};

@@ -1,5 +1,5 @@
-use crate::config::server_config::ServerConfig;
-use crate::config::session_config::SessionConfig;
+use crate::configuration::server_config::ServerConfig;
+use crate::configuration::session_config::SessionConfig;
 use crate::description::RTCSessionDescription;
 use crate::endpoint::{
     candidate::{Candidate, ConnectionCredentials},
@@ -28,7 +28,7 @@ pub struct ServerStates {
 }
 
 impl ServerStates {
-    /// create new server states
+    /// create new state states
     pub fn new(server_config: Arc<ServerConfig>, local_addr: SocketAddr) -> Result<Self> {
         let _ = server_config
             .certificates

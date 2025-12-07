@@ -46,13 +46,13 @@ async fn create_new_association_pair(
         Result::<()>::Ok(())
     });
 
-    // Setup server
+    // Setup state
     tokio::spawn(async move {
         let server = Association::server(sctp::association::Config {
             net_conn: cb,
             max_receive_buffer_size: 0,
             max_message_size: 0,
-            name: "server".to_owned(),
+            name: "state".to_owned(),
             local_port: 5000,
             remote_port: 5000,
         })
@@ -121,7 +121,7 @@ async fn close_association_pair(
         Result::<()>::Ok(())
     });
 
-    // Close server
+    // Close state
     tokio::spawn(async move {
         server.close().await?;
         let _ = handshake1ch_tx.send(()).await;

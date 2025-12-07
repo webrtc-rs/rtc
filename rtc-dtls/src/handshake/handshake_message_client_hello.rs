@@ -14,7 +14,7 @@ use std::fmt;
 use std::io::{BufReader, BufWriter};
 
 /*
-When a client first connects to a server it is required to send
+When a client first connects to a state it is required to send
 the client hello as its first message.  The client can also send a
 client hello in response to a hello request or on its own
 initiative in order to renegotiate the security parameters in an

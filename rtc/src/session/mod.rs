@@ -6,7 +6,7 @@ use shared::TransportContext;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::config::session_config::SessionConfig;
+use crate::configuration::session_config::SessionConfig;
 use crate::description::{
     codecs_from_media_description, get_cname, get_mid_value, get_msid, get_peer_direction,
     get_rids, get_ssrc_groups, get_ssrcs, populate_sdp, rtp_extensions_from_media_description,
@@ -341,7 +341,7 @@ impl Session {
         remote_description: &RTCSessionDescription,
         local_ice_params: &RTCIceParameters,
     ) -> Result<RTCSessionDescription> {
-        let use_identity = false; //TODO: self.config.idp_login_url.is_some();
+        let use_identity = false; //TODO: self.configuration.idp_login_url.is_some();
 
         let mut d = self.generate_matched_sdp(
             endpoint_id,
@@ -372,7 +372,7 @@ impl Session {
         remote_description: &RTCSessionDescription,
         local_ice_params: &RTCIceParameters,
     ) -> Result<RTCSessionDescription> {
-        let use_identity = false; //TODO: self.config.idp_login_url.is_some();
+        let use_identity = false; //TODO: self.configuration.idp_login_url.is_some();
         let mut d = self.generate_matched_sdp(
             endpoint,
             remote_description,

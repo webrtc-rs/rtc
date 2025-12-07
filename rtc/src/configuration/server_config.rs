@@ -1,26 +1,26 @@
-use crate::config::media_config::MediaConfig;
-use crate::server::certificate::RTCCertificate;
+use crate::configuration::media_config::MediaConfig;
+use crate::state::certificate::RTCCertificate;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// ClientConfig provides customized parameters for client usage
-pub struct ClientConfig {
+/// ServerConfig provides customized parameters for SFU state
+pub struct ServerConfig {
     pub(crate) certificates: Vec<RTCCertificate>,
     pub(crate) dtls_handshake_config: Arc<dtls::config::HandshakeConfig>,
     pub(crate) sctp_endpoint_config: Arc<sctp::EndpointConfig>,
-    pub(crate) sctp_client_config: Arc<sctp::ClientConfig>,
+    pub(crate) sctp_server_config: Arc<sctp::ServerConfig>,
     pub(crate) media_config: MediaConfig,
     pub(crate) idle_timeout: Duration,
 }
 
-impl ClientConfig {
-    /// create new client config
+impl ServerConfig {
+    /// create new state configuration
     pub fn new(certificates: Vec<RTCCertificate>) -> Self {
         Self {
             certificates,
             media_config: MediaConfig::default(),
             sctp_endpoint_config: Arc::new(sctp::EndpointConfig::default()),
-            sctp_client_config: Arc::new(sctp::ClientConfig::default()),
+            sctp_server_config: Arc::new(sctp::ServerConfig::default()),
             dtls_handshake_config: Arc::new(dtls::config::HandshakeConfig::default()),
             idle_timeout: Duration::from_secs(30),
         }
@@ -32,9 +32,9 @@ impl ClientConfig {
         self
     }
 
-    /// build with provided sctp::ClientConfig
-    pub fn with_sctp_client_config(mut self, sctp_client_config: Arc<sctp::ClientConfig>) -> Self {
-        self.sctp_client_config = sctp_client_config;
+    /// build with provided sctp::ServerConfig
+    pub fn with_sctp_server_config(mut self, sctp_server_config: Arc<sctp::ServerConfig>) -> Self {
+        self.sctp_server_config = sctp_server_config;
         self
     }
 
@@ -47,7 +47,7 @@ impl ClientConfig {
         self
     }
 
-    /// build with provided dtls::config::HandshakeConfig
+    /// build with provided dtls::configuration::HandshakeConfig
     pub fn with_dtls_handshake_config(
         mut self,
         dtls_handshake_config: Arc<dtls::config::HandshakeConfig>,

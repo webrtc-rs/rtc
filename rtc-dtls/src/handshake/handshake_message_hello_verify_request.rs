@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 
    The HelloVerifyRequest message type is hello_verify_request(3).
 
-   When the client sends its ClientHello message to the server, the server
+   When the client sends its ClientHello message to the state, the state
    MAY respond with a HelloVerifyRequest message.  This message contains
    a stateless cookie generated using the technique of [PHOTURIS].  The
    client MUST retransmit the ClientHello with the cookie added.

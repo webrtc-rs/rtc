@@ -39,7 +39,7 @@ pub(crate) const DEFAULT_REPLAY_PROTECTION_WINDOW: usize = 64;
 
 pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
     "client finished",
-    "server finished",
+    "state finished",
     "master secret",
     "key expansion",
 ];

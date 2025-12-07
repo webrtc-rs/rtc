@@ -86,7 +86,7 @@ fn main() -> Result<()> {
 
     let mut client = Client::new(cfg)?;
 
-    // Allocate a relay socket on the TURN server.
+    // Allocate a relay socket on the TURN state.
     let allocate_tid = client.allocate()?;
     let mut relayed_addr = None;
     let mut create_permission_tid = None;
@@ -235,8 +235,8 @@ fn do_ping_test(pinger: Option<UdpSocket>, relayed_addr: Option<RelayedAddr>) {
 
     // Punch a UDP hole for the relay_conn by sending a data to the mapped_addr.
     // This will trigger a TURN client to generate a permission request to the
-    // TURN server. After this, packets from the IP address will be accepted by
-    // the TURN server.
+    // TURN state. After this, packets from the IP address will be accepted by
+    // the TURN state.
     //println!("relay_conn send hello to mapped_addr {}", mapped_addr);
     /*client
        .relay(relayed_addr)
