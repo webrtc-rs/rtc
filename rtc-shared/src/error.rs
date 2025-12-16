@@ -1389,6 +1389,8 @@ pub enum Error {
     ErrPeerConnRemoteDescriptionWithoutMidValue,
     #[error("remoteDescription has not been set yet")]
     ErrPeerConnRemoteDescriptionNil,
+    #[error("localDescription has not been set yet")]
+    ErrPeerConnLocalDescriptionNil,
     #[error("single media section has an explicit SSRC")]
     ErrPeerConnSingleMediaSectionHasExplicitSSRC,
     #[error("could not add transceiver for remote SSRC")]

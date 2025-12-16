@@ -1,5 +1,3 @@
-use crate::data_channel::RTCDataChannelId;
-
 /// DataChannelConfig can be used to configure properties of the underlying
 /// channel such as data reliability.
 ///
@@ -33,8 +31,5 @@ pub struct RTCDataChannelInit {
     /// corresponding DataChannel. If set to Some(id), it is up to the application
     /// to negotiate the channel and create an DataChannel with the same id
     /// at the other peer.
-    pub negotiated: bool,
-
-    /// id sets the channel ID when negotiated is true. Ignored when negotiated is false.
-    pub id: RTCDataChannelId,
+    pub negotiated: Option<u16>,
 }

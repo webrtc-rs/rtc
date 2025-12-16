@@ -8,7 +8,10 @@ use crate::peer_connection::certificate::RTCCertificate;
 use crate::transport::ice::server::RTCIceServer;
 use bundle_policy::RTCBundlePolicy;
 use ice_transport_policy::RTCIceTransportPolicy;
+use rcgen::KeyPair;
 use rtcp_mux_policy::RTCRtcpMuxPolicy;
+use shared::error::{Error, Result};
+use std::time::SystemTime;
 
 /// A Configuration defines how peer-to-peer communication via PeerConnection
 /// is established or re-established.
@@ -66,7 +69,7 @@ impl RTCConfiguration {
     /// (as defined in https://tools.ietf.org/html/rfc7064) by copying and then
     /// stripping any erroneous queries from "stun(s):" URLs before parsing.
     #[allow(clippy::assigning_clones)]
-    pub(crate) fn get_ice_servers(&self) -> Vec<RTCIceServer> {
+    fn get_ice_servers(&self) -> Vec<RTCIceServer> {
         let mut ice_servers = self.ice_servers.clone();
 
         for ice_server in &mut ice_servers {
@@ -80,6 +83,31 @@ impl RTCConfiguration {
         }
 
         ice_servers
+    }
+
+    pub(crate) fn validate(&mut self) -> Result<()> {
+        let sanitized_ice_servers = self.get_ice_servers();
+        if !sanitized_ice_servers.is_empty() {
+            for server in &sanitized_ice_servers {
+                server.validate()?;
+            }
+        }
+
+        // <https://www.w3.org/TR/webrtc/#constructor> (step #3)
+        if !self.certificates.is_empty() {
+            let now = SystemTime::now();
+            for cert in &self.certificates {
+                cert.expires
+                    .duration_since(now)
+                    .map_err(|_| Error::ErrCertificateExpired)?;
+            }
+        } else {
+            let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+            let cert = RTCCertificate::from_key_pair(kp)?;
+            self.certificates = vec![cert];
+        };
+
+        Ok(())
     }
 }
 

@@ -16,13 +16,13 @@ use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use crate::data_channel::init::RTCDataChannelInit;
-use crate::data_channel::{RTCDataChannel, RTCDataChannelId};
-use crate::peer_connection::proto::PeerConnectionInternal;
+use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
 use crate::transport::ice::candidate::RTCIceCandidateInit;
-use shared::error::Result;
+use shared::error::{Error, Result};
 
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
@@ -52,16 +52,18 @@ pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
-    pub(crate) internal: PeerConnectionInternal,
+    pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
 }
 
 impl RTCPeerConnection {
     /// creates a PeerConnection with RTCConfiguration
-    pub fn new(configuration: RTCConfiguration) -> Self {
-        Self {
+    pub fn new(mut configuration: RTCConfiguration) -> Result<Self> {
+        configuration.validate()?;
+
+        Ok(Self {
             configuration,
             ..Default::default()
-        }
+        })
     }
 
     /// create_offer starts the PeerConnection and generates the localDescription
@@ -146,19 +148,78 @@ impl RTCPeerConnection {
     /// underlying channel such as data reliability.
     pub fn create_data_channel(
         &mut self,
-        _label: &str,
-        _options: Option<RTCDataChannelInit>,
+        label: &str,
+        options: Option<RTCDataChannelInit>,
     ) -> Result<RTCDataChannel<'_>> {
+        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
+        if self.connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        let mut params = DataChannelParameters {
+            label: label.to_owned(),
+            ..Default::default()
+        };
+
+        let mut id = {
+            let mut id = rand::random::<u16>();
+            while self.data_channels.contains_key(&id) {
+                id = rand::random::<u16>();
+            }
+            id
+        };
+
+        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #19)
+        if let Some(options) = options {
+            // Ordered indicates if data is allowed to be delivered out of order. The
+            // default value of true, guarantees that data will be delivered in order.
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #9)
+            params.ordered = options.ordered;
+
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #7)
+            params.max_packet_life_time = Some(options.max_packet_life_time);
+
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #8)
+            params.max_retransmits = Some(options.max_retransmits);
+
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #10)
+            params.protocol = options.protocol;
+
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #11)
+            if params.protocol.len() > 65535 {
+                return Err(Error::ErrProtocolTooLarge);
+            }
+
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #12)
+            params.negotiated = options.negotiated;
+
+            if let Some(negotiated_id) = &params.negotiated {
+                id = *negotiated_id;
+            }
+        }
+
+        let data_channel = RTCDataChannelInternal::new(
+            params,
+            //TODO: &self.configuration.setting_engine,
+        );
+
+        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
+        if data_channel.max_packet_lifetime.is_some() && data_channel.max_retransmits.is_some() {
+            return Err(Error::ErrRetransmitsOrPacketLifeTime);
+        }
+
+        self.data_channels.insert(id, data_channel);
+
         Ok(RTCDataChannel {
-            channel_id: Default::default(),
+            id,
             peer_connection: self,
         })
     }
 
-    pub fn data_channel(&mut self, channel_id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
-        if self.internal.data_channels.contains_key(&channel_id) {
+    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
+        if self.data_channels.contains_key(&id) {
             Some(RTCDataChannel {
-                channel_id,
+                id,
                 peer_connection: self,
             })
         } else {

@@ -101,7 +101,7 @@ async fn run(
         .build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config);
+    let mut peer_connection = RTCPeerConnection::new(config)?;
 
     // Create a datachannel with label 'data'
     let _data_channel = peer_connection.create_data_channel("data", None)?;
@@ -119,6 +119,7 @@ async fn run(
         println!("{b64}");
     } else {
         println!("generate local_description failed!");
+        return Err(Error::ErrPeerConnLocalDescriptionNil.into());
     }
 
     // Wait for the answer to be pasted

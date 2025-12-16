@@ -5,7 +5,9 @@ use shared::error::{Error, Result};
 
 pub mod event;
 pub mod init;
+pub(crate) mod internal;
 pub mod message;
+pub mod parameters;
 pub mod state;
 
 /// Identifier for a data channel within a particular peer connection
@@ -17,19 +19,6 @@ pub enum BinaryType {
     String,
     Blob,
     ArrayBuffer,
-}
-
-#[derive(Default, Clone)]
-pub(crate) struct RTCDataChannelInternal {
-    label: String,
-    ordered: bool,
-    max_packet_lifetime: Option<u16>,
-    max_retransmits: Option<u16>,
-    protocol: String,
-    negotiated: bool,
-    ready_state: RTCDataChannelState,
-    buffered_amount_low_threshold: usize,
-    binary_type: BinaryType,
 }
 
 /// DataChannel represents a WebRTC DataChannel
@@ -44,7 +33,7 @@ pub(crate) struct RTCDataChannelInternal {
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel
 pub struct RTCDataChannel<'a> {
-    pub(crate) channel_id: RTCDataChannelId,
+    pub(crate) id: RTCDataChannelId,
     pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
@@ -53,12 +42,7 @@ impl RTCDataChannel<'_> {
     /// DataChannel object from other DataChannel objects. Scripts are
     /// allowed to create multiple DataChannel objects with the same label.
     pub fn label(&self) -> Result<String> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.label.clone())
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -68,12 +52,7 @@ impl RTCDataChannel<'_> {
     /// Ordered returns true if the DataChannel is ordered, and false if
     /// out-of-order delivery is allowed.
     pub fn ordered(&self) -> Result<bool> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.ordered)
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -83,12 +62,7 @@ impl RTCDataChannel<'_> {
     /// max_packet_lifetime represents the length of the time window (msec) during
     /// which transmissions and retransmissions may occur in unreliable mode.
     pub fn max_packet_lifetime(&self) -> Result<Option<u16>> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.max_packet_lifetime)
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -98,12 +72,7 @@ impl RTCDataChannel<'_> {
     /// max_retransmits represents the maximum number of retransmissions that are
     /// attempted in unreliable mode.
     pub fn max_retransmits(&self) -> Result<Option<u16>> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.max_retransmits)
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -113,12 +82,7 @@ impl RTCDataChannel<'_> {
     /// protocol represents the name of the sub-protocol used with this
     /// DataChannel.
     pub fn protocol(&self) -> Result<String> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.protocol.clone())
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -128,12 +92,7 @@ impl RTCDataChannel<'_> {
     /// negotiated represents whether this DataChannel was negotiated by the
     /// application (true), or not (false).
     pub fn negotiated(&self) -> Result<bool> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.negotiated)
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -147,17 +106,12 @@ impl RTCDataChannel<'_> {
     /// selected by the script or generated. After the ID is set to a non-null
     /// value, it will not change.
     pub fn id(&self) -> RTCDataChannelId {
-        self.channel_id
+        self.id
     }
 
     /// ready_state represents the state of the DataChannel object.
     pub fn ready_state(&self) -> Result<RTCDataChannelState> {
-        if let Some(dc) = self
-            .peer_connection
-            .internal
-            .data_channels
-            .get(&self.channel_id)
-        {
+        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.ready_state)
         } else {
             Err(Error::ErrDataChannelClosed)
