@@ -3,11 +3,11 @@
 
 use rand::{rng, Rng};
 
-pub(crate) mod peer_connection;
+pub mod peer_connection;
 //TODO: pub(crate) mod statistics;
-pub(crate) mod data_channel;
-pub(crate) mod media;
-pub(crate) mod transport;
+pub mod data_channel;
+pub mod media;
+pub mod transport;
 
 pub(crate) const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

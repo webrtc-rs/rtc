@@ -1,7 +1,7 @@
 use crate::transport::dtls::state::RTCDtlsTransportState;
 
-pub(crate) mod fingerprint;
-pub(crate) mod state;
+pub mod fingerprint;
+pub mod state;
 
 /// DTLSTransport allows an application access to information about the DTLS
 /// transport over which RTP and RTCP packets are sent and received by

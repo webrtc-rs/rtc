@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "examples",
     "rtc",
     "rtc-datachannel",
     "rtc-dtls",

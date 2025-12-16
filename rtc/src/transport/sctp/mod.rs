@@ -1,6 +1,6 @@
 use crate::transport::sctp::state::RTCSctpTransportState;
 
-pub(crate) mod state;
+pub mod state;
 
 /// SCTPTransport provides details about the SCTP transport.
 #[derive(Default)]

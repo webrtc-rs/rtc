@@ -13,7 +13,7 @@ pub(crate) enum DataChannelMessageType {
     Text,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DataChannelMessageParams {
     pub(crate) unordered: bool,
     pub(crate) reliability_type: ReliabilityType,
@@ -27,7 +27,7 @@ pub(crate) enum DataChannelEvent {
     Close,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DataChannelMessage {
     pub(crate) association_handle: usize,
     pub(crate) stream_id: u16,
@@ -43,27 +43,27 @@ pub struct ApplicationMessage {
     pub(crate) data_channel_event: DataChannelEvent,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum STUNMessage {
     Raw(BytesMut),
     Stun(stun::message::Message),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DTLSMessage {
     Raw(BytesMut),
     Sctp(DataChannelMessage),
     DataChannel(ApplicationMessage),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RTPMessage {
     Raw(BytesMut),
     Rtp(rtp::packet::Packet),
     Rtcp(Vec<Box<dyn rtcp::packet::Packet>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RTCMessage {
     Stun(STUNMessage),
     Dtls(DTLSMessage),
@@ -75,3 +75,6 @@ pub struct TaggedRTCMessage {
     pub transport: TransportContext,
     pub message: RTCMessage,
 }
+
+#[derive(Debug, Clone)]
+pub enum RTCEvent {}

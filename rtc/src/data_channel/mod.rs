@@ -3,9 +3,10 @@ use crate::peer_connection::RTCPeerConnection;
 use bytes::Bytes;
 use shared::error::{Error, Result};
 
-pub(crate) mod event;
-pub(crate) mod init;
-pub(crate) mod state;
+pub mod event;
+pub mod init;
+pub mod message;
+pub mod state;
 
 /// Identifier for a data channel within a particular peer connection
 pub type RTCDataChannelId = u16;

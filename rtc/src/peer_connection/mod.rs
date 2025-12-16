@@ -1,11 +1,10 @@
-pub(crate) mod certificate;
-pub(crate) mod configuration;
-pub(crate) mod event;
-pub(crate) mod ice;
-pub(crate) mod message;
-pub(crate) mod proto;
-pub(crate) mod sdp;
-pub(crate) mod state;
+pub mod certificate;
+pub mod configuration;
+pub mod event;
+pub mod message;
+pub mod proto;
+pub mod sdp;
+pub mod state;
 
 use crate::peer_connection::configuration::offer_answer_options::{
     RTCAnswerOptions, RTCOfferOptions,
@@ -20,7 +19,7 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use std::collections::VecDeque;
 
 use crate::data_channel::init::RTCDataChannelInit;
-use crate::data_channel::RTCDataChannel;
+use crate::data_channel::{RTCDataChannel, RTCDataChannelId};
 use crate::peer_connection::proto::PeerConnectionInternal;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
 use shared::error::Result;
@@ -87,9 +86,33 @@ impl RTCPeerConnection {
         Ok(())
     }
 
+    /// local_description returns PendingLocalDescription if it is not null and
+    /// otherwise it returns CurrentLocalDescription. This property is used to
+    /// determine if set_local_description has already been called.
+    /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-localdescription>
+    pub fn local_description(&self) -> Option<&RTCSessionDescription> {
+        if self.pending_local_description.is_some() {
+            self.pending_local_description.as_ref()
+        } else {
+            self.current_local_description.as_ref()
+        }
+    }
+
     /// set_remote_description sets the SessionDescription of the remote peer
     pub fn set_remote_description(&mut self, _description: RTCSessionDescription) -> Result<()> {
         Ok(())
+    }
+
+    /// remote_description returns pending_remote_description if it is not null and
+    /// otherwise it returns current_remote_description. This property is used to
+    /// determine if setRemoteDescription has already been called.
+    /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-remotedescription>
+    pub fn remote_description(&self) -> Option<&RTCSessionDescription> {
+        if self.pending_remote_description.is_some() {
+            self.pending_remote_description.as_ref()
+        } else {
+            self.current_remote_description.as_ref()
+        }
     }
 
     /// add_ice_candidate accepts an ICE candidate string and adds it
@@ -130,5 +153,16 @@ impl RTCPeerConnection {
             channel_id: Default::default(),
             peer_connection: self,
         })
+    }
+
+    pub fn data_channel(&mut self, channel_id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
+        if self.internal.data_channels.contains_key(&channel_id) {
+            Some(RTCDataChannel {
+                channel_id,
+                peer_connection: self,
+            })
+        } else {
+            None
+        }
     }
 }

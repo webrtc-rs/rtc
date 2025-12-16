@@ -1,6 +1,6 @@
 use crate::data_channel::{RTCDataChannelId, RTCDataChannelInternal};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::message::TaggedRTCMessage;
+use crate::peer_connection::message::{RTCEvent, RTCMessage};
 use crate::peer_connection::RTCPeerConnection;
 use shared::error::Error;
 use shared::{Protocol, TaggedBytesMut};
@@ -12,8 +12,8 @@ pub(crate) struct PeerConnectionInternal {
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
 }
 
-impl Protocol<TaggedBytesMut, TaggedRTCMessage, RTCPeerConnectionEvent> for RTCPeerConnection {
-    type Rout = TaggedRTCMessage;
+impl Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnection {
+    type Rout = RTCMessage;
     type Wout = TaggedBytesMut;
     type Eout = RTCPeerConnectionEvent;
     type Error = Error;
@@ -26,7 +26,7 @@ impl Protocol<TaggedBytesMut, TaggedRTCMessage, RTCPeerConnectionEvent> for RTCP
         todo!()
     }
 
-    fn handle_write(&mut self, _msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+    fn handle_write(&mut self, _msg: RTCMessage) -> Result<(), Self::Error> {
         todo!()
     }
 
@@ -34,7 +34,7 @@ impl Protocol<TaggedBytesMut, TaggedRTCMessage, RTCPeerConnectionEvent> for RTCP
         todo!()
     }
 
-    fn handle_event(&mut self, _evt: RTCPeerConnectionEvent) -> Result<(), Self::Error> {
+    fn handle_event(&mut self, _evt: RTCEvent) -> Result<(), Self::Error> {
         todo!()
     }
 
