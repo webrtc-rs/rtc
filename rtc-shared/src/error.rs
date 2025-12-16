@@ -1129,10 +1129,10 @@ pub enum Error {
     #[error("connection closed")]
     ErrConnectionClosed,
 
-    /// ErrDataChannelNotOpen indicates an operation executed when the data
-    /// channel is not (yet) open.
-    #[error("data channel not open")]
-    ErrDataChannelNotOpen,
+    /// ErrDataChannelClosed indicates an operation executed when the data
+    /// channel is not (yet) open or closed.
+    #[error("data channel closed")]
+    ErrDataChannelClosed,
 
     /// ErrDataChannelExist indicates an operation executed when the data
     /// channel exists.

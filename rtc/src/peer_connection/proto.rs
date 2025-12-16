@@ -1,12 +1,16 @@
+use crate::data_channel::{RTCDataChannelId, RTCDataChannelInternal};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::message::TaggedRTCMessage;
 use crate::peer_connection::RTCPeerConnection;
 use shared::error::Error;
 use shared::{Protocol, TaggedBytesMut};
+use std::collections::HashMap;
 use std::time::Instant;
 
 #[derive(Default, Clone)]
-pub(crate) struct PeerConnectionInternal {}
+pub(crate) struct PeerConnectionInternal {
+    pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+}
 
 impl Protocol<TaggedBytesMut, TaggedRTCMessage, RTCPeerConnectionEvent> for RTCPeerConnection {
     type Rout = TaggedRTCMessage;

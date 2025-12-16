@@ -20,7 +20,7 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use std::collections::VecDeque;
 
 use crate::data_channel::init::RTCDataChannelInit;
-use crate::data_channel::RTCDataChannelId;
+use crate::data_channel::RTCDataChannel;
 use crate::peer_connection::proto::PeerConnectionInternal;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
 use shared::error::Result;
@@ -53,7 +53,7 @@ pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
-    internal: PeerConnectionInternal,
+    pub(crate) internal: PeerConnectionInternal,
 }
 
 impl RTCPeerConnection {
@@ -125,7 +125,10 @@ impl RTCPeerConnection {
         &mut self,
         _label: &str,
         _options: Option<RTCDataChannelInit>,
-    ) -> Result<RTCDataChannelId> {
-        Ok(RTCDataChannelId)
+    ) -> Result<RTCDataChannel<'_>> {
+        Ok(RTCDataChannel {
+            channel_id: Default::default(),
+            peer_connection: self,
+        })
     }
 }
