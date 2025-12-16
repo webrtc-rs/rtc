@@ -1,6 +1,7 @@
 use crate::transport::dtls::state::RTCDtlsTransportState;
 
 pub mod fingerprint;
+pub mod role;
 pub mod state;
 
 /// DTLSTransport allows an application access to information about the DTLS

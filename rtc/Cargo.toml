@@ -24,6 +24,7 @@ rustls = { version = "0.23.27", default-features = false, features = ["std", "ri
 url = { version = "2", features = [] }
 hex = { version = "0.4", features = [] }
 pem = { version = "3", optional = true }
+unicase = "2.8"
 
 datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
 dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }

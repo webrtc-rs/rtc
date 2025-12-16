@@ -2,6 +2,7 @@ use crate::data_channel::event::RTCDataChannelEvent;
 use crate::peer_connection::event::ice_error_event::RTCPeerConnectionIceErrorEvent;
 use crate::peer_connection::event::ice_event::RTCPeerConnectionIceEvent;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use crate::peer_connection::state::signaling_state::RTCSignalingState;
 
 pub(crate) mod ice_error_event;
 pub(crate) mod ice_event;
@@ -13,7 +14,7 @@ pub enum RTCPeerConnectionEvent {
     OnNegotiationNeededEvent,
     OnIceCandidateEvent(RTCPeerConnectionIceEvent),
     OnIceCandidateErrorEvent(RTCPeerConnectionIceErrorEvent),
-    OnSignalingStateChangeEvent,
+    OnSignalingStateChangeEvent(RTCSignalingState),
     OnIceConnectionStateChangeEvent,
     OnIceGatheringStateChangeEvent,
     OnConnectionStateChangeEvent(RTCPeerConnectionState),

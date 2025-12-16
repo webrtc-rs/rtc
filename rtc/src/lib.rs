@@ -19,6 +19,7 @@ pub(crate) const RECEIVE_MTU: usize = 1460;
 pub(crate) const SDP_ATTRIBUTE_RID: &str = "rid";
 pub(crate) const SDP_ATTRIBUTE_SIMULCAST: &str = "simulcast";
 pub(crate) const GENERATED_CERTIFICATE_ORIGIN: &str = "WebRTC";
+pub(crate) const MEDIA_SECTION_APPLICATION: &str = "application";
 
 /// math_rand_alpha generates a mathematical random alphabet sequence of the requested length.
 pub(crate) fn math_rand_alpha(n: usize) -> String {

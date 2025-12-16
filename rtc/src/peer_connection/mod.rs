@@ -1,28 +1,38 @@
 pub mod certificate;
 pub mod configuration;
 pub mod event;
+mod internal;
 pub mod message;
 pub mod proto;
 pub mod sdp;
 pub mod state;
 
+use crate::data_channel::init::RTCDataChannelInit;
+use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use crate::peer_connection::configuration::offer_answer_options::{
     RTCAnswerOptions, RTCOfferOptions,
 };
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
+use crate::peer_connection::sdp::{
+    extract_ice_details, get_mid_value, get_peer_direction, sdp_type::RTCSdpType, update_sdp_origin,
+};
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
-use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use crate::peer_connection::state::signaling_state::RTCSignalingState;
-use std::collections::{HashMap, VecDeque};
-
-use crate::data_channel::init::RTCDataChannelInit;
-use crate::data_channel::parameters::DataChannelParameters;
-use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::peer_connection::state::peer_connection_state::{
+    NegotiationNeededState, RTCPeerConnectionState,
+};
+use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
+use crate::transport::dtls::role::DEFAULT_DTLS_ROLE_OFFER;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
+use crate::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
+use std::collections::{HashMap, VecDeque};
 
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
@@ -44,7 +54,7 @@ pub struct RTCPeerConnection {
     signaling_state: RTCSignalingState,
     ice_gathering_state: RTCIceGatheringState,
     ice_connection_state: RTCIceConnectionState,
-    connection_state: RTCPeerConnectionState,
+    peer_connection_state: RTCPeerConnectionState,
     can_trickle_ice_candidates: bool,
 
     events: VecDeque<RTCPeerConnectionEvent>,
@@ -53,6 +63,15 @@ pub struct RTCPeerConnection {
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
+
+    greater_mid: usize,
+    sdp_origin: ::sdp::description::session::Origin,
+    last_offer: String,
+    last_answer: String,
+
+    negotiation_needed_state: NegotiationNeededState,
+    is_negotiation_needed: bool,
 }
 
 impl RTCPeerConnection {
@@ -70,9 +89,92 @@ impl RTCPeerConnection {
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createoffer>
     pub fn create_offer(
         &mut self,
-        _options: Option<RTCOfferOptions>,
+        options: Option<RTCOfferOptions>,
     ) -> Result<RTCSessionDescription> {
-        Ok(RTCSessionDescription::default())
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        if let Some(options) = options {
+            if options.ice_restart {
+                self.restart_ice()?;
+            }
+        }
+
+        // This may be necessary to recompute if, for example, createOffer was called when only an
+        // audio RTCRtpTransceiver was added to connection, but while performing the in-parallel
+        // steps to create an offer, a video RTCRtpTransceiver was added, requiring additional
+        // inspection of video system resources.
+        let mut count = 0;
+        let mut offer;
+
+        loop {
+            // include unmatched local transceivers
+            // update the greater mid if the remote description provides a greater one
+            if let Some(d) = self.current_remote_description.as_ref() {
+                if let Some(parsed) = &d.parsed {
+                    for media in &parsed.media_descriptions {
+                        if let Some(mid) = get_mid_value(media) {
+                            if mid.is_empty() {
+                                continue;
+                            }
+                            let numeric_mid = match mid.parse::<usize>() {
+                                Ok(n) => n,
+                                Err(_) => continue,
+                            };
+                            if numeric_mid > self.greater_mid {
+                                self.greater_mid = numeric_mid + 1;
+                            }
+                        }
+                    }
+                    if parsed.media_descriptions.len() > self.greater_mid {
+                        self.greater_mid = parsed.media_descriptions.len() + 1;
+                    }
+                }
+            }
+
+            for t in &mut self.rtp_transceivers {
+                if t.mid.is_some() {
+                    continue;
+                }
+
+                t.mid = Some(format!("{}", self.greater_mid));
+                self.greater_mid += 1;
+            }
+
+            let mut d = if self.current_remote_description.is_none() {
+                self.generate_unmatched_sdp()?
+            } else {
+                self.generate_matched_sdp(
+                    true, /*includeUnmatched */
+                    DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
+                )?
+            };
+
+            update_sdp_origin(&mut self.sdp_origin, &mut d);
+
+            let sdp = d.marshal();
+
+            offer = RTCSessionDescription {
+                sdp_type: RTCSdpType::Offer,
+                sdp,
+                parsed: Some(d),
+            };
+
+            // Verify local media hasn't changed during offer
+            // generation. Recompute if necessary
+            if !self.has_local_description_changed(&offer) {
+                break;
+            }
+            count += 1;
+            if count >= 128 {
+                return Err(Error::ErrExcessiveRetries);
+            }
+        }
+
+        self.last_offer.clone_from(&offer.sdp);
+
+        Ok(offer)
     }
 
     /// create_answer starts the PeerConnection and generates the localDescription
@@ -84,7 +186,89 @@ impl RTCPeerConnection {
     }
 
     /// set_local_description sets the SessionDescription of the local peer
-    pub fn set_local_description(&mut self, _description: RTCSessionDescription) -> Result<()> {
+    pub fn set_local_description(&mut self, mut description: RTCSessionDescription) -> Result<()> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        // JSEP 5.4
+        if description.sdp.is_empty() {
+            match description.sdp_type {
+                RTCSdpType::Answer | RTCSdpType::Pranswer => {
+                    description.sdp.clone_from(&self.last_answer);
+                }
+                RTCSdpType::Offer => {
+                    description.sdp.clone_from(&self.last_offer);
+                }
+                _ => return Err(Error::ErrPeerConnSDPTypeInvalidValueSetLocalDescription),
+            }
+        }
+
+        description.parsed = Some(description.unmarshal()?);
+        self.set_description(&description, StateChangeOp::SetLocal)?;
+
+        let we_answer = description.sdp_type == RTCSdpType::Answer;
+        if we_answer {
+            if let Some(parsed) = description.parsed {
+                // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
+                // Section 4.4.1.5
+                for media in &parsed.media_descriptions {
+                    if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                        continue;
+                    }
+
+                    let kind = RTPCodecType::from(media.media_name.media.as_str());
+                    let direction = get_peer_direction(media);
+                    if kind == RTPCodecType::Unspecified
+                        || direction == RTCRtpTransceiverDirection::Unspecified
+                    {
+                        continue;
+                    }
+
+                    let mid_value = match get_mid_value(media) {
+                        Some(mid) if !mid.is_empty() => mid,
+                        _ => continue,
+                    };
+
+                    let t = match find_by_mid(mid_value, &mut self.rtp_transceivers) {
+                        Some(t) => t,
+                        None => continue,
+                    };
+                    let previous_direction = t.current_direction;
+                    // 4.9.1.7.3 applying a local answer or pranswer
+                    // Set transceiver.[[CurrentDirection]] and transceiver.[[FiredDirection]] to direction.
+
+                    // TODO: Also set FiredDirection here.
+                    t.set_current_direction(direction);
+                    t.process_new_current_direction(previous_direction)?;
+                }
+            }
+
+            /*TODO:
+            let have_local_description = self.current_local_description.is_some();
+            let remote_description = self.remote_description().await;
+            if let Some(remote_desc) = remote_description {
+                self.start_rtp_senders().await?;
+
+                let pci = Arc::clone(&self.internal);
+                let remote_desc = Arc::new(remote_desc);
+                self.internal
+                    .ops
+                    .enqueue(Operation::new(
+                        move || {
+                            let pc = Arc::clone(&pci);
+                            let rd = Arc::clone(&remote_desc);
+                            Box::pin(async move {
+                                let _ = pc.start_rtp(have_local_description, rd).await;
+                                false
+                            })
+                        },
+                        "set_local_description",
+                    ))
+                    .await?;
+            }*/
+        }
+
         Ok(())
     }
 
@@ -101,7 +285,273 @@ impl RTCPeerConnection {
     }
 
     /// set_remote_description sets the SessionDescription of the remote peer
-    pub fn set_remote_description(&mut self, _description: RTCSessionDescription) -> Result<()> {
+    pub fn set_remote_description(&mut self, mut description: RTCSessionDescription) -> Result<()> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        let _is_renegotiation = self.current_remote_description.is_some();
+
+        description.parsed = Some(description.unmarshal()?);
+        self.set_description(&description, StateChangeOp::SetRemote)?;
+
+        if let Some(parsed) = &description.parsed {
+            //TODO: self.media_engine.update_from_remote_description(parsed)?;
+
+            let we_offer = description.sdp_type == RTCSdpType::Answer;
+
+            // Extract media descriptions to avoid borrowing conflicts
+            let media_descriptions = self
+                .remote_description()
+                .as_ref()
+                .and_then(|r| r.parsed.as_ref())
+                .map(|parsed| parsed.media_descriptions.clone());
+
+            if let Some(media_descriptions) = media_descriptions {
+                if !we_offer {
+                    for media in &media_descriptions {
+                        let mid_value = match get_mid_value(media) {
+                            Some(m) => {
+                                if m.is_empty() {
+                                    return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
+                                } else {
+                                    m
+                                }
+                            }
+                            None => continue,
+                        };
+
+                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                            continue;
+                        }
+
+                        let kind = RTPCodecType::from(media.media_name.media.as_str());
+                        let direction = get_peer_direction(media);
+                        if kind == RTPCodecType::Unspecified
+                            || direction == RTCRtpTransceiverDirection::Unspecified
+                        {
+                            continue;
+                        }
+
+                        let t = if let Some(t) = find_by_mid(mid_value, &mut self.rtp_transceivers)
+                        {
+                            Some(t)
+                        } else {
+                            satisfy_type_and_direction(kind, direction, &mut self.rtp_transceivers)
+                        };
+
+                        if let Some(t) = t {
+                            if t.mid.is_none() {
+                                t.mid = Some(mid_value.to_string());
+                            }
+                        } else {
+                            let local_direction =
+                                if direction == RTCRtpTransceiverDirection::Recvonly {
+                                    RTCRtpTransceiverDirection::Sendonly
+                                } else {
+                                    RTCRtpTransceiverDirection::Recvonly
+                                };
+
+                            //todo: let receive_mtu = self.setting_engine.get_receive_mtu();
+
+                            /*let receiver = RTCRtpReceiver::new(
+                                receive_mtu,
+                                kind,
+                                Arc::clone(&self.internal.dtls_transport),
+                                Arc::clone(&self.internal.media_engine),
+                                Arc::clone(&self.interceptor),
+                            );
+
+                            let sender = Arc::new(
+                                RTCRtpSender::new(
+                                    None,
+                                    kind,
+                                    Arc::clone(&self.internal.dtls_transport),
+                                    Arc::clone(&self.internal.media_engine),
+                                    Arc::clone(&self.internal.setting_engine),
+                                    Arc::clone(&self.interceptor),
+                                    false,
+                                )
+                                .await,
+                            );*/
+
+                            let mut t = RTCRtpTransceiver::new(
+                                //receiver,
+                                //sender,
+                                local_direction,
+                                kind,
+                                vec![],
+                                //Arc::clone(&self.internal.media_engine),
+                                //Some(Box::new(self.internal.make_negotiation_needed_trigger())),
+                            );
+
+                            if t.mid.is_none() {
+                                t.mid = Some(mid_value.to_string());
+                            }
+
+                            self.add_rtp_transceiver(t);
+                        }
+                    }
+                } else {
+                    // we_offer
+                    // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
+                    // 4.5.9.2
+                    // This is an answer from the remote.
+                    for media in &media_descriptions {
+                        let mid_value = match get_mid_value(media) {
+                            Some(m) => {
+                                if m.is_empty() {
+                                    return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
+                                } else {
+                                    m
+                                }
+                            }
+                            None => continue,
+                        };
+
+                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                            continue;
+                        }
+                        let kind = RTPCodecType::from(media.media_name.media.as_str());
+                        let direction = get_peer_direction(media);
+                        if kind == RTPCodecType::Unspecified
+                            || direction == RTCRtpTransceiverDirection::Unspecified
+                        {
+                            continue;
+                        }
+
+                        if let Some(t) = find_by_mid(mid_value, &mut self.rtp_transceivers) {
+                            let previous_direction = t.current_direction;
+
+                            // 4.5.9.2.9
+                            // Let direction be an RTCRtpTransceiverDirection value representing the direction
+                            // from the media description, but with the send and receive directions reversed to
+                            // represent this peer's point of view. If the media description is rejected,
+                            // set direction to "inactive".
+                            let reversed_direction = direction.reverse();
+
+                            // 4.5.9.2.13.2
+                            // Set transceiver.[[CurrentDirection]] and transceiver.[[Direction]]s to direction.
+                            t.set_current_direction(reversed_direction);
+                            // TODO: According to the specification we should set
+                            // transceiver.[[Direction]] here, however libWebrtc doesn't do this.
+                            // NOTE: After raising this it seems like the specification might
+                            // change to remove the setting of transceiver.[[Direction]].
+                            // See https://github.com/w3c/webrtc-pc/issues/2751#issuecomment-1185901962
+                            // t.set_direction_internal(reversed_direction);
+                            t.process_new_current_direction(previous_direction)?;
+                        }
+                    }
+                }
+            }
+
+            let (_remote_ufrag, _remote_pwd, _candidates) = extract_ice_details(parsed)?;
+
+            /*
+            if is_renegotiation
+                && self
+                    .internal
+                    .ice_transport
+                    .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
+                    .await
+            {
+                // An ICE Restart only happens implicitly for a set_remote_description of type offer
+                if !we_offer {
+                    self.internal.ice_transport.restart().await?;
+                }
+
+                self.internal
+                    .ice_transport
+                    .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())
+                    .await?;
+            }
+
+            for candidate in candidates {
+                self.internal
+                    .ice_transport
+                    .add_remote_candidate(Some(candidate))
+                    .await?;
+            }
+
+            if is_renegotiation {
+                if we_offer {
+                    self.start_rtp_senders().await?;
+
+                    let pci = Arc::clone(&self.internal);
+                    let remote_desc = Arc::new(description);
+                    self.internal
+                        .ops
+                        .enqueue(Operation::new(
+                            move || {
+                                let pc = Arc::clone(&pci);
+                                let rd = Arc::clone(&remote_desc);
+                                Box::pin(async move {
+                                    let _ = pc.start_rtp(true, rd).await;
+                                    false
+                                })
+                            },
+                            "set_remote_description renegotiation",
+                        ))
+                        .await?;
+                }
+                return Ok(());
+            }
+
+            let remote_is_lite = Self::is_lite_set(parsed);
+
+            let (fingerprint, fingerprint_hash) = extract_fingerprint(parsed)?;
+
+            // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
+            // If both or neither agents are lite the offering agent is controlling.
+            // RFC 8445 S6.1.1
+            let ice_role = if (we_offer
+                && remote_is_lite == self.internal.setting_engine.candidates.ice_lite)
+                || (remote_is_lite && !self.internal.setting_engine.candidates.ice_lite)
+            {
+                RTCIceRole::Controlling
+            } else {
+                RTCIceRole::Controlled
+            };
+
+            // Start the networking in a new routine since it will block until
+            // the connection is actually established.
+            if we_offer {
+                self.start_rtp_senders().await?;
+            }
+
+            //log::trace!("start_transports: parsed={:?}", parsed);
+
+            let pci = Arc::clone(&self.internal);
+            let dtls_role = DTLSRole::from(parsed);
+            let remote_desc = Arc::new(description);
+            self.internal
+                .ops
+                .enqueue(Operation::new(
+                    move || {
+                        let pc = Arc::clone(&pci);
+                        let rd = Arc::clone(&remote_desc);
+                        let ru = remote_ufrag.clone();
+                        let rp = remote_pwd.clone();
+                        let fp = fingerprint.clone();
+                        let fp_hash = fingerprint_hash.clone();
+                        Box::pin(async move {
+                            log::trace!(
+                                "start_transports: ice_role={ice_role}, dtls_role={dtls_role}",
+                            );
+                            pc.start_transports(ice_role, dtls_role, ru, rp, fp, fp_hash)
+                                .await;
+
+                            if we_offer {
+                                let _ = pc.start_rtp(false, rd).await;
+                            }
+                            false
+                        })
+                    },
+                    "set_remote_description",
+                ))
+                .await?;*/
+        }
+
         Ok(())
     }
 
@@ -152,7 +602,7 @@ impl RTCPeerConnection {
         options: Option<RTCDataChannelInit>,
     ) -> Result<RTCDataChannel<'_>> {
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
-        if self.connection_state == RTCPeerConnectionState::Closed {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
