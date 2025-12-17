@@ -4,7 +4,7 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::transport::ice::candidate::RTCIceCandidate;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::media::*;
@@ -13,25 +13,25 @@ use sdp::extmap::ExtMap;
 use std::collections::HashMap;
 use std::io::BufReader;
 
-use crate::media::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters};
-use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
+use crate::media::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
+use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, SSRC};
 use shared::error::{Error, Result};
 
 //use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
-/*
+
 /// TrackDetails represents any media source that can be represented in a SDP
 /// This isn't keyed by SSRC because it also needs to support rid based sources
 #[derive(Default, Debug, Clone)]
 pub(crate) struct TrackDetails {
-    pub(crate) mid: SmolStr,
+    pub(crate) mid: String,
     pub(crate) kind: RTPCodecType,
     pub(crate) stream_id: String,
     pub(crate) id: String,
     pub(crate) ssrcs: Vec<SSRC>,
     pub(crate) repair_ssrc: SSRC,
-    pub(crate) rids: Vec<SmolStr>,
+    pub(crate) rids: Vec<String>,
 }
-
+/*
 pub(crate) fn track_details_for_ssrc(
     track_details: &[TrackDetails],
     ssrc: SSRC,

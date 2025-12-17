@@ -23,16 +23,11 @@ use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::track::track_local::TrackLocal;
  */
 
-use rtp_codec::*;
-use rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_codec::*;
+use crate::media::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_sender::RTCRtpSender;
+use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 //use shared::error::{Error, Result};
-
-pub(crate) mod fmtp;
-pub mod rtp_codec;
-// pub mod rtp_receiver;
-// pub mod rtp_sender;
-pub mod rtp_transceiver_direction;
-//pub(crate) mod srtp_writer_future;
 
 /// SSRC represents a synchronization source
 /// A synchronization source is a randomly chosen
@@ -181,8 +176,8 @@ pub type TriggerNegotiationNeededFnOption =
 #[derive(Default, Clone)]
 pub struct RTCRtpTransceiver {
     pub(crate) mid: Option<String>,
-    //TODO: sender: RTCRtpSender,
-    //TODO:  receiver: RTCRtpReceiver,
+    pub(crate) sender: RTCRtpSender,
+    pub(crate) receiver: RTCRtpReceiver,
     pub(crate) direction: RTCRtpTransceiverDirection,
     pub(crate) current_direction: RTCRtpTransceiverDirection,
 
@@ -196,8 +191,8 @@ pub struct RTCRtpTransceiver {
 
 impl RTCRtpTransceiver {
     pub fn new(
-        //receiver: Arc<RTCRtpReceiver>,
-        //sender: Arc<RTCRtpSender>,
+        receiver: RTCRtpReceiver,
+        sender: RTCRtpSender,
         direction: RTCRtpTransceiverDirection,
         kind: RTPCodecType,
         codecs: Vec<RTCRtpCodecParameters>,
@@ -209,8 +204,8 @@ impl RTCRtpTransceiver {
 
         RTCRtpTransceiver {
             mid: None,
-            //sender: Mutex::new(sender),
-            //receiver: Mutex::new(receiver),
+            sender,
+            receiver,
             direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
 

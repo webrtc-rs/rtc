@@ -13,9 +13,11 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_codec::RTPCodecType;
+use crate::media::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_sender::RTCRtpSender;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
+use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
@@ -353,37 +355,21 @@ impl RTCPeerConnection {
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            let _receive_mtu = self.configuration.setting_engine.get_receive_mtu();
+                            let receive_mtu = self.configuration.setting_engine.get_receive_mtu();
+                            let enable_sender_rtx =
+                                self.configuration.setting_engine.enable_sender_rtx;
 
-                            /*let receiver = RTCRtpReceiver::new(
-                                receive_mtu,
-                                kind,
-                                Arc::clone(&self.internal.dtls_transport),
-                                Arc::clone(&self.internal.media_engine),
-                                Arc::clone(&self.interceptor),
-                            );
+                            let receiver = RTCRtpReceiver::new(receive_mtu, kind);
 
-                            let sender = Arc::new(
-                                RTCRtpSender::new(
-                                    None,
-                                    kind,
-                                    Arc::clone(&self.internal.dtls_transport),
-                                    Arc::clone(&self.internal.media_engine),
-                                    Arc::clone(&self.internal.setting_engine),
-                                    Arc::clone(&self.interceptor),
-                                    false,
-                                )
-                                .await,
-                            );*/
+                            let sender =
+                                RTCRtpSender::new(kind, false, receive_mtu, enable_sender_rtx);
 
                             let mut t = RTCRtpTransceiver::new(
-                                //receiver,
-                                //sender,
+                                receiver,
+                                sender,
                                 local_direction,
                                 kind,
                                 vec![],
-                                //Arc::clone(&self.internal.media_engine),
-                                //Some(Box::new(self.internal.make_negotiation_needed_trigger())),
                             );
 
                             if t.mid.is_none() {
