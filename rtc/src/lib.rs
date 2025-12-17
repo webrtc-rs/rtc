@@ -5,6 +5,7 @@ use rand::{rng, Rng};
 
 pub mod peer_connection;
 //TODO: pub(crate) mod statistics;
+pub mod configuration;
 pub mod data_channel;
 pub mod media;
 pub mod transport;

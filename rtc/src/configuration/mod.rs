@@ -1,9 +1,13 @@
 pub mod bundle_policy;
 pub mod ice_transport_policy;
+pub mod media_engine;
 pub mod offer_answer_options;
 pub mod rtcp_mux_policy;
 pub mod sdp_semantics;
+pub mod setting_engine;
 
+use crate::configuration::media_engine::MediaEngine;
+use crate::configuration::setting_engine::SettingEngine;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::transport::ice::server::RTCIceServer;
 use bundle_policy::RTCBundlePolicy;
@@ -62,6 +66,10 @@ pub struct RTCConfiguration {
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub(crate) ice_candidate_pool_size: u8,
+
+    pub(crate) media_engine: MediaEngine,
+
+    pub(crate) setting_engine: SettingEngine,
 }
 
 impl RTCConfiguration {
@@ -149,6 +157,10 @@ pub struct RTCConfigurationBuilder {
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub(crate) ice_candidate_pool_size: u8,
+
+    pub(crate) media_engine: MediaEngine,
+
+    pub(crate) setting_engine: SettingEngine,
 }
 
 impl RTCConfigurationBuilder {
@@ -194,6 +206,16 @@ impl RTCConfigurationBuilder {
         self
     }
 
+    pub fn with_media_engine(mut self, media_engine: MediaEngine) -> Self {
+        self.media_engine = media_engine;
+        self
+    }
+
+    pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
+        self.setting_engine = setting_engine;
+        self
+    }
+
     pub fn build(self) -> RTCConfiguration {
         RTCConfiguration {
             ice_servers: self.ice_servers,
@@ -203,6 +225,8 @@ impl RTCConfigurationBuilder {
             peer_identity: self.peer_identity,
             certificates: self.certificates,
             ice_candidate_pool_size: self.ice_candidate_pool_size,
+            media_engine: self.media_engine,
+            setting_engine: self.setting_engine,
         }
     }
 }

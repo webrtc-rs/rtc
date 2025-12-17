@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use std::{io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
+use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
-use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;

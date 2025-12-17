@@ -1,5 +1,4 @@
 pub mod certificate;
-pub mod configuration;
 pub mod event;
 mod internal;
 pub mod message;
@@ -7,16 +6,16 @@ pub mod proto;
 pub mod sdp;
 pub mod state;
 
+use crate::configuration::{
+    offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
+    RTCConfiguration,
+};
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
 use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
 use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
-use crate::peer_connection::configuration::offer_answer_options::{
-    RTCAnswerOptions, RTCOfferOptions,
-};
-use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
@@ -296,7 +295,9 @@ impl RTCPeerConnection {
         self.set_description(&description, StateChangeOp::SetRemote)?;
 
         if let Some(parsed) = &description.parsed {
-            //TODO: self.media_engine.update_from_remote_description(parsed)?;
+            self.configuration
+                .media_engine
+                .update_from_remote_description(parsed)?;
 
             let we_offer = description.sdp_type == RTCSdpType::Answer;
 
@@ -352,7 +353,7 @@ impl RTCPeerConnection {
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            //todo: let receive_mtu = self.setting_engine.get_receive_mtu();
+                            let _receive_mtu = self.configuration.setting_engine.get_receive_mtu();
 
                             /*let receiver = RTCRtpReceiver::new(
                                 receive_mtu,

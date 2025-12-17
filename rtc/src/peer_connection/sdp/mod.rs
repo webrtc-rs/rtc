@@ -4,13 +4,17 @@
 pub mod sdp_type;
 pub mod session_description;
 
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::transport::ice::candidate::RTCIceCandidate;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::media::*;
 use sdp::description::session::*;
+use sdp::extmap::ExtMap;
+use std::collections::HashMap;
+use std::io::BufReader;
 
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::transport::ice::candidate::RTCIceCandidate;
-
+use crate::media::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters};
+use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
 use shared::error::{Error, Result};
 
 //use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
@@ -1065,7 +1069,7 @@ pub(crate) fn have_data_channel(
 ) -> Option<&MediaDescription> {
     get_application_media(desc.parsed.as_ref()?)
 }
-
+*/
 pub(crate) fn codecs_from_media_description(
     m: &MediaDescription,
 ) -> Result<Vec<RTCRtpCodecParameters>> {
@@ -1083,7 +1087,7 @@ pub(crate) fn codecs_from_media_description(
                 if payload_type == 0 {
                     continue;
                 }
-                return Err(err.into());
+                return Err(err);
             }
         };
 
@@ -1143,7 +1147,7 @@ pub(crate) fn rtp_extensions_from_media_description(
 
     Ok(out)
 }
-*/
+
 /// update_sdp_origin saves sdp.Origin in PeerConnection when creating 1st local SDP;
 /// for subsequent calling, it updates Origin for SessionDescription from saved one
 /// and increments session version by one.
