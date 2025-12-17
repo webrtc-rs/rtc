@@ -1,5 +1,7 @@
 use super::*;
-use crate::peer_connection::sdp::{get_by_mid, get_peer_direction, MediaSection};
+use crate::peer_connection::sdp::{
+    get_by_mid, get_peer_direction, populate_sdp, MediaSection, PopulateSdpParams,
+};
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
@@ -8,11 +10,11 @@ impl RTCPeerConnection {
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
     /// This is used for the initial call for CreateOffer
     pub(super) fn generate_unmatched_sdp(&mut self) -> Result<SessionDescription> {
-        let _d = SessionDescription::new_jsep_session_description(false);
+        let d = SessionDescription::new_jsep_session_description(false);
 
-        let _ice_params = self.ice_transport.get_local_parameters()?;
+        let ice_params = self.ice_transport.get_local_parameters()?;
 
-        let _candidates = self.ice_transport.get_local_candidates()?;
+        let candidates = self.ice_transport.get_local_candidates()?;
 
         let mut media_sections = vec![];
 
@@ -42,33 +44,32 @@ impl RTCPeerConnection {
             });
         }
 
-        let _dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
+        let dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
             cert.get_fingerprints()
         } else {
             return Err(Error::ErrNonCertificate);
         };
 
-        /*
         let params = PopulateSdpParams {
-            media_description_fingerprint: self.setting_engine.sdp_media_level_fingerprints,
-            is_icelite: self.setting_engine.candidates.ice_lite,
+            media_description_fingerprint: self
+                .configuration
+                .setting_engine
+                .sdp_media_level_fingerprints,
+            is_icelite: self.configuration.setting_engine.candidates.ice_lite,
             extmap_allow_mixed: true,
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
-            ice_gathering_state: self.ice_gathering_state(),
+            ice_gathering_state: self.ice_gathering_state,
             match_bundle_group: None,
         };
         populate_sdp(
             d,
             &dtls_fingerprints,
-            &self.media_engine,
+            //&self.media_engine,
             &candidates,
             &ice_params,
             &media_sections,
             params,
         )
-
-         */
-        Err(Error::ErrNonCertificate)
     }
 
     /// generate_matched_sdp generates a SDP and takes the remote state into account
