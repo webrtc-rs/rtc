@@ -3,7 +3,8 @@ use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::state::RTCIceTransportState;
 use ice::candidate::Candidate;
-use shared::error::Result;
+use ice::rand::{generate_pwd, generate_ufrag};
+use shared::error::{Error, Result};
 
 pub mod candidate;
 pub mod candidate_pair;
@@ -40,12 +41,32 @@ pub struct RTCIceTransport {
 
 impl RTCIceTransport {
     /// creates a new RTCIceTransport
-    pub(crate) fn new(/*gatherer: Arc<RTCIceGatherer>*/) -> Self {
-        RTCIceTransport {
-            state: RTCIceTransportState::New,
-            //gatherer,
-            ..Default::default()
+    pub(crate) fn new(mut ufrag: String, mut pwd: String) -> Result<Self> {
+        if ufrag.is_empty() {
+            ufrag = generate_ufrag();
         }
+        if pwd.is_empty() {
+            pwd = generate_pwd();
+        }
+
+        if ufrag.len() * 8 < 24 {
+            return Err(Error::ErrLocalUfragInsufficientBits);
+        }
+        if pwd.len() * 8 < 128 {
+            return Err(Error::ErrLocalPwdInsufficientBits);
+        }
+
+        Ok(RTCIceTransport {
+            state: RTCIceTransportState::New,
+            role: RTCIceRole::Unspecified,
+            ufrag_pwd: UfragPwd {
+                local_ufrag: ufrag,
+                local_pwd: pwd,
+                remote_ufrag: String::new(),
+                remote_pwd: String::new(),
+            },
+            ..Default::default()
+        })
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.

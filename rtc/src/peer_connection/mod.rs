@@ -88,7 +88,14 @@ impl RTCPeerConnection {
         configuration.validate()?;
 
         // Create the ICE transport
-        let ice_transport = RTCIceTransport::new();
+        let ice_transport = RTCIceTransport::new(
+            configuration
+                .setting_engine
+                .candidates
+                .username_fragment
+                .clone(),
+            configuration.setting_engine.candidates.password.clone(),
+        )?;
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
