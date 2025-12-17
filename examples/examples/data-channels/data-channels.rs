@@ -1,50 +1,49 @@
-use std::io::Write;
-use std::sync::Arc;
-
 use anyhow::Result;
-use clap::{AppSettings, Arg, Command};
-use tokio::time::Duration;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
-use webrtc::data_channel::RTCDataChannel;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::math_rand_alpha;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use bytes::BytesMut;
+use clap::Parser;
+use log::{error, info, trace, warn};
+use sansio_executor::LocalExecutorBuilder;
+use shared::{Protocol, TaggedBytesMut, TransportContext, TransportProtocol};
+use std::time::{Duration, Instant};
+use std::{io::Write, str::FromStr};
+use tokio::{net::UdpSocket, sync::broadcast};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut app = Command::new("data-channels")
-        .version("0.1.0")
-        .author("Rain Liu <yliu@webrtc.rs>")
-        .about("An example of Data-Channels.")
-        .setting(AppSettings::DeriveDisplayOrder)
-        .subcommand_negates_reqs(true)
-        .arg(
-            Arg::new("FULLHELP")
-                .help("Prints more detailed help information")
-                .long("fullhelp"),
-        )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .short('d')
-                .help("Prints debug log information"),
-        );
+use rtc::configuration::RTCConfigurationBuilder;
+use rtc::data_channel::event::RTCDataChannelEvent;
+use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::message::{RTCEvent, RTCMessage};
+use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::{
+    peer_connection::sdp::session_description::RTCSessionDescription,
+    transport::ice::server::RTCIceServer,
+};
+use shared::error::Error;
 
-    let matches = app.clone().get_matches();
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 
-    if matches.is_present("FULLHELP") {
-        app.print_long_help().unwrap();
-        std::process::exit(0);
-    }
+#[derive(Parser)]
+#[command(name = "data-channels")]
+#[command(author = "Rusty Rain <y@liu.mx>")]
+#[command(version = "0.0.0")]
+#[command(about = "An example of Data-Channels", long_about = None)]
+struct Cli {
+    #[arg(short, long)]
+    debug: bool,
+    #[arg(long, default_value_t = format!("127.0.0.1"))]
+    host: String,
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+    #[arg(long, default_value_t = format!("INFO"))]
+    log_level: String,
+}
 
-    let debug = matches.is_present("debug");
-    if debug {
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let host = cli.host;
+    let port = cli.port;
+    let log_level = log::LevelFilter::from_str(&cli.log_level)?;
+    if cli.debug {
         env_logger::Builder::new()
             .format(|buf, record| {
                 writeln!(
@@ -57,151 +56,214 @@ async fn main() -> Result<()> {
                     record.args()
                 )
             })
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log_level)
             .init();
     }
 
-    // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
+    let (stop_tx, stop_rx) = broadcast::channel::<()>(1);
+    let (_message_tx, message_rx) = broadcast::channel::<RTCMessage>(8);
+    let (_event_tx, event_rx) = broadcast::channel::<RTCEvent>(8);
 
-    // Create a MediaEngine object to configure the supported codec
-    let mut m = MediaEngine::default();
+    info!("Press Ctrl-C to stop");
+    std::thread::spawn(move || {
+        let mut stop_tx = Some(stop_tx);
+        ctrlc::set_handler(move || {
+            if let Some(stop_tx) = stop_tx.take() {
+                let _ = stop_tx.send(());
+            }
+        })
+        .expect("Error setting Ctrl-C handler");
+    });
 
-    // Register default codecs
-    m.register_default_codecs()?;
+    LocalExecutorBuilder::default().run(async move {
+        if let Err(err) = run(stop_rx, message_rx, event_rx, host, port).await {
+            error!("run got error: {}", err);
+        }
+    });
 
-    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-    // for each PeerConnection.
-    let mut registry = Registry::new();
+    Ok(())
+}
 
-    // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m)?;
+async fn run(
+    mut stop_rx: broadcast::Receiver<()>,
+    mut message_rx: broadcast::Receiver<RTCMessage>,
+    mut event_rx: broadcast::Receiver<RTCEvent>,
+    host: String,
+    port: u16,
+) -> Result<()> {
+    // Everything below is the RTC API! Thanks for using it ❤️.
 
-    // Create the API object with the MediaEngine
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
+    let config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
-        }],
-        ..Default::default()
-    };
+        }])
+        .build();
 
     // Create a new RTCPeerConnection
-    let peer_connection = Arc::new(api.new_peer_connection(config).await?);
-
-    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-
-        if s == RTCPeerConnectionState::Failed {
-            // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-            // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-            // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-            println!("Peer Connection has gone to failed exiting");
-            let _ = done_tx.try_send(());
-        }
-
-        Box::pin(async {})
-    }));
-
-    // Register data channel creation handling
-    peer_connection
-        .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-            let d_label = d.label().to_owned();
-            let d_id = d.id();
-            println!("New DataChannel {d_label} {d_id}");
-
-            // Register channel opening handling
-            Box::pin(async move {
-                let d2 = Arc::clone(&d);
-                let d_label2 = d_label.clone();
-                let d_id2 = d_id;
-                d.on_close(Box::new(move || {
-                    println!("Data channel closed");
-                    Box::pin(async {})
-                }));
-
-                d.on_open(Box::new(move || {
-                    println!("Data channel '{d_label2}'-'{d_id2}' open. Random messages will now be sent to any connected DataChannels every 5 seconds");
-
-                    Box::pin(async move {
-                        let mut result = Result::<usize>::Ok(0);
-                        while result.is_ok() {
-                            let timeout = tokio::time::sleep(Duration::from_secs(5));
-                            tokio::pin!(timeout);
-
-                            tokio::select! {
-                                _ = timeout.as_mut() =>{
-                                    let message = math_rand_alpha(15);
-                                    println!("Sending '{message}'");
-                                    result = d2.send_text(message).await.map_err(Into::into);
-                                }
-                            };
-                        }
-                    })
-                }));
-
-                // Register text message handling
-                d.on_message(Box::new(move |msg: DataChannelMessage| {
-                    let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
-                    println!("Message from DataChannel '{d_label}': '{msg_str}'");
-                    Box::pin(async {})
-                }));
-            })
-        }));
+    let mut peer_connection = RTCPeerConnection::new(config)?;
 
     // Wait for the offer to be pasted
     let line = signal::must_read_stdin()?;
     let desc_data = signal::decode(line.as_str())?;
     let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+    info!("Offer received: {:?}", offer.sdp);
 
     // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer).await?;
+    peer_connection.set_remote_description(offer)?;
 
     // Create an answer
-    let answer = peer_connection.create_answer(None).await?;
-
-    // Create channel that is blocked until ICE Gathering is complete
-    let mut gather_complete = peer_connection.gathering_complete_promise().await;
+    let answer = peer_connection.create_answer(None)?;
+    info!("answer created: {:?}", answer.sdp);
 
     // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(answer).await?;
-
-    // Block until ICE Gathering is complete, disabling trickle ICE
-    // we do this because we only can exchange one signaling message
-    // in a production application you should exchange ICE Candidates via OnICECandidate
-    let _ = gather_complete.recv().await;
+    peer_connection.set_local_description(answer)?;
 
     // Output the answer in base64 so we can paste it in browser
-    if let Some(local_desc) = peer_connection.local_description().await {
-        let json_str = serde_json::to_string(&local_desc)?;
+    if let Some(local_desc) = peer_connection.local_description() {
+        let json_str = serde_json::to_string(local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("{b64}");
     } else {
         println!("generate local_description failed!");
+        return Err(Error::ErrPeerConnLocalDescriptionNil.into());
     }
 
-    println!("Press ctrl-c to stop");
-    tokio::select! {
-        _ = done_rx.recv() => {
-            println!("received done signal!");
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!();
-        }
-    };
+    let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
+    let local_addr = socket.local_addr()?;
 
-    peer_connection.close().await?;
+    println!("listening {}...", socket.local_addr()?);
+
+    let mut buf = vec![0; 2000];
+    'EventLoop: loop {
+        while let Some(msg) = peer_connection.poll_write() {
+            match socket.send_to(&msg.message, msg.transport.peer_addr).await {
+                Ok(n) => {
+                    trace!(
+                        "socket write to {} with bytes {}",
+                        msg.transport.peer_addr,
+                        n
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        "socket write to {} with error {}",
+                        msg.transport.peer_addr, err
+                    );
+                    break 'EventLoop;
+                }
+            }
+        }
+
+        while let Some(event) = peer_connection.poll_event() {
+            match event {
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(peer_connection_state) => {
+                    info!("Peer Connection State has changed: {peer_connection_state}");
+                    if peer_connection_state == RTCPeerConnectionState::Failed {
+                        warn!("Peer Connection State has gone to failed! Exiting...");
+                        break 'EventLoop;
+                    }
+                }
+                RTCPeerConnectionEvent::OnDataChannel(data_channel_event) => {
+                    match data_channel_event {
+                        RTCDataChannelEvent::OnOpen(channel_id) => {
+                            let dc = peer_connection
+                                .data_channel(channel_id)
+                                .ok_or(Error::ErrDataChannelClosed)?;
+                            info!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
+                        }
+                        RTCDataChannelEvent::OnMessage(channel_id, message) => {
+                            let mut dc = peer_connection
+                                .data_channel(channel_id)
+                                .ok_or(Error::ErrDataChannelClosed)?;
+                            let msg_str = String::from_utf8(message.data.to_vec())?;
+                            info!(
+                                "Message from DataChannel '{}': '{}', Echoing back",
+                                dc.label()?,
+                                msg_str
+                            );
+                            dc.send(&message.data)?;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Poll peer_connection to get next timeout
+        let eto = peer_connection
+            .poll_timeout()
+            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
+
+        let delay_from_now = eto
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::from_secs(0));
+        if delay_from_now.is_zero() {
+            peer_connection.handle_timeout(Instant::now())?;
+            continue;
+        }
+
+        let timer = tokio::time::sleep(delay_from_now);
+        tokio::pin!(timer);
+
+        tokio::select! {
+            biased;
+
+            _ = stop_rx.recv() => {
+                trace!("pipeline socket exit loop");
+                break 'EventLoop;
+            }
+            res = message_rx.recv() => {
+                match res {
+                    Ok(message) => {
+                        peer_connection.handle_write(message)?;
+                    }
+                    Err(err) => {
+                        warn!("write_rx error: {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+            res = event_rx.recv() => {
+                match res {
+                    Ok(event) => {
+                        peer_connection.handle_event(event)?;
+                    }
+                    Err(err) => {
+                        warn!("event_rx error: {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+            _ = timer.as_mut() => {
+                peer_connection.handle_timeout(Instant::now())?;
+            }
+            res = socket.recv_from(&mut buf) => {
+                match res {
+                    Ok((n, peer_addr)) => {
+                        trace!("socket read {} bytes", n);
+                        peer_connection.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&buf[..n]),
+                        })?;
+                    }
+                    Err(err) => {
+                        warn!("socket read error {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+        }
+    }
+
+    peer_connection.close()?;
 
     Ok(())
 }

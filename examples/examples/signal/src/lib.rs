@@ -74,6 +74,8 @@ pub async fn http_sdp_server(port: u16) -> mpsc::Receiver<String> {
     sdp_chan_rx
 }
 
+/// Note that macOS Terminal may have issue to paste large size of SDP line
+/// How to fix it? echo $BROWSER_SDP | ./target/debug/examples/$example
 /// must_read_stdin blocks until input is received from stdin
 #[allow(clippy::assigning_clones)]
 pub fn must_read_stdin() -> Result<String> {

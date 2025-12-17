@@ -33,15 +33,15 @@ rand = "0.9.2"
 ctrlc = "3.5.1"
 
 [[example]]
+name = "data-channels"
+path = "examples/data-channels/data-channels.rs"
+bench = false
+
+[[example]]
 name = "data-channels-create"
 path = "examples/data-channels-create/data-channels-create.rs"
 bench = false
 
-#[[example]]
-#name = "data-channels"
-#path = "examples/data-channels/data-channels.rs"
-#bench = false
-#
 #[[example]]
 #name = "data-channels-close"
 #path = "examples/data-channels-close/data-channels-close.rs"

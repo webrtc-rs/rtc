@@ -108,6 +108,7 @@ async fn run(
 
     // Create an offer to send to the browser
     let offer = peer_connection.create_offer(None)?;
+    info!("offer created: {:?}", offer.sdp);
 
     // Sets the LocalDescription, and starts our UDP listeners
     peer_connection.set_local_description(offer)?;
@@ -126,6 +127,7 @@ async fn run(
     let line = signal::must_read_stdin()?;
     let desc_data = signal::decode(line.as_str())?;
     let answer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+    info!("answer received: {:?}", answer.sdp);
 
     // Apply the answer as the remote description
     peer_connection.set_remote_description(answer)?;
@@ -136,7 +138,7 @@ async fn run(
     println!("listening {}...", socket.local_addr()?);
 
     let mut buf = vec![0; 2000];
-    loop {
+    'EventLoop: loop {
         while let Some(msg) = peer_connection.poll_write() {
             match socket.send_to(&msg.message, msg.transport.peer_addr).await {
                 Ok(n) => {
@@ -151,7 +153,7 @@ async fn run(
                         "socket write to {} with error {}",
                         msg.transport.peer_addr, err
                     );
-                    break;
+                    break 'EventLoop;
                 }
             }
         }
@@ -162,7 +164,7 @@ async fn run(
                     info!("Peer Connection State has changed: {peer_connection_state}");
                     if peer_connection_state == RTCPeerConnectionState::Failed {
                         warn!("Peer Connection State has gone to failed! Exiting...");
-                        break;
+                        break 'EventLoop;
                     }
                 }
                 RTCPeerConnectionEvent::OnDataChannel(data_channel_event) => {
@@ -213,7 +215,7 @@ async fn run(
 
             _ = stop_rx.recv() => {
                 trace!("pipeline socket exit loop");
-                break;
+                break 'EventLoop;
             }
             res = message_rx.recv() => {
                 match res {
@@ -222,7 +224,7 @@ async fn run(
                     }
                     Err(err) => {
                         warn!("write_rx error: {}", err);
-                        break;
+                        break 'EventLoop;
                     }
                 }
             }
@@ -233,7 +235,7 @@ async fn run(
                     }
                     Err(err) => {
                         warn!("event_rx error: {}", err);
-                        break;
+                        break 'EventLoop;
                     }
                 }
             }
@@ -257,7 +259,7 @@ async fn run(
                     }
                     Err(err) => {
                         warn!("socket read error {}", err);
-                        break;
+                        break 'EventLoop;
                     }
                 }
             }

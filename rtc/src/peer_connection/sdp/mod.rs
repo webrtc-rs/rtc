@@ -11,7 +11,7 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::transport::ice::candidate::RTCIceCandidate;
 use crate::transport::ice::parameters::RTCIceParameters;
-use crate::MEDIA_SECTION_APPLICATION;
+use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;
@@ -217,7 +217,7 @@ pub(crate) fn track_details_from_sdp(
 
     incoming_tracks
 }
-
+*/
 pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
     let mut rids = vec![];
     let mut simulcast_attr: Option<String> = None;
@@ -226,7 +226,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
             if let Err(err) = attr
                 .value
                 .as_ref()
-                .ok_or(SimulcastRidParseError::SyntaxIdDirSplit)
+                .ok_or(Error::SimulcastRidParseErrorSyntaxIdDirSplit)
                 .and_then(SimulcastRid::try_from)
                 .map(|rid| rids.push(rid))
             {
@@ -263,7 +263,7 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
 
     rids
 }
-*/
+
 pub(crate) fn add_candidates_to_media_descriptions(
     candidates: &[RTCIceCandidate],
     mut m: MediaDescription,
@@ -730,19 +730,19 @@ pub(crate) struct SimulcastRid {
     pub(crate) params: String,
     pub(crate) paused: bool,
 }
-/*
+
 impl TryFrom<&String> for SimulcastRid {
-    type Error = SimulcastRidParseError;
+    type Error = Error;
     fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
         let mut split = value.split(' ');
         let id = split
             .next()
-            .ok_or(SimulcastRidParseError::SyntaxIdDirSplit)?
+            .ok_or(Error::SimulcastRidParseErrorSyntaxIdDirSplit)?
             .to_owned();
         let direction = SimulcastDirection::try_from(
             split
                 .next()
-                .ok_or(SimulcastRidParseError::SyntaxIdDirSplit)?,
+                .ok_or(Error::SimulcastRidParseErrorSyntaxIdDirSplit)?,
         )?;
         let params = split.collect();
 
@@ -754,7 +754,7 @@ impl TryFrom<&String> for SimulcastRid {
         })
     }
 }
-*/
+
 fn bundle_match(bundle: Option<&String>, id: &str) -> bool {
     match bundle {
         None => true,

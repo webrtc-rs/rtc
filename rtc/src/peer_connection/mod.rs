@@ -32,13 +32,14 @@ use crate::peer_connection::state::peer_connection_state::{
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
 use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::transport::dtls::parameters::DTLSParameters;
-use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_OFFER};
+use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER};
 use crate::transport::dtls::RTCDtlsTransport;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
 use crate::MEDIA_SECTION_APPLICATION;
+use ::sdp::util::ConnectionRole;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 
@@ -218,7 +219,52 @@ impl RTCPeerConnection {
         &mut self,
         _options: Option<RTCAnswerOptions>,
     ) -> Result<RTCSessionDescription> {
-        Ok(RTCSessionDescription::default())
+        if self.remote_description().is_none() {
+            return Err(Error::ErrNoRemoteDescription);
+        }
+
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        if self.signaling_state != RTCSignalingState::HaveRemoteOffer
+            && self.signaling_state != RTCSignalingState::HaveLocalPranswer
+        {
+            return Err(Error::ErrIncorrectSignalingState);
+        }
+
+        let mut connection_role = self
+            .configuration
+            .setting_engine
+            .answering_dtls_role
+            .to_connection_role();
+        if connection_role == ConnectionRole::Unspecified {
+            connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
+
+            if let Some(remote_description) = self.remote_description() {
+                if let Some(parsed) = remote_description.parsed.as_ref() {
+                    if is_lite_set(parsed) && !self.configuration.setting_engine.candidates.ice_lite
+                    {
+                        connection_role = DTLSRole::Server.to_connection_role();
+                    }
+                }
+            }
+        }
+
+        let mut d = self.generate_matched_sdp(false /*includeUnmatched */, connection_role)?;
+        update_sdp_origin(&mut self.sdp_origin, &mut d);
+
+        let sdp = d.marshal();
+
+        let answer = RTCSessionDescription {
+            sdp_type: RTCSdpType::Answer,
+            sdp,
+            parsed: Some(d),
+        };
+
+        self.last_answer.clone_from(&answer.sdp);
+
+        Ok(answer)
     }
 
     /// set_local_description sets the SessionDescription of the local peer
