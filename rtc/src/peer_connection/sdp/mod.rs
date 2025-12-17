@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::io::BufReader;
 
 use crate::media::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
-use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, SSRC};
+use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, RTCRtpTransceiver, SSRC};
 use shared::error::{Error, Result};
 
 //use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
@@ -700,16 +700,7 @@ pub(crate) async fn add_transceiver_sdp(
 
     Ok((d.with_media(media), true))
 }
-
-#[derive(thiserror::Error, Debug, PartialEq)]
-pub(crate) enum SimulcastRidParseError {
-    /// SyntaxIdDirSplit indicates rid-syntax could not be parsed.
-    #[error("RFC8851 mandates rid-syntax        = %s\"a=rid:\" rid-id SP rid-dir")]
-    SyntaxIdDirSplit,
-    /// UnknownDirection indicates rid-dir was not parsed. Should be "send" or "recv".
-    #[error("RFC8851 mandates rid-dir           = %s\"send\" / %s\"recv\"")]
-    UnknownDirection,
-}
+*/
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum SimulcastDirection {
@@ -718,12 +709,12 @@ pub(crate) enum SimulcastDirection {
 }
 
 impl TryFrom<&str> for SimulcastDirection {
-    type Error = SimulcastRidParseError;
+    type Error = Error;
     fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "send" => Ok(SimulcastDirection::Send),
             "recv" => Ok(SimulcastDirection::Recv),
-            _ => Err(SimulcastRidParseError::UnknownDirection),
+            _ => Err(Error::SimulcastRidParseErrorUnknownDirection),
         }
     }
 }
@@ -735,7 +726,7 @@ pub(crate) struct SimulcastRid {
     pub(crate) params: String,
     pub(crate) paused: bool,
 }
-
+/*
 impl TryFrom<&String> for SimulcastRid {
     type Error = SimulcastRidParseError;
     fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
@@ -766,17 +757,17 @@ fn bundle_match(bundle: Option<&String>, id: &str) -> bool {
         Some(b) => b.split_whitespace().any(|s| s == id),
     }
 }
-
+*/
 #[derive(Default)]
-pub(crate) struct MediaSection {
+pub(crate) struct MediaSection<'a> {
     pub(crate) id: String,
-    pub(crate) transceivers: Vec<Arc<RTCRtpTransceiver>>,
+    pub(crate) transceivers: &'a [RTCRtpTransceiver],
     pub(crate) data: bool,
     pub(crate) rid_map: Vec<SimulcastRid>,
     pub(crate) offered_direction: Option<RTCRtpTransceiverDirection>,
     pub(crate) extmap_allow_mixed: bool,
 }
-
+/*
 pub(crate) struct PopulateSdpParams {
     pub(crate) media_description_fingerprint: bool,
     pub(crate) is_icelite: bool,

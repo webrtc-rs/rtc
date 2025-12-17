@@ -1480,6 +1480,13 @@ pub enum Error {
     #[error("not long enough to be a RTP Packet")]
     ErrRTPTooShort,
 
+    /// SyntaxIdDirSplit indicates rid-syntax could not be parsed.
+    #[error("RFC8851 mandates rid-syntax        = %s\"a=rid:\" rid-id SP rid-dir")]
+    SimulcastRidParseErrorSyntaxIdDirSplit,
+    /// UnknownDirection indicates rid-dir was not parsed. Should be "send" or "recv".
+    #[error("RFC8851 mandates rid-dir           = %s\"send\" / %s\"recv\"")]
+    SimulcastRidParseErrorUnknownDirection,
+
     //SDP
     #[error("codec not found")]
     CodecNotFound,

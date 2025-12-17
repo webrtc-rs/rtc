@@ -53,7 +53,7 @@ pub struct ReplayProtection {
     pub srtcp: usize,
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub enum SctpMaxMessageSize {
     Bounded(u32),
     Unbounded,

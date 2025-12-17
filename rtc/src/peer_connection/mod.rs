@@ -30,7 +30,10 @@ use crate::peer_connection::state::peer_connection_state::{
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
 use crate::transport::dtls::role::DEFAULT_DTLS_ROLE_OFFER;
+use crate::transport::dtls::RTCDtlsTransport;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
+use crate::transport::ice::RTCIceTransport;
+use crate::transport::sctp::RTCSctpTransport;
 use crate::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
@@ -60,6 +63,10 @@ pub struct RTCPeerConnection {
 
     events: VecDeque<RTCPeerConnectionEvent>,
 
+    pub(super) ice_transport: RTCIceTransport,
+    pub(super) dtls_transport: RTCDtlsTransport,
+    pub(crate) sctp_transport: RTCSctpTransport,
+
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
@@ -80,8 +87,22 @@ impl RTCPeerConnection {
     pub fn new(mut configuration: RTCConfiguration) -> Result<Self> {
         configuration.validate()?;
 
+        // Create the ICE transport
+        let ice_transport = RTCIceTransport::new();
+
+        // Create the DTLS transport
+        let certificates = configuration.certificates.drain(..).collect();
+        let dtls_transport = RTCDtlsTransport::new(certificates)?;
+
+        // Create the SCTP transport
+        let sctp_transport =
+            RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size_can_send);
+
         Ok(Self {
             configuration,
+            ice_transport,
+            dtls_transport,
+            sctp_transport,
             ..Default::default()
         })
     }

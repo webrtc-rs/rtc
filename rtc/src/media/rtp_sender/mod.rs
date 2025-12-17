@@ -100,76 +100,51 @@ impl RTCRtpSender {
     }
 
     /*
-        /// AddEncoding adds an encoding to RTPSender. Used by simulcast senders.
-        pub async fn add_encoding(&self, track: Arc<dyn TrackLocal + Send + Sync>) -> Result<()> {
-            let mut track_encodings = self.track_encodings.lock().await;
+            /// AddEncoding adds an encoding to RTPSender. Used by simulcast senders.
+            pub async fn add_encoding(&self, track: Arc<dyn TrackLocal + Send + Sync>) -> Result<()> {
+                let mut track_encodings = self.track_encodings.lock().await;
 
-            if track.rid().is_none() {
-                return Err(Error::ErrRTPSenderRidNil);
+                if track.rid().is_none() {
+                    return Err(Error::ErrRTPSenderRidNil);
+                }
+
+                if self.has_stopped().await {
+                    return Err(Error::ErrRTPSenderStopped);
+                }
+
+                if self.has_sent() {
+                    return Err(Error::ErrRTPSenderSendAlreadyCalled);
+                }
+
+                let base_track = track_encodings
+                    .first()
+                    .map(|e| &e.track)
+                    .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+                if base_track.rid().is_none() {
+                    return Err(Error::ErrRTPSenderNoBaseEncoding);
+                }
+
+                if base_track.id() != track.id()
+                    || base_track.stream_id() != track.stream_id()
+                    || base_track.kind() != track.kind()
+                {
+                    return Err(Error::ErrRTPSenderBaseEncodingMismatch);
+                }
+
+                if track_encodings.iter().any(|e| e.track.rid() == track.rid()) {
+                    return Err(Error::ErrRTPSenderRIDCollision);
+                }
+
+                self.add_encoding_internal(&mut track_encodings, track)
+                    .await
             }
 
-            if self.has_stopped().await {
-                return Err(Error::ErrRTPSenderStopped);
-            }
-
-            if self.has_sent() {
-                return Err(Error::ErrRTPSenderSendAlreadyCalled);
-            }
-
-            let base_track = track_encodings
-                .first()
-                .map(|e| &e.track)
-                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
-            if base_track.rid().is_none() {
-                return Err(Error::ErrRTPSenderNoBaseEncoding);
-            }
-
-            if base_track.id() != track.id()
-                || base_track.stream_id() != track.stream_id()
-                || base_track.kind() != track.kind()
-            {
-                return Err(Error::ErrRTPSenderBaseEncodingMismatch);
-            }
-
-            if track_encodings.iter().any(|e| e.track.rid() == track.rid()) {
-                return Err(Error::ErrRTPSenderRIDCollision);
-            }
-
-            self.add_encoding_internal(&mut track_encodings, track)
-                .await
-        }
-
-        async fn add_encoding_internal(
-            &self,
-            track_encodings: &mut Vec<TrackEncoding>,
-            track: Arc<dyn TrackLocal + Send + Sync>,
-        ) -> Result<()> {
-            let ssrc = rand::random::<u32>();
-            let srtp_stream = Arc::new(SrtpWriterFuture {
-                closed: AtomicBool::new(false),
-                ssrc,
-                rtp_sender: Arc::downgrade(&self.internal),
-                rtp_transport: Arc::clone(&self.transport),
-                rtcp_read_stream: Mutex::new(None),
-                rtp_write_session: Mutex::new(None),
-                seq_trans: Arc::clone(&self.seq_trans),
-            });
-
-            let srtp_rtcp_reader = Arc::clone(&srtp_stream) as Arc<dyn RTCPReader + Send + Sync>;
-            let rtcp_interceptor = self.interceptor.bind_rtcp_reader(srtp_rtcp_reader).await;
-
-            let create_rtx_stream = self.enable_rtx
-                && self
-                    .media_engine
-                    .get_codecs_by_kind(track.kind())
-                    .iter()
-                    .any(|codec| {
-                        matches!(codec.capability.mime_type.split_once("/"), Some((_, "rtx")))
-                    });
-
-            let rtx = if create_rtx_stream {
+            async fn add_encoding_internal(
+                &self,
+                track_encodings: &mut Vec<TrackEncoding>,
+                track: Arc<dyn TrackLocal + Send + Sync>,
+            ) -> Result<()> {
                 let ssrc = rand::random::<u32>();
-
                 let srtp_stream = Arc::new(SrtpWriterFuture {
                     closed: AtomicBool::new(false),
                     ssrc,
@@ -177,54 +152,79 @@ impl RTCRtpSender {
                     rtp_transport: Arc::clone(&self.transport),
                     rtcp_read_stream: Mutex::new(None),
                     rtp_write_session: Mutex::new(None),
-                    seq_trans: Arc::clone(&self.rtx_seq_trans),
+                    seq_trans: Arc::clone(&self.seq_trans),
                 });
 
                 let srtp_rtcp_reader = Arc::clone(&srtp_stream) as Arc<dyn RTCPReader + Send + Sync>;
                 let rtcp_interceptor = self.interceptor.bind_rtcp_reader(srtp_rtcp_reader).await;
 
-                Some(RtxEncoding {
+                let create_rtx_stream = self.enable_rtx
+                    && self
+                        .media_engine
+                        .get_codecs_by_kind(track.kind())
+                        .iter()
+                        .any(|codec| {
+                            matches!(codec.capability.mime_type.split_once("/"), Some((_, "rtx")))
+                        });
+
+                let rtx = if create_rtx_stream {
+                    let ssrc = rand::random::<u32>();
+
+                    let srtp_stream = Arc::new(SrtpWriterFuture {
+                        closed: AtomicBool::new(false),
+                        ssrc,
+                        rtp_sender: Arc::downgrade(&self.internal),
+                        rtp_transport: Arc::clone(&self.transport),
+                        rtcp_read_stream: Mutex::new(None),
+                        rtp_write_session: Mutex::new(None),
+                        seq_trans: Arc::clone(&self.rtx_seq_trans),
+                    });
+
+                    let srtp_rtcp_reader = Arc::clone(&srtp_stream) as Arc<dyn RTCPReader + Send + Sync>;
+                    let rtcp_interceptor = self.interceptor.bind_rtcp_reader(srtp_rtcp_reader).await;
+
+                    Some(RtxEncoding {
+                        srtp_stream,
+                        rtcp_interceptor,
+                        stream_info: Mutex::new(StreamInfo::default()),
+                        ssrc,
+                    })
+                } else {
+                    None
+                };
+
+                let write_stream = Arc::new(InterceptorToTrackLocalWriter::new(self.paused.clone()));
+                let context = TrackLocalContext {
+                    id: self.id.clone(),
+                    params: super::RTCRtpParameters::default(),
+                    ssrc: 0,
+                    write_stream,
+                    paused: self.paused.clone(),
+                    mid: None,
+                };
+                let encoding = TrackEncoding {
+                    track,
                     srtp_stream,
                     rtcp_interceptor,
-                    stream_info: Mutex::new(StreamInfo::default()),
+                    stream_info: StreamInfo::default(),
+                    context,
                     ssrc,
-                })
-            } else {
-                None
-            };
+                    rtx,
+                };
 
-            let write_stream = Arc::new(InterceptorToTrackLocalWriter::new(self.paused.clone()));
-            let context = TrackLocalContext {
-                id: self.id.clone(),
-                params: super::RTCRtpParameters::default(),
-                ssrc: 0,
-                write_stream,
-                paused: self.paused.clone(),
-                mid: None,
-            };
-            let encoding = TrackEncoding {
-                track,
-                srtp_stream,
-                rtcp_interceptor,
-                stream_info: StreamInfo::default(),
-                context,
-                ssrc,
-                rtx,
-            };
+                track_encodings.push(encoding);
 
-            track_encodings.push(encoding);
+                Ok(())
+            }
+    */
+    pub(crate) fn is_negotiated(&self) -> bool {
+        self.negotiated
+    }
 
-            Ok(())
-        }
-
-        pub(crate) fn is_negotiated(&self) -> bool {
-            self.negotiated.load(Ordering::SeqCst)
-        }
-
-        pub(crate) fn set_negotiated(&self) {
-            self.negotiated.store(true, Ordering::SeqCst);
-        }
-
+    pub(crate) fn set_negotiated(&mut self) {
+        self.negotiated = true;
+    }
+    /*
         pub(crate) fn set_rtp_transceiver(&self, rtp_transceiver: Option<Weak<RTCRtpTransceiver>>) {
             if let Some(t) = rtp_transceiver.as_ref().and_then(|t| t.upgrade()) {
                 self.set_paused(!t.direction().has_send());
