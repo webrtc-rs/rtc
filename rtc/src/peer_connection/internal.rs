@@ -55,7 +55,7 @@ impl RTCPeerConnection {
                 .configuration
                 .setting_engine
                 .sdp_media_level_fingerprints,
-            is_icelite: self.configuration.setting_engine.candidates.ice_lite,
+            is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
             extmap_allow_mixed: true,
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
             ice_gathering_state: self.ice_gathering_state,
@@ -195,7 +195,7 @@ impl RTCPeerConnection {
                 .configuration
                 .setting_engine
                 .sdp_media_level_fingerprints,
-            is_icelite: self.configuration.setting_engine.candidates.ice_lite,
+            is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
             extmap_allow_mixed,
             connection_role,
             ice_gathering_state: self.ice_gathering_state,

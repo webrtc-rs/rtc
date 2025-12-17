@@ -148,31 +148,29 @@ impl RTCIceTransport {
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
             //TODO: if self.mdns_mode == MulticastDnsMode::Disabled {
             log::warn!(
-                "remote mDNS candidate added, but mDNS is disabled: ({})",
+                "remote mDNS candidate is not supported due to that mDNS is disabled: ({})",
                 c.address()
             );
             return Ok(());
-            //}
-            /*
-            if c.candidate_type() != CandidateType::Host {
-                return Err(Error::ErrAddressParseFailed);
-            }
-
-            let ai = Arc::clone(&self.internal);
-            let host_candidate = Arc::clone(c);
-            let mdns_conn = self.mdns_conn.clone();
-            tokio::spawn(async move {
-                if let Some(mdns_conn) = mdns_conn {
-                    if let Ok(candidate) =
-                        Self::resolve_and_add_multicast_candidate(mdns_conn, host_candidate).await
-                    {
-                        ai.add_remote_candidate(&candidate).await;
-                    }
-                }
-            });*/
         }
 
         self.remote_candidates.push(c);
+
+        Ok(())
+    }
+
+    pub(crate) fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
+        // If we have a mDNS Candidate lets fully resolve it before adding it locally
+        if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
+            //TODO: if self.mdns_mode == MulticastDnsMode::Disabled {
+            log::warn!(
+                "local mDNS candidate is not supported due to that mDNS is disabled: ({})",
+                c.address()
+            );
+            return Ok(());
+        }
+
+        self.local_candidates.push(c);
 
         Ok(())
     }

@@ -14,6 +14,7 @@ use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::RTCPeerConnection;
+use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
     transport::ice::server::RTCIceServer,
@@ -92,6 +93,8 @@ async fn run(
     port: u16,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
+    let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
+    let local_addr = socket.local_addr()?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -112,15 +115,30 @@ async fn run(
     // Set the remote SessionDescription
     peer_connection.set_remote_description(offer)?;
 
+    // Add local candidate
+    let candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
+    peer_connection.add_local_candidate(local_candidate_init)?;
+
     // Create an answer
     let answer = peer_connection.create_answer(None)?;
-    info!("answer created: {:?}", answer.sdp);
 
     // Sets the LocalDescription, and starts our UDP listeners
     peer_connection.set_local_description(answer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
+        info!("answer created: {:?}", local_desc.sdp);
         let json_str = serde_json::to_string(local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("{b64}");
@@ -128,9 +146,6 @@ async fn run(
         println!("generate local_description failed!");
         return Err(Error::ErrPeerConnLocalDescriptionNil.into());
     }
-
-    let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
-    let local_addr = socket.local_addr()?;
 
     println!("listening {}...", socket.local_addr()?);
 

@@ -774,7 +774,7 @@ pub(crate) struct MediaSection<'a> {
 
 pub(crate) struct PopulateSdpParams {
     pub(crate) media_description_fingerprint: bool,
-    pub(crate) is_icelite: bool,
+    pub(crate) is_ice_lite: bool,
     pub(crate) extmap_allow_mixed: bool,
     pub(crate) connection_role: ConnectionRole,
     pub(crate) ice_gathering_state: RTCIceGatheringState,
@@ -868,7 +868,7 @@ pub(crate) fn populate_sdp(
         }
     }
 
-    if params.is_icelite {
+    if params.is_ice_lite {
         // RFC 5245 S15.3
         d = d.with_value_attribute(ATTR_KEY_ICELITE.to_owned(), ATTR_KEY_ICELITE.to_owned());
     }

@@ -40,6 +40,7 @@ use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
 use crate::MEDIA_SECTION_APPLICATION;
 use ::sdp::util::ConnectionRole;
+use ice::candidate::{unmarshal_candidate, Candidate};
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 
@@ -637,9 +638,41 @@ impl RTCPeerConnection {
         }
     }
 
-    /// add_ice_candidate accepts an ICE candidate string and adds it
+    /// add_remote_candidate accepts a remote ICE candidate string and adds it
+    /// to the existing set of remote candidates.
+    pub fn add_remote_candidate(&mut self, remote_candidate: RTCIceCandidateInit) -> Result<()> {
+        if self.remote_description().is_none() {
+            return Err(Error::ErrNoRemoteDescription);
+        }
+
+        let candidate_value = match remote_candidate.candidate.strip_prefix("candidate:") {
+            Some(s) => s,
+            None => remote_candidate.candidate.as_str(),
+        };
+
+        if !candidate_value.is_empty() {
+            let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+            self.ice_transport.add_remote_candidate(candidate)?;
+        }
+
+        Ok(())
+    }
+
+    /// add_local_candidate accepts an ICE candidate string and adds it
     /// to the existing set of candidates.
-    pub fn add_ice_candidate(&mut self, _candidate: RTCIceCandidateInit) -> Result<()> {
+    pub fn add_local_candidate(&mut self, local_candidate: RTCIceCandidateInit) -> Result<()> {
+        let candidate_value = match local_candidate.candidate.strip_prefix("candidate:") {
+            Some(s) => s,
+            None => local_candidate.candidate.as_str(),
+        };
+
+        if !candidate_value.is_empty() {
+            let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+            self.ice_transport.add_local_candidate(candidate)?;
+        }
+
         Ok(())
     }
 
