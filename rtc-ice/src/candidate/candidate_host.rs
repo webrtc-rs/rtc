@@ -17,11 +17,21 @@ impl CandidateHostConfig {
             candidate_id = generate_cand_id();
         }
 
-        let ip: IpAddr = match self.base_config.address.parse() {
-            Ok(ip) => ip,
-            Err(_) => return Err(Error::ErrAddressParseFailed),
+        let (resolved_addr, network_type) = if !self.base_config.address.ends_with(".local") {
+            let ip: IpAddr = match self.base_config.address.parse() {
+                Ok(ip) => ip,
+                Err(_) => return Err(Error::ErrAddressParseFailed),
+            };
+            (
+                SocketAddr::new(ip, self.base_config.port),
+                determine_network_type(&self.base_config.network, &ip)?,
+            )
+        } else {
+            (
+                SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
+                NetworkType::Udp4,
+            )
         };
-        let network_type = determine_network_type(&self.base_config.network, &ip)?;
 
         Ok(Candidate {
             id: candidate_id,
@@ -29,7 +39,7 @@ impl CandidateHostConfig {
             candidate_type: CandidateType::Host,
             address: self.base_config.address,
             port: self.base_config.port,
-            resolved_addr: SocketAddr::new(ip, self.base_config.port),
+            resolved_addr,
             component: self.base_config.component,
             foundation_override: self.base_config.foundation,
             priority_override: self.base_config.priority,

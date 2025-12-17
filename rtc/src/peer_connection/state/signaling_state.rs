@@ -31,12 +31,12 @@ impl fmt::Display for StateChangeOp {
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-signaling-state
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCSignalingState {
-    #[default]
     Unspecified = 0,
 
     /// SignalingStateStable indicates there is no offer/answer exchange in
     /// progress. This is also the initial state, in which case the local and
     /// remote descriptions are nil.
+    #[default]
     Stable,
 
     /// SignalingStateHaveLocalOffer indicates that a local description, of
