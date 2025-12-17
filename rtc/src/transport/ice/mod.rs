@@ -2,8 +2,9 @@ use crate::transport::ice::candidate::RTCIceCandidate;
 use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::state::RTCIceTransportState;
-use ice::candidate::Candidate;
+use ice::candidate::{Candidate, CandidateType};
 use ice::rand::{generate_pwd, generate_ufrag};
+use ice::tcp_type::TcpType;
 use shared::error::{Error, Result};
 
 pub mod candidate;
@@ -74,8 +75,8 @@ impl RTCIceTransport {
         let (frag, pwd) = self.get_local_user_credentials();
 
         Ok(RTCIceParameters {
-            username_fragment: frag,
-            password: pwd,
+            username_fragment: frag.to_string(),
+            password: pwd.to_string(),
             ice_lite: false,
         })
     }
@@ -88,18 +89,18 @@ impl RTCIceTransport {
     }
 
     /// Returns the local user credentials.
-    pub fn get_local_user_credentials(&self) -> (String, String) {
+    pub(crate) fn get_local_user_credentials(&self) -> (&str, &str) {
         (
-            self.ufrag_pwd.local_ufrag.clone(),
-            self.ufrag_pwd.local_pwd.clone(),
+            self.ufrag_pwd.local_ufrag.as_str(),
+            self.ufrag_pwd.local_pwd.as_str(),
         )
     }
 
     /// Returns the remote user credentials.
-    pub fn get_remote_user_credentials(&self) -> (String, String) {
+    pub(crate) fn get_remote_user_credentials(&self) -> (&str, &str) {
         (
-            self.ufrag_pwd.remote_ufrag.clone(),
-            self.ufrag_pwd.remote_pwd.clone(),
+            self.ufrag_pwd.remote_ufrag.as_str(),
+            self.ufrag_pwd.remote_pwd.as_str(),
         )
     }
 
@@ -108,5 +109,88 @@ impl RTCIceTransport {
         ice_candidates: &[Candidate],
     ) -> Vec<RTCIceCandidate> {
         ice_candidates.iter().map(|c| c.into()).collect()
+    }
+
+    pub(crate) fn have_remote_credentials_change(&self, new_ufrag: &str, new_pwd: &str) -> bool {
+        let (ufrag, upwd) = self.get_remote_user_credentials();
+        ufrag != new_ufrag || upwd != new_pwd
+    }
+
+    pub(crate) fn set_remote_credentials(
+        &mut self,
+        remote_ufrag: String,
+        remote_pwd: String,
+    ) -> Result<()> {
+        if remote_ufrag.is_empty() {
+            return Err(Error::ErrRemoteUfragEmpty);
+        } else if remote_pwd.is_empty() {
+            return Err(Error::ErrRemotePwdEmpty);
+        }
+
+        self.ufrag_pwd.remote_ufrag = remote_ufrag;
+        self.ufrag_pwd.remote_pwd = remote_pwd;
+
+        Ok(())
+    }
+
+    /// Adds a new remote candidate.
+    pub(crate) fn add_remote_candidate(&mut self, c: Candidate) -> Result<()> {
+        // cannot check for network yet because it might not be applied
+        // when mDNS hostame is used.
+        if c.tcp_type() == TcpType::Active {
+            // TCP Candidates with tcptype active will probe server passive ones, so
+            // no need to do anything with them.
+            log::info!("Ignoring remote candidate with tcpType active: {c}");
+            return Ok(());
+        }
+
+        // If we have a mDNS Candidate lets fully resolve it before adding it locally
+        if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
+            //TODO: if self.mdns_mode == MulticastDnsMode::Disabled {
+            log::warn!(
+                "remote mDNS candidate added, but mDNS is disabled: ({})",
+                c.address()
+            );
+            return Ok(());
+            //}
+            /*
+            if c.candidate_type() != CandidateType::Host {
+                return Err(Error::ErrAddressParseFailed);
+            }
+
+            let ai = Arc::clone(&self.internal);
+            let host_candidate = Arc::clone(c);
+            let mdns_conn = self.mdns_conn.clone();
+            tokio::spawn(async move {
+                if let Some(mdns_conn) = mdns_conn {
+                    if let Ok(candidate) =
+                        Self::resolve_and_add_multicast_candidate(mdns_conn, host_candidate).await
+                    {
+                        ai.add_remote_candidate(&candidate).await;
+                    }
+                }
+            });*/
+        }
+
+        self.remote_candidates.push(c);
+
+        Ok(())
+    }
+
+    /// Role indicates the current role of the ICE transport.
+    pub(crate) fn role(&self) -> RTCIceRole {
+        self.role
+    }
+
+    /// set current role of the ICE transport.
+    pub(crate) fn set_role(&mut self, role: RTCIceRole) {
+        self.role = role;
+    }
+
+    /// restart is not exposed currently because ORTC has users create a whole new ICETransport
+    /// so for now lets keep it private so we don't cause ORTC users to depend on non-standard APIs
+    pub(crate) fn restart(&self) -> Result<()> {
+        //TODO:
+        Ok(())
     }
 }

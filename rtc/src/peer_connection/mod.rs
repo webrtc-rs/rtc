@@ -21,7 +21,8 @@ use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    extract_ice_details, get_mid_value, get_peer_direction, sdp_type::RTCSdpType, update_sdp_origin,
+    extract_fingerprint, extract_ice_details, get_mid_value, get_peer_direction, is_lite_set,
+    sdp_type::RTCSdpType, update_sdp_origin,
 };
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
@@ -29,9 +30,12 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
-use crate::transport::dtls::role::DEFAULT_DTLS_ROLE_OFFER;
+use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
+use crate::transport::dtls::parameters::DTLSParameters;
+use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_OFFER};
 use crate::transport::dtls::RTCDtlsTransport;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
+use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
 use crate::MEDIA_SECTION_APPLICATION;
@@ -99,7 +103,10 @@ impl RTCPeerConnection {
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
-        let dtls_transport = RTCDtlsTransport::new(certificates)?;
+        let dtls_transport = RTCDtlsTransport::new(
+            certificates,
+            configuration.setting_engine.answering_dtls_role,
+        )?;
 
         // Create the SCTP transport
         let sctp_transport =
@@ -319,8 +326,6 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let _is_renegotiation = self.current_remote_description.is_some();
-
         description.parsed = Some(description.unmarshal()?);
         self.set_description(&description, StateChangeOp::SetRemote)?;
 
@@ -460,34 +465,27 @@ impl RTCPeerConnection {
                 }
             }
 
-            let (_remote_ufrag, _remote_pwd, _candidates) = extract_ice_details(parsed)?;
+            let (remote_ufrag, remote_pwd, candidates) = extract_ice_details(parsed)?;
+            let is_renegotiation = self.current_remote_description.is_some();
 
-            /*
             if is_renegotiation
                 && self
-                    .internal
                     .ice_transport
                     .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
-                    .await
             {
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
                 if !we_offer {
-                    self.internal.ice_transport.restart().await?;
+                    self.ice_transport.restart()?;
                 }
 
-                self.internal
-                    .ice_transport
-                    .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())
-                    .await?;
+                self.ice_transport
+                    .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())?;
             }
 
             for candidate in candidates {
-                self.internal
-                    .ice_transport
-                    .add_remote_candidate(Some(candidate))
-                    .await?;
+                self.ice_transport.add_remote_candidate(candidate)?;
             }
-
+            /*TODO:
             if is_renegotiation {
                 if we_offer {
                     self.start_rtp_senders().await?;
@@ -510,9 +508,9 @@ impl RTCPeerConnection {
                         .await?;
                 }
                 return Ok(());
-            }
+            }*/
 
-            let remote_is_lite = Self::is_lite_set(parsed);
+            let remote_is_lite = is_lite_set(parsed);
 
             let (fingerprint, fingerprint_hash) = extract_fingerprint(parsed)?;
 
@@ -520,24 +518,35 @@ impl RTCPeerConnection {
             // If both or neither agents are lite the offering agent is controlling.
             // RFC 8445 S6.1.1
             let ice_role = if (we_offer
-                && remote_is_lite == self.internal.setting_engine.candidates.ice_lite)
-                || (remote_is_lite && !self.internal.setting_engine.candidates.ice_lite)
+                && remote_is_lite == self.configuration.setting_engine.candidates.ice_lite)
+                || (remote_is_lite && !self.configuration.setting_engine.candidates.ice_lite)
             {
                 RTCIceRole::Controlling
             } else {
                 RTCIceRole::Controlled
             };
+            self.ice_transport.set_role(ice_role);
 
+            let dtls_role = DTLSRole::from(parsed);
+            self.dtls_transport.set_parameters(DTLSParameters {
+                role: dtls_role,
+                fingerprints: vec![RTCDtlsFingerprint {
+                    algorithm: fingerprint_hash,
+                    value: fingerprint,
+                }],
+            })?;
+
+            /*TODO:
             // Start the networking in a new routine since it will block until
             // the connection is actually established.
             if we_offer {
-                self.start_rtp_senders().await?;
+                self.start_rtp_senders()?;
             }
 
             //log::trace!("start_transports: parsed={:?}", parsed);
 
             let pci = Arc::clone(&self.internal);
-            let dtls_role = DTLSRole::from(parsed);
+
             let remote_desc = Arc::new(description);
             self.internal
                 .ops

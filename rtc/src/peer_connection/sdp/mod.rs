@@ -903,7 +903,7 @@ pub(crate) fn get_peer_direction(media: &MediaDescription) -> RTCRtpTransceiverD
     }
     RTCRtpTransceiverDirection::Unspecified
 }
-/*
+
 pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, String)> {
     let mut fingerprints = vec![];
 
@@ -934,10 +934,10 @@ pub(crate) fn extract_fingerprint(desc: &SessionDescription) -> Result<(String, 
 
     Ok((parts[1].to_owned(), parts[0].to_owned()))
 }
-*/
+
 pub(crate) fn extract_ice_details(
     desc: &SessionDescription,
-) -> Result<(String, String, Vec<RTCIceCandidate>)> {
+) -> Result<(String, String, Vec<Candidate>)> {
     let mut candidates = vec![];
 
     // Backup ufrag/pwd is the first inactive credentials found.
@@ -983,8 +983,8 @@ pub(crate) fn extract_ice_details(
             if a.is_ice_candidate() {
                 if let Some(value) = &a.value {
                     let c: Candidate = unmarshal_candidate(value)?;
-                    let candidate = RTCIceCandidate::from(&c);
-                    candidates.push(candidate);
+                    //let candidate = RTCIceCandidate::from(&c);
+                    candidates.push(c);
                 }
             }
         }
@@ -999,6 +999,16 @@ pub(crate) fn extract_ice_details(
 
     Ok((remote_ufrag.to_owned(), remote_pwd.to_owned(), candidates))
 }
+
+pub(crate) fn is_lite_set(desc: &SessionDescription) -> bool {
+    for a in &desc.attributes {
+        if a.key.trim() == ATTR_KEY_ICELITE {
+            return true;
+        }
+    }
+    false
+}
+
 /*
 pub(crate) fn get_application_media_section_sctp_port(desc: &SessionDescription) -> Option<u16> {
     for m in &desc.media_descriptions {
