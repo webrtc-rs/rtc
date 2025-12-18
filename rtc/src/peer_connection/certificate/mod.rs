@@ -2,17 +2,32 @@ use std::ops::Add;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
+use rand::{rng, Rng};
 use rcgen::{CertificateParams, KeyPair};
 use ring::rand::SystemRandom;
 use ring::rsa;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
-use crate::math_rand_alpha;
 //TODO:use crate::stats::stats_collector::StatsCollector;
 //TODO:use crate::stats::{CertificateStats, StatsReportType};
 use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use shared::error::{Error, Result};
+
+pub(crate) const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/// math_rand_alpha generates a mathematical random alphabet sequence of the requested length.
+pub(crate) fn math_rand_alpha(n: usize) -> String {
+    let mut rng = rng();
+
+    let rand_string: String = (0..n)
+        .map(|_| {
+            let idx = rng.random_range(0..RUNES_ALPHA.len());
+            RUNES_ALPHA[idx] as char
+        })
+        .collect();
+
+    rand_string
+}
 
 /// Certificate represents a X.509 certificate used to authenticate WebRTC communications.
 ///

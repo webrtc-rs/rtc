@@ -17,6 +17,8 @@ use rtcp_mux_policy::RTCRtcpMuxPolicy;
 use shared::error::{Error, Result};
 use std::time::SystemTime;
 
+pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
+
 /// A Configuration defines how peer-to-peer communication via PeerConnection
 /// is established or re-established.
 /// Configurations may be set up once and reused across multiple connections.

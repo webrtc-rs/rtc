@@ -44,7 +44,7 @@ impl fmt::Display for RTCIceRole {
         match *self {
             RTCIceRole::Controlling => write!(f, "{ICE_ROLE_CONTROLLING_STR}"),
             RTCIceRole::Controlled => write!(f, "{ICE_ROLE_CONTROLLED_STR}"),
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::configuration::UNSPECIFIED_STR),
         }
     }
 }

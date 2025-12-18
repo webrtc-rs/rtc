@@ -88,7 +88,7 @@ impl fmt::Display for RTCPeerConnectionState {
             RTCPeerConnectionState::Disconnected => PEER_CONNECTION_STATE_DISCONNECTED_STR,
             RTCPeerConnectionState::Failed => PEER_CONNECTION_STATE_FAILED_STR,
             RTCPeerConnectionState::Closed => PEER_CONNECTION_STATE_CLOSED_STR,
-            RTCPeerConnectionState::Unspecified => crate::UNSPECIFIED_STR,
+            RTCPeerConnectionState::Unspecified => crate::configuration::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }
@@ -122,7 +122,10 @@ mod test {
     #[test]
     fn test_new_peer_connection_state() {
         let tests = vec![
-            (crate::UNSPECIFIED_STR, RTCPeerConnectionState::Unspecified),
+            (
+                crate::configuration::UNSPECIFIED_STR,
+                RTCPeerConnectionState::Unspecified,
+            ),
             ("new", RTCPeerConnectionState::New),
             ("connecting", RTCPeerConnectionState::Connecting),
             ("connected", RTCPeerConnectionState::Connected),
@@ -143,7 +146,10 @@ mod test {
     #[test]
     fn test_peer_connection_state_string() {
         let tests = vec![
-            (RTCPeerConnectionState::Unspecified, crate::UNSPECIFIED_STR),
+            (
+                RTCPeerConnectionState::Unspecified,
+                crate::configuration::UNSPECIFIED_STR,
+            ),
             (RTCPeerConnectionState::New, "new"),
             (RTCPeerConnectionState::Connecting, "connecting"),
             (RTCPeerConnectionState::Connected, "connected"),

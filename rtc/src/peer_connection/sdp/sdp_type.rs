@@ -68,7 +68,7 @@ impl fmt::Display for RTCSdpType {
             RTCSdpType::Pranswer => write!(f, "{SDP_TYPE_PRANSWER_STR}"),
             RTCSdpType::Answer => write!(f, "{SDP_TYPE_ANSWER_STR}"),
             RTCSdpType::Rollback => write!(f, "{SDP_TYPE_ROLLBACK_STR}"),
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::configuration::UNSPECIFIED_STR),
         }
     }
 }

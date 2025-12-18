@@ -11,7 +11,6 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::transport::ice::candidate::RTCIceCandidate;
 use crate::transport::ice::parameters::RTCIceParameters;
-use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;
@@ -21,7 +20,11 @@ use sdp::util::ConnectionRole;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::io::BufReader;
-//use crate::{MEDIA_SECTION_APPLICATION, SDP_ATTRIBUTE_RID, SDP_ATTRIBUTE_SIMULCAST};
+
+pub(crate) const SDP_ATTRIBUTE_RID: &str = "rid";
+pub(crate) const SDP_ATTRIBUTE_SIMULCAST: &str = "simulcast";
+pub(crate) const GENERATED_CERTIFICATE_ORIGIN: &str = "WebRTC";
+pub(crate) const MEDIA_SECTION_APPLICATION: &str = "application";
 
 /// TrackDetails represents any media source that can be represented in a SDP
 /// This isn't keyed by SSRC because it also needs to support rid based sources

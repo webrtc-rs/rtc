@@ -52,7 +52,7 @@ impl fmt::Display for RTCIceGatheringState {
             RTCIceGatheringState::Complete => {
                 write!(f, "{ICE_GATHERING_STATE_COMPLETE_STR}")
             }
-            _ => write!(f, "{}", crate::UNSPECIFIED_STR),
+            _ => write!(f, "{}", crate::configuration::UNSPECIFIED_STR),
         }
     }
 }

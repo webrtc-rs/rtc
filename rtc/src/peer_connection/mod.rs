@@ -38,9 +38,9 @@ use crate::transport::ice::candidate::RTCIceCandidateInit;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
-use crate::MEDIA_SECTION_APPLICATION;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
+use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 

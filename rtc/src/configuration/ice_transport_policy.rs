@@ -47,7 +47,7 @@ impl fmt::Display for RTCIceTransportPolicy {
         let s = match *self {
             RTCIceTransportPolicy::Relay => ICE_TRANSPORT_POLICY_RELAY_STR,
             RTCIceTransportPolicy::All => ICE_TRANSPORT_POLICY_ALL_STR,
-            RTCIceTransportPolicy::Unspecified => crate::UNSPECIFIED_STR,
+            RTCIceTransportPolicy::Unspecified => crate::configuration::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

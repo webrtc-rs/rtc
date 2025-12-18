@@ -12,8 +12,10 @@ use std::time::Duration;
 
 use crate::transport::dtls::role::DTLSRole;
 use crate::transport::ice::candidate_type::RTCIceCandidateType;
-use crate::RECEIVE_MTU;
 use shared::error::{Error, Result};
+
+/// Equal to UDP MTU
+pub(crate) const RECEIVE_MTU: usize = 1460;
 
 #[derive(Default, Clone)]
 pub struct Detach {
