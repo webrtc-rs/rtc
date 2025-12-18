@@ -1,32 +1,7 @@
-use super::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, STUNMessage,
-    TaggedRTCMessage,
-};
-//use crate::description::{
-//    rtp_transceiver_direction::RTCRtpTransceiverDirection, sdp_type::RTCSdpType,
-//    RTCSessionDescription,
-//};
-//use crate::endpoint::candidate::Candidate;
-//use crate::state::server_states::ServerStates;
-use bytes::BytesMut;
-use log::{debug, info, trace, warn};
-use shared::error::{Error, Result};
-use shared::{Context, Handler, TransportContext, TransportProtocol};
-use std::cell::RefCell;
+use super::message::TaggedRTCMessage;
+use shared::{Context, Handler};
 use std::collections::VecDeque;
-use std::ops::{Add, Sub};
-use std::rc::Rc;
-use std::time::Duration;
 use std::time::Instant;
-use stun::attributes::{
-    ATTR_ICE_CONTROLLED, ATTR_ICE_CONTROLLING, ATTR_NETWORK_COST, ATTR_PRIORITY, ATTR_USERNAME,
-    ATTR_USE_CANDIDATE,
-};
-use stun::fingerprint::FINGERPRINT;
-use stun::integrity::MessageIntegrity;
-use stun::message::{Setter, TransactionId, BINDING_SUCCESS};
-use stun::textattrs::TextAttribute;
-use stun::xoraddr::XorMappedAddress;
 
 /// EndpointHandler implements Data/Media Endpoint handling
 pub struct EndpointHandler {
@@ -78,9 +53,10 @@ impl Handler for EndpointHandler {
 
     fn handle_read(
         &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
+        _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
+        _msg: Self::Rin,
     ) {
+        /*
         let try_read = || -> Result<Vec<TaggedRTCMessage>> {
             //let mut server_states = self.server_states.borrow_mut();
             match msg.message {
@@ -129,13 +105,13 @@ impl Handler for EndpointHandler {
                 warn!("try_read got error {}", err);
                 ctx.fire_handle_error(Box::new(err));
             }
-        }
+        }*/
     }
 
     fn handle_timeout(
         &mut self,
         _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        now: Instant,
+        _now: Instant,
     ) {
         // terminate timeout here, no more ctx.fire_handle_timeout(now);
         /*if self.next_timeout <= now {

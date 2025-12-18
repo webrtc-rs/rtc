@@ -1,15 +1,6 @@
 use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
-//use crate::state::server_states::ServerStates;
-use bytes::BytesMut;
-use log::{debug, error};
-use shared::{
-    error::{Error, Result},
-    marshal::{Marshal, Unmarshal},
-    util::is_rtcp,
-    Context, Handler,
-};
-use std::cell::RefCell;
-use std::rc::Rc;
+use log::debug;
+use shared::{Context, Handler};
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
 pub struct SrtpHandler {
@@ -35,9 +26,9 @@ impl Handler for SrtpHandler {
     fn handle_read(
         &mut self,
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        mut msg: Self::Rin,
+        msg: Self::Rin,
     ) {
-        if let RTCMessage::Rtp(RTPMessage::Raw(message)) = msg.message {
+        if let RTCMessage::Rtp(RTPMessage::Raw(_message)) = msg.message {
             debug!("srtp read {:?}", msg.transport.peer_addr);
             /*TODO:
             let try_read = || -> Result<RTCMessage> {
@@ -97,8 +88,8 @@ impl Handler for SrtpHandler {
         &mut self,
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
-        if let Some(mut msg) = ctx.fire_poll_write() {
-            if let RTCMessage::Rtp(message) = msg.message {
+        if let Some(msg) = ctx.fire_poll_write() {
+            if let RTCMessage::Rtp(_message) = msg.message {
                 debug!("srtp write {:?}", msg.transport.peer_addr);
                 /*todo:
                 let try_write = || -> Result<BytesMut> {

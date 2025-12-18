@@ -12,6 +12,7 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::handler::message::TaggedRTCMessage;
 use crate::media::rtp_codec::RTPCodecType;
 use crate::media::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_sender::RTCRtpSender;
@@ -37,16 +38,18 @@ use crate::transport::ice::candidate::RTCIceCandidateInit;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
+use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
+use shared::{Pipeline, TaggedBytesMut};
 use std::collections::{HashMap, VecDeque};
 
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
 /// browser, or to another endpoint implementing the required protocols.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
@@ -68,8 +71,9 @@ pub struct RTCPeerConnection {
 
     events: VecDeque<RTCPeerConnectionEvent>,
 
-    pub(super) ice_transport: RTCIceTransport,
-    pub(super) dtls_transport: RTCDtlsTransport,
+    pub(crate) transport_pipeline: Pipeline<TaggedBytesMut, TaggedRTCMessage>,
+    pub(crate) ice_transport: RTCIceTransport,
+    pub(crate) dtls_transport: RTCDtlsTransport,
     pub(crate) sctp_transport: RTCSctpTransport,
 
     //////////////////////////////////////////////////
@@ -79,7 +83,7 @@ pub struct RTCPeerConnection {
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
 
     greater_mid: usize,
-    sdp_origin: ::sdp::description::session::Origin,
+    sdp_origin: Origin,
     last_offer: String,
     last_answer: String,
 

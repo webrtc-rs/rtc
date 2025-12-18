@@ -1,13 +1,7 @@
 use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
-//todo: use crate::interceptor::InterceptorEvent;
-//use crate::ServerStates;
-use log::{debug, error};
-use shared::error::Result;
-use shared::FourTuple;
+use log::debug;
 use shared::{Context, Handler};
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::time::Instant;
 
 /// InterceptorHandler implements RTCP feedback handling
@@ -38,7 +32,7 @@ impl Handler for InterceptorHandler {
     fn handle_read(
         &mut self,
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        mut msg: Self::Rin,
+        msg: Self::Rin,
     ) {
         if let RTCMessage::Rtp(RTPMessage::Rtp(_)) | RTCMessage::Rtp(RTPMessage::Rtcp(_)) =
             &msg.message
@@ -168,7 +162,7 @@ impl Handler for InterceptorHandler {
         &mut self,
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
-        if let Some(mut msg) = ctx.fire_poll_write() {
+        if let Some(msg) = ctx.fire_poll_write() {
             if let RTCMessage::Rtp(RTPMessage::Rtp(_)) | RTCMessage::Rtp(RTPMessage::Rtcp(_)) =
                 &msg.message
             {

@@ -1,17 +1,13 @@
-use bytes::BytesMut;
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::Instant;
 
 use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
-use dtls::endpoint::EndpointEvent;
+//TODO: use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
-use log::{debug, error, warn};
+use log::debug;
 use shared::error::{Error, Result};
-use shared::{Context, Handler, TransportContext, TransportProtocol};
+use shared::{Context, Handler};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 
@@ -47,7 +43,7 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
             todo!()
             /*TODO:
@@ -152,7 +148,7 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         now: Instant,
     ) {
-        let mut try_timeout = || -> Result<()> {
+        let /*mut*/ _try_timeout = || -> Result<()> {
             /*TODO:
             let mut server_states = self.server_states.borrow_mut();
             for session in server_states.get_mut_sessions().values_mut() {
@@ -222,7 +218,7 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+            if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
                 debug!("send dtls RAW {:?}", msg.transport.peer_addr);
                 todo!()
                 /*

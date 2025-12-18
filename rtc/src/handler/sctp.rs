@@ -1,21 +1,10 @@
 use super::message::{
-    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCMessage,
-    TaggedRTCMessage,
+    DTLSMessage, DataChannelMessage, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
 };
-//use crate::state::server_states::ServerStates;
-use bytes::BytesMut;
-use log::{debug, error};
-use sctp::{
-    AssociationEvent, AssociationHandle, DatagramEvent, EndpointEvent, Event, Payload,
-    PayloadProtocolIdentifier, StreamEvent,
-};
-use shared::error::{Error, Result};
-use shared::{Context, Handler, TransportContext, TransportMessage, TransportProtocol};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use log::debug;
+use sctp::{Payload, PayloadProtocolIdentifier};
+use shared::{Context, Handler, TransportMessage};
 use std::collections::VecDeque;
-use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::Instant;
 
 /// SctpHandler implements SCTP Protocol handling
@@ -60,7 +49,7 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
             todo!()
             /*
@@ -287,7 +276,7 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
+            if let RTCMessage::Dtls(DTLSMessage::Sctp(_message)) = msg.message {
                 debug!(
                     "send sctp data channel message {:?}",
                     msg.transport.peer_addr
