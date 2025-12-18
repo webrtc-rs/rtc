@@ -14,7 +14,7 @@ pub mod error;
 pub mod util;
 
 pub use sansio::{Context, Handler, InboundPipeline, OutboundPipeline, Pipeline, Protocol};
-
+pub use sansio_executor::{spawn_local, yield_local, LocalExecutorBuilder, Task, TaskError};
 pub use sansio_transport::{
     EcnCodepoint, FiveTuple, FourTuple, TaggedBytesMut, TransportContext, TransportMessage,
     TransportProtocol,
