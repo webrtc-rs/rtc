@@ -1,8 +1,8 @@
-use crate::messages::{
-    DTLSMessageEvent, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType,
-    MessageEvent, TaggedMessageEvent,
+use super::message::{
+    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCMessage,
+    TaggedRTCMessage,
 };
-use crate::state::server_states::ServerStates;
+//use crate::state::server_states::ServerStates;
 use bytes::BytesMut;
 use log::{debug, error};
 use sctp::{
@@ -20,10 +20,10 @@ use std::time::Instant;
 
 /// SctpHandler implements SCTP Protocol handling
 pub struct SctpHandler {
-    local_addr: SocketAddr,
-    server_states: Rc<RefCell<ServerStates>>,
+    //local_addr: SocketAddr,
+    //server_states: Rc<RefCell<ServerStates>>,
     internal_buffer: Vec<u8>,
-    transmits: VecDeque<TaggedMessageEvent>,
+    transmits: VecDeque<TaggedRTCMessage>,
 }
 
 enum SctpMessage {
@@ -32,19 +32,13 @@ enum SctpMessage {
 }
 
 impl SctpHandler {
-    pub fn new(local_addr: SocketAddr, server_states: Rc<RefCell<ServerStates>>) -> Self {
-        let max_message_size = {
-            let server_states = server_states.borrow();
-            server_states
-                .server_config()
-                .sctp_server_config
-                .transport
-                .max_message_size() as usize
-        };
-
+    pub fn new(
+        /*local_addr: SocketAddr, server_states: Rc<RefCell<ServerStates>>*/
+        max_message_size: usize,
+    ) -> Self {
         SctpHandler {
-            local_addr,
-            server_states: Rc::clone(&server_states),
+            //local_addr,
+            //server_states: Rc::clone(&server_states),
             internal_buffer: vec![0u8; max_message_size],
             transmits: VecDeque::new(),
         }
@@ -52,9 +46,9 @@ impl SctpHandler {
 }
 
 impl Handler for SctpHandler {
-    type Rin = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
@@ -66,8 +60,10 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let MessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
+            todo!()
+            /*
             let four_tuple = (&msg.transport).into();
 
             let try_read = || -> Result<Vec<SctpMessage>> {
@@ -152,16 +148,16 @@ impl Handler for SctpHandler {
                                     "recv sctp data channel message {:?}",
                                     msg.transport.peer_addr
                                 );
-                                ctx.fire_handle_read(TaggedMessageEvent {
+                                ctx.fire_handle_read(TaggedRTCMessage {
                                     now: msg.now,
                                     transport: msg.transport,
-                                    message: MessageEvent::Dtls(DTLSMessageEvent::Sctp(message)),
+                                    message: RTCMessage::Dtls(DTLSMessage::Sctp(message)),
                                 })
                             }
                             SctpMessage::Outbound(transmit) => {
                                 if let Payload::RawEncode(raw_data) = transmit.message {
                                     for raw in raw_data {
-                                        self.transmits.push_back(TaggedMessageEvent {
+                                        self.transmits.push_back(TaggedRTCMessage {
                                             now: transmit.now,
                                             transport: TransportContext {
                                                 local_addr: self.local_addr,
@@ -169,7 +165,7 @@ impl Handler for SctpHandler {
                                                 transport_protocol: TransportProtocol::UDP,
                                                 ecn: transmit.transport.ecn,
                                             },
-                                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(
+                                            message: RTCMessage::Dtls(DTLSMessage::Raw(
                                                 BytesMut::from(&raw[..]),
                                             )),
                                         });
@@ -183,7 +179,7 @@ impl Handler for SctpHandler {
                     error!("try_read with error {}", err);
                     ctx.fire_handle_error(Box::new(err))
                 }
-            };
+            };*/
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -196,6 +192,7 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         now: Instant,
     ) {
+        /*TODO:
         let try_timeout = || -> Result<Vec<TransportMessage<Payload>>> {
             let mut transmits = vec![];
             let mut server_states = self.server_states.borrow_mut();
@@ -234,7 +231,7 @@ impl Handler for SctpHandler {
                 for transmit in transmits {
                     if let Payload::RawEncode(raw_data) = transmit.message {
                         for raw in raw_data {
-                            self.transmits.push_back(TaggedMessageEvent {
+                            self.transmits.push_back(TaggedRTCMessage {
                                 now: transmit.now,
                                 transport: TransportContext {
                                     local_addr: self.local_addr,
@@ -242,7 +239,7 @@ impl Handler for SctpHandler {
                                     transport_protocol: TransportProtocol::UDP,
                                     ecn: transmit.transport.ecn,
                                 },
-                                message: MessageEvent::Dtls(DTLSMessageEvent::Raw(BytesMut::from(
+                                message: RTCMessage::Dtls(DTLSMessage::Raw(BytesMut::from(
                                     &raw[..],
                                 ))),
                             });
@@ -254,7 +251,7 @@ impl Handler for SctpHandler {
                 error!("try_timeout with error {}", err);
                 ctx.fire_handle_error(Box::new(err));
             }
-        }
+        }*/
 
         ctx.fire_handle_timeout(now);
     }
@@ -264,6 +261,7 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         eto: &mut Instant,
     ) {
+        /*TODO:
         {
             let server_states = self.server_states.borrow();
             for session in server_states.get_sessions().values() {
@@ -280,7 +278,7 @@ impl Handler for SctpHandler {
                     }
                 }
             }
-        }
+        }*/
         ctx.fire_poll_timeout(eto);
     }
 
@@ -289,11 +287,12 @@ impl Handler for SctpHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Dtls(DTLSMessageEvent::Sctp(message)) = msg.message {
+            if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
                 debug!(
                     "send sctp data channel message {:?}",
                     msg.transport.peer_addr
                 );
+                /*
                 let four_tuple = (&msg.transport).into();
 
                 let try_write = || -> Result<Vec<TransportMessage<Payload>>> {
@@ -346,7 +345,7 @@ impl Handler for SctpHandler {
                         for transmit in transmits {
                             if let Payload::RawEncode(raw_data) = transmit.message {
                                 for raw in raw_data {
-                                    self.transmits.push_back(TaggedMessageEvent {
+                                    self.transmits.push_back(TaggedRTCMessage {
                                         now: transmit.now,
                                         transport: TransportContext {
                                             local_addr: self.local_addr,
@@ -354,7 +353,7 @@ impl Handler for SctpHandler {
                                             transport_protocol: TransportProtocol::UDP,
                                             ecn: transmit.transport.ecn,
                                         },
-                                        message: MessageEvent::Dtls(DTLSMessageEvent::Raw(
+                                        message: RTCMessage::Dtls(DTLSMessage::Raw(
                                             BytesMut::from(&raw[..]),
                                         )),
                                     });
@@ -366,7 +365,7 @@ impl Handler for SctpHandler {
                         error!("try_write with error {}", err);
                         ctx.fire_handle_error(Box::new(err));
                     }
-                }
+                }*/
             } else {
                 // Bypass
                 debug!("Bypass sctp write {:?}", msg.transport.peer_addr);

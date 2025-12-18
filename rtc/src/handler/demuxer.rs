@@ -1,6 +1,5 @@
-use crate::messages::{
-    DTLSMessageEvent, MessageEvent, RTPMessageEvent, STUNMessageEvent, TaggedMessageEvent,
-};
+use super::message::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage};
+
 use log::{debug, error};
 use shared::{Context, Handler, TaggedBytesMut};
 
@@ -50,8 +49,8 @@ impl DemuxerHandler {
 
 impl Handler for DemuxerHandler {
     type Rin = TaggedBytesMut;
-    type Rout = TaggedMessageEvent;
-    type Win = TaggedMessageEvent;
+    type Rout = TaggedRTCMessage;
+    type Win = TaggedRTCMessage;
     type Wout = TaggedBytesMut;
 
     fn name(&self) -> &str {
@@ -66,22 +65,22 @@ impl Handler for DemuxerHandler {
         if msg.message.is_empty() {
             error!("drop invalid packet due to zero length");
         } else if match_dtls(&msg.message) {
-            ctx.fire_handle_read(TaggedMessageEvent {
+            ctx.fire_handle_read(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
-                message: MessageEvent::Dtls(DTLSMessageEvent::Raw(msg.message)),
+                message: RTCMessage::Dtls(DTLSMessage::Raw(msg.message)),
             });
         } else if match_srtp(&msg.message) {
-            ctx.fire_handle_read(TaggedMessageEvent {
+            ctx.fire_handle_read(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
-                message: MessageEvent::Rtp(RTPMessageEvent::Raw(msg.message)),
+                message: RTCMessage::Rtp(RTPMessage::Raw(msg.message)),
             });
         } else {
-            ctx.fire_handle_read(TaggedMessageEvent {
+            ctx.fire_handle_read(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
-                message: MessageEvent::Stun(STUNMessageEvent::Raw(msg.message)),
+                message: RTCMessage::Stun(STUNMessage::Raw(msg.message)),
             });
         }
     }
@@ -92,9 +91,9 @@ impl Handler for DemuxerHandler {
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
             match msg.message {
-                MessageEvent::Stun(STUNMessageEvent::Raw(message))
-                | MessageEvent::Dtls(DTLSMessageEvent::Raw(message))
-                | MessageEvent::Rtp(RTPMessageEvent::Raw(message)) => Some(TaggedBytesMut {
+                RTCMessage::Stun(STUNMessage::Raw(message))
+                | RTCMessage::Dtls(DTLSMessage::Raw(message))
+                | RTCMessage::Rtp(RTPMessage::Raw(message)) => Some(TaggedBytesMut {
                     now: msg.now,
                     transport: msg.transport,
                     message,

@@ -1,4 +1,4 @@
-use crate::messages::{MessageEvent, STUNMessageEvent, TaggedMessageEvent};
+use super::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use bytes::BytesMut;
 use log::{debug, warn};
 use shared::error::Result;
@@ -16,9 +16,9 @@ impl StunHandler {
 }
 
 impl Handler for StunHandler {
-    type Rin = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
@@ -30,7 +30,7 @@ impl Handler for StunHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let MessageEvent::Stun(STUNMessageEvent::Raw(message)) = msg.message {
+        if let RTCMessage::Stun(STUNMessage::Raw(message)) = msg.message {
             let try_read = || -> Result<Message> {
                 let mut stun_message = Message {
                     raw: message.to_vec(),
@@ -46,10 +46,10 @@ impl Handler for StunHandler {
 
             match try_read() {
                 Ok(stun_message) => {
-                    ctx.fire_handle_read(TaggedMessageEvent {
+                    ctx.fire_handle_read(TaggedRTCMessage {
                         now: msg.now,
                         transport: msg.transport,
-                        message: MessageEvent::Stun(STUNMessageEvent::Stun(stun_message)),
+                        message: RTCMessage::Stun(STUNMessage::Stun(stun_message)),
                     });
                 }
                 Err(err) => {
@@ -68,17 +68,17 @@ impl Handler for StunHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Stun(STUNMessageEvent::Stun(mut stun_message)) = msg.message {
+            if let RTCMessage::Stun(STUNMessage::Stun(mut stun_message)) = msg.message {
                 debug!(
                     "StunMessage type {} sent to {}",
                     stun_message.typ, msg.transport.peer_addr
                 );
                 stun_message.encode();
                 let message = BytesMut::from(&stun_message.raw[..]);
-                Some(TaggedMessageEvent {
+                Some(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
-                    message: MessageEvent::Stun(STUNMessageEvent::Raw(message)),
+                    message: RTCMessage::Stun(STUNMessage::Raw(message)),
                 })
             } else {
                 debug!("bypass StunHandler write for {}", msg.transport.peer_addr);

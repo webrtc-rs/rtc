@@ -57,16 +57,17 @@ pub struct ReplayProtection {
 
 #[derive(Copy, Clone)]
 pub enum SctpMaxMessageSize {
-    Bounded(u32),
+    Bounded(usize),
     Unbounded,
 }
 
 impl SctpMaxMessageSize {
-    pub const DEFAULT_MESSAGE_SIZE: u32 = 65536;
-    pub fn as_u32(&self) -> u32 {
+    pub const DEFAULT_MESSAGE_SIZE: usize = 65536;
+    pub const MAX_MESSAGE_SIZE: usize = 262144;
+    pub fn as_usize(&self) -> usize {
         match self {
             Self::Bounded(result) => *result,
-            Self::Unbounded => 0,
+            Self::Unbounded => Self::MAX_MESSAGE_SIZE,
         }
     }
 }
@@ -106,7 +107,7 @@ pub struct SettingEngine {
     pub(crate) mid_generator: Option<Arc<dyn Fn(isize) -> String + Send + Sync>>,
     pub(crate) enable_sender_rtx: bool,
     /// Determines the max size of any message that may be sent through an SCTP transport.
-    pub(crate) sctp_max_message_size_can_send: SctpMaxMessageSize,
+    pub(crate) sctp_max_message_size: SctpMaxMessageSize,
 }
 
 impl SettingEngine {
@@ -376,10 +377,7 @@ impl SettingEngine {
         self.enable_sender_rtx = is_enabled;
     }
 
-    pub fn set_sctp_max_message_size_can_send(
-        &mut self,
-        max_message_size_can_send: SctpMaxMessageSize,
-    ) {
-        self.sctp_max_message_size_can_send = max_message_size_can_send
+    pub fn set_sctp_max_message_size(&mut self, max_message_size: SctpMaxMessageSize) {
+        self.sctp_max_message_size = max_message_size
     }
 }

@@ -1,9 +1,9 @@
-use crate::interceptor::InterceptorEvent;
-use crate::messages::{MessageEvent, RTPMessageEvent, TaggedMessageEvent};
-use crate::types::FourTuple;
-use crate::ServerStates;
+use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
+//todo: use crate::interceptor::InterceptorEvent;
+//use crate::ServerStates;
 use log::{debug, error};
 use shared::error::Result;
+use shared::FourTuple;
 use shared::{Context, Handler};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -12,23 +12,23 @@ use std::time::Instant;
 
 /// InterceptorHandler implements RTCP feedback handling
 pub struct InterceptorHandler {
-    server_states: Rc<RefCell<ServerStates>>,
-    transmits: VecDeque<TaggedMessageEvent>,
+    //server_states: Rc<RefCell<ServerStates>>,
+    transmits: VecDeque<TaggedRTCMessage>,
 }
 
 impl InterceptorHandler {
-    pub fn new(server_states: Rc<RefCell<ServerStates>>) -> Self {
+    pub fn new(/*server_states: Rc<RefCell<ServerStates>>*/) -> Self {
         Self {
-            server_states,
+            //server_states,
             transmits: VecDeque::new(),
         }
     }
 }
 
 impl Handler for InterceptorHandler {
-    type Rin = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
@@ -40,9 +40,10 @@ impl Handler for InterceptorHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         mut msg: Self::Rin,
     ) {
-        if let MessageEvent::Rtp(RTPMessageEvent::Rtp(_))
-        | MessageEvent::Rtp(RTPMessageEvent::Rtcp(_)) = &msg.message
+        if let RTCMessage::Rtp(RTPMessage::Rtp(_)) | RTCMessage::Rtp(RTPMessage::Rtcp(_)) =
+            &msg.message
         {
+            /*TODO
             let mut try_read = || -> Result<Vec<InterceptorEvent>> {
                 let mut server_states = self.server_states.borrow_mut();
                 let four_tuple = (&msg.transport).into();
@@ -74,9 +75,9 @@ impl Handler for InterceptorHandler {
                     ctx.fire_handle_error(Box::new(err))
                 }
             };
-
-            if let MessageEvent::Rtp(RTPMessageEvent::Rtcp(_)) = &msg.message {
-                // RTCP message read must end here in SFU case. If any rtcp packet needs to be forwarded to other Endpoints,
+            */
+            if let RTCMessage::Rtp(RTPMessage::Rtcp(_)) = &msg.message {
+                // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
                 // just add a new interceptor to forward it.
                 debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
                 return;
@@ -92,6 +93,7 @@ impl Handler for InterceptorHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         now: Instant,
     ) {
+        /*TODO:
         let try_handle_timeout = || -> Result<Vec<InterceptorEvent>> {
             let mut interceptor_events = vec![];
 
@@ -136,7 +138,7 @@ impl Handler for InterceptorHandler {
                 error!("try_handle_timeout with error {}", err);
                 ctx.fire_handle_error(Box::new(err))
             }
-        }
+        }*/
 
         ctx.fire_handle_timeout(now);
     }
@@ -146,6 +148,7 @@ impl Handler for InterceptorHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         eto: &mut Instant,
     ) {
+        /*TODO
         {
             let mut server_states = self.server_states.borrow_mut();
             let sessions = server_states.get_mut_sessions();
@@ -156,7 +159,7 @@ impl Handler for InterceptorHandler {
                     interceptor.poll_timeout(eto)
                 }
             }
-        }
+        }*/
 
         ctx.fire_poll_timeout(eto);
     }
@@ -166,9 +169,10 @@ impl Handler for InterceptorHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(mut msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Rtp(RTPMessageEvent::Rtp(_))
-            | MessageEvent::Rtp(RTPMessageEvent::Rtcp(_)) = &msg.message
+            if let RTCMessage::Rtp(RTPMessage::Rtp(_)) | RTCMessage::Rtp(RTPMessage::Rtcp(_)) =
+                &msg.message
             {
+                /*TODO:
                 let mut try_write = || -> Result<Vec<InterceptorEvent>> {
                     let mut server_states = self.server_states.borrow_mut();
                     let four_tuple = (&msg.transport).into();
@@ -198,7 +202,7 @@ impl Handler for InterceptorHandler {
                         error!("try_write with error {}", err);
                         ctx.fire_handle_error(Box::new(err))
                     }
-                };
+                };*/
             }
 
             debug!("interceptor write {:?}", msg.transport.peer_addr);

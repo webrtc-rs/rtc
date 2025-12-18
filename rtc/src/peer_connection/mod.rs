@@ -1,7 +1,6 @@
 pub mod certificate;
 pub mod event;
 mod internal;
-pub mod message;
 pub mod proto;
 pub mod sdp;
 pub mod state;
@@ -112,7 +111,7 @@ impl RTCPeerConnection {
 
         // Create the SCTP transport
         let sctp_transport =
-            RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size_can_send);
+            RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size);
 
         Ok(Self {
             configuration,
@@ -687,8 +686,8 @@ impl RTCPeerConnection {
     /// copy and direct mutation on it will not take effect until set_configuration
     /// has been called with Configuration passed as its only argument.
     /// <https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getconfiguration>
-    pub fn get_configuration(&self) -> RTCConfiguration {
-        self.configuration.clone()
+    pub fn get_configuration(&self) -> &RTCConfiguration {
+        &self.configuration
     }
 
     /// set_configuration updates the configuration of this PeerConnection object.

@@ -1,13 +1,13 @@
-use crate::description::{
-    rtp_transceiver_direction::RTCRtpTransceiverDirection, sdp_type::RTCSdpType,
-    RTCSessionDescription,
+use super::message::{
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, STUNMessage,
+    TaggedRTCMessage,
 };
-use crate::endpoint::candidate::Candidate;
-use crate::messages::{
-    ApplicationMessage, DTLSMessageEvent, DataChannelEvent, MessageEvent, RTPMessageEvent,
-    STUNMessageEvent, TaggedMessageEvent,
-};
-use crate::state::server_states::ServerStates;
+//use crate::description::{
+//    rtp_transceiver_direction::RTCRtpTransceiverDirection, sdp_type::RTCSdpType,
+//    RTCSessionDescription,
+//};
+//use crate::endpoint::candidate::Candidate;
+//use crate::state::server_states::ServerStates;
 use bytes::BytesMut;
 use log::{debug, info, trace, warn};
 use shared::error::{Error, Result};
@@ -28,39 +28,39 @@ use stun::message::{Setter, TransactionId, BINDING_SUCCESS};
 use stun::textattrs::TextAttribute;
 use stun::xoraddr::XorMappedAddress;
 
-/// GatewayHandler implements Data/Media Selective Forward handling
-pub struct GatewayHandler {
-    server_states: Rc<RefCell<ServerStates>>,
-    transmits: VecDeque<TaggedMessageEvent>,
-    next_timeout: Instant,
-    idle_timeout: Duration,
+/// EndpointHandler implements Data/Media Endpoint handling
+pub struct EndpointHandler {
+    //server_states: Rc<RefCell<ServerStates>>,
+    transmits: VecDeque<TaggedRTCMessage>,
+    //next_timeout: Instant,
+    //idle_timeout: Duration,
 }
 
-impl GatewayHandler {
-    pub fn new(server_states: Rc<RefCell<ServerStates>>) -> Self {
-        let idle_timeout = server_states.borrow().server_config().idle_timeout;
+impl EndpointHandler {
+    pub fn new(/*server_states: Rc<RefCell<ServerStates>>*/) -> Self {
+        //let idle_timeout = server_states.borrow().server_config().idle_timeout;
 
-        GatewayHandler {
-            server_states,
+        EndpointHandler {
+            //server_states,
             transmits: VecDeque::new(),
-            next_timeout: Instant::now().add(idle_timeout),
-            idle_timeout,
+            //next_timeout: Instant::now().add(idle_timeout),
+            //idle_timeout,
         }
     }
 }
 
-impl Handler for GatewayHandler {
-    type Rin = TaggedMessageEvent;
+impl Handler for EndpointHandler {
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
-        "GatewayHandler"
+        "EndpointHandler"
     }
 
     fn transport_inactive(&mut self, _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>) {
-        let server_states = self.server_states.borrow();
+        /*let server_states = self.server_states.borrow();
         let sessions = server_states.get_sessions();
         let mut endpoint_count = 0;
         for session in sessions.values() {
@@ -73,7 +73,7 @@ impl Handler for GatewayHandler {
             server_states.get_endpoints().len(),
             server_states.get_candidates().len(),
             server_states.local_addr()
-        );
+        );*/
     }
 
     fn handle_read(
@@ -81,41 +81,37 @@ impl Handler for GatewayHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        let try_read = || -> Result<Vec<TaggedMessageEvent>> {
-            let mut server_states = self.server_states.borrow_mut();
+        let try_read = || -> Result<Vec<TaggedRTCMessage>> {
+            //let mut server_states = self.server_states.borrow_mut();
             match msg.message {
-                MessageEvent::Stun(STUNMessageEvent::Stun(message)) => {
-                    GatewayHandler::handle_stun_message(
+                /*RTCMessage::Stun(STUNMessage::Stun(message)) => {
+                    EndpointHandler::handle_stun_message(
                         &mut server_states,
                         msg.now,
                         msg.transport,
                         message,
                     )
                 }
-                MessageEvent::Dtls(DTLSMessageEvent::DataChannel(message)) => {
-                    GatewayHandler::handle_dtls_message(
+                RTCMessage::Dtls(DTLSMessage::DataChannel(message)) => {
+                    EndpointHandler::handle_dtls_message(
                         &mut server_states,
                         msg.now,
                         msg.transport,
                         message,
                     )
                 }
-                MessageEvent::Rtp(RTPMessageEvent::Rtp(message)) => {
-                    GatewayHandler::handle_rtp_message(
-                        &mut server_states,
-                        msg.now,
-                        msg.transport,
-                        message,
-                    )
-                }
-                MessageEvent::Rtp(RTPMessageEvent::Rtcp(message)) => {
-                    GatewayHandler::handle_rtcp_message(
-                        &mut server_states,
-                        msg.now,
-                        msg.transport,
-                        message,
-                    )
-                }
+                RTCMessage::Rtp(RTPMessage::Rtp(message)) => EndpointHandler::handle_rtp_message(
+                    &mut server_states,
+                    msg.now,
+                    msg.transport,
+                    message,
+                ),
+                RTCMessage::Rtp(RTPMessage::Rtcp(message)) => EndpointHandler::handle_rtcp_message(
+                    &mut server_states,
+                    msg.now,
+                    msg.transport,
+                    message,
+                ),*/
                 _ => {
                     warn!("drop unsupported message from {}", msg.transport.peer_addr);
                     Ok(vec![])
@@ -142,7 +138,7 @@ impl Handler for GatewayHandler {
         now: Instant,
     ) {
         // terminate timeout here, no more ctx.fire_handle_timeout(now);
-        if self.next_timeout <= now {
+        /*if self.next_timeout <= now {
             let mut four_tuples = vec![];
             let mut server_states = self.server_states.borrow_mut();
             for session in server_states.get_mut_sessions().values_mut() {
@@ -159,7 +155,7 @@ impl Handler for GatewayHandler {
             }
 
             self.next_timeout = self.next_timeout.add(self.idle_timeout);
-        }
+        }*/
     }
 
     fn poll_timeout(
@@ -167,9 +163,9 @@ impl Handler for GatewayHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         eto: &mut Instant,
     ) {
-        if self.next_timeout < *eto {
+        /*if self.next_timeout < *eto {
             *eto = self.next_timeout;
-        }
+        }*/
         ctx.fire_poll_timeout(eto);
     }
 
@@ -184,17 +180,18 @@ impl Handler for GatewayHandler {
     }
 }
 
-impl GatewayHandler {
+impl EndpointHandler {
+    /*
     fn handle_stun_message(
         server_states: &mut ServerStates,
         now: Instant,
         transport_context: TransportContext,
         mut request: stun::message::Message,
-    ) -> Result<Vec<TaggedMessageEvent>> {
-        let candidate = match GatewayHandler::check_stun_message(server_states, &mut request)? {
+    ) -> Result<Vec<TaggedRTCMessage>> {
+        let candidate = match EndpointHandler::check_stun_message(server_states, &mut request)? {
             Some(candidate) => candidate,
             None => {
-                return GatewayHandler::create_server_reflective_address_message_event(
+                return EndpointHandler::create_server_reflective_address_message_event(
                     now,
                     transport_context,
                     request.transaction_id,
@@ -202,7 +199,7 @@ impl GatewayHandler {
             }
         };
 
-        GatewayHandler::add_endpoint(server_states, &request, &candidate, &transport_context)?;
+        EndpointHandler::add_endpoint(server_states, &request, &candidate, &transport_context)?;
 
         let mut response = stun::message::Message::new();
         response.build(&[
@@ -226,10 +223,10 @@ impl GatewayHandler {
             transport_context.peer_addr.port()
         );
 
-        Ok(vec![TaggedMessageEvent {
+        Ok(vec![TaggedRTCMessage {
             now,
             transport: transport_context,
-            message: MessageEvent::Stun(STUNMessageEvent::Stun(response)),
+            message: RTCMessage::Stun(STUNMessage::Stun(response)),
         }])
     }
 
@@ -238,16 +235,16 @@ impl GatewayHandler {
         now: Instant,
         transport_context: TransportContext,
         message: ApplicationMessage,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         match message.data_channel_event {
-            DataChannelEvent::Open => GatewayHandler::handle_datachannel_open(
+            DataChannelEvent::Open => EndpointHandler::handle_datachannel_open(
                 server_states,
                 now,
                 transport_context,
                 message.association_handle,
                 message.stream_id,
             ),
-            DataChannelEvent::Message(payload) => GatewayHandler::handle_datachannel_message(
+            DataChannelEvent::Message(payload) => EndpointHandler::handle_datachannel_message(
                 server_states,
                 now,
                 transport_context,
@@ -255,7 +252,7 @@ impl GatewayHandler {
                 message.stream_id,
                 payload,
             ),
-            DataChannelEvent::Close => GatewayHandler::handle_datachannel_close(
+            DataChannelEvent::Close => EndpointHandler::handle_datachannel_close(
                 server_states,
                 now,
                 transport_context,
@@ -271,7 +268,7 @@ impl GatewayHandler {
         transport_context: TransportContext,
         association_handle: usize,
         stream_id: u16,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         let four_tuple = (&transport_context).into();
         let (session_id, endpoint_id) = server_states
             .find_endpoint(&four_tuple)
@@ -328,7 +325,7 @@ impl GatewayHandler {
         }
 
         if endpoint.is_renegotiation_needed() {
-            Ok(vec![GatewayHandler::create_offer_message_event(
+            Ok(vec![EndpointHandler::create_offer_message_event(
                 server_states,
                 now,
                 transport_context,
@@ -346,7 +343,7 @@ impl GatewayHandler {
         _transport_context: TransportContext,
         _association_handle: usize,
         _stream_id: u16,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         //TODO: handle datachannel close event!
         // clean up resources, like sctp_association, endpoint, etc.
         Ok(vec![])
@@ -359,7 +356,7 @@ impl GatewayHandler {
         association_handle: usize,
         stream_id: u16,
         payload: BytesMut,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         let request_sdp_str = String::from_utf8(payload.to_vec())?;
         let request_sdp = serde_json::from_str::<RTCSessionDescription>(&request_sdp_str)
             .map_err(|err| Error::Other(err.to_string()))?;
@@ -380,24 +377,22 @@ impl GatewayHandler {
                 let answer_str =
                     serde_json::to_string(&answer).map_err(|err| Error::Other(err.to_string()))?;
 
-                let peers = GatewayHandler::get_other_datachannel_transport_contexts(
+                let peers = EndpointHandler::get_other_datachannel_transport_contexts(
                     server_states,
                     &transport_context,
                 )?;
                 let mut messages = Vec::with_capacity(peers.len() + 1);
 
-                messages.push(TaggedMessageEvent {
+                messages.push(TaggedRTCMessage {
                     now,
                     transport: transport_context,
-                    message: MessageEvent::Dtls(DTLSMessageEvent::DataChannel(
-                        ApplicationMessage {
-                            association_handle,
-                            stream_id,
-                            data_channel_event: DataChannelEvent::Message(BytesMut::from(
-                                answer_str.as_str(),
-                            )),
-                        },
-                    )),
+                    message: RTCMessage::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                        association_handle,
+                        stream_id,
+                        data_channel_event: DataChannelEvent::Message(BytesMut::from(
+                            answer_str.as_str(),
+                        )),
+                    })),
                 });
 
                 // trigger other endpoints' create_offer()
@@ -409,7 +404,7 @@ impl GatewayHandler {
                 ) in peers
                 {
                     if is_renegotiation_needed {
-                        messages.push(GatewayHandler::create_offer_message_event(
+                        messages.push(EndpointHandler::create_offer_message_event(
                             server_states,
                             now,
                             other_transport_context,
@@ -437,7 +432,7 @@ impl GatewayHandler {
         now: Instant,
         transport_context: TransportContext,
         rtp_packet: rtp::packet::Packet,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
         server_states
             .get_mut_transport(&(&transport_context).into())?
@@ -445,14 +440,14 @@ impl GatewayHandler {
 
         //TODO: Selective Forwarding RTP Packets
         let peers =
-            GatewayHandler::get_other_media_transport_contexts(server_states, &transport_context)?;
+            EndpointHandler::get_other_media_transport_contexts(server_states, &transport_context)?;
 
         let mut outgoing_messages = Vec::with_capacity(peers.len());
         for transport in peers {
-            outgoing_messages.push(TaggedMessageEvent {
+            outgoing_messages.push(TaggedRTCMessage {
                 now,
                 transport,
-                message: MessageEvent::Rtp(RTPMessageEvent::Rtp(rtp_packet.clone())),
+                message: RTCMessage::Rtp(RTPMessage::Rtp(rtp_packet.clone())),
             });
         }
 
@@ -464,7 +459,7 @@ impl GatewayHandler {
         now: Instant,
         transport_context: TransportContext,
         rtcp_packets: Vec<Box<dyn rtcp::packet::Packet>>,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         debug!("handle_rtcp_message {}", transport_context.peer_addr);
         server_states
             .get_mut_transport(&(&transport_context).into())?
@@ -472,14 +467,14 @@ impl GatewayHandler {
 
         //TODO: Selective Forwarding RTCP Packets
         let peers =
-            GatewayHandler::get_other_media_transport_contexts(server_states, &transport_context)?;
+            EndpointHandler::get_other_media_transport_contexts(server_states, &transport_context)?;
 
         let mut outgoing_messages = Vec::with_capacity(peers.len());
         for transport in peers {
-            outgoing_messages.push(TaggedMessageEvent {
+            outgoing_messages.push(TaggedRTCMessage {
                 now,
                 transport,
-                message: MessageEvent::Rtp(RTPMessageEvent::Rtcp(rtcp_packets.clone())),
+                message: RTCMessage::Rtp(RTPMessage::Rtcp(rtcp_packets.clone())),
             });
         }
 
@@ -636,7 +631,7 @@ impl GatewayHandler {
         now: Instant,
         transport_context: TransportContext,
         transaction_id: TransactionId,
-    ) -> Result<Vec<TaggedMessageEvent>> {
+    ) -> Result<Vec<TaggedRTCMessage>> {
         let mut response = stun::message::Message::new();
         response.build(&[
             Box::new(BINDING_SUCCESS),
@@ -652,10 +647,10 @@ impl GatewayHandler {
             response.typ
         );
 
-        Ok(vec![TaggedMessageEvent {
+        Ok(vec![TaggedRTCMessage {
             now,
             transport: transport_context,
-            message: MessageEvent::Stun(STUNMessageEvent::Stun(response)),
+            message: RTCMessage::Stun(STUNMessage::Stun(response)),
         }])
     }
 
@@ -699,7 +694,7 @@ impl GatewayHandler {
         transport_context: TransportContext,
         association_handle: usize,
         stream_id: u16,
-    ) -> Result<TaggedMessageEvent> {
+    ) -> Result<TaggedRTCMessage> {
         let four_tuple = (&transport_context).into();
         let (session_id, endpoint_id) = server_states
             .find_endpoint(&four_tuple)
@@ -743,14 +738,14 @@ impl GatewayHandler {
         let offer_str =
             serde_json::to_string(&offer).map_err(|err| Error::Other(err.to_string()))?;
 
-        Ok(TaggedMessageEvent {
+        Ok(TaggedRTCMessage {
             now,
             transport: transport_context,
-            message: MessageEvent::Dtls(DTLSMessageEvent::DataChannel(ApplicationMessage {
+            message: RTCMessage::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
                 association_handle,
                 stream_id,
                 data_channel_event: DataChannelEvent::Message(BytesMut::from(offer_str.as_str())),
             })),
         })
-    }
+    }*/
 }

@@ -1,4 +1,4 @@
-use crate::messages::TaggedMessageEvent;
+use super::message::TaggedRTCMessage;
 use log::error;
 use shared::{Context, Handler};
 use std::error::Error;
@@ -14,10 +14,10 @@ impl ExceptionHandler {
 }
 
 impl Handler for ExceptionHandler {
-    type Rin = TaggedMessageEvent;
-    type Rout = TaggedMessageEvent;
-    type Win = TaggedMessageEvent;
-    type Wout = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
+    type Rout = TaggedRTCMessage;
+    type Win = TaggedRTCMessage;
+    type Wout = TaggedRTCMessage;
 
     fn name(&self) -> &str {
         "ExceptionHandler"

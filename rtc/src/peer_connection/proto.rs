@@ -1,5 +1,5 @@
+use crate::handler::message::{RTCEvent, RTCMessage};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::message::{RTCEvent, RTCMessage};
 use crate::peer_connection::RTCPeerConnection;
 use shared::error::Error;
 use shared::{Protocol, TaggedBytesMut};

@@ -1,6 +1,6 @@
-use crate::messages::{
-    ApplicationMessage, DTLSMessageEvent, DataChannelEvent, DataChannelMessage,
-    DataChannelMessageParams, DataChannelMessageType, MessageEvent, TaggedMessageEvent,
+use super::message::{
+    ApplicationMessage, DTLSMessage, DataChannelEvent, DataChannelMessage,
+    DataChannelMessageParams, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
 };
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
 use log::{debug, error, warn};
@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 /// DataChannelHandler implements DataChannel Protocol handling
 #[derive(Default)]
 pub struct DataChannelHandler {
-    transmits: VecDeque<TaggedMessageEvent>,
+    transmits: VecDeque<TaggedRTCMessage>,
 }
 
 impl DataChannelHandler {
@@ -25,9 +25,9 @@ impl DataChannelHandler {
 }
 
 impl Handler for DataChannelHandler {
-    type Rin = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
@@ -39,7 +39,7 @@ impl Handler for DataChannelHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let MessageEvent::Dtls(DTLSMessageEvent::Sctp(message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "recv SCTP DataChannelMessage from {:?}",
                 msg.transport.peer_addr
@@ -98,22 +98,20 @@ impl Handler for DataChannelHandler {
                     // first outbound message
                     if let Some(data_channel_message) = outbound_message {
                         debug!("send DataChannelAck message {:?}", msg.transport.peer_addr);
-                        self.transmits.push_back(TaggedMessageEvent {
+                        self.transmits.push_back(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Sctp(
-                                data_channel_message,
-                            )),
+                            message: RTCMessage::Dtls(DTLSMessage::Sctp(data_channel_message)),
                         });
                     }
 
                     // then inbound message
                     if let Some(application_message) = inbound_message {
                         debug!("recv application message {:?}", msg.transport.peer_addr);
-                        ctx.fire_handle_read(TaggedMessageEvent {
+                        ctx.fire_handle_read(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
-                            message: MessageEvent::Dtls(DTLSMessageEvent::DataChannel(
+                            message: RTCMessage::Dtls(DTLSMessage::DataChannel(
                                 application_message,
                             )),
                         })
@@ -136,14 +134,14 @@ impl Handler for DataChannelHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Dtls(DTLSMessageEvent::DataChannel(message)) = msg.message {
+            if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
                 debug!("send application message {:?}", msg.transport.peer_addr);
 
                 if let DataChannelEvent::Message(payload) = message.data_channel_event {
-                    self.transmits.push_back(TaggedMessageEvent {
+                    self.transmits.push_back(TaggedRTCMessage {
                         now: msg.now,
                         transport: msg.transport,
-                        message: MessageEvent::Dtls(DTLSMessageEvent::Sctp(DataChannelMessage {
+                        message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
                             association_handle: message.association_handle,
                             stream_id: message.stream_id,
                             data_message_type: DataChannelMessageType::Text,

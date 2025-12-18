@@ -9,8 +9,8 @@ use tokio::{net::UdpSocket, sync::broadcast};
 
 use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
+use rtc::handler::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};

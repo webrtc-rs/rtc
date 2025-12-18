@@ -5,8 +5,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::messages::{DTLSMessageEvent, MessageEvent, TaggedMessageEvent};
-use crate::state::server_states::ServerStates;
+use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
@@ -18,25 +17,25 @@ use srtp::protection_profile::ProtectionProfile;
 
 /// DtlsHandler implements DTLS Protocol handling
 pub struct DtlsHandler {
-    local_addr: SocketAddr,
-    server_states: Rc<RefCell<ServerStates>>,
-    transmits: VecDeque<TaggedMessageEvent>,
+    //TODO: local_addr: SocketAddr,
+    //todo:server_states: Rc<RefCell<ServerStates>>,
+    transmits: VecDeque<TaggedRTCMessage>,
 }
 
 impl DtlsHandler {
-    pub fn new(local_addr: SocketAddr, server_states: Rc<RefCell<ServerStates>>) -> Self {
+    pub fn new(/*local_addr: SocketAddr , server_states: Rc<RefCell<ServerStates>>*/) -> Self {
         DtlsHandler {
-            local_addr,
-            server_states: Rc::clone(&server_states),
+            //local_addr,
+            //server_states: Rc::clone(&server_states),
             transmits: VecDeque::new(),
         }
     }
 }
 
 impl Handler for DtlsHandler {
-    type Rin = TaggedMessageEvent;
+    type Rin = TaggedRTCMessage;
     type Rout = Self::Rin;
-    type Win = TaggedMessageEvent;
+    type Win = TaggedRTCMessage;
     type Wout = Self::Win;
 
     fn name(&self) -> &str {
@@ -48,8 +47,10 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         msg: Self::Rin,
     ) {
-        if let MessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
+            todo!()
+            /*TODO:
             let four_tuple = (&msg.transport).into();
 
             let try_read = || -> Result<Vec<BytesMut>> {
@@ -97,7 +98,7 @@ impl Handler for DtlsHandler {
                     }
 
                     while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(TaggedMessageEvent {
+                        self.transmits.push_back(TaggedRTCMessage {
                             now: transmit.now,
                             transport: TransportContext {
                                 local_addr: self.local_addr,
@@ -105,7 +106,7 @@ impl Handler for DtlsHandler {
                                 transport_protocol: TransportProtocol::UDP,
                                 ecn: transmit.transport.ecn,
                             },
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(transmit.message)),
+                            message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
                         });
                     }
                 }
@@ -122,10 +123,10 @@ impl Handler for DtlsHandler {
                 Ok(messages) => {
                     for message in messages {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        ctx.fire_handle_read(TaggedMessageEvent {
+                        ctx.fire_handle_read(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(message)),
+                            message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
                         });
                     }
                 }
@@ -138,7 +139,7 @@ impl Handler for DtlsHandler {
                         ctx.fire_handle_error(Box::new(err))
                     }
                 }
-            };
+            };*/
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);
@@ -152,6 +153,7 @@ impl Handler for DtlsHandler {
         now: Instant,
     ) {
         let mut try_timeout = || -> Result<()> {
+            /*TODO:
             let mut server_states = self.server_states.borrow_mut();
             for session in server_states.get_mut_sessions().values_mut() {
                 for endpoint in session.get_mut_endpoints().values_mut() {
@@ -163,7 +165,7 @@ impl Handler for DtlsHandler {
                             let _ = dtls_endpoint.handle_timeout(remote, now);
                         }
                         while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                            self.transmits.push_back(TaggedMessageEvent {
+                            self.transmits.push_back(TaggedRTCMessage {
                                 now: transmit.now,
                                 transport: TransportContext {
                                     local_addr: self.local_addr,
@@ -171,24 +173,23 @@ impl Handler for DtlsHandler {
                                     transport_protocol: TransportProtocol::UDP,
                                     ecn: transmit.transport.ecn,
                                 },
-                                message: MessageEvent::Dtls(DTLSMessageEvent::Raw(
-                                    transmit.message,
-                                )),
+                                message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
                             });
                         }
                     }
                 }
-            }
+            }*/
 
             Ok(())
         };
+        /*TODO:
         match try_timeout() {
             Ok(_) => {}
             Err(err) => {
                 error!("try_timeout with error {}", err);
                 ctx.fire_handle_error(Box::new(err));
             }
-        }
+        }*/
 
         ctx.fire_handle_timeout(now);
     }
@@ -198,6 +199,7 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         eto: &mut Instant,
     ) {
+        /*TODO:
         {
             let server_states = self.server_states.borrow();
             for session in server_states.get_sessions().values() {
@@ -211,7 +213,7 @@ impl Handler for DtlsHandler {
                     }
                 }
             }
-        }
+        }*/
         ctx.fire_poll_timeout(eto);
     }
 
@@ -220,8 +222,10 @@ impl Handler for DtlsHandler {
         ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
     ) -> Option<Self::Wout> {
         if let Some(msg) = ctx.fire_poll_write() {
-            if let MessageEvent::Dtls(DTLSMessageEvent::Raw(dtls_message)) = msg.message {
+            if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
                 debug!("send dtls RAW {:?}", msg.transport.peer_addr);
+                todo!()
+                /*
                 let four_tuple = (&msg.transport).into();
 
                 let mut try_write = || -> Result<()> {
@@ -231,7 +235,7 @@ impl Handler for DtlsHandler {
 
                     dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
                     while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(TaggedMessageEvent {
+                        self.transmits.push_back(TaggedRTCMessage {
                             now: transmit.now,
                             transport: TransportContext {
                                 local_addr: self.local_addr,
@@ -239,7 +243,7 @@ impl Handler for DtlsHandler {
                                 transport_protocol: TransportProtocol::UDP,
                                 ecn: transmit.transport.ecn,
                             },
-                            message: MessageEvent::Dtls(DTLSMessageEvent::Raw(transmit.message)),
+                            message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
                         });
                     }
 
@@ -253,6 +257,7 @@ impl Handler for DtlsHandler {
                         ctx.fire_handle_error(Box::new(err));
                     }
                 }
+                 */
             } else {
                 // Bypass
                 debug!("Bypass dtls write {:?}", msg.transport.peer_addr);
