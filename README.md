@@ -23,7 +23,7 @@
  </a>
 </p>
 <p align="center">
- RTC in Rust with Sans-IO
+ Sans-IO WebRTC implementation in Rust
 </p>
 
 ## RTC Crates
