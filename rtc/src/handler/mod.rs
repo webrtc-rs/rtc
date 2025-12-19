@@ -11,7 +11,6 @@ pub(crate) mod stun;
 
 /*
 use crate::handler::datachannel::DataChannelHandler;
-use crate::handler::demuxer::DemuxerHandler;
 use crate::handler::dtls::DtlsHandler;
 use crate::handler::exception::ExceptionHandler;
 use crate::handler::interceptor::InterceptorHandler;
@@ -19,6 +18,7 @@ use crate::handler::sctp::SctpHandler;
 use crate::handler::srtp::SrtpHandler;
 use crate::handler::stun::StunHandler;
 */
+use crate::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
 use crate::handler::endpoint::{EndpointHandler, EndpointHandlerContext};
 use crate::peer_connection::RTCPeerConnection;
 use crate::transport::TransportStates;
@@ -34,7 +34,8 @@ pub(crate) struct PipelineContext {
     // Shared states
     pub(crate) transport_states: TransportStates,
 
-    // Endpoint handler context
+    // Handler contexts
+    pub(crate) demuxer_handler_context: DemuxerHandlerContext,
     pub(crate) endpoint_handler_context: EndpointHandlerContext,
 }
 
@@ -101,5 +102,9 @@ impl RTCPeerConnection {
             &mut self.pipeline_context.transport_states,
             &mut self.pipeline_context.endpoint_handler_context,
         )
+    }
+
+    pub(crate) fn get_demuxer_handler(&mut self) -> DemuxerHandler<'_> {
+        DemuxerHandler::new(&mut self.pipeline_context.demuxer_handler_context)
     }
 }

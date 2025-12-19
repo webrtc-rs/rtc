@@ -1,7 +1,9 @@
 use super::message::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage};
 
 use log::{debug, error};
-use shared::{Context, Handler, TaggedBytesMut};
+use shared::{Protocol, TaggedBytesMut};
+use std::collections::VecDeque;
+use std::time::Instant;
 
 /// match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]
 fn match_range(lower: u8, upper: u8, buf: &[u8]) -> bool {
@@ -37,74 +39,97 @@ fn match_srtp(b: &[u8]) -> bool {
     match_range(128, 191, b)
 }
 
-/// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
 #[derive(Default)]
-pub struct DemuxerHandler;
+pub(crate) struct DemuxerHandlerContext {
+    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) write_outs: VecDeque<TaggedBytesMut>,
+}
 
-impl DemuxerHandler {
-    pub fn new() -> Self {
-        DemuxerHandler
+/// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
+pub(crate) struct DemuxerHandler<'a> {
+    ctx: &'a mut DemuxerHandlerContext,
+}
+
+impl<'a> DemuxerHandler<'a> {
+    pub fn new(ctx: &'a mut DemuxerHandlerContext) -> Self {
+        DemuxerHandler { ctx }
     }
 }
 
-impl Handler for DemuxerHandler {
-    type Rin = TaggedBytesMut;
+impl<'a> Protocol<TaggedBytesMut, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
     type Rout = TaggedRTCMessage;
-    type Win = TaggedRTCMessage;
     type Wout = TaggedBytesMut;
+    type Eout = ();
+    type Error = shared::error::Error;
 
-    fn name(&self) -> &str {
-        "DemuxerHandler"
-    }
-
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
         if msg.message.is_empty() {
             error!("drop invalid packet due to zero length");
         } else if match_dtls(&msg.message) {
-            ctx.fire_handle_read(TaggedRTCMessage {
+            self.ctx.read_outs.push_back(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
                 message: RTCMessage::Dtls(DTLSMessage::Raw(msg.message)),
             });
         } else if match_srtp(&msg.message) {
-            ctx.fire_handle_read(TaggedRTCMessage {
+            self.ctx.read_outs.push_back(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
                 message: RTCMessage::Rtp(RTPMessage::Raw(msg.message)),
             });
         } else {
-            ctx.fire_handle_read(TaggedRTCMessage {
+            self.ctx.read_outs.push_back(TaggedRTCMessage {
                 now: msg.now,
                 transport: msg.transport,
                 message: RTCMessage::Stun(STUNMessage::Raw(msg.message)),
             });
         }
+        Ok(())
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
-            match msg.message {
-                RTCMessage::Stun(STUNMessage::Raw(message))
-                | RTCMessage::Dtls(DTLSMessage::Raw(message))
-                | RTCMessage::Rtp(RTPMessage::Raw(message)) => Some(TaggedBytesMut {
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.ctx.read_outs.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+        match msg.message {
+            RTCMessage::Stun(STUNMessage::Raw(message))
+            | RTCMessage::Dtls(DTLSMessage::Raw(message))
+            | RTCMessage::Rtp(RTPMessage::Raw(message)) => {
+                self.ctx.write_outs.push_back(TaggedBytesMut {
                     now: msg.now,
                     transport: msg.transport,
                     message,
-                }),
-                _ => {
-                    debug!("drop non-RAW packet {:?}", msg.message);
-                    None
-                }
+                });
             }
-        } else {
-            None
+            _ => {
+                debug!("drop non-RAW packet {:?}", msg.message);
+            }
         }
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.ctx.write_outs.pop_front()
+    }
+
+    fn handle_event(&mut self, _evt: ()) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Option<Self::Eout> {
+        None
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        None
+    }
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
