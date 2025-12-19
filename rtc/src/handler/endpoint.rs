@@ -2,9 +2,8 @@ use super::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::transport::{CandidatePair, Transport, TransportStates};
 use log::{debug, warn};
 use shared::error::{Error, Result};
-use shared::{Context, Handler, TransportContext};
+use shared::{Protocol, TransportContext};
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::time::Instant;
 use stun::attributes::{
     ATTR_ICE_CONTROLLED, ATTR_ICE_CONTROLLING, ATTR_NETWORK_COST, ATTR_PRIORITY, ATTR_USERNAME,
@@ -16,47 +15,48 @@ use stun::message::{Setter, TransactionId, BINDING_SUCCESS};
 use stun::textattrs::TextAttribute;
 use stun::xoraddr::XorMappedAddress;
 
-/// EndpointHandler implements Data/Media Endpoint handling
-pub struct EndpointHandler {
-    dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
-    sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
-    sctp_server_config: Arc<::sctp::ServerConfig>,
-    transport_states: Arc<TransportStates>,
-    transmits: VecDeque<TaggedRTCMessage>,
+#[derive(Default)]
+pub(crate) struct EndpointHandlerContext {
+    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
 }
 
-impl EndpointHandler {
+/// EndpointHandler implements DataChannel/Media Endpoint handling
+/// The transmits queue is now stored in RTCPeerConnection and passed by reference
+pub(crate) struct EndpointHandler<'a> {
+    dtls_handshake_config: &'a ::dtls::config::HandshakeConfig,
+    sctp_endpoint_config: &'a ::sctp::EndpointConfig,
+    sctp_server_config: &'a ::sctp::ServerConfig,
+    transport_states: &'a mut TransportStates,
+    ctx: &'a mut EndpointHandlerContext,
+}
+
+impl<'a> EndpointHandler<'a> {
     pub fn new(
-        dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
-        sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
-        sctp_server_config: Arc<::sctp::ServerConfig>,
-        transport_states: Arc<TransportStates>,
+        dtls_handshake_config: &'a ::dtls::config::HandshakeConfig,
+        sctp_endpoint_config: &'a ::sctp::EndpointConfig,
+        sctp_server_config: &'a ::sctp::ServerConfig,
+        transport_states: &'a mut TransportStates,
+        ctx: &'a mut EndpointHandlerContext,
     ) -> Self {
         EndpointHandler {
             dtls_handshake_config,
             sctp_endpoint_config,
             sctp_server_config,
             transport_states,
-            transmits: VecDeque::new(),
+            ctx,
         }
     }
 }
 
-impl Handler for EndpointHandler {
-    type Rin = TaggedRTCMessage;
-    type Rout = Self::Rin;
-    type Win = TaggedRTCMessage;
-    type Wout = Self::Win;
+// Implement Protocol trait for message processing
+impl<'a> Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for EndpointHandler<'a> {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedRTCMessage;
+    type Eout = ();
+    type Error = Error;
 
-    fn name(&self) -> &str {
-        "EndpointHandler"
-    }
-
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
+    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         let try_read = || -> Result<Vec<TaggedRTCMessage>> {
             match msg.message {
                 RTCMessage::Stun(STUNMessage::Stun(message)) => {
@@ -88,35 +88,52 @@ impl Handler for EndpointHandler {
             }
         };
 
-        match try_read() {
-            Ok(messages) => {
-                for message in messages {
-                    self.transmits.push_back(message);
-                }
-            }
-            Err(err) => {
-                warn!("try_read got error {}", err);
-                ctx.fire_handle_error(Box::new(err));
-            }
+        for message in try_read()? {
+            self.ctx.write_outs.push_back(message);
         }
+
+        Ok(())
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
-            self.transmits.push_back(msg);
-        }
-        self.transmits.pop_front()
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.ctx.read_outs.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+        self.ctx.write_outs.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.ctx.write_outs.pop_front()
+    }
+
+    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Option<Self::Eout> {
+        None
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        None
+    }
+
+    fn close(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 
-impl EndpointHandler {
+impl<'a> EndpointHandler<'a> {
     fn check_stun_message(
         &self,
         request: &mut stun::message::Message,
-    ) -> Result<Option<Arc<CandidatePair>>> {
+    ) -> Result<Option<CandidatePair>> {
         match TextAttribute::get_from_as(request, ATTR_USERNAME) {
             Ok(username) => {
                 if !request.contains(ATTR_PRIORITY) {
@@ -173,7 +190,7 @@ impl EndpointHandler {
         mut request: stun::message::Message,
     ) -> Result<Vec<TaggedRTCMessage>> {
         let candidate_pair = match self.check_stun_message(&mut request)? {
-            Some(candidate) => candidate,
+            Some(candidate_pair) => candidate_pair,
             None => {
                 return EndpointHandler::create_server_reflective_address_message_event(
                     now,
@@ -183,7 +200,9 @@ impl EndpointHandler {
             }
         };
 
-        self.add_transport(&request, &candidate_pair, &transport_context)?;
+        let password = candidate_pair.get_local_parameters().password.clone();
+
+        self.add_transport(&request, candidate_pair, &transport_context)?;
 
         let mut response = stun::message::Message::new();
 
@@ -195,9 +214,7 @@ impl EndpointHandler {
                 port: transport_context.peer_addr.port(),
             }),
         ])?;
-        let integrity = MessageIntegrity::new_short_term_integrity(
-            candidate_pair.get_local_parameters().password.clone(),
-        );
+        let integrity = MessageIntegrity::new_short_term_integrity(password);
         integrity.add_to(&mut response)?;
         FINGERPRINT.add_to(&mut response)?;
 
@@ -593,7 +610,7 @@ impl EndpointHandler {
     fn add_transport(
         &mut self,
         request: &stun::message::Message,
-        candidate_pair: &Arc<CandidatePair>,
+        candidate_pair: CandidatePair,
         transport_context: &TransportContext,
     ) -> Result<bool> {
         let four_tuple = transport_context.into();
@@ -606,10 +623,10 @@ impl EndpointHandler {
         let transport = Transport::new(
             four_tuple,
             transport_context.transport_protocol,
-            candidate_pair.clone(),
-            self.dtls_handshake_config.clone(),
-            self.sctp_endpoint_config.clone(),
-            self.sctp_server_config.clone(),
+            candidate_pair,
+            self.dtls_handshake_config,
+            self.sctp_endpoint_config,
+            self.sctp_server_config,
         );
 
         self.transport_states.add_transport(four_tuple, transport);

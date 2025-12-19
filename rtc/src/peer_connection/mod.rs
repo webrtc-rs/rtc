@@ -12,7 +12,7 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::handler::message::TaggedRTCMessage;
+use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
 use crate::media::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_sender::RTCRtpSender;
@@ -38,15 +38,12 @@ use crate::transport::ice::candidate::RTCIceCandidateInit;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
-use crate::transport::TransportStates;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
-use shared::{Pipeline, TaggedBytesMut};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
@@ -76,11 +73,12 @@ pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection Internal Transports
     //////////////////////////////////////////////////
-    pub(crate) transport_pipeline: Pipeline<TaggedBytesMut, TaggedRTCMessage>,
-    pub(crate) transport_states: Arc<TransportStates>,
     pub(crate) ice_transport: RTCIceTransport,
     pub(crate) dtls_transport: RTCDtlsTransport,
     pub(crate) sctp_transport: RTCSctpTransport,
+
+    // Pipeline context
+    pub(crate) pipeline_context: PipelineContext,
 
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine

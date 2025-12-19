@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use shared::{FourTuple, TransportProtocol};
 use srtp::context::Context;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 pub mod dtls;
 pub mod ice;
@@ -57,7 +56,7 @@ pub(crate) struct Transport {
     four_tuple: FourTuple,
 
     // ICE
-    pub(crate) candidate_pair: Arc<CandidatePair>,
+    pub(crate) candidate_pair: CandidatePair,
 
     // DTLS
     dtls_endpoint: ::dtls::endpoint::Endpoint,
@@ -79,10 +78,10 @@ impl Transport {
     pub(crate) fn new(
         four_tuple: FourTuple,
         transport_protocol: TransportProtocol,
-        candidate_pair: Arc<CandidatePair>,
-        dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
-        sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
-        sctp_server_config: Arc<::sctp::ServerConfig>,
+        candidate_pair: CandidatePair,
+        dtls_handshake_config: &::dtls::config::HandshakeConfig,
+        sctp_endpoint_config: &::sctp::EndpointConfig,
+        sctp_server_config: &::sctp::ServerConfig,
     ) -> Self {
         Self {
             four_tuple,
@@ -92,14 +91,14 @@ impl Transport {
             dtls_endpoint: ::dtls::endpoint::Endpoint::new(
                 four_tuple.local_addr,
                 transport_protocol,
-                Some(dtls_handshake_config),
+                Some(dtls_handshake_config.clone().into()),
             ),
 
             sctp_endpoint: ::sctp::Endpoint::new(
                 four_tuple.local_addr,
                 transport_protocol,
-                sctp_endpoint_config,
-                Some(sctp_server_config),
+                sctp_endpoint_config.clone().into(),
+                Some(sctp_server_config.clone().into()),
             ),
             sctp_associations: HashMap::new(),
 
@@ -114,23 +113,32 @@ impl Transport {
 
 #[derive(Default)]
 pub(crate) struct TransportStates {
-    candidates: Mutex<HashMap<UserName, Arc<CandidatePair>>>,
-    transports: Mutex<HashMap<FourTuple, Transport>>,
+    candidates: HashMap<UserName, CandidatePair>,
+    transports: HashMap<FourTuple, Transport>,
 }
 
 impl TransportStates {
-    pub(crate) fn find_candidate_pair(&self, username: &UserName) -> Option<Arc<CandidatePair>> {
-        let candidates = self.candidates.lock().unwrap();
-        candidates.get(username).cloned()
+    pub(crate) fn add_candidate_pair(&mut self, username: UserName, pair: CandidatePair) {
+        self.candidates.insert(username, pair);
+    }
+
+    pub(crate) fn find_candidate_pair(&self, username: &UserName) -> Option<&CandidatePair> {
+        self.candidates.get(username)
     }
 
     pub(crate) fn has_transport(&self, four_tuple: &FourTuple) -> bool {
-        let transports = self.transports.lock().unwrap();
-        transports.contains_key(four_tuple)
+        self.transports.contains_key(four_tuple)
     }
 
-    pub(crate) fn add_transport(&self, four_tuple: FourTuple, transport: Transport) {
-        let mut transports = self.transports.lock().unwrap();
-        transports.insert(four_tuple, transport);
+    pub(crate) fn add_transport(&mut self, four_tuple: FourTuple, transport: Transport) {
+        self.transports.insert(four_tuple, transport);
+    }
+
+    pub(crate) fn find_transport(&self, four_tuple: &FourTuple) -> Option<&Transport> {
+        self.transports.get(four_tuple)
+    }
+
+    pub(crate) fn find_transport_mut(&mut self, four_tuple: &FourTuple) -> Option<&mut Transport> {
+        self.transports.get_mut(four_tuple)
     }
 }
