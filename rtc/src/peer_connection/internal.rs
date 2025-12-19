@@ -1,4 +1,5 @@
 use super::*;
+use crate::handler::message::TaggedRTCEvent;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
@@ -403,8 +404,33 @@ impl RTCPeerConnection {
     }
 
     /// Helper to trigger a negotiation needed.
-    pub(super) fn trigger_negotiation_needed(&self) {
-        //TODO: RTCPeerConnection::do_negotiation_needed(self.create_negotiation_needed_params()).await;
+    pub(super) fn trigger_negotiation_needed(&mut self) {
+        self.do_negotiation_needed();
+    }
+
+    pub(super) fn make_negotiation_needed_trigger(&mut self) {
+        self.do_negotiation_needed();
+    }
+
+    fn do_negotiation_needed_inner(&mut self) -> bool {
+        // https://w3c.github.io/webrtc-pc/#updating-the-negotiation-needed-flag
+        // non-canon step 1
+        if self.negotiation_needed_state == NegotiationNeededState::Run {
+            self.negotiation_needed_state = NegotiationNeededState::Queue;
+            false
+        } else if self.negotiation_needed_state == NegotiationNeededState::Queue {
+            false
+        } else {
+            self.negotiation_needed_state = NegotiationNeededState::Run;
+            true
+        }
+    }
+
+    fn do_negotiation_needed(&mut self) {
+        if !self.do_negotiation_needed_inner() {
+            return;
+        }
+        self.ops_enqueue(TaggedRTCEvent::DoNegotiationNeeded);
     }
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
@@ -421,5 +447,20 @@ impl RTCPeerConnection {
     pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) {
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
+    }
+
+    pub(super) fn ops_enqueue(&mut self, event: TaggedRTCEvent) {
+        self.pipeline_context.event_outs.push_back(event);
+    }
+
+    pub(super) fn ops_start(&mut self, event: TaggedRTCEvent) -> Result<()> {
+        let mut intermediate_eouts = VecDeque::new();
+        intermediate_eouts.append(&mut self.pipeline_context.event_outs);
+
+        let mut endpoint_handler = self.get_endpoint_handler();
+        while let Some(evt) = intermediate_eouts.pop_front() {
+            endpoint_handler.handle_event(evt)?;
+        }
+        endpoint_handler.handle_event(event)
     }
 }

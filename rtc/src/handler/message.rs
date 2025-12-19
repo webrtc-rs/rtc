@@ -1,3 +1,7 @@
+use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::sdp::session_description::RTCSessionDescription;
+use crate::transport::dtls::role::DTLSRole;
+use crate::transport::ice::role::RTCIceRole;
 use bytes::BytesMut;
 use sctp::ReliabilityType;
 use shared::TransportContext;
@@ -78,3 +82,24 @@ pub struct TaggedRTCMessage {
 
 #[derive(Debug, Clone)]
 pub enum RTCEvent {}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
+pub(crate) enum TaggedRTCEvent {
+    StartRtpSenders,
+    StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
+    StartTransports(
+        RTCIceRole,
+        DTLSRole,
+        String, /*remote_ufrag*/
+        String, /*remote_pwd*/
+        String, /*fingerprint*/
+        String, /*fingerprint_hash*/
+    ),
+    DoNegotiationNeeded,
+
+    // Public Input RTCEvent
+    RTCEvent(RTCEvent),
+    // Public Output RTCPeerConnectionEvent
+    RTCPeerConnectionEvent(RTCPeerConnectionEvent),
+}

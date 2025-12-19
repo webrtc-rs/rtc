@@ -1,5 +1,4 @@
-use super::message::{RTCEvent, RTCMessage, STUNMessage, TaggedRTCMessage};
-use crate::peer_connection::event::RTCPeerConnectionEvent;
+use super::message::{RTCMessage, STUNMessage, TaggedRTCEvent, TaggedRTCMessage};
 use crate::transport::{CandidatePair, Transport, TransportStates};
 use log::{debug, warn};
 use shared::error::{Error, Result};
@@ -51,10 +50,12 @@ impl<'a> EndpointHandler<'a> {
 }
 
 // Implement Protocol trait for message processing
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for EndpointHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, TaggedRTCEvent>
+    for EndpointHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = RTCPeerConnectionEvent;
+    type Eout = TaggedRTCEvent;
     type Error = Error;
     type Time = Instant;
 
@@ -114,7 +115,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for Endp
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEvent) -> Result<()> {
+    fn handle_event(&mut self, _evt: TaggedRTCEvent) -> Result<()> {
         Ok(())
     }
 

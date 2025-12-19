@@ -30,7 +30,7 @@ bytes = "1.11.0"
 lazy_static = "1.5.0"
 rand = "0.9.2"
 ctrlc = "3.5.1"
-sansio = "0.10.0"
+sansio = "1"
 
 [[example]]
 name = "data-channels"

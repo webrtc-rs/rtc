@@ -11,6 +11,7 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::handler::message::TaggedRTCEvent;
 use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
 use crate::media::rtp_receiver::RTCRtpReceiver;
@@ -29,8 +30,6 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
-use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
-use crate::transport::dtls::parameters::DTLSParameters;
 use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER};
 use crate::transport::dtls::RTCDtlsTransport;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
@@ -40,6 +39,7 @@ use crate::transport::sctp::RTCSctpTransport;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
+use sansio::Protocol;
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
@@ -347,36 +347,18 @@ impl RTCPeerConnection {
                     let previous_direction = t.current_direction;
                     // 4.9.1.7.3 applying a local answer or pranswer
                     // Set transceiver.[[CurrentDirection]] and transceiver.[[FiredDirection]] to direction.
-
-                    // TODO: Also set FiredDirection here.
                     t.set_current_direction(direction);
                     t.process_new_current_direction(previous_direction)?;
                 }
             }
 
-            /*TODO:
-            let have_local_description = self.current_local_description.is_some();
-            let remote_description = self.remote_description().await;
-            if let Some(remote_desc) = remote_description {
-                self.start_rtp_senders().await?;
-
-                let pci = Arc::clone(&self.internal);
-                let remote_desc = Arc::new(remote_desc);
-                self.internal
-                    .ops
-                    .enqueue(Operation::new(
-                        move || {
-                            let pc = Arc::clone(&pci);
-                            let rd = Arc::clone(&remote_desc);
-                            Box::pin(async move {
-                                let _ = pc.start_rtp(have_local_description, rd).await;
-                                false
-                            })
-                        },
-                        "set_local_description",
-                    ))
-                    .await?;
-            }*/
+            if let Some(remote_desc) = self.remote_description().cloned() {
+                self.ops_start(TaggedRTCEvent::StartRtpSenders)?;
+                self.ops_enqueue(TaggedRTCEvent::StartRtp(
+                    self.current_local_description.is_some(),
+                    remote_desc,
+                ));
+            }
         }
 
         Ok(())
@@ -559,30 +541,17 @@ impl RTCPeerConnection {
             for candidate in candidates {
                 self.ice_transport.add_remote_candidate(candidate)?;
             }
-            /*TODO:
+
             if is_renegotiation {
                 if we_offer {
-                    self.start_rtp_senders().await?;
-
-                    let pci = Arc::clone(&self.internal);
-                    let remote_desc = Arc::new(description);
-                    self.internal
-                        .ops
-                        .enqueue(Operation::new(
-                            move || {
-                                let pc = Arc::clone(&pci);
-                                let rd = Arc::clone(&remote_desc);
-                                Box::pin(async move {
-                                    let _ = pc.start_rtp(true, rd).await;
-                                    false
-                                })
-                            },
-                            "set_remote_description renegotiation",
-                        ))
-                        .await?;
+                    self.ops_start(TaggedRTCEvent::StartRtpSenders)?;
+                    self.ops_enqueue(TaggedRTCEvent::StartRtp(
+                        is_renegotiation,
+                        description.clone(),
+                    ));
                 }
                 return Ok(());
-            }*/
+            }
 
             let remote_is_lite = is_lite_set(parsed);
 
@@ -599,55 +568,27 @@ impl RTCPeerConnection {
             } else {
                 RTCIceRole::Controlled
             };
-            self.ice_transport.set_role(ice_role);
 
-            let dtls_role = DTLSRole::from(parsed);
-            self.dtls_transport.set_parameters(DTLSParameters {
-                role: dtls_role,
-                fingerprints: vec![RTCDtlsFingerprint {
-                    algorithm: fingerprint_hash,
-                    value: fingerprint,
-                }],
-            })?;
-
-            /*TODO:
             // Start the networking in a new routine since it will block until
             // the connection is actually established.
             if we_offer {
-                self.start_rtp_senders()?;
+                self.ops_start(TaggedRTCEvent::StartRtpSenders)?;
             }
 
-            //log::trace!("start_transports: parsed={:?}", parsed);
+            let dtls_role = DTLSRole::from(parsed);
+            log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
+            self.ops_enqueue(TaggedRTCEvent::StartTransports(
+                ice_role,
+                dtls_role,
+                remote_ufrag.clone(),
+                remote_pwd.clone(),
+                fingerprint.clone(),
+                fingerprint_hash.clone(),
+            ));
 
-            let pci = Arc::clone(&self.internal);
-
-            let remote_desc = Arc::new(description);
-            self.internal
-                .ops
-                .enqueue(Operation::new(
-                    move || {
-                        let pc = Arc::clone(&pci);
-                        let rd = Arc::clone(&remote_desc);
-                        let ru = remote_ufrag.clone();
-                        let rp = remote_pwd.clone();
-                        let fp = fingerprint.clone();
-                        let fp_hash = fingerprint_hash.clone();
-                        Box::pin(async move {
-                            log::trace!(
-                                "start_transports: ice_role={ice_role}, dtls_role={dtls_role}",
-                            );
-                            pc.start_transports(ice_role, dtls_role, ru, rp, fp, fp_hash)
-                                .await;
-
-                            if we_offer {
-                                let _ = pc.start_rtp(false, rd).await;
-                            }
-                            false
-                        })
-                    },
-                    "set_remote_description",
-                ))
-                .await?;*/
+            if we_offer {
+                self.ops_enqueue(TaggedRTCEvent::StartRtp(false, description.clone()));
+            }
         }
 
         Ok(())
