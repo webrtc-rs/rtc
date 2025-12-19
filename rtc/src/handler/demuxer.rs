@@ -1,7 +1,8 @@
 use super::message::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage};
 
 use log::{debug, error};
-use shared::{Protocol, TaggedBytesMut};
+use shared::error::Error;
+use shared::TaggedBytesMut;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -56,11 +57,12 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
-impl<'a> Protocol<TaggedBytesMut, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
+impl<'a> sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedBytesMut;
     type Eout = ();
-    type Error = shared::error::Error;
+    type Error = Error;
+    type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
         if msg.message.is_empty() {

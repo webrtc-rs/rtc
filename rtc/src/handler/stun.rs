@@ -1,8 +1,7 @@
 use super::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use bytes::BytesMut;
 use log::{debug, warn};
-use shared::error::Result;
-use shared::Protocol;
+use shared::error::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
 use stun::message::Message;
@@ -24,11 +23,12 @@ impl<'a> StunHandler<'a> {
     }
 }
 
-impl<'a> Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for StunHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for StunHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
     type Eout = ();
-    type Error = shared::error::Error;
+    type Error = Error;
+    type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         if let RTCMessage::Stun(STUNMessage::Raw(message)) = msg.message {

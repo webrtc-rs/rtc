@@ -2,7 +2,7 @@ use super::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::transport::{CandidatePair, Transport, TransportStates};
 use log::{debug, warn};
 use shared::error::{Error, Result};
-use shared::{Protocol, TransportContext};
+use shared::TransportContext;
 use std::collections::VecDeque;
 use std::time::Instant;
 use stun::attributes::{
@@ -50,11 +50,12 @@ impl<'a> EndpointHandler<'a> {
 }
 
 // Implement Protocol trait for message processing
-impl<'a> Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for EndpointHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for EndpointHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
     type Eout = ();
     type Error = Error;
+    type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         let try_read = || -> Result<Vec<TaggedRTCMessage>> {

@@ -11,11 +11,10 @@ pub mod marshal;
 pub mod replay_detector;
 
 pub mod error;
+pub(crate) mod transport;
 pub mod util;
 
-pub use sansio::{Context, Handler, InboundPipeline, OutboundPipeline, Pipeline, Protocol};
-pub use sansio_executor::{spawn_local, yield_local, LocalExecutorBuilder, Task, TaskError};
-pub use sansio_transport::{
+pub use transport::{
     EcnCodepoint, FiveTuple, FourTuple, TaggedBytesMut, TransportContext, TransportMessage,
     TransportProtocol,
 };

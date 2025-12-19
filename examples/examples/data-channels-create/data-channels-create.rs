@@ -2,7 +2,8 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use log::{error, info, trace, warn};
-use shared::{LocalExecutorBuilder, Protocol, TaggedBytesMut, TransportContext, TransportProtocol};
+use sansio::Protocol;
+use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::time::{Duration, Instant};
 use std::{io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
@@ -38,7 +39,8 @@ struct Cli {
     log_level: String,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     let host = cli.host;
     let port = cli.port;
@@ -75,11 +77,9 @@ fn main() -> Result<()> {
         .expect("Error setting Ctrl-C handler");
     });
 
-    LocalExecutorBuilder::default().run(async move {
-        if let Err(err) = run(stop_rx, message_rx, event_rx, host, port).await {
-            error!("run got error: {}", err);
-        }
-    });
+    if let Err(err) = run(stop_rx, message_rx, event_rx, host, port).await {
+        error!("run got error: {}", err);
+    }
 
     Ok(())
 }
