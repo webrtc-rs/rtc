@@ -78,6 +78,7 @@ pub(crate) struct Transport {
 impl Transport {
     pub(crate) fn new(
         four_tuple: FourTuple,
+        transport_protocol: TransportProtocol,
         candidate_pair: Arc<CandidatePair>,
         dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
         sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
@@ -90,13 +91,13 @@ impl Transport {
 
             dtls_endpoint: ::dtls::endpoint::Endpoint::new(
                 four_tuple.local_addr,
-                TransportProtocol::UDP,
+                transport_protocol,
                 Some(dtls_handshake_config),
             ),
 
             sctp_endpoint: ::sctp::Endpoint::new(
                 four_tuple.local_addr,
-                TransportProtocol::UDP,
+                transport_protocol,
                 sctp_endpoint_config,
                 Some(sctp_server_config),
             ),
@@ -113,8 +114,8 @@ impl Transport {
 
 #[derive(Default)]
 pub(crate) struct TransportStates {
-    pub(crate) candidates: Mutex<HashMap<UserName, Arc<CandidatePair>>>,
-    pub(crate) transports: Mutex<HashMap<FourTuple, Transport>>,
+    candidates: Mutex<HashMap<UserName, Arc<CandidatePair>>>,
+    transports: Mutex<HashMap<FourTuple, Transport>>,
 }
 
 impl TransportStates {

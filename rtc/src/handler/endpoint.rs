@@ -605,6 +605,7 @@ impl EndpointHandler {
 
         let transport = Transport::new(
             four_tuple,
+            transport_context.transport_protocol,
             candidate_pair.clone(),
             self.dtls_handshake_config.clone(),
             self.sctp_endpoint_config.clone(),
