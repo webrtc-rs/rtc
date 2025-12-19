@@ -30,6 +30,29 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 
+/// Macro to execute code for each handler in sequence
+macro_rules! for_each_handler {
+    ($self:expr, $handler:ident, $code:block) => {{
+        {
+            let mut $handler = $self.get_demuxer_handler();
+            $code
+        }
+        {
+            let mut $handler = $self.get_stun_handler();
+            $code
+        }
+        // TODO: Add other handlers here when implemented
+        // {
+        //     let mut $handler = $self.get_dtls_handler();
+        //     $code
+        // }
+        {
+            let mut $handler = $self.get_endpoint_handler();
+            $code
+        }
+    }};
+}
+
 #[derive(Default)]
 pub(crate) struct PipelineContext {
     // Immutable Configs
@@ -220,94 +243,26 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
-        // Demuxer
-        let mut demuxer_handler = self.get_demuxer_handler();
-        demuxer_handler.handle_timeout(now)?;
-
-        // STUN
-        let mut stun_handler = self.get_stun_handler();
-        stun_handler.handle_timeout(now)?;
-
-        // DTLS
-        //let dtls_handler = DtlsHandler::new();
-        //let sctp_handler = SctpHandler::new(sctp_max_message_size);
-        //let data_channel_handler = DataChannelHandler::new();
-        // SRTP
-        //let srtp_handler = SrtpHandler::new();
-        //let interceptor_handler = InterceptorHandler::new();
-
-        // Endpoint
-        let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.handle_timeout(now)?;
-
+        for_each_handler!(self, h, {
+            h.handle_timeout(now)?;
+        });
         Ok(())
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
         let mut eto: Option<Instant> = None;
-
-        // Demuxer
-        let mut demuxer_handler = self.get_demuxer_handler();
-        if let Some(t) = demuxer_handler.poll_timeout() {
-            if let Some(e) = eto {
-                eto = Some(std::cmp::min(t, e));
-            } else {
-                eto = Some(t);
+        for_each_handler!(self, h, {
+            if let Some(next) = h.poll_timeout() {
+                eto = Some(eto.map_or(next, |curr| std::cmp::min(curr, next)));
             }
-        }
-
-        // STUN
-        let mut stun_handler = self.get_stun_handler();
-        if let Some(t) = stun_handler.poll_timeout() {
-            if let Some(e) = eto {
-                eto = Some(std::cmp::min(t, e));
-            } else {
-                eto = Some(t);
-            }
-        }
-
-        // DTLS
-        //let dtls_handler = DtlsHandler::new();
-        //let sctp_handler = SctpHandler::new(sctp_max_message_size);
-        //let data_channel_handler = DataChannelHandler::new();
-        // SRTP
-        //let srtp_handler = SrtpHandler::new();
-        //let interceptor_handler = InterceptorHandler::new();
-
-        // Endpoint
-        let mut endpoint_handler = self.get_endpoint_handler();
-        if let Some(t) = endpoint_handler.poll_timeout() {
-            if let Some(e) = eto {
-                eto = Some(std::cmp::min(t, e));
-            } else {
-                eto = Some(t);
-            }
-        }
-
+        });
         eto
     }
 
     fn close(&mut self) -> Result<(), Self::Error> {
-        // Demuxer
-        let mut demuxer_handler = self.get_demuxer_handler();
-        demuxer_handler.close()?;
-
-        // STUN
-        let mut stun_handler = self.get_stun_handler();
-        stun_handler.close()?;
-
-        // DTLS
-        //let dtls_handler = DtlsHandler::new();
-        //let sctp_handler = SctpHandler::new(sctp_max_message_size);
-        //let data_channel_handler = DataChannelHandler::new();
-        // SRTP
-        //let srtp_handler = SrtpHandler::new();
-        //let interceptor_handler = InterceptorHandler::new();
-
-        // Endpoint
-        let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.close()?;
-
+        for_each_handler!(self, h, {
+            h.close()?;
+        });
         Ok(())
     }
 }
