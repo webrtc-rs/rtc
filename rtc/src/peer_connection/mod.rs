@@ -1,7 +1,6 @@
 pub mod certificate;
 pub mod event;
 mod internal;
-pub mod proto;
 pub mod sdp;
 pub mod state;
 
@@ -120,6 +119,27 @@ impl RTCPeerConnection {
         // Create the SCTP transport
         let sctp_transport =
             RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size);
+
+        // Create and store DTLS handshake config and SCTP configs
+        /*let mut pipeline_context = PipelineContext::default();
+        pipeline_context.dtls_handshake_config = ::dtls::config::HandshakeConfig::default();
+        pipeline_context.sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        pipeline_context.sctp_server_config = ::sctp::ServerConfig::default();*/
+        /*TODO:
+        pipeline_context.dtls_handshake_config = ::dtls::config::ConfigBuilder::default()
+            .with_certificates(
+                dtls_transport
+                    .certificates
+                    .iter()
+                    .map(|c| c.dtls_certificate.clone())
+                    .collect(),
+            )
+            .with_srtp_protection_profiles(vec![(dtls_transport.srtp_protection_profile
+                as u16)
+                .into()])
+            .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
+            .build(false, None)?;
+         */
 
         Ok(Self {
             configuration,
