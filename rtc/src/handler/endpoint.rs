@@ -1,25 +1,43 @@
-use super::message::TaggedRTCMessage;
-use shared::{Context, Handler};
+use super::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
+use crate::transport::{CandidatePair, Transport, TransportStates};
+use log::{debug, warn};
+use shared::error::{Error, Result};
+use shared::{Context, Handler, TransportContext};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
+use stun::attributes::{
+    ATTR_ICE_CONTROLLED, ATTR_ICE_CONTROLLING, ATTR_NETWORK_COST, ATTR_PRIORITY, ATTR_USERNAME,
+    ATTR_USE_CANDIDATE,
+};
+use stun::fingerprint::FINGERPRINT;
+use stun::integrity::MessageIntegrity;
+use stun::message::{Setter, TransactionId, BINDING_SUCCESS};
+use stun::textattrs::TextAttribute;
+use stun::xoraddr::XorMappedAddress;
 
 /// EndpointHandler implements Data/Media Endpoint handling
 pub struct EndpointHandler {
-    //server_states: Rc<RefCell<ServerStates>>,
+    dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
+    sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
+    sctp_server_config: Arc<::sctp::ServerConfig>,
+    transport_states: Arc<TransportStates>,
     transmits: VecDeque<TaggedRTCMessage>,
-    //next_timeout: Instant,
-    //idle_timeout: Duration,
 }
 
 impl EndpointHandler {
-    pub fn new(/*server_states: Rc<RefCell<ServerStates>>*/) -> Self {
-        //let idle_timeout = server_states.borrow().server_config().idle_timeout;
-
+    pub fn new(
+        dtls_handshake_config: Arc<::dtls::config::HandshakeConfig>,
+        sctp_endpoint_config: Arc<::sctp::EndpointConfig>,
+        sctp_server_config: Arc<::sctp::ServerConfig>,
+        transport_states: Arc<TransportStates>,
+    ) -> Self {
         EndpointHandler {
-            //server_states,
+            dtls_handshake_config,
+            sctp_endpoint_config,
+            sctp_server_config,
+            transport_states,
             transmits: VecDeque::new(),
-            //next_timeout: Instant::now().add(idle_timeout),
-            //idle_timeout,
         }
     }
 }
@@ -34,48 +52,23 @@ impl Handler for EndpointHandler {
         "EndpointHandler"
     }
 
-    fn transport_inactive(&mut self, _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>) {
-        /*let server_states = self.server_states.borrow();
-        let sessions = server_states.get_sessions();
-        let mut endpoint_count = 0;
-        for session in sessions.values() {
-            endpoint_count += session.get_endpoints().len();
-        }
-        info!(
-            "Still Active Sessions {}, Endpoints {}/{}, Candidates {} on {}",
-            sessions.len(),
-            endpoint_count,
-            server_states.get_endpoints().len(),
-            server_states.get_candidates().len(),
-            server_states.local_addr()
-        );*/
-    }
-
     fn handle_read(
         &mut self,
-        _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        _msg: Self::Rin,
+        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
+        msg: Self::Rin,
     ) {
-        /*
         let try_read = || -> Result<Vec<TaggedRTCMessage>> {
-            //let mut server_states = self.server_states.borrow_mut();
             match msg.message {
-                /*RTCMessage::Stun(STUNMessage::Stun(message)) => {
-                    EndpointHandler::handle_stun_message(
-                        &mut server_states,
-                        msg.now,
-                        msg.transport,
-                        message,
-                    )
+                RTCMessage::Stun(STUNMessage::Stun(message)) => {
+                    self.handle_stun_message(msg.now, msg.transport, message)
                 }
-                RTCMessage::Dtls(DTLSMessage::DataChannel(message)) => {
-                    EndpointHandler::handle_dtls_message(
-                        &mut server_states,
-                        msg.now,
-                        msg.transport,
-                        message,
-                    )
-                }
+                /*
+                RTCMessage::Dtls(DTLSMessage::DataChannel(message)) => EndpointHandler::handle_dtls_message(
+                    &mut server_states,
+                    msg.now,
+                    msg.transport,
+                    message,
+                ),
                 RTCMessage::Rtp(RTPMessage::Rtp(message)) => EndpointHandler::handle_rtp_message(
                     &mut server_states,
                     msg.now,
@@ -105,44 +98,7 @@ impl Handler for EndpointHandler {
                 warn!("try_read got error {}", err);
                 ctx.fire_handle_error(Box::new(err));
             }
-        }*/
-    }
-
-    fn handle_timeout(
-        &mut self,
-        _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        _now: Instant,
-    ) {
-        // terminate timeout here, no more ctx.fire_handle_timeout(now);
-        /*if self.next_timeout <= now {
-            let mut four_tuples = vec![];
-            let mut server_states = self.server_states.borrow_mut();
-            for session in server_states.get_mut_sessions().values_mut() {
-                for endpoint in session.get_mut_endpoints().values_mut() {
-                    for transport in endpoint.get_mut_transports().values_mut() {
-                        if transport.last_activity() <= now.sub(self.idle_timeout) {
-                            four_tuples.push(*transport.four_tuple());
-                        }
-                    }
-                }
-            }
-            for four_tuple in four_tuples {
-                server_states.remove_transport(four_tuple);
-            }
-
-            self.next_timeout = self.next_timeout.add(self.idle_timeout);
-        }*/
-    }
-
-    fn poll_timeout(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        eto: &mut Instant,
-    ) {
-        /*if self.next_timeout < *eto {
-            *eto = self.next_timeout;
-        }*/
-        ctx.fire_poll_timeout(eto);
+        }
     }
 
     fn poll_write(
@@ -157,14 +113,66 @@ impl Handler for EndpointHandler {
 }
 
 impl EndpointHandler {
-    /*
+    fn check_stun_message(
+        &self,
+        request: &mut stun::message::Message,
+    ) -> Result<Option<Arc<CandidatePair>>> {
+        match TextAttribute::get_from_as(request, ATTR_USERNAME) {
+            Ok(username) => {
+                if !request.contains(ATTR_PRIORITY) {
+                    return Err(Error::Other(
+                        "invalid STUN message without ATTR_PRIORITY".to_string(),
+                    ));
+                }
+
+                if request.contains(ATTR_ICE_CONTROLLING) {
+                    if request.contains(ATTR_ICE_CONTROLLED) {
+                        return Err(Error::Other("invalid STUN message with both ATTR_ICE_CONTROLLING and ATTR_ICE_CONTROLLED".to_string()));
+                    }
+                } else if request.contains(ATTR_ICE_CONTROLLED) {
+                    if request.contains(ATTR_USE_CANDIDATE) {
+                        return Err(Error::Other("invalid STUN message with both ATTR_USE_CANDIDATE and ATTR_ICE_CONTROLLED".to_string()));
+                    }
+                } else {
+                    return Err(Error::Other(
+                        "invalid STUN message without ATTR_ICE_CONTROLLING or ATTR_ICE_CONTROLLED"
+                            .to_string(),
+                    ));
+                }
+
+                if let Some(candidate_pair) =
+                    self.transport_states.find_candidate_pair(&username.text)
+                {
+                    let password = candidate_pair.get_local_parameters().password.clone();
+                    let integrity = MessageIntegrity::new_short_term_integrity(password);
+                    integrity.check(request)?;
+                    Ok(Some(candidate_pair.clone()))
+                } else {
+                    Err(Error::Other("username not found".to_string()))
+                }
+            }
+            Err(_) => {
+                if request.contains(ATTR_ICE_CONTROLLED)
+                    || request.contains(ATTR_ICE_CONTROLLING)
+                    || request.contains(ATTR_NETWORK_COST)
+                    || request.contains(ATTR_PRIORITY)
+                    || request.contains(ATTR_USE_CANDIDATE)
+                {
+                    Err(Error::Other("unexpected attribute".to_string()))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     fn handle_stun_message(
-        server_states: &mut ServerStates,
+        &mut self,
         now: Instant,
         transport_context: TransportContext,
         mut request: stun::message::Message,
     ) -> Result<Vec<TaggedRTCMessage>> {
-        let candidate = match EndpointHandler::check_stun_message(server_states, &mut request)? {
+        let candidate_pair = match self.check_stun_message(&mut request)? {
             Some(candidate) => candidate,
             None => {
                 return EndpointHandler::create_server_reflective_address_message_event(
@@ -175,9 +183,10 @@ impl EndpointHandler {
             }
         };
 
-        EndpointHandler::add_endpoint(server_states, &request, &candidate, &transport_context)?;
+        self.add_transport(&request, &candidate_pair, &transport_context)?;
 
         let mut response = stun::message::Message::new();
+
         response.build(&[
             Box::new(BINDING_SUCCESS),
             Box::new(request.transaction_id),
@@ -187,7 +196,7 @@ impl EndpointHandler {
             }),
         ])?;
         let integrity = MessageIntegrity::new_short_term_integrity(
-            candidate.get_local_parameters().password.clone(),
+            candidate_pair.get_local_parameters().password.clone(),
         );
         integrity.add_to(&mut response)?;
         FINGERPRINT.add_to(&mut response)?;
@@ -205,7 +214,7 @@ impl EndpointHandler {
             message: RTCMessage::Stun(STUNMessage::Stun(response)),
         }])
     }
-
+    /*
     fn handle_dtls_message(
         server_states: &mut ServerStates,
         now: Instant,
@@ -457,56 +466,7 @@ impl EndpointHandler {
         Ok(outgoing_messages)
     }
 
-    fn check_stun_message(
-        server_states: &ServerStates,
-        request: &mut stun::message::Message,
-    ) -> Result<Option<Rc<Candidate>>> {
-        match TextAttribute::get_from_as(request, ATTR_USERNAME) {
-            Ok(username) => {
-                if !request.contains(ATTR_PRIORITY) {
-                    return Err(Error::Other(
-                        "invalid STUN message without ATTR_PRIORITY".to_string(),
-                    ));
-                }
 
-                if request.contains(ATTR_ICE_CONTROLLING) {
-                    if request.contains(ATTR_ICE_CONTROLLED) {
-                        return Err(Error::Other("invalid STUN message with both ATTR_ICE_CONTROLLING and ATTR_ICE_CONTROLLED".to_string()));
-                    }
-                } else if request.contains(ATTR_ICE_CONTROLLED) {
-                    if request.contains(ATTR_USE_CANDIDATE) {
-                        return Err(Error::Other("invalid STUN message with both ATTR_USE_CANDIDATE and ATTR_ICE_CONTROLLED".to_string()));
-                    }
-                } else {
-                    return Err(Error::Other(
-                        "invalid STUN message without ATTR_ICE_CONTROLLING or ATTR_ICE_CONTROLLED"
-                            .to_string(),
-                    ));
-                }
-
-                if let Some(candidate) = server_states.find_candidate(&username.text) {
-                    let password = candidate.get_local_parameters().password.clone();
-                    let integrity = MessageIntegrity::new_short_term_integrity(password);
-                    integrity.check(request)?;
-                    Ok(Some(candidate.clone()))
-                } else {
-                    Err(Error::Other("username not found".to_string()))
-                }
-            }
-            Err(_) => {
-                if request.contains(ATTR_ICE_CONTROLLED)
-                    || request.contains(ATTR_ICE_CONTROLLING)
-                    || request.contains(ATTR_NETWORK_COST)
-                    || request.contains(ATTR_PRIORITY)
-                    || request.contains(ATTR_USE_CANDIDATE)
-                {
-                    Err(Error::Other("unexpected attribute".to_string()))
-                } else {
-                    Ok(None)
-                }
-            }
-        }
-    }
 
     fn get_other_datachannel_transport_contexts(
         server_states: &mut ServerStates,
@@ -601,7 +561,7 @@ impl EndpointHandler {
             }
         }
         Ok(peers)
-    }
+    }*/
 
     fn create_server_reflective_address_message_event(
         now: Instant,
@@ -630,40 +590,33 @@ impl EndpointHandler {
         }])
     }
 
-    fn add_endpoint(
-        server_states: &mut ServerStates,
+    fn add_transport(
+        &mut self,
         request: &stun::message::Message,
-        candidate: &Rc<Candidate>,
+        candidate_pair: &Arc<CandidatePair>,
         transport_context: &TransportContext,
     ) -> Result<bool> {
-        let mut is_new_endpoint = false;
-
-        let session_id = candidate.session_id();
-        let session = server_states
-            .get_mut_session(&session_id)
-            .ok_or(Error::Other(format!("session {} not found", session_id)))?;
-
-        let endpoint_id = candidate.endpoint_id();
-        let endpoint = session.get_endpoint(&endpoint_id);
         let four_tuple = transport_context.into();
-        let has_transport = if let Some(endpoint) = &endpoint {
-            endpoint.has_transport(&four_tuple)
-        } else {
-            is_new_endpoint = true;
-            false
-        };
+        let has_transport = self.transport_states.has_transport(&four_tuple);
 
         if !request.contains(ATTR_USE_CANDIDATE) || has_transport {
-            return Ok(is_new_endpoint);
+            return Ok(false);
         }
 
-        let is_new_endpoint = session.add_endpoint(candidate, transport_context)?;
+        let transport = Transport::new(
+            four_tuple,
+            candidate_pair.clone(),
+            self.dtls_handshake_config.clone(),
+            self.sctp_endpoint_config.clone(),
+            self.sctp_server_config.clone(),
+        );
 
-        server_states.add_endpoint(four_tuple, session_id, endpoint_id);
+        self.transport_states.add_transport(four_tuple, transport);
 
-        Ok(is_new_endpoint)
+        Ok(true)
     }
 
+    /*
     fn create_offer_message_event(
         server_states: &mut ServerStates,
         now: Instant,

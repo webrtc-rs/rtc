@@ -2,6 +2,7 @@ use super::message::TaggedRTCMessage;
 use log::error;
 use shared::{Context, Handler};
 use std::error::Error;
+use std::time::Instant;
 
 /// ExceptionHandler implements exception handling for inbound or outbound directions
 #[derive(Default)]
@@ -33,11 +34,19 @@ impl Handler for ExceptionHandler {
 
     fn handle_error(
         &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
+        _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
         err: Box<dyn Error>,
     ) {
         error!("ExceptionHandler::read_exception {}", err);
-        ctx.fire_handle_error(err);
+        // terminate timeout here, no more ctx.fire_handle_error(err);
+    }
+
+    fn handle_timeout(
+        &mut self,
+        _ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
+        _now: Instant,
+    ) {
+        // terminate timeout here, no more ctx.fire_handle_timeout(now);
     }
 
     fn poll_write(

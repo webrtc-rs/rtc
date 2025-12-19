@@ -20,6 +20,7 @@ use crate::handler::srtp::SrtpHandler;
 use crate::handler::stun::StunHandler;
 use crate::peer_connection::RTCPeerConnection;
 use shared::error::Result;
+use std::sync::Arc;
 
 impl RTCPeerConnection {
     pub(crate) fn build_pipeline(&mut self) -> Result<()> {
@@ -29,9 +30,27 @@ impl RTCPeerConnection {
             .sctp_max_message_size
             .as_usize();
 
+        let dtls_handshake_config = Arc::new(
+            ::dtls::config::ConfigBuilder::default()
+                .with_certificates(
+                    self.dtls_transport
+                        .certificates
+                        .iter()
+                        .map(|c| c.dtls_certificate.clone())
+                        .collect(),
+                )
+                .with_srtp_protection_profiles(vec![(self.dtls_transport.srtp_protection_profile
+                    as u16)
+                    .into()])
+                .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
+                .build(false, None)?,
+        );
+        let sctp_endpoint_config = Arc::new(::sctp::EndpointConfig::default());
+        let sctp_server_config = Arc::new(::sctp::ServerConfig::default());
+
+        // Handlers
         let demuxer_handler = DemuxerHandler::new();
         let stun_handler = StunHandler::new();
-
         // DTLS
         let dtls_handler = DtlsHandler::new();
         let sctp_handler = SctpHandler::new(
@@ -43,9 +62,15 @@ impl RTCPeerConnection {
         let srtp_handler = SrtpHandler::new(/*Rc::clone(&server_states)*/);
         let interceptor_handler = InterceptorHandler::new(/*Rc::clone(&server_states)*/);
         // Endpoint
-        let endpoint_handler = EndpointHandler::new(/*Rc::clone(&server_states)*/);
+        let endpoint_handler = EndpointHandler::new(
+            dtls_handshake_config,
+            sctp_endpoint_config,
+            sctp_server_config,
+            Arc::clone(&self.transport_states),
+        );
         let exception_handler = ExceptionHandler::new();
 
+        // Build transport pipeline
         self.transport_pipeline.add_back(demuxer_handler);
         self.transport_pipeline.add_back(stun_handler);
         // DTLS
