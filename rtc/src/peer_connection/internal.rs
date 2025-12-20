@@ -430,7 +430,7 @@ impl RTCPeerConnection {
         if !self.do_negotiation_needed_inner() {
             return;
         }
-        self.ops_enqueue(TaggedRTCEvent::DoNegotiationNeeded);
+        let _ = self.ops_enqueue_start(TaggedRTCEvent::DoNegotiationNeeded);
     }
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
@@ -449,11 +449,7 @@ impl RTCPeerConnection {
         self.trigger_negotiation_needed();
     }
 
-    pub(super) fn ops_enqueue(&mut self, event: TaggedRTCEvent) {
-        self.pipeline_context.event_outs.push_back(event);
-    }
-
-    pub(super) fn ops_start(&mut self, event: TaggedRTCEvent) -> Result<()> {
+    pub(super) fn ops_enqueue_start(&mut self, event: TaggedRTCEvent) -> Result<()> {
         let mut intermediate_eouts = VecDeque::new();
         intermediate_eouts.append(&mut self.pipeline_context.event_outs);
 
