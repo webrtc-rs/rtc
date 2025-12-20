@@ -13,7 +13,7 @@ use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
 use crate::handler::dtls::DtlsHandlerContext;
 use crate::handler::ice::IceHandlerContext;
-use crate::handler::message::TaggedRTCEvent;
+use crate::handler::message::RTCEventInternal;
 use crate::handler::sctp::SctpHandlerContext;
 use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
@@ -42,7 +42,6 @@ use crate::transport::sctp::RTCSctpTransport;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
-use sansio::Protocol;
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
@@ -363,8 +362,8 @@ impl RTCPeerConnection {
             }
 
             if let Some(remote_desc) = self.remote_description().cloned() {
-                self.ops_enqueue_start(TaggedRTCEvent::StartRtpSenders)?;
-                self.ops_enqueue_start(TaggedRTCEvent::StartRtp(
+                self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
+                self.ops_enqueue_start(RTCEventInternal::StartRtp(
                     self.current_local_description.is_some(),
                     remote_desc,
                 ))?;
@@ -554,8 +553,8 @@ impl RTCPeerConnection {
 
             if is_renegotiation {
                 if we_offer {
-                    self.ops_enqueue_start(TaggedRTCEvent::StartRtpSenders)?;
-                    self.ops_enqueue_start(TaggedRTCEvent::StartRtp(
+                    self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
+                    self.ops_enqueue_start(RTCEventInternal::StartRtp(
                         is_renegotiation,
                         description.clone(),
                     ))?;
@@ -582,12 +581,12 @@ impl RTCPeerConnection {
             // Start the networking in a new routine since it will block until
             // the connection is actually established.
             if we_offer {
-                self.ops_enqueue_start(TaggedRTCEvent::StartRtpSenders)?;
+                self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
             }
 
             let dtls_role = DTLSRole::from(parsed);
             log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
-            self.ops_enqueue_start(TaggedRTCEvent::StartTransports(
+            self.ops_enqueue_start(RTCEventInternal::StartTransports(
                 ice_role,
                 dtls_role,
                 remote_ufrag.clone(),
@@ -597,7 +596,7 @@ impl RTCPeerConnection {
             ))?;
 
             if we_offer {
-                self.ops_enqueue_start(TaggedRTCEvent::StartRtp(false, description.clone()))?;
+                self.ops_enqueue_start(RTCEventInternal::StartRtp(false, description.clone()))?;
             }
         }
 

@@ -1,4 +1,3 @@
-use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::transport::dtls::role::DTLSRole;
 use crate::transport::ice::role::RTCIceRole;
@@ -86,7 +85,7 @@ pub enum RTCEvent {}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
-pub(crate) enum TaggedRTCEvent {
+pub(crate) enum RTCEventInternal {
     StartRtpSenders,
     StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
     StartTransports(
@@ -98,9 +97,4 @@ pub(crate) enum TaggedRTCEvent {
         String, /*fingerprint_hash*/
     ),
     DoNegotiationNeeded,
-
-    // Public Input RTCEvent
-    RTCEvent(RTCEvent),
-    // Public Output RTCPeerConnectionEvent
-    RTCPeerConnectionEvent(RTCPeerConnectionEvent),
 }

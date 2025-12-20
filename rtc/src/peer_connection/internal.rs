@@ -1,5 +1,5 @@
 use super::*;
-use crate::handler::message::TaggedRTCEvent;
+use crate::handler::message::RTCEventInternal;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
@@ -430,7 +430,7 @@ impl RTCPeerConnection {
         if !self.do_negotiation_needed_inner() {
             return;
         }
-        let _ = self.ops_enqueue_start(TaggedRTCEvent::DoNegotiationNeeded);
+        let _ = self.ops_enqueue_start(RTCEventInternal::DoNegotiationNeeded);
     }
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
@@ -449,15 +449,15 @@ impl RTCPeerConnection {
         self.trigger_negotiation_needed();
     }
 
-    pub(super) fn ops_enqueue_start(&mut self, event: TaggedRTCEvent) -> Result<()> {
-        let mut intermediate_eouts = VecDeque::new();
-        intermediate_eouts.append(&mut self.pipeline_context.event_outs);
-
-        let mut endpoint_handler = self.get_endpoint_handler();
-        while let Some(evt) = intermediate_eouts.pop_front() {
-            endpoint_handler.handle_event(evt)?;
+    pub(super) fn ops_enqueue_start(&mut self, event: RTCEventInternal) -> Result<()> {
+        //TODO:
+        match event {
+            RTCEventInternal::StartRtpSenders => {}
+            RTCEventInternal::StartRtp(_, _) => {}
+            RTCEventInternal::StartTransports(_, _, _, _, _, _) => {}
+            RTCEventInternal::DoNegotiationNeeded => {}
         }
-        endpoint_handler.handle_event(event)
+        Ok(())
     }
 
     pub(crate) fn ice_transport(&self) -> &RTCIceTransport {

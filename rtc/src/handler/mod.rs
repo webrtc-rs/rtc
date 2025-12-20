@@ -15,7 +15,7 @@ use crate::handler::dtls::{DtlsHandler, DtlsHandlerContext};
 use crate::handler::endpoint::{EndpointHandler, EndpointHandlerContext};
 use crate::handler::ice::{IceHandler, IceHandlerContext};
 use crate::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
-use crate::handler::message::{RTCEvent, RTCMessage, TaggedRTCEvent, TaggedRTCMessage};
+use crate::handler::message::{RTCEvent, RTCMessage, TaggedRTCMessage};
 use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::handler::stun::{StunHandler, StunHandlerContext};
@@ -119,7 +119,6 @@ pub(crate) struct PipelineContext {
     // Pipeline
     pub(crate) read_outs: VecDeque<RTCMessage>,
     pub(crate) write_outs: VecDeque<RTCMessage>,
-    pub(crate) event_outs: VecDeque<TaggedRTCEvent>,
 }
 
 impl RTCPeerConnection {
@@ -252,16 +251,12 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     fn handle_event(&mut self, evt: RTCEvent) -> Result<(), Self::Error> {
         // Endpoint
         let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.handle_event(TaggedRTCEvent::RTCEvent(evt))
+        endpoint_handler.handle_event(evt)
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
         let mut endpoint_handler = self.get_endpoint_handler();
-        if let Some(TaggedRTCEvent::RTCPeerConnectionEvent(evt)) = endpoint_handler.poll_event() {
-            Some(evt)
-        } else {
-            None
-        }
+        endpoint_handler.poll_event()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
