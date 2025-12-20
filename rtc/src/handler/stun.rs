@@ -18,8 +18,12 @@ pub(crate) struct StunHandler<'a> {
 }
 
 impl<'a> StunHandler<'a> {
-    pub fn new(ctx: &'a mut StunHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut StunHandlerContext) -> Self {
         StunHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "StunHandler"
     }
 }
 

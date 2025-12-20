@@ -227,7 +227,7 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
         for_each_handler!(reverse: process_handler!(self, handler, {
             while let Some(msg) = intermediate_wouts.pop_front() {
                 if let Err(err) = handler.handle_write(msg) {
-                    warn!("Error handling intermediate RTC message: {}", err);
+                    warn!("{}.handle_write got error: {}", handler.name(), err);
                 }
             }
             while let Some(msg) = handler.poll_write() {

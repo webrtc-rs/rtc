@@ -16,8 +16,12 @@ pub(crate) struct InterceptorHandler<'a> {
 }
 
 impl<'a> InterceptorHandler<'a> {
-    pub fn new(ctx: &'a mut InterceptorHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut InterceptorHandlerContext) -> Self {
         InterceptorHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "InterceptorHandler"
     }
 }
 

@@ -51,8 +51,12 @@ pub(crate) struct DemuxerHandler<'a> {
 }
 
 impl<'a> DemuxerHandler<'a> {
-    pub fn new(ctx: &'a mut DemuxerHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut DemuxerHandlerContext) -> Self {
         DemuxerHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "DemuxerHandler"
     }
 }
 

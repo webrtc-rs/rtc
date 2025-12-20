@@ -17,8 +17,12 @@ pub(crate) struct SrtpHandler<'a> {
 }
 
 impl<'a> SrtpHandler<'a> {
-    pub fn new(ctx: &'a mut SrtpHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut SrtpHandlerContext) -> Self {
         SrtpHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "SrtpHandler"
     }
 }
 

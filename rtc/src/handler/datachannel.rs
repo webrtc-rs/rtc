@@ -22,8 +22,12 @@ pub(crate) struct DataChannelHandler<'a> {
 }
 
 impl<'a> DataChannelHandler<'a> {
-    pub fn new(ctx: &'a mut DataChannelHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut DataChannelHandlerContext) -> Self {
         DataChannelHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "DataChannelHandler"
     }
 }
 

@@ -30,8 +30,12 @@ pub(crate) struct IceHandler<'a> {
 }
 
 impl<'a> IceHandler<'a> {
-    pub fn new(ctx: &'a mut IceHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut IceHandlerContext) -> Self {
         IceHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "IceHandler"
     }
 }
 

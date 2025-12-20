@@ -38,8 +38,12 @@ pub(crate) struct SctpHandler<'a> {
 }
 
 impl<'a> SctpHandler<'a> {
-    pub fn new(ctx: &'a mut SctpHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut SctpHandlerContext) -> Self {
         SctpHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "SctpHandler"
     }
 }
 

@@ -37,8 +37,12 @@ pub(crate) struct DtlsHandler<'a> {
 }
 
 impl<'a> DtlsHandler<'a> {
-    pub fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
+    pub(crate) fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
         DtlsHandler { ctx }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "DtlsHandler"
     }
 }
 

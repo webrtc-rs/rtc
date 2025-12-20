@@ -33,7 +33,7 @@ pub(crate) struct EndpointHandler<'a> {
 }
 
 impl<'a> EndpointHandler<'a> {
-    pub fn new(
+    pub(crate) fn new(
         dtls_handshake_config: &'a ::dtls::config::HandshakeConfig,
         sctp_endpoint_config: &'a ::sctp::EndpointConfig,
         sctp_server_config: &'a ::sctp::ServerConfig,
@@ -47,6 +47,10 @@ impl<'a> EndpointHandler<'a> {
             transport_states,
             ctx,
         }
+    }
+
+    pub(crate) fn name(&self) -> &'static str {
+        "EndpointHandler"
     }
 }
 
