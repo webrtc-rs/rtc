@@ -2,13 +2,26 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use super::message::TaggedRTCMessage;
+use crate::transport::ice::RTCIceTransport;
 use log::debug;
 use shared::error::{Error, Result};
 
 #[derive(Default)]
 pub(crate) struct IceHandlerContext {
+    pub(crate) ice_transport: RTCIceTransport,
+
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+}
+
+impl IceHandlerContext {
+    pub(crate) fn new(ice_transport: RTCIceTransport) -> Self {
+        Self {
+            ice_transport,
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
+        }
+    }
 }
 
 /// IceHandler implements ICE Protocol handling

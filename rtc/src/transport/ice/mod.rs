@@ -32,12 +32,12 @@ pub struct RTCIceTransport {
     //on_connection_state_change_handler: Arc<ArcSwapOption<Mutex<OnConnectionStateChangeHdlrFn>>>,
     //on_selected_candidate_pair_change_handler:
     //    Arc<ArcSwapOption<Mutex<OnSelectedCandidatePairChangeHdlrFn>>>,
-    state: RTCIceTransportState,
-    role: RTCIceRole,
+    pub(crate) state: RTCIceTransportState,
+    pub(crate) role: RTCIceRole,
 
-    ufrag_pwd: UfragPwd,
-    local_candidates: Vec<Candidate>,
-    remote_candidates: Vec<Candidate>,
+    pub(crate) ufrag_pwd: UfragPwd,
+    pub(crate) local_candidates: Vec<Candidate>,
+    pub(crate) remote_candidates: Vec<Candidate>,
 }
 
 impl RTCIceTransport {
@@ -187,7 +187,7 @@ impl RTCIceTransport {
 
     /// restart is not exposed currently because ORTC has users create a whole new ICETransport
     /// so for now lets keep it private so we don't cause ORTC users to depend on non-standard APIs
-    pub(crate) fn restart(&self) -> Result<()> {
+    pub(crate) fn restart(&mut self) -> Result<()> {
         //TODO:
         Ok(())
     }

@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
 //TODO: use dtls::endpoint::EndpointEvent;
+use crate::transport::dtls::RTCDtlsTransport;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::debug;
@@ -12,10 +13,22 @@ use srtp::protection_profile::ProtectionProfile;
 
 #[derive(Default)]
 pub(crate) struct DtlsHandlerContext {
+    pub(crate) dtls_transport: RTCDtlsTransport,
+
     //TODO: local_addr: SocketAddr,
     //todo:server_states: Rc<RefCell<ServerStates>>,
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+}
+
+impl DtlsHandlerContext {
+    pub(crate) fn new(dtls_transport: RTCDtlsTransport) -> Self {
+        Self {
+            dtls_transport,
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
+        }
+    }
 }
 
 /// DtlsHandler implements DTLS Protocol handling

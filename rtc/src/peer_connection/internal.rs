@@ -13,9 +13,9 @@ impl RTCPeerConnection {
     pub(super) fn generate_unmatched_sdp(&mut self) -> Result<SessionDescription> {
         let d = SessionDescription::new_jsep_session_description(false);
 
-        let ice_params = self.ice_transport.get_local_parameters()?;
+        let ice_params = self.ice_transport().get_local_parameters()?;
 
-        let candidates = self.ice_transport.get_local_candidates()?;
+        let candidates = self.ice_transport().get_local_candidates()?;
 
         let mut media_sections = vec![];
 
@@ -45,7 +45,7 @@ impl RTCPeerConnection {
             });
         }
 
-        let dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
+        let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
             cert.get_fingerprints()
         } else {
             return Err(Error::ErrNonCertificate);
@@ -82,8 +82,8 @@ impl RTCPeerConnection {
     ) -> Result<SessionDescription> {
         let d = SessionDescription::new_jsep_session_description(false);
 
-        let ice_params = self.ice_transport.get_local_parameters()?;
-        let candidates = self.ice_transport.get_local_candidates()?;
+        let ice_params = self.ice_transport().get_local_parameters()?;
+        let candidates = self.ice_transport().get_local_candidates()?;
 
         let mut media_sections = vec![];
         let mut already_have_application_media_section = false;
@@ -185,7 +185,7 @@ impl RTCPeerConnection {
                 .or(Some(String::new()))
         };
 
-        let dtls_fingerprints = if let Some(cert) = self.dtls_transport.certificates.first() {
+        let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
             cert.get_fingerprints()
         } else {
             return Err(Error::ErrNonCertificate);
@@ -462,5 +462,29 @@ impl RTCPeerConnection {
             endpoint_handler.handle_event(evt)?;
         }
         endpoint_handler.handle_event(event)
+    }
+
+    pub(crate) fn ice_transport(&self) -> &RTCIceTransport {
+        &self.pipeline_context.ice_handler_context.ice_transport
+    }
+
+    pub(crate) fn ice_transport_mut(&mut self) -> &mut RTCIceTransport {
+        &mut self.pipeline_context.ice_handler_context.ice_transport
+    }
+
+    pub(crate) fn dtls_transport(&self) -> &RTCDtlsTransport {
+        &self.pipeline_context.dtls_handler_context.dtls_transport
+    }
+
+    pub(crate) fn dtls_transport_mut(&mut self) -> &mut RTCDtlsTransport {
+        &mut self.pipeline_context.dtls_handler_context.dtls_transport
+    }
+
+    pub(crate) fn sctp_transport(&self) -> &RTCSctpTransport {
+        &self.pipeline_context.sctp_handler_context.sctp_transport
+    }
+
+    pub(crate) fn sctp_transport_mut(&mut self) -> &mut RTCSctpTransport {
+        &mut self.pipeline_context.sctp_handler_context.sctp_transport
     }
 }

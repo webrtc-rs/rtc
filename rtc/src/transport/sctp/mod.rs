@@ -11,20 +11,20 @@ pub struct RTCSctpTransport {
     //TODO: transport: RTCDtlsTransport,
 
     // State represents the current state of the SCTP transport.
-    state: RTCSctpTransportState,
+    pub(crate) state: RTCSctpTransportState,
 
     // SCTPTransportState doesn't have an enum to distinguish between New/Connecting
     // so we need a dedicated field
-    is_started: bool,
+    pub(crate) is_started: bool,
 
     // max_message_size represents the maximum size of data that can be passed to
     // RTCDataChannel's send() method. The attribute MUST, on getting,
     // return the value of the [[MaxMessageSize]] slot.
-    max_message_size: SctpMaxMessageSize,
+    pub(crate) max_message_size: SctpMaxMessageSize,
 
     // max_channels represents the maximum amount of DataChannel's that can
     // be used simultaneously.
-    max_channels: u16,
+    pub(crate) max_channels: u16,
 }
 
 impl RTCSctpTransport {

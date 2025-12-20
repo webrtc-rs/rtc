@@ -11,7 +11,10 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::handler::dtls::DtlsHandlerContext;
+use crate::handler::ice::IceHandlerContext;
 use crate::handler::message::TaggedRTCEvent;
+use crate::handler::sctp::SctpHandlerContext;
 use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
 use crate::media::rtp_receiver::RTCRtpReceiver;
@@ -72,11 +75,6 @@ pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection Internal Transports
     //////////////////////////////////////////////////
-    pub(crate) ice_transport: RTCIceTransport,
-    pub(crate) dtls_transport: RTCDtlsTransport,
-    pub(crate) sctp_transport: RTCSctpTransport,
-
-    // Pipeline context
     pub(crate) pipeline_context: PipelineContext,
 
     //////////////////////////////////////////////////
@@ -120,13 +118,9 @@ impl RTCPeerConnection {
         let sctp_transport =
             RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size);
 
-        // Create and store DTLS handshake config and SCTP configs
-        /*let mut pipeline_context = PipelineContext::default();
-        pipeline_context.dtls_handshake_config = ::dtls::config::HandshakeConfig::default();
-        pipeline_context.sctp_endpoint_config = ::sctp::EndpointConfig::default();
-        pipeline_context.sctp_server_config = ::sctp::ServerConfig::default();*/
-        /*TODO:
-        pipeline_context.dtls_handshake_config = ::dtls::config::ConfigBuilder::default()
+        // Create Pipeline Context
+        // Immutable Configs
+        let dtls_handshake_config = ::dtls::config::ConfigBuilder::default()
             .with_certificates(
                 dtls_transport
                     .certificates
@@ -134,18 +128,34 @@ impl RTCPeerConnection {
                     .map(|c| c.dtls_certificate.clone())
                     .collect(),
             )
-            .with_srtp_protection_profiles(vec![(dtls_transport.srtp_protection_profile
-                as u16)
-                .into()])
+            .with_srtp_protection_profiles(vec![
+                (dtls_transport.srtp_protection_profile as u16).into()
+            ])
             .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
             .build(false, None)?;
-         */
+        let sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        let sctp_server_config = ::sctp::ServerConfig::default();
+
+        // Handler contexts
+        let ice_handler_context = IceHandlerContext::new(ice_transport);
+        let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
+        let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
+
+        let pipeline_context = PipelineContext {
+            dtls_handshake_config,
+            sctp_endpoint_config,
+            sctp_server_config,
+
+            ice_handler_context,
+            dtls_handler_context,
+            sctp_handler_context,
+
+            ..Default::default()
+        };
 
         Ok(Self {
             configuration,
-            ice_transport,
-            dtls_transport,
-            sctp_transport,
+            pipeline_context,
             ..Default::default()
         })
     }
@@ -526,20 +536,20 @@ impl RTCPeerConnection {
 
             if is_renegotiation
                 && self
-                    .ice_transport
+                    .ice_transport()
                     .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
             {
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
                 if !we_offer {
-                    self.ice_transport.restart()?;
+                    self.ice_transport_mut().restart()?;
                 }
 
-                self.ice_transport
+                self.ice_transport_mut()
                     .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())?;
             }
 
             for candidate in candidates {
-                self.ice_transport.add_remote_candidate(candidate)?;
+                self.ice_transport_mut().add_remote_candidate(candidate)?;
             }
 
             if is_renegotiation {
@@ -621,7 +631,7 @@ impl RTCPeerConnection {
         if !candidate_value.is_empty() {
             let candidate: Candidate = unmarshal_candidate(candidate_value)?;
 
-            self.ice_transport.add_remote_candidate(candidate)?;
+            self.ice_transport_mut().add_remote_candidate(candidate)?;
         }
 
         Ok(())
@@ -638,7 +648,7 @@ impl RTCPeerConnection {
         if !candidate_value.is_empty() {
             let candidate: Candidate = unmarshal_candidate(candidate_value)?;
 
-            self.ice_transport.add_local_candidate(candidate)?;
+            self.ice_transport_mut().add_local_candidate(candidate)?;
         }
 
         Ok(())

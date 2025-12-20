@@ -1,6 +1,7 @@
 use super::message::{
     DTLSMessage, DataChannelMessage, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
 };
+use crate::transport::sctp::RTCSctpTransport;
 use log::debug;
 use sctp::{Payload, PayloadProtocolIdentifier};
 use shared::error::{Error, Result};
@@ -8,10 +9,10 @@ use shared::TransportMessage;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 65536;
-
 #[derive(Default)]
 pub(crate) struct SctpHandlerContext {
+    pub(crate) sctp_transport: RTCSctpTransport,
+
     //local_addr: SocketAddr,
     //server_states: Rc<RefCell<ServerStates>>,
     pub(crate) internal_buffer: Vec<u8>,
@@ -20,14 +21,11 @@ pub(crate) struct SctpHandlerContext {
 }
 
 impl SctpHandlerContext {
-    //TODO: let sctp_max_message_size = self
-    //          .get_configuration()
-    //          .setting_engine
-    //          .sctp_max_message_size
-    //          .as_usize();
-    pub fn new(max_message_size: usize) -> Self {
+    pub(crate) fn new(sctp_transport: RTCSctpTransport) -> Self {
+        let max_message_size = sctp_transport.max_message_size.as_usize();
         Self {
-            internal_buffer: vec![0u8; std::cmp::max(max_message_size, DEFAULT_MAX_MESSAGE_SIZE)],
+            sctp_transport,
+            internal_buffer: vec![0u8; max_message_size],
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
         }
