@@ -8,6 +8,8 @@ use shared::TransportMessage;
 use std::collections::VecDeque;
 use std::time::Instant;
 
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 65536;
+
 #[derive(Default)]
 pub(crate) struct SctpHandlerContext {
     //local_addr: SocketAddr,
@@ -25,7 +27,7 @@ impl SctpHandlerContext {
     //          .as_usize();
     pub fn new(max_message_size: usize) -> Self {
         Self {
-            internal_buffer: vec![0u8; max_message_size],
+            internal_buffer: vec![0u8; std::cmp::max(max_message_size, DEFAULT_MAX_MESSAGE_SIZE)],
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
         }
