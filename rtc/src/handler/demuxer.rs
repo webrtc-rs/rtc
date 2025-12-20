@@ -2,7 +2,6 @@ use super::message::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTC
 
 use log::{debug, error};
 use shared::error::Error;
-use shared::TaggedBytesMut;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -43,7 +42,7 @@ fn match_srtp(b: &[u8]) -> bool {
 #[derive(Default)]
 pub(crate) struct DemuxerHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedBytesMut>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
 }
 
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
@@ -57,34 +56,38 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
     type Rout = TaggedRTCMessage;
-    type Wout = TaggedBytesMut;
+    type Wout = TaggedRTCMessage;
     type Eout = ();
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        if msg.message.is_empty() {
-            error!("drop invalid packet due to zero length");
-        } else if match_dtls(&msg.message) {
-            self.ctx.read_outs.push_back(TaggedRTCMessage {
-                now: msg.now,
-                transport: msg.transport,
-                message: RTCMessage::Dtls(DTLSMessage::Raw(msg.message)),
-            });
-        } else if match_srtp(&msg.message) {
-            self.ctx.read_outs.push_back(TaggedRTCMessage {
-                now: msg.now,
-                transport: msg.transport,
-                message: RTCMessage::Rtp(RTPMessage::Raw(msg.message)),
-            });
+    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+        if let RTCMessage::Raw(message) = msg.message {
+            if message.is_empty() {
+                error!("drop invalid packet due to zero length");
+            } else if match_dtls(&message) {
+                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
+                });
+            } else if match_srtp(&message) {
+                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessage::Rtp(RTPMessage::Raw(message)),
+                });
+            } else {
+                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessage::Stun(STUNMessage::Raw(message)),
+                });
+            }
         } else {
-            self.ctx.read_outs.push_back(TaggedRTCMessage {
-                now: msg.now,
-                transport: msg.transport,
-                message: RTCMessage::Stun(STUNMessage::Raw(msg.message)),
-            });
+            debug!("drop non-RAW packet {:?}", msg.message);
         }
         Ok(())
     }
@@ -98,10 +101,10 @@ impl<'a> sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, ()> for DemuxerHandl
             RTCMessage::Stun(STUNMessage::Raw(message))
             | RTCMessage::Dtls(DTLSMessage::Raw(message))
             | RTCMessage::Rtp(RTPMessage::Raw(message)) => {
-                self.ctx.write_outs.push_back(TaggedBytesMut {
+                self.ctx.write_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
-                    message,
+                    message: RTCMessage::Raw(message),
                 });
             }
             _ => {

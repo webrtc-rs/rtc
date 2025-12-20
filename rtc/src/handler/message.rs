@@ -69,6 +69,7 @@ pub enum RTPMessage {
 
 #[derive(Debug, Clone)]
 pub enum RTCMessage {
+    Raw(BytesMut),
     Stun(STUNMessage),
     Dtls(DTLSMessage),
     Rtp(RTPMessage),

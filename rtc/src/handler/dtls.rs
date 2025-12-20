@@ -7,42 +7,36 @@ use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::debug;
 use shared::error::{Error, Result};
-use shared::{Context, Handler};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 
-/// DtlsHandler implements DTLS Protocol handling
-pub struct DtlsHandler {
+#[derive(Default)]
+pub(crate) struct DtlsHandlerContext {
     //TODO: local_addr: SocketAddr,
     //todo:server_states: Rc<RefCell<ServerStates>>,
-    transmits: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
 }
 
-impl DtlsHandler {
-    pub fn new(/*local_addr: SocketAddr , server_states: Rc<RefCell<ServerStates>>*/) -> Self {
-        DtlsHandler {
-            //local_addr,
-            //server_states: Rc::clone(&server_states),
-            transmits: VecDeque::new(),
-        }
+/// DtlsHandler implements DTLS Protocol handling
+pub(crate) struct DtlsHandler<'a> {
+    ctx: &'a mut DtlsHandlerContext,
+}
+
+impl<'a> DtlsHandler<'a> {
+    pub fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
+        DtlsHandler { ctx }
     }
 }
 
-impl Handler for DtlsHandler {
-    type Rin = TaggedRTCMessage;
-    type Rout = Self::Rin;
-    type Win = TaggedRTCMessage;
-    type Wout = Self::Win;
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandler<'a> {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedRTCMessage;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
 
-    fn name(&self) -> &str {
-        "DtlsHandler"
-    }
-
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
+    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
             todo!()
@@ -94,7 +88,7 @@ impl Handler for DtlsHandler {
                     }
 
                     while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(TaggedRTCMessage {
+                        self.ctx.write_outs.push_back(TaggedRTCMessage {
                             now: transmit.now,
                             transport: TransportContext {
                                 local_addr: self.local_addr,
@@ -119,7 +113,7 @@ impl Handler for DtlsHandler {
                 Ok(messages) => {
                     for message in messages {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        ctx.fire_handle_read(TaggedRTCMessage {
+                        self.ctx.read_outs.push_back(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
                             message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
@@ -131,23 +125,80 @@ impl Handler for DtlsHandler {
                     if err == Error::ErrAlertFatalOrClose {
                         let mut server_states = self.server_states.borrow_mut();
                         server_states.remove_transport(four_tuple);
-                    } else {
-                        ctx.fire_handle_error(Box::new(err))
                     }
+                    return Err(err);
                 }
             };*/
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);
-            ctx.fire_handle_read(msg);
+            self.ctx.read_outs.push_back(msg);
         }
+        Ok(())
     }
 
-    fn handle_timeout(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        now: Instant,
-    ) {
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.ctx.read_outs.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
+            debug!("send dtls RAW {:?}", msg.transport.peer_addr);
+            todo!()
+            /*
+            let four_tuple = (&msg.transport).into();
+
+            let mut try_write = || -> Result<()> {
+                let mut server_states = self.server_states.borrow_mut();
+                let transport = server_states.get_mut_transport(&four_tuple)?;
+                let dtls_endpoint = transport.get_mut_dtls_endpoint();
+
+                dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
+                while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                    self.ctx.write_outs.push_back(TaggedRTCMessage {
+                        now: transmit.now,
+                        transport: TransportContext {
+                            local_addr: self.local_addr,
+                            peer_addr: transmit.transport.peer_addr,
+                            transport_protocol: TransportProtocol::UDP,
+                            ecn: transmit.transport.ecn,
+                        },
+                        message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                    });
+                }
+
+                Ok(())
+            };
+
+            match try_write() {
+                Ok(_) => {}
+                Err(err) => {
+                    error!("try_write with error {}", err);
+                    return Err(err);
+                }
+            }
+             */
+        } else {
+            // Bypass
+            debug!("Bypass dtls write {:?}", msg.transport.peer_addr);
+            self.ctx.write_outs.push_back(msg);
+        }
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.ctx.write_outs.pop_front()
+    }
+
+    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Option<Self::Eout> {
+        None
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
         let /*mut*/ _try_timeout = || -> Result<()> {
             /*TODO:
             let mut server_states = self.server_states.borrow_mut();
@@ -161,7 +212,7 @@ impl Handler for DtlsHandler {
                             let _ = dtls_endpoint.handle_timeout(remote, now);
                         }
                         while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                            self.transmits.push_back(TaggedRTCMessage {
+                            self.ctx.write_outs.push_back(TaggedRTCMessage {
                                 now: transmit.now,
                                 transport: TransportContext {
                                     local_addr: self.local_addr,
@@ -183,18 +234,14 @@ impl Handler for DtlsHandler {
             Ok(_) => {}
             Err(err) => {
                 error!("try_timeout with error {}", err);
-                ctx.fire_handle_error(Box::new(err));
+                return Err(err);
             }
         }*/
 
-        ctx.fire_handle_timeout(now);
+        Ok(())
     }
 
-    fn poll_timeout(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        eto: &mut Instant,
-    ) {
+    fn poll_timeout(&mut self) -> Option<Instant> {
         /*TODO:
         {
             let server_states = self.server_states.borrow();
@@ -210,62 +257,15 @@ impl Handler for DtlsHandler {
                 }
             }
         }*/
-        ctx.fire_poll_timeout(eto);
+        None
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
-            if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
-                debug!("send dtls RAW {:?}", msg.transport.peer_addr);
-                todo!()
-                /*
-                let four_tuple = (&msg.transport).into();
-
-                let mut try_write = || -> Result<()> {
-                    let mut server_states = self.server_states.borrow_mut();
-                    let transport = server_states.get_mut_transport(&four_tuple)?;
-                    let dtls_endpoint = transport.get_mut_dtls_endpoint();
-
-                    dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
-                    while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.transmits.push_back(TaggedRTCMessage {
-                            now: transmit.now,
-                            transport: TransportContext {
-                                local_addr: self.local_addr,
-                                peer_addr: transmit.transport.peer_addr,
-                                transport_protocol: TransportProtocol::UDP,
-                                ecn: transmit.transport.ecn,
-                            },
-                            message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
-                        });
-                    }
-
-                    Ok(())
-                };
-
-                match try_write() {
-                    Ok(_) => {}
-                    Err(err) => {
-                        error!("try_write with error {}", err);
-                        ctx.fire_handle_error(Box::new(err));
-                    }
-                }
-                 */
-            } else {
-                // Bypass
-                debug!("Bypass dtls write {:?}", msg.transport.peer_addr);
-                self.transmits.push_back(msg);
-            }
-        }
-
-        self.transmits.pop_front()
+    fn close(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 
-impl DtlsHandler {
+impl<'a> DtlsHandler<'a> {
     const DEFAULT_SESSION_SRTP_REPLAY_PROTECTION_WINDOW: usize = 64;
     const DEFAULT_SESSION_SRTCP_REPLAY_PROTECTION_WINDOW: usize = 64;
     pub(crate) fn update_srtp_contexts(

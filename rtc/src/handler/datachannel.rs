@@ -5,40 +5,36 @@ use super::message::{
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
 use log::{debug, error, warn};
 use sctp::ReliabilityType;
-use shared::error::Result;
+use shared::error::{Error, Result};
 use shared::marshal::*;
-use shared::{Context, Handler};
 use std::collections::VecDeque;
+use std::time::Instant;
+
+#[derive(Default)]
+pub(crate) struct DataChannelHandlerContext {
+    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+}
 
 /// DataChannelHandler implements DataChannel Protocol handling
-#[derive(Default)]
-pub struct DataChannelHandler {
-    transmits: VecDeque<TaggedRTCMessage>,
+pub(crate) struct DataChannelHandler<'a> {
+    ctx: &'a mut DataChannelHandlerContext,
 }
 
-impl DataChannelHandler {
-    pub fn new() -> Self {
-        Self {
-            transmits: VecDeque::new(),
-        }
+impl<'a> DataChannelHandler<'a> {
+    pub fn new(ctx: &'a mut DataChannelHandlerContext) -> Self {
+        DataChannelHandler { ctx }
     }
 }
 
-impl Handler for DataChannelHandler {
-    type Rin = TaggedRTCMessage;
-    type Rout = Self::Rin;
-    type Win = TaggedRTCMessage;
-    type Wout = Self::Win;
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DataChannelHandler<'a> {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedRTCMessage;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
 
-    fn name(&self) -> &str {
-        "DataChannelHandler"
-    }
-
-    fn handle_read(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-        msg: Self::Rin,
-    ) {
+    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "recv SCTP DataChannelMessage from {:?}",
@@ -98,7 +94,7 @@ impl Handler for DataChannelHandler {
                     // first outbound message
                     if let Some(data_channel_message) = outbound_message {
                         debug!("send DataChannelAck message {:?}", msg.transport.peer_addr);
-                        self.transmits.push_back(TaggedRTCMessage {
+                        self.ctx.write_outs.push_back(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
                             message: RTCMessage::Dtls(DTLSMessage::Sctp(data_channel_message)),
@@ -108,7 +104,7 @@ impl Handler for DataChannelHandler {
                     // then inbound message
                     if let Some(application_message) = inbound_message {
                         debug!("recv application message {:?}", msg.transport.peer_addr);
-                        ctx.fire_handle_read(TaggedRTCMessage {
+                        self.ctx.read_outs.push_back(TaggedRTCMessage {
                             now: msg.now,
                             transport: msg.transport,
                             message: RTCMessage::Dtls(DTLSMessage::DataChannel(
@@ -119,50 +115,73 @@ impl Handler for DataChannelHandler {
                 }
                 Err(err) => {
                     error!("try_read with error {}", err);
-                    ctx.fire_handle_error(Box::new(err))
+                    return Err(err);
                 }
             };
         } else {
             // Bypass
             debug!("bypass DataChannel read {:?}", msg.transport.peer_addr);
-            ctx.fire_handle_read(msg);
+            self.ctx.read_outs.push_back(msg);
         }
+        Ok(())
     }
 
-    fn poll_write(
-        &mut self,
-        ctx: &Context<Self::Rin, Self::Rout, Self::Win, Self::Wout>,
-    ) -> Option<Self::Wout> {
-        if let Some(msg) = ctx.fire_poll_write() {
-            if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
-                debug!("send application message {:?}", msg.transport.peer_addr);
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.ctx.read_outs.pop_front()
+    }
 
-                if let DataChannelEvent::Message(payload) = message.data_channel_event {
-                    self.transmits.push_back(TaggedRTCMessage {
-                        now: msg.now,
-                        transport: msg.transport,
-                        message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
-                            association_handle: message.association_handle,
-                            stream_id: message.stream_id,
-                            data_message_type: DataChannelMessageType::Text,
-                            params: None,
-                            payload,
-                        })),
-                    });
-                } else {
-                    warn!(
-                        "drop unsupported DATACHANNEL message to {}",
-                        msg.transport.peer_addr
-                    );
-                }
+    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+        if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
+            debug!("send application message {:?}", msg.transport.peer_addr);
+
+            if let DataChannelEvent::Message(payload) = message.data_channel_event {
+                self.ctx.write_outs.push_back(TaggedRTCMessage {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                        association_handle: message.association_handle,
+                        stream_id: message.stream_id,
+                        data_message_type: DataChannelMessageType::Text,
+                        params: None,
+                        payload,
+                    })),
+                });
             } else {
-                // Bypass
-                debug!("bypass DataChannel write {:?}", msg.transport.peer_addr);
-                self.transmits.push_back(msg);
+                warn!(
+                    "drop unsupported DATACHANNEL message to {}",
+                    msg.transport.peer_addr
+                );
             }
+        } else {
+            // Bypass
+            debug!("bypass DataChannel write {:?}", msg.transport.peer_addr);
+            self.ctx.write_outs.push_back(msg);
         }
+        Ok(())
+    }
 
-        self.transmits.pop_front()
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.ctx.write_outs.pop_front()
+    }
+
+    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Option<Self::Eout> {
+        None
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        None
+    }
+
+    fn close(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 

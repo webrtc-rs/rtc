@@ -1,23 +1,23 @@
-//TODO:pub(crate) mod datachannel;
+pub(crate) mod datachannel;
 pub(crate) mod demuxer;
-//pub(crate) mod dtls;
+pub(crate) mod dtls;
 pub(crate) mod endpoint;
-//pub(crate) mod interceptor;
+pub(crate) mod ice;
+pub(crate) mod interceptor;
 pub mod message;
-//pub(crate) mod sctp;
-//pub(crate) mod srtp;
+pub(crate) mod sctp;
+pub(crate) mod srtp;
 pub(crate) mod stun;
 
-/*
-use crate::handler::datachannel::DataChannelHandler;
-use crate::handler::dtls::DtlsHandler;
-use crate::handler::interceptor::InterceptorHandler;
-use crate::handler::sctp::SctpHandler;
-use crate::handler::srtp::SrtpHandler;
-*/
+use crate::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
 use crate::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
+use crate::handler::dtls::{DtlsHandler, DtlsHandlerContext};
 use crate::handler::endpoint::{EndpointHandler, EndpointHandlerContext};
+use crate::handler::ice::{IceHandler, IceHandlerContext};
+use crate::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
 use crate::handler::message::{RTCEvent, RTCMessage, TaggedRTCEvent, TaggedRTCMessage};
+use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
+use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::handler::stun::{StunHandler, StunHandlerContext};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::RTCPeerConnection;
@@ -30,27 +30,69 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 
-/// Macro to execute code for each handler in sequence
-macro_rules! for_each_handler {
-    ($self:expr, $handler:ident, $code:block) => {{
-        {
-            let mut $handler = $self.get_demuxer_handler();
-            $code
-        }
-        {
-            let mut $handler = $self.get_stun_handler();
-            $code
-        }
-        // TODO: Add other handlers here when implemented
-        // {
-        //     let mut $handler = $self.get_dtls_handler();
-        //     $code
-        // }
-        {
-            let mut $handler = $self.get_endpoint_handler();
-            $code
-        }
+/// Forward handler list - invokes callback with handler list
+macro_rules! forward_handlers {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!(
+            $($args)*,
+            [
+                get_demuxer_handler,
+                get_stun_handler,
+                get_ice_handler,
+                get_dtls_handler,
+                get_sctp_handler,
+                get_datachannel_handler,
+                get_srtp_handler,
+                get_interceptor_handler,
+                get_endpoint_handler
+            ]
+        )
+    };
+}
+
+/// Reverse handler list - invokes callback with handler list
+macro_rules! reverse_handlers {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!(
+            $($args)*,
+            [
+                get_endpoint_handler,
+                get_interceptor_handler,
+                get_srtp_handler,
+                get_datachannel_handler,
+                get_sctp_handler,
+                get_dtls_handler,
+                get_ice_handler,
+                get_stun_handler,
+                get_demuxer_handler
+            ]
+        )
+    };
+}
+
+/// Helper macro that processes a list of handlers with code blocks
+macro_rules! process_handler_list {
+    (call_macro: process_handler!($self:expr, $handler:ident, $code:block), [$($getter:ident),+]) => {{
+        $(
+            {
+                let mut $handler = $self.$getter();
+                $code
+            }
+        )+
     }};
+}
+
+/// Unified macro to iterate over handlers with code blocks
+macro_rules! for_each_handler {
+    // Forward order: execute code block for each handler
+    (forward: $macro:ident!($($args:tt)*)) => {
+        forward_handlers!(process_handler_list!(call_macro: $macro!($($args)*)))
+    };
+
+    // Reverse order: execute code block for each handler
+    (reverse: $macro:ident!($($args:tt)*)) => {
+        reverse_handlers!(process_handler_list!(call_macro: $macro!($($args)*)))
+    };
 }
 
 #[derive(Default)]
@@ -66,6 +108,12 @@ pub(crate) struct PipelineContext {
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,
     pub(crate) stun_handler_context: StunHandlerContext,
+    pub(crate) ice_handler_context: IceHandlerContext,
+    pub(crate) dtls_handler_context: DtlsHandlerContext,
+    pub(crate) sctp_handler_context: SctpHandlerContext,
+    pub(crate) datachannel_handler_context: DataChannelHandlerContext,
+    pub(crate) srtp_handler_context: SrtpHandlerContext,
+    pub(crate) interceptor_handler_context: InterceptorHandlerContext,
     pub(crate) endpoint_handler_context: EndpointHandlerContext,
 
     // Pipeline
@@ -76,23 +124,11 @@ pub(crate) struct PipelineContext {
 
 impl RTCPeerConnection {
     /*
-     let sctp_max_message_size = self
-         .get_configuration()
-         .setting_engine
-         .sctp_max_message_size
-         .as_usize();
-     // STUN
-     let demuxer_handler = DemuxerHandler::new();
-     let stun_handler = StunHandler::new();
-     // DTLS
-     let dtls_handler = DtlsHandler::new();
-     let sctp_handler = SctpHandler::new(sctp_max_message_size);
-     let data_channel_handler = DataChannelHandler::new();
-     // SRTP
-     let srtp_handler = SrtpHandler::new();
-     let interceptor_handler = InterceptorHandler::new();
-     // Endpoint
-     let endpoint_handler = EndpointHandler::new();
+     Pipeline Flow (Read Path):
+     Raw Bytes -> Demuxer -> STUN -> ICE -> DTLS -> SCTP -> DataChannel -> SRTP -> Interceptor -> Endpoint -> Application
+
+     Pipeline Flow (Write Path):
+     Application -> Endpoint -> Interceptor -> SRTP -> DataChannel -> SCTP -> DTLS -> ICE -> STUN -> Demuxer -> Raw Bytes
     */
 
     pub(crate) fn get_demuxer_handler(&mut self) -> DemuxerHandler<'_> {
@@ -101,6 +137,30 @@ impl RTCPeerConnection {
 
     pub(crate) fn get_stun_handler(&mut self) -> StunHandler<'_> {
         StunHandler::new(&mut self.pipeline_context.stun_handler_context)
+    }
+
+    pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {
+        IceHandler::new(&mut self.pipeline_context.ice_handler_context)
+    }
+
+    pub(crate) fn get_dtls_handler(&mut self) -> DtlsHandler<'_> {
+        DtlsHandler::new(&mut self.pipeline_context.dtls_handler_context)
+    }
+
+    pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
+        SctpHandler::new(&mut self.pipeline_context.sctp_handler_context)
+    }
+
+    pub(crate) fn get_datachannel_handler(&mut self) -> DataChannelHandler<'_> {
+        DataChannelHandler::new(&mut self.pipeline_context.datachannel_handler_context)
+    }
+
+    pub(crate) fn get_srtp_handler(&mut self) -> SrtpHandler<'_> {
+        SrtpHandler::new(&mut self.pipeline_context.srtp_handler_context)
+    }
+
+    pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
+        InterceptorHandler::new(&mut self.pipeline_context.interceptor_handler_context)
     }
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
@@ -123,42 +183,20 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
         let mut intermediate_routs = VecDeque::new();
+        intermediate_routs.push_back(TaggedRTCMessage {
+            now: msg.now,
+            transport: msg.transport,
+            message: RTCMessage::Raw(msg.message),
+        });
 
-        // Demuxer
-        let mut demuxer_handler = self.get_demuxer_handler();
-        demuxer_handler.handle_read(msg)?;
-
-        while let Some(msg) = demuxer_handler.poll_read() {
-            intermediate_routs.push_back(msg);
-        }
-
-        // STUN
-        let mut stun_handler = self.get_stun_handler();
-        while let Some(msg) = intermediate_routs.pop_front() {
-            stun_handler.handle_read(msg)?;
-        }
-
-        while let Some(msg) = stun_handler.poll_read() {
-            intermediate_routs.push_back(msg);
-        }
-
-        // DTLS
-        //let dtls_handler = DtlsHandler::new();
-        //let sctp_handler = SctpHandler::new(sctp_max_message_size);
-        //let data_channel_handler = DataChannelHandler::new();
-        // SRTP
-        //let srtp_handler = SrtpHandler::new();
-        //let interceptor_handler = InterceptorHandler::new();
-
-        // Endpoint
-        let mut endpoint_handler = self.get_endpoint_handler();
-        while let Some(msg) = intermediate_routs.pop_front() {
-            endpoint_handler.handle_read(msg)?;
-        }
-
-        while let Some(msg) = endpoint_handler.poll_read() {
-            intermediate_routs.push_back(msg);
-        }
+        for_each_handler!(forward: process_handler!(self, handler, {
+            while let Some(msg) = intermediate_routs.pop_front() {
+                handler.handle_read(msg)?;
+            }
+            while let Some(msg) = handler.poll_read() {
+                intermediate_routs.push_back(msg);
+            }
+        }));
 
         // Finally, put intermediate_routs into RTCPeerConnection's routs
         while let Some(msg) = intermediate_routs.pop_front() {
@@ -187,49 +225,28 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
             });
         }
 
-        // Reverse order as handle_read
+        for_each_handler!(reverse: process_handler!(self, handler, {
+            while let Some(msg) = intermediate_wouts.pop_front() {
+                if let Err(err) = handler.handle_write(msg) {
+                    warn!("Error handling intermediate RTC message: {}", err);
+                }
+            }
+            while let Some(msg) = handler.poll_write() {
+                intermediate_wouts.push_back(msg);
+            }
+        }));
 
-        // Endpoint
-        let mut endpoint_handler = self.get_endpoint_handler();
-        while let Some(msg) = intermediate_wouts.pop_front() {
-            if let Err(err) = endpoint_handler.handle_write(msg) {
-                warn!("Error handling intermediate RTC message: {}", err);
+        // Final poll write out to pipeline's write out
+        if let Some(msg) = intermediate_wouts.pop_front() {
+            if let RTCMessage::Raw(message) = msg.message {
+                return Some(TaggedBytesMut {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message,
+                });
             }
         }
-
-        while let Some(msg) = endpoint_handler.poll_write() {
-            intermediate_wouts.push_back(msg);
-        }
-
-        //let interceptor_handler = InterceptorHandler::new();
-        //let srtp_handler = SrtpHandler::new();
-        //let data_channel_handler = DataChannelHandler::new();
-
-        //let sctp_handler = SctpHandler::new(sctp_max_message_size);
-        //let dtls_handler = DtlsHandler::new();
-
-        // STUN
-        let mut stun_handler = self.get_stun_handler();
-        while let Some(msg) = intermediate_wouts.pop_front() {
-            if let Err(err) = stun_handler.handle_write(msg) {
-                warn!("Error handling intermediate RTC message: {}", err);
-            }
-        }
-
-        while let Some(msg) = stun_handler.poll_write() {
-            intermediate_wouts.push_back(msg);
-        }
-
-        // Demuxer
-        let mut demuxer_handler = self.get_demuxer_handler();
-        while let Some(msg) = intermediate_wouts.pop_front() {
-            if let Err(err) = demuxer_handler.handle_write(msg) {
-                warn!("Error handling intermediate RTC message: {}", err);
-            }
-        }
-
-        // Final poll demuxer handler write out to pipeline's write out
-        demuxer_handler.poll_write()
+        None
     }
 
     fn handle_event(&mut self, evt: RTCEvent) -> Result<(), Self::Error> {
@@ -248,26 +265,26 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
-        for_each_handler!(self, h, {
-            h.handle_timeout(now)?;
-        });
+        for_each_handler!(forward: process_handler!(self, handler, {
+            handler.handle_timeout(now)?;
+        }));
         Ok(())
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
         let mut eto: Option<Instant> = None;
-        for_each_handler!(self, h, {
-            if let Some(next) = h.poll_timeout() {
+        for_each_handler!(forward: process_handler!(self, handler, {
+            if let Some(next) = handler.poll_timeout() {
                 eto = Some(eto.map_or(next, |curr| std::cmp::min(curr, next)));
             }
-        });
+        }));
         eto
     }
 
     fn close(&mut self) -> Result<(), Self::Error> {
-        for_each_handler!(self, h, {
-            h.close()?;
-        });
+        for_each_handler!(forward: process_handler!(self, handler, {
+            handler.close()?;
+        }));
         Ok(())
     }
 }
