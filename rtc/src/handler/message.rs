@@ -1,6 +1,8 @@
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
-use crate::transport::dtls::role::DTLSRole;
+use crate::transport::dtls::parameters::DTLSParameters;
+use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
+use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use bytes::BytesMut;
 use sctp::ReliabilityType;
 use shared::TransportContext;
@@ -88,13 +90,20 @@ pub enum RTCEvent {}
 pub(crate) enum RTCEventInternal {
     StartRtpSenders,
     StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
-    StartTransports(
+    /*StartTransports(
         RTCIceRole,
         DTLSRole,
         String, /*remote_ufrag*/
         String, /*remote_pwd*/
         String, /*fingerprint*/
         String, /*fingerprint_hash*/
+    ),*/
+    IceTransportStart(RTCIceRole, RTCIceParameters),
+    DtlsTransportStart(DTLSParameters),
+    SctpTransportStart(
+        SCTPTransportCapabilities,
+        u16, /*local_port*/
+        u16, /*remote_port*/
     ),
     DoNegotiationNeeded,
 }

@@ -4,6 +4,8 @@ use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
+use crate::transport::dtls::state::RTCDtlsTransportState;
+use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 
@@ -481,22 +483,14 @@ impl RTCPeerConnection {
             RTCEventInternal::StartRtp(is_renegotiation, remote_desc) => {
                 self.start_rtp(is_renegotiation, remote_desc)?
             }
-            RTCEventInternal::StartTransports(
-                ice_role,
-                dtls_role,
-                remote_ufrag,
-                remote_pwd,
-                fingerprint,
-                fingerprint_hash,
-            ) => {
-                self.start_transports(
-                    ice_role,
-                    dtls_role,
-                    remote_ufrag,
-                    remote_pwd,
-                    fingerprint,
-                    fingerprint_hash,
-                )?;
+            RTCEventInternal::IceTransportStart(ice_role, ice_parameters) => {
+                self.start_ice_transport(ice_role, ice_parameters)?;
+            }
+            RTCEventInternal::DtlsTransportStart(dtls_parameters) => {
+                self.start_dtls_transport(dtls_parameters)?
+            }
+            RTCEventInternal::SctpTransportStart(capabilities, local_port, remote_port) => {
+                self.start_sctp_transport(capabilities, local_port, remote_port)?
             }
             RTCEventInternal::DoNegotiationNeeded => self.negotiation_needed_op()?,
         }
@@ -678,6 +672,294 @@ impl RTCPeerConnection {
         Ok(())
     }
 
+    /// Start incoming connectivity checks based on its configured role.
+    fn start_ice_transport(
+        &mut self,
+        _ice_role: RTCIceRole,
+        _params: RTCIceParameters,
+    ) -> Result<()> {
+        /*if self.state() != RTCIceTransportState::New {
+            return Err(Error::ErrICETransportNotInNew);
+        }
+
+        let state = Arc::clone(&self.state);
+
+        let on_connection_state_change_handler =
+            Arc::clone(&self.on_connection_state_change_handler);
+        agent.on_connection_state_change(Box::new(move |ice_state: ConnectionState| {
+            let s = RTCIceTransportState::from(ice_state);
+            let on_connection_state_change_handler_clone =
+                Arc::clone(&on_connection_state_change_handler);
+            state.store(s as u8, Ordering::SeqCst);
+            Box::pin(async move {
+                if let Some(handler) = &*on_connection_state_change_handler_clone.load() {
+                    let mut f = handler.lock().await;
+                    f(s).await;
+                }
+            })
+        }));
+
+        let on_selected_candidate_pair_change_handler =
+            Arc::clone(&self.on_selected_candidate_pair_change_handler);
+        agent.on_selected_candidate_pair_change(Box::new(
+            move |local: &Arc<dyn Candidate + Send + Sync>,
+                  remote: &Arc<dyn Candidate + Send + Sync>| {
+                let on_selected_candidate_pair_change_handler_clone =
+                    Arc::clone(&on_selected_candidate_pair_change_handler);
+                let local = RTCIceCandidate::from(local);
+                let remote = RTCIceCandidate::from(remote);
+                Box::pin(async move {
+                    if let Some(handler) =
+                        &*on_selected_candidate_pair_change_handler_clone.load()
+                    {
+                        let mut f = handler.lock().await;
+                        f(RTCIceCandidatePair::new(local, remote)).await;
+                    }
+                })
+            },
+        ));
+
+        let role = if let Some(role) = role {
+            role
+        } else {
+            RTCIceRole::Controlled
+        };
+
+        let (cancel_tx, cancel_rx) = mpsc::channel(1);
+        {
+            let mut internal = self.internal.lock().await;
+            internal.role = role;
+            internal.cancel_tx = Some(cancel_tx);
+        }
+
+        let conn: Arc<dyn Conn + Send + Sync> = match role {
+            RTCIceRole::Controlling => {
+                agent
+                    .dial(
+                        cancel_rx,
+                        params.username_fragment.clone(),
+                        params.password.clone(),
+                    )
+                    .await?
+            }
+
+            RTCIceRole::Controlled => {
+                agent
+                    .accept(
+                        cancel_rx,
+                        params.username_fragment.clone(),
+                        params.password.clone(),
+                    )
+                    .await?
+            }
+
+            _ => return Err(Error::ErrICERoleUnknown),
+        };
+
+        let config = Config {
+            conn: Arc::clone(&conn),
+            buffer_size: self.gatherer.setting_engine.get_receive_mtu(),
+        };
+
+        {
+            let mut internal = self.internal.lock().await;
+            internal.conn = Some(conn);
+            internal.mux = Some(Mux::new(config));
+        }*/
+
+        self.update_connection_state();
+        Ok(())
+    }
+
+    /// Start the SCTPTransport. Since both local and remote parties must mutually
+    /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
+    /// a connection over SCTP.
+    fn start_sctp_transport(
+        &mut self,
+        _remote_caps: SCTPTransportCapabilities,
+        _local_port: u16,
+        _remote_port: u16,
+    ) -> Result<()> {
+        /*
+        if self.is_started.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.is_started.store(true, Ordering::SeqCst);
+
+        let dtls_transport = self.transport();
+
+        let max_message_size = Self::calc_message_size(
+            remote_caps.max_message_size,
+            self.setting_engine.sctp_max_message_size_can_send.as_u32(),
+        );
+
+        if let Some(net_conn) = &dtls_transport.conn().await {
+            let sctp_association = loop {
+                tokio::select! {
+                    _ = self.notify_tx.notified() => {
+                        // It seems like notify_tx is only notified on Stop so perhaps this check
+                        // is redundant.
+                        // TODO: Consider renaming notify_tx to shutdown_tx.
+                        if self.state.load(Ordering::SeqCst) == RTCSctpTransportState::Closed as u8 {
+                            return Err(Error::ErrSCTPTransportDTLS);
+                        }
+                    },
+                    association = sctp::association::Association::client(sctp::association::Config {
+                        net_conn: Arc::clone(net_conn) as Arc<dyn Conn + Send + Sync>,
+                        max_receive_buffer_size: 0,
+                        max_message_size,
+                        name: String::new(),
+                        local_port,
+                        remote_port,
+                    }) => {
+                        break Arc::new(association?);
+                    }
+                };
+            };
+
+            {
+                let mut sa = self.sctp_association.lock().await;
+                *sa = Some(Arc::clone(&sctp_association));
+            }
+            self.state
+                .store(RTCSctpTransportState::Connected as u8, Ordering::SeqCst);
+
+            let param = AcceptDataChannelParams {
+                notify_rx: self.notify_tx.clone(),
+                sctp_association,
+                data_channels: Arc::clone(&self.data_channels),
+                on_error_handler: Arc::clone(&self.on_error_handler),
+                on_data_channel_handler: Arc::clone(&self.on_data_channel_handler),
+                on_data_channel_opened_handler: Arc::clone(&self.on_data_channel_opened_handler),
+                data_channels_opened: Arc::clone(&self.data_channels_opened),
+                data_channels_accepted: Arc::clone(&self.data_channels_accepted),
+                setting_engine: Arc::clone(&self.setting_engine),
+            };
+            tokio::spawn(async move {
+                RTCSctpTransport::accept_data_channels(param).await;
+            });
+
+            Ok(())
+        } else {
+            Err(Error::ErrSCTPTransportDTLS)
+        }*/
+        Ok(())
+    }
+
+    fn start_dtls_transport(&mut self, _remote_parameters: DTLSParameters) -> Result<()> {
+        /*
+        let dtls_conn_result = if let Some(dtls_endpoint) =
+            self.ice_transport.new_endpoint(Box::new(match_dtls)).await
+        {
+            let (role, mut dtls_config) = self.prepare_transport(remote_parameters).await?;
+            if self.setting_engine.replay_protection.dtls != 0 {
+                dtls_config.replay_protection_window = self.setting_engine.replay_protection.dtls;
+            }
+
+            // Connect as DTLS Client/Server, function is blocking and we
+            // must not hold the DTLSTransport lock
+            if role == DTLSRole::Client {
+                dtls::conn::DTLSConn::new(
+                    dtls_endpoint as Arc<dyn Conn + Send + Sync>,
+                    dtls_config,
+                    true,
+                    None,
+                )
+                .await
+            } else {
+                dtls::conn::DTLSConn::new(
+                    dtls_endpoint as Arc<dyn Conn + Send + Sync>,
+                    dtls_config,
+                    false,
+                    None,
+                )
+                .await
+            }
+        } else {
+            Err(dtls::Error::Other(
+                "ice_transport.new_endpoint failed".to_owned(),
+            ))
+        };
+
+        let dtls_conn = match dtls_conn_result {
+            Ok(dtls_conn) => dtls_conn,
+            Err(err) => {
+                self.state_change(RTCDtlsTransportState::Failed).await;
+                return Err(err.into());
+            }
+        };
+
+        let srtp_profile = dtls_conn.selected_srtpprotection_profile();
+        {
+            let mut srtp_protection_profile = self.srtp_protection_profile.lock().await;
+            *srtp_protection_profile = match srtp_profile {
+                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => {
+                    srtp::protection_profile::ProtectionProfile::AeadAes128Gcm
+                }
+                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => {
+                    srtp::protection_profile::ProtectionProfile::AeadAes256Gcm
+                }
+                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
+                    srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_80
+                }
+                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32 => {
+                    srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_32
+                }
+                _ => {
+                    if let Err(err) = dtls_conn.close().await {
+                        log::error!("{err}");
+                    }
+
+                    self.state_change(RTCDtlsTransportState::Failed).await;
+                    return Err(Error::ErrNoSRTPProtectionProfile);
+                }
+            };
+        }
+
+        // Check the fingerprint if a certificate was exchanged
+        let remote_certs = &dtls_conn.connection_state().await.peer_certificates;
+        if remote_certs.is_empty() {
+            if let Err(err) = dtls_conn.close().await {
+                log::error!("{err}");
+            }
+
+            self.state_change(RTCDtlsTransportState::Failed).await;
+            return Err(Error::ErrNoRemoteCertificate);
+        }
+
+        {
+            let mut remote_certificate = self.remote_certificate.lock().await;
+            *remote_certificate = Bytes::from(remote_certs[0].clone());
+        }
+
+        if !self
+            .setting_engine
+            .disable_certificate_fingerprint_verification
+        {
+            if let Err(err) = self.validate_fingerprint(&remote_certs[0]).await {
+                if let Err(close_err) = dtls_conn.close().await {
+                    log::error!("{close_err}");
+                }
+
+                self.state_change(RTCDtlsTransportState::Failed).await;
+                return Err(err);
+            }
+        }
+
+        {
+            let mut conn = self.conn.lock().await;
+            *conn = Some(Arc::new(dtls_conn));
+        }
+        self.state_change(RTCDtlsTransportState::Connected).await;
+
+         self.start_srtp().await
+
+         */
+
+        self.update_connection_state();
+        Ok(())
+    }
+
     fn negotiation_needed_op(&mut self) -> Result<()> {
         /*
         // Don't run NegotiatedNeeded checks if on_negotiation_needed is not set
@@ -731,5 +1013,52 @@ impl RTCPeerConnection {
 
          */
         Ok(())
+    }
+
+    /// Update the PeerConnectionState given the state of relevant transports
+    /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
+    fn update_connection_state(&mut self) {
+        let connection_state =
+            // The RTCPeerConnection object's [[IsClosed]] slot is true.
+            if self.peer_connection_state == RTCPeerConnectionState::Closed {
+                RTCPeerConnectionState::Closed
+            } else if self.ice_connection_state == RTCIceConnectionState::Failed || self.dtls_transport().state == RTCDtlsTransportState::Failed {
+                // Any of the RTCIceTransports or RTCDtlsTransports are in a "failed" state.
+                RTCPeerConnectionState::Failed
+            } else if self.ice_connection_state == RTCIceConnectionState::Disconnected {
+                // Any of the RTCIceTransports or RTCDtlsTransports are in the "disconnected"
+                // state and none of them are in the "failed" or "connecting" or "checking" state.
+                RTCPeerConnectionState::Disconnected
+            } else if (self.ice_connection_state == RTCIceConnectionState::New || self.ice_connection_state == RTCIceConnectionState::Closed) &&
+                (self.dtls_transport().state == RTCDtlsTransportState::New || self.dtls_transport().state == RTCDtlsTransportState::Closed) {
+                // None of the previous states apply and all RTCIceTransports are in the "new" or "closed" state,
+                // and all RTCDtlsTransports are in the "new" or "closed" state, or there are no transports.
+                RTCPeerConnectionState::New
+            } else if (self.ice_connection_state == RTCIceConnectionState::New || self.ice_connection_state == RTCIceConnectionState::Checking) ||
+                (self.dtls_transport().state == RTCDtlsTransportState::New || self.dtls_transport().state == RTCDtlsTransportState::Connecting) {
+                // None of the previous states apply and any RTCIceTransport is in the "new" or "checking" state or
+                // any RTCDtlsTransport is in the "new" or "connecting" state.
+                RTCPeerConnectionState::Connecting
+            } else if (self.ice_connection_state == RTCIceConnectionState::Connected || self.ice_connection_state == RTCIceConnectionState::Completed || self.ice_connection_state == RTCIceConnectionState::Closed) &&
+                (self.dtls_transport().state == RTCDtlsTransportState::Connected || self.dtls_transport().state == RTCDtlsTransportState::Closed) {
+                // All RTCIceTransports and RTCDtlsTransports are in the "connected", "completed" or "closed"
+                // state and all RTCDtlsTransports are in the "connected" or "closed" state.
+                RTCPeerConnectionState::Connected
+            } else {
+                RTCPeerConnectionState::New
+            };
+
+        if self.peer_connection_state == connection_state {
+            return;
+        }
+
+        log::info!("peer connection state changed: {connection_state}");
+        self.peer_connection_state = connection_state;
+
+        /*TODO: put it into events
+        RTCPeerConnection::do_peer_connection_state_change(
+            on_peer_connection_state_change_handler,
+            connection_state,
+        )*/
     }
 }

@@ -33,9 +33,12 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
+use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
+use crate::transport::dtls::parameters::DTLSParameters;
 use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER};
 use crate::transport::dtls::RTCDtlsTransport;
 use crate::transport::ice::candidate::RTCIceCandidateInit;
+use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::sctp::RTCSctpTransport;
@@ -582,14 +585,21 @@ impl RTCPeerConnection {
 
             let dtls_role = DTLSRole::from(parsed);
             log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
-            self.ops_enqueue_start(RTCEventInternal::StartTransports(
+            self.ops_enqueue_start(RTCEventInternal::IceTransportStart(
                 ice_role,
-                dtls_role,
-                remote_ufrag.clone(),
-                remote_pwd.clone(),
-                fingerprint.clone(),
-                fingerprint_hash.clone(),
+                RTCIceParameters {
+                    username_fragment: remote_ufrag,
+                    password: remote_pwd,
+                    ice_lite: false,
+                },
             ))?;
+            self.ops_enqueue_start(RTCEventInternal::DtlsTransportStart(DTLSParameters {
+                role: dtls_role,
+                fingerprints: vec![RTCDtlsFingerprint {
+                    algorithm: fingerprint_hash,
+                    value: fingerprint,
+                }],
+            }))?;
 
             if we_offer {
                 self.ops_enqueue_start(RTCEventInternal::StartRtp(false, description.clone()))?;

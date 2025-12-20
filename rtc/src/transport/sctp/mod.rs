@@ -1,6 +1,7 @@
 use crate::configuration::setting_engine::SctpMaxMessageSize;
 use crate::transport::sctp::state::RTCSctpTransportState;
 
+pub mod capabilities;
 pub mod state;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
