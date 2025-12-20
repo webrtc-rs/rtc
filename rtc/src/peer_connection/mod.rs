@@ -124,10 +124,10 @@ impl RTCPeerConnection {
                     .collect(),
             )
             .with_srtp_protection_profiles(vec![
-                (dtls_transport.srtp_protection_profile as u16).into()
+                (dtls_transport.srtp_protection_profile as u16).into(), //FIXME: it should be set after SDP Negotiation
             ])
             .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
-            .build(false, None)?;
+            .build(false, None)?; //FIXME: it should be set after SDP Negotiation
         let sctp_endpoint_config = ::sctp::EndpointConfig::default();
         let sctp_server_config = ::sctp::ServerConfig::default();
 
