@@ -441,25 +441,6 @@ impl RTCPeerConnection {
             ));
     }
 
-    /// add_rtp_transceiver appends t into rtp_transceivers
-    /// and fires onNegotiationNeeded;
-    /// caller of this method should hold `self.mu` lock
-    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) {
-        self.rtp_transceivers.push(t);
-        self.trigger_negotiation_needed();
-    }
-
-    pub(super) fn ops_enqueue_start(&mut self, event: RTCEventInternal) -> Result<()> {
-        //TODO:
-        match event {
-            RTCEventInternal::StartRtpSenders => {}
-            RTCEventInternal::StartRtp(_, _) => {}
-            RTCEventInternal::StartTransports(_, _, _, _, _, _) => {}
-            RTCEventInternal::DoNegotiationNeeded => {}
-        }
-        Ok(())
-    }
-
     pub(crate) fn ice_transport(&self) -> &RTCIceTransport {
         &self.pipeline_context.ice_handler_context.ice_transport
     }
@@ -482,5 +463,273 @@ impl RTCPeerConnection {
 
     pub(crate) fn sctp_transport_mut(&mut self) -> &mut RTCSctpTransport {
         &mut self.pipeline_context.sctp_handler_context.sctp_transport
+    }
+
+    /// add_rtp_transceiver appends t into rtp_transceivers
+    /// and fires onNegotiationNeeded;
+    /// caller of this method should hold `self.mu` lock
+    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) {
+        self.rtp_transceivers.push(t);
+        self.trigger_negotiation_needed();
+    }
+
+    pub(super) fn ops_enqueue_start(&mut self, event: RTCEventInternal) -> Result<()> {
+        match event {
+            RTCEventInternal::StartRtpSenders => {
+                self.start_rtp_senders()?;
+            }
+            RTCEventInternal::StartRtp(is_renegotiation, remote_desc) => {
+                self.start_rtp(is_renegotiation, remote_desc)?
+            }
+            RTCEventInternal::StartTransports(
+                ice_role,
+                dtls_role,
+                remote_ufrag,
+                remote_pwd,
+                fingerprint,
+                fingerprint_hash,
+            ) => {
+                self.start_transports(
+                    ice_role,
+                    dtls_role,
+                    remote_ufrag,
+                    remote_pwd,
+                    fingerprint,
+                    fingerprint_hash,
+                )?;
+            }
+            RTCEventInternal::DoNegotiationNeeded => self.negotiation_needed_op()?,
+        }
+        Ok(())
+    }
+
+    /// start_rtp_senders starts all outbound RTP streams
+    fn start_rtp_senders(&mut self) -> Result<()> {
+        /*TODO: let current_transceivers = self.internal.rtp_transceivers.lock().await;
+        for transceiver in &*current_transceivers {
+            let sender = transceiver.sender().await;
+            if !sender.track_encodings.lock().await.is_empty()
+                && sender.is_negotiated()
+                && !sender.has_sent()
+            {
+                sender.send(&sender.get_parameters().await).await?;
+            }
+        }*/
+
+        Ok(())
+    }
+
+    fn start_rtp(
+        &mut self,
+        _is_renegotiation: bool,
+        _remote_desc: RTCSessionDescription,
+    ) -> Result<()> {
+        /*
+        let mut track_details = if let Some(parsed) = &remote_desc.parsed {
+            track_details_from_sdp(parsed, false)
+        } else {
+            vec![]
+        };
+
+        let current_transceivers = {
+            let current_transceivers = self.rtp_transceivers.lock().await;
+            current_transceivers.clone()
+        };
+
+        if !is_renegotiation {
+            self.undeclared_media_processor();
+        } else {
+            for t in &current_transceivers {
+                let receiver = t.receiver().await;
+                let tracks = receiver.tracks().await;
+                if tracks.is_empty() {
+                    continue;
+                }
+
+                let mut receiver_needs_stopped = false;
+
+                for t in tracks {
+                    if !t.rid().is_empty() {
+                        if let Some(details) =
+                            track_details_for_rid(&track_details, SmolStr::from(t.rid()))
+                        {
+                            t.set_id(details.id.clone());
+                            t.set_stream_id(details.stream_id.clone());
+                            continue;
+                        }
+                    } else if t.ssrc() != 0 {
+                        if let Some(details) = track_details_for_ssrc(&track_details, t.ssrc()) {
+                            t.set_id(details.id.clone());
+                            t.set_stream_id(details.stream_id.clone());
+                            continue;
+                        }
+                    }
+
+                    receiver_needs_stopped = true;
+                }
+
+                if !receiver_needs_stopped {
+                    continue;
+                }
+
+                log::info!("Stopping receiver {receiver:?}");
+                if let Err(err) = receiver.stop().await {
+                    log::warn!("Failed to stop RtpReceiver: {err}");
+                    continue;
+                }
+
+                let interceptor = self
+                    .interceptor
+                    .upgrade()
+                    .ok_or(Error::ErrInterceptorNotBind)?;
+
+                let receiver = Arc::new(RTCRtpReceiver::new(
+                    self.setting_engine.get_receive_mtu(),
+                    receiver.kind(),
+                    Arc::clone(&self.dtls_transport),
+                    Arc::clone(&self.media_engine),
+                    interceptor,
+                ));
+                t.set_receiver(receiver).await;
+            }
+        }
+
+        self.start_rtp_receivers(&mut track_details, &current_transceivers, is_renegotiation)
+            .await?;
+        if let Some(parsed_remote) = &remote_desc.parsed {
+            let current_local_desc = self.current_local_description.lock().await;
+            if let Some(parsed_local) = current_local_desc
+                .as_ref()
+                .and_then(|desc| desc.parsed.as_ref())
+            {
+                if let Some(remote_port) = get_application_media_section_sctp_port(parsed_remote) {
+                    if let Some(local_port) = get_application_media_section_sctp_port(parsed_local)
+                    {
+                        // TODO: Reuse the MediaDescription retrieved when looking for the message size.
+                        let max_message_size =
+                            get_application_media_section_max_message_size(parsed_remote)
+                                .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+                        self.start_sctp(
+                            local_port,
+                            remote_port,
+                            SCTPTransportCapabilities { max_message_size },
+                        )
+                        .await;
+                    }
+                }
+            }
+        }*/
+
+        Ok(())
+    }
+
+    /// Start all transports. PeerConnection now has enough state
+    fn start_transports(
+        &mut self,
+        _ice_role: RTCIceRole,
+        _dtls_role: DTLSRole,
+        _remote_ufrag: String,
+        _remote_pwd: String,
+        _fingerprint: String,
+        _fingerprint_hash: String,
+    ) -> Result<()> {
+        /*
+        // Start the ice transport
+        if let Err(err) = self
+            .ice_transport
+            .start(
+                &RTCIceParameters {
+                    username_fragment: remote_ufrag,
+                    password: remote_pwd,
+                    ice_lite: false,
+                },
+                Some(ice_role),
+            )
+            .await
+        {
+            log::warn!("Failed to start manager ice: {err}");
+            return;
+        }
+
+        // Start the dtls_transport transport
+        let result = self
+            .dtls_transport
+            .start(DTLSParameters {
+                role: dtls_role,
+                fingerprints: vec![RTCDtlsFingerprint {
+                    algorithm: fingerprint_hash,
+                    value: fingerprint,
+                }],
+            })
+            .await;
+        RTCPeerConnection::update_connection_state(
+            &self.on_peer_connection_state_change_handler,
+            &self.is_closed,
+            &self.peer_connection_state,
+            self.ice_connection_state.load(Ordering::SeqCst).into(),
+            self.dtls_transport.state(),
+        )
+        .await;
+        if let Err(err) = result {
+            log::warn!("Failed to start manager dtls: {err}");
+        }
+
+         */
+        Ok(())
+    }
+
+    fn negotiation_needed_op(&mut self) -> Result<()> {
+        /*
+        // Don't run NegotiatedNeeded checks if on_negotiation_needed is not set
+        let handler = &*params.on_negotiation_needed_handler.load();
+        if handler.is_none() {
+            return false;
+        }
+
+        // https://www.w3.org/TR/webrtc/#updating-the-negotiation-needed-flag
+        // Step 2.1
+        if params.is_closed.load(Ordering::SeqCst) {
+            return false;
+        }
+        // non-canon step 2.2
+        if !params.ops.is_empty().await {
+            //enqueue negotiation_needed_op again by return true
+            return true;
+        }
+
+        // non-canon, run again if there was a request
+        // starting defer(after_do_negotiation_needed(params).await);
+
+        // Step 2.3
+        if params.signaling_state.load(Ordering::SeqCst) != RTCSignalingState::Stable as u8 {
+            return RTCPeerConnection::after_negotiation_needed_op(params).await;
+        }
+
+        // Step 2.4
+        if !RTCPeerConnection::check_negotiation_needed(&params.check_negotiation_needed_params)
+            .await
+        {
+            params.is_negotiation_needed.store(false, Ordering::SeqCst);
+            return RTCPeerConnection::after_negotiation_needed_op(params).await;
+        }
+
+        // Step 2.5
+        if params.is_negotiation_needed.load(Ordering::SeqCst) {
+            return RTCPeerConnection::after_negotiation_needed_op(params).await;
+        }
+
+        // Step 2.6
+        params.is_negotiation_needed.store(true, Ordering::SeqCst);
+
+        // Step 2.7
+        if let Some(handler) = handler {
+            let mut f = handler.lock().await;
+            f().await;
+        }
+
+        RTCPeerConnection::after_negotiation_needed_op(params).await
+
+         */
+        Ok(())
     }
 }

@@ -72,13 +72,9 @@ pub struct RTCPeerConnection {
     events: VecDeque<RTCPeerConnectionEvent>,
 
     //////////////////////////////////////////////////
-    // PeerConnection Internal Transports
-    //////////////////////////////////////////////////
-    pub(crate) pipeline_context: PipelineContext,
-
-    //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
+    pub(crate) pipeline_context: PipelineContext,
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
 
