@@ -118,6 +118,38 @@ impl Transport {
             remote_srtp_context: None,
         }
     }
+
+    pub(crate) fn get_dtls_endpoint_mut(&mut self) -> &mut ::dtls::endpoint::Endpoint {
+        &mut self.dtls_endpoint
+    }
+
+    pub(crate) fn get_dtls_endpoint(&self) -> &::dtls::endpoint::Endpoint {
+        &self.dtls_endpoint
+    }
+
+    pub(crate) fn get_sctp_endpoint_mut(&mut self) -> &mut ::sctp::Endpoint {
+        &mut self.sctp_endpoint
+    }
+
+    pub(crate) fn get_sctp_endpoint(&self) -> &::sctp::Endpoint {
+        &self.sctp_endpoint
+    }
+
+    pub(crate) fn local_srtp_context(&mut self) -> Option<&mut Context> {
+        self.local_srtp_context.as_mut()
+    }
+
+    pub(crate) fn remote_srtp_context(&mut self) -> Option<&mut Context> {
+        self.remote_srtp_context.as_mut()
+    }
+
+    pub(crate) fn set_local_srtp_context(&mut self, local_srtp_context: Context) {
+        self.local_srtp_context = Some(local_srtp_context);
+    }
+
+    pub(crate) fn set_remote_srtp_context(&mut self, remote_srtp_context: Context) {
+        self.remote_srtp_context = Some(remote_srtp_context);
+    }
 }
 
 #[derive(Default)]
@@ -129,6 +161,10 @@ pub(crate) struct TransportStates {
 impl TransportStates {
     pub(crate) fn add_candidate_pair(&mut self, username: UserName, pair: CandidatePair) {
         self.candidates.insert(username, pair);
+    }
+
+    pub(crate) fn remove_candidate_pair(&mut self, username: &UserName) -> Option<CandidatePair> {
+        self.candidates.remove(username)
     }
 
     pub(crate) fn find_candidate_pair(&self, username: &UserName) -> Option<&CandidatePair> {
@@ -143,11 +179,26 @@ impl TransportStates {
         self.transports.insert(four_tuple, transport);
     }
 
+    pub(crate) fn remove_transport(&mut self, four_tuple: FourTuple) {
+        let transport = self.transports.remove(&four_tuple);
+        if let Some(transport) = transport {
+            self.remove_candidate_pair(&transport.candidate_pair.username());
+        }
+    }
+
     pub(crate) fn find_transport(&self, four_tuple: &FourTuple) -> Option<&Transport> {
         self.transports.get(four_tuple)
     }
 
     pub(crate) fn find_transport_mut(&mut self, four_tuple: &FourTuple) -> Option<&mut Transport> {
         self.transports.get_mut(four_tuple)
+    }
+
+    pub(crate) fn get_transports(&self) -> &HashMap<FourTuple, Transport> {
+        &self.transports
+    }
+
+    pub(crate) fn get_transports_mut(&mut self) -> &mut HashMap<FourTuple, Transport> {
+        &mut self.transports
     }
 }

@@ -28,7 +28,7 @@ use shared::{TaggedBytesMut, TransportContext};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
+pub(crate) const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 
 /// Forward handler list - invokes callback with handler list
 macro_rules! forward_handlers {
