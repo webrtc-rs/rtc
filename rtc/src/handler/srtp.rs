@@ -1,7 +1,10 @@
 use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
 use crate::transport::TransportStates;
-use log::debug;
+use bytes::BytesMut;
+use log::{debug, error};
 use shared::error::{Error, Result};
+use shared::marshal::{Marshal, Unmarshal};
+use shared::util::is_rtcp;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -41,13 +44,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandle
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Rtp(RTPMessage::Raw(_message)) = msg.message {
+        if let RTCMessage::Rtp(RTPMessage::Raw(message)) = msg.message {
             debug!("srtp read {:?}", msg.transport.peer_addr);
-            /*TODO:
-            let try_read = || -> Result<RTCMessage> {
+
+            let mut try_read = || -> Result<RTCMessage> {
                 let four_tuple = (&msg.transport).into();
-                let mut server_states = self.server_states.borrow_mut();
-                let transport = server_states.get_mut_transport(&four_tuple)?;
+                let transport = self
+                    .transport_states
+                    .find_transport_mut(&four_tuple)
+                    .ok_or(Error::ErrTransportNoExisted)?;
 
                 if is_rtcp(&message) {
                     let mut remote_context = transport.remote_srtp_context();
@@ -93,7 +98,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandle
                     error!("try_read got error {}", err);
                     return Err(err);
                 }
-            };*/
+            };
         } else {
             debug!("bypass srtp read {:?}", msg.transport.peer_addr);
             self.ctx.read_outs.push_back(msg);
@@ -106,13 +111,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandle
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Rtp(_message) = msg.message {
+        if let RTCMessage::Rtp(message) = msg.message {
             debug!("srtp write {:?}", msg.transport.peer_addr);
-            /*todo:
+
             let try_write = || -> Result<BytesMut> {
                 let four_tuple = (&msg.transport).into();
-                let mut server_states = self.server_states.borrow_mut();
-                let transport = server_states.get_mut_transport(&four_tuple)?;
+                let transport = self
+                    .transport_states
+                    .find_transport_mut(&four_tuple)
+                    .ok_or(Error::ErrTransportNoExisted)?;
 
                 match message {
                     RTPMessage::Rtcp(rtcp_packets) => {
@@ -163,7 +170,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandle
                     error!("try_write with error {}", err);
                     return Err(err);
                 }
-            }*/
+            }
         } else {
             // Bypass
             debug!("Bypass srtp write {:?}", msg.transport.peer_addr);
