@@ -53,25 +53,25 @@ impl CandidatePair {
 }
 
 pub(crate) struct Transport {
-    four_tuple: FourTuple,
+    pub(crate) four_tuple: FourTuple,
 
     // ICE
     pub(crate) candidate_pair: CandidatePair,
 
     // DTLS
-    dtls_endpoint: ::dtls::endpoint::Endpoint,
+    pub(crate) dtls_endpoint: ::dtls::endpoint::Endpoint,
 
     // SCTP
-    sctp_endpoint: ::sctp::Endpoint,
-    sctp_associations: HashMap<AssociationHandle, Association>,
+    pub(crate) sctp_endpoint: ::sctp::Endpoint,
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // DataChannel
-    association_handle: Option<usize>,
-    stream_id: Option<u16>,
+    pub(crate) association_handle: Option<usize>, //TODO: support multiple association_handle in DataChannel
+    pub(crate) stream_id: Option<u16>, //TODO: support multiple streams in one association_handle
 
     // SRTP
-    local_srtp_context: Option<Context>,
-    remote_srtp_context: Option<Context>,
+    pub(crate) local_srtp_context: Option<Context>,
+    pub(crate) remote_srtp_context: Option<Context>,
 }
 
 impl Transport {

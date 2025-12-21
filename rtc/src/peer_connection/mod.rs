@@ -693,6 +693,8 @@ impl RTCPeerConnection {
     /// restart_ice restart ICE and triggers negotiation needed
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-restartice>
     pub fn restart_ice(&mut self) -> Result<()> {
+        self.ice_transport_mut().restart()?;
+        self.trigger_negotiation_needed();
         Ok(())
     }
 
@@ -706,7 +708,65 @@ impl RTCPeerConnection {
     }
 
     /// set_configuration updates the configuration of this PeerConnection object.
-    pub fn set_configuration(&mut self, _configuration: RTCConfiguration) -> Result<()> {
+    pub fn set_configuration(&mut self, configuration: RTCConfiguration) -> Result<()> {
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #3)
+        if !configuration.peer_identity.is_empty() {
+            if configuration.peer_identity != self.configuration.peer_identity {
+                return Err(Error::ErrModifyingPeerIdentity);
+            }
+            self.configuration.peer_identity = configuration.peer_identity;
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #4)
+        if !configuration.certificates.is_empty() {
+            if configuration.certificates.len() != self.configuration.certificates.len() {
+                return Err(Error::ErrModifyingCertificates);
+            }
+
+            self.configuration.certificates = configuration.certificates;
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #5)
+
+        if configuration.bundle_policy != self.configuration.bundle_policy {
+            return Err(Error::ErrModifyingBundlePolicy);
+        }
+        self.configuration.bundle_policy = configuration.bundle_policy;
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #6)
+        if configuration.rtcp_mux_policy != self.configuration.rtcp_mux_policy {
+            return Err(Error::ErrModifyingRTCPMuxPolicy);
+        }
+        self.configuration.rtcp_mux_policy = configuration.rtcp_mux_policy;
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #7)
+        if configuration.ice_candidate_pool_size != 0 {
+            if self.configuration.ice_candidate_pool_size != configuration.ice_candidate_pool_size
+                && self.local_description().is_some()
+            {
+                return Err(Error::ErrModifyingICECandidatePoolSize);
+            }
+            self.configuration.ice_candidate_pool_size = configuration.ice_candidate_pool_size;
+        }
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #8)
+
+        self.configuration.ice_transport_policy = configuration.ice_transport_policy;
+
+        // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11)
+        if !configuration.ice_servers.is_empty() {
+            // https://www.w3.org/TR/webrtc/#set-the-configuration (step #11.3)
+            for server in &configuration.ice_servers {
+                server.validate()?;
+            }
+            self.configuration.ice_servers = configuration.ice_servers
+        }
+
         Ok(())
     }
 
