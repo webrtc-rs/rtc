@@ -134,15 +134,24 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {
-        IceHandler::new(&mut self.pipeline_context.ice_handler_context)
+        IceHandler::new(
+            &mut self.pipeline_context.transport_states,
+            &mut self.pipeline_context.ice_handler_context,
+        )
     }
 
     pub(crate) fn get_dtls_handler(&mut self) -> DtlsHandler<'_> {
-        DtlsHandler::new(&mut self.pipeline_context.dtls_handler_context)
+        DtlsHandler::new(
+            &mut self.pipeline_context.transport_states,
+            &mut self.pipeline_context.dtls_handler_context,
+        )
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
-        SctpHandler::new(&mut self.pipeline_context.sctp_handler_context)
+        SctpHandler::new(
+            &mut self.pipeline_context.transport_states,
+            &mut self.pipeline_context.sctp_handler_context,
+        )
     }
 
     pub(crate) fn get_datachannel_handler(&mut self) -> DataChannelHandler<'_> {
@@ -150,11 +159,17 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_srtp_handler(&mut self) -> SrtpHandler<'_> {
-        SrtpHandler::new(&mut self.pipeline_context.srtp_handler_context)
+        SrtpHandler::new(
+            &mut self.pipeline_context.transport_states,
+            &mut self.pipeline_context.srtp_handler_context,
+        )
     }
 
     pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
-        InterceptorHandler::new(&mut self.pipeline_context.interceptor_handler_context)
+        InterceptorHandler::new(
+            &mut self.pipeline_context.transport_states,
+            &mut self.pipeline_context.interceptor_handler_context,
+        )
     }
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {

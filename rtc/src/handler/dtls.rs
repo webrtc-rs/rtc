@@ -4,6 +4,7 @@ use std::time::Instant;
 use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
 //TODO: use dtls::endpoint::EndpointEvent;
 use crate::transport::dtls::RTCDtlsTransport;
+use crate::transport::TransportStates;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::debug;
@@ -33,12 +34,19 @@ impl DtlsHandlerContext {
 
 /// DtlsHandler implements DTLS Protocol handling
 pub(crate) struct DtlsHandler<'a> {
+    transport_states: &'a mut TransportStates,
     ctx: &'a mut DtlsHandlerContext,
 }
 
 impl<'a> DtlsHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
-        DtlsHandler { ctx }
+    pub(crate) fn new(
+        transport_states: &'a mut TransportStates,
+        ctx: &'a mut DtlsHandlerContext,
+    ) -> Self {
+        DtlsHandler {
+            transport_states,
+            ctx,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {

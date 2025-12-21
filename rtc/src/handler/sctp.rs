@@ -2,6 +2,7 @@ use super::message::{
     DTLSMessage, DataChannelMessage, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
 };
 use crate::transport::sctp::RTCSctpTransport;
+use crate::transport::TransportStates;
 use log::debug;
 use sctp::{Payload, PayloadProtocolIdentifier};
 use shared::error::{Error, Result};
@@ -13,8 +14,6 @@ use std::time::Instant;
 pub(crate) struct SctpHandlerContext {
     pub(crate) sctp_transport: RTCSctpTransport,
 
-    //local_addr: SocketAddr,
-    //server_states: Rc<RefCell<ServerStates>>,
     pub(crate) internal_buffer: Vec<u8>,
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
@@ -33,12 +32,19 @@ impl SctpHandlerContext {
 
 /// SctpHandler implements SCTP Protocol handling
 pub(crate) struct SctpHandler<'a> {
+    transport_states: &'a mut TransportStates,
     ctx: &'a mut SctpHandlerContext,
 }
 
 impl<'a> SctpHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut SctpHandlerContext) -> Self {
-        SctpHandler { ctx }
+    pub(crate) fn new(
+        transport_states: &'a mut TransportStates,
+        ctx: &'a mut SctpHandlerContext,
+    ) -> Self {
+        SctpHandler {
+            transport_states,
+            ctx,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {

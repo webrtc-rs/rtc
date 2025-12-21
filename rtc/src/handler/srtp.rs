@@ -1,4 +1,5 @@
 use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
+use crate::transport::TransportStates;
 use log::debug;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
@@ -6,19 +7,25 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct SrtpHandlerContext {
-    //server_states: Rc<RefCell<ServerStates>>,
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
 }
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
 pub(crate) struct SrtpHandler<'a> {
+    transport_states: &'a mut TransportStates,
     ctx: &'a mut SrtpHandlerContext,
 }
 
 impl<'a> SrtpHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut SrtpHandlerContext) -> Self {
-        SrtpHandler { ctx }
+    pub(crate) fn new(
+        transport_states: &'a mut TransportStates,
+        ctx: &'a mut SrtpHandlerContext,
+    ) -> Self {
+        SrtpHandler {
+            transport_states,
+            ctx,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {
