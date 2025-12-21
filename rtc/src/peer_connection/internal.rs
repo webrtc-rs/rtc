@@ -7,6 +7,7 @@ use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::transport::dtls::state::RTCDtlsTransportState;
 use crate::transport::ice::state::RTCIceTransportState;
 use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
+use crate::transport::{CandidatePair, ConnectionCredentials};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use sansio::Protocol;
@@ -485,6 +486,9 @@ impl RTCPeerConnection {
             RTCEventInternal::StartRtp(is_renegotiation, remote_desc) => {
                 self.start_rtp(is_renegotiation, remote_desc)?
             }
+            RTCEventInternal::StartTransports(ice_role, ice_parameters, dtls_parameters) => {
+                self.start_transports(ice_role, ice_parameters, dtls_parameters)?;
+            }
             RTCEventInternal::IceTransportStart(ice_role, ice_parameters) => {
                 self.start_ice_transport(ice_role, ice_parameters)?;
             }
@@ -622,55 +626,45 @@ impl RTCPeerConnection {
     /// Start all transports. PeerConnection now has enough state
     fn start_transports(
         &mut self,
-        _ice_role: RTCIceRole,
-        _dtls_role: DTLSRole,
-        _remote_ufrag: String,
-        _remote_pwd: String,
-        _fingerprint: String,
-        _fingerprint_hash: String,
+        ice_role: RTCIceRole,
+        remote_ice_parameters: RTCIceParameters,
+        remote_dtls_parameters: DTLSParameters,
     ) -> Result<()> {
-        /*
         // Start the ice transport
-        if let Err(err) = self
-            .ice_transport
-            .start(
-                &RTCIceParameters {
-                    username_fragment: remote_ufrag,
-                    password: remote_pwd,
-                    ice_lite: false,
-                },
-                Some(ice_role),
-            )
-            .await
-        {
-            log::warn!("Failed to start manager ice: {err}");
-            return;
-        }
+        self.start_ice_transport(ice_role, remote_ice_parameters.clone())?;
 
         // Start the dtls_transport transport
-        let result = self
-            .dtls_transport
-            .start(DTLSParameters {
-                role: dtls_role,
-                fingerprints: vec![RTCDtlsFingerprint {
-                    algorithm: fingerprint_hash,
-                    value: fingerprint,
-                }],
-            })
-            .await;
-        RTCPeerConnection::update_connection_state(
-            &self.on_peer_connection_state_change_handler,
-            &self.is_closed,
-            &self.peer_connection_state,
-            self.ice_connection_state.load(Ordering::SeqCst).into(),
-            self.dtls_transport.state(),
-        )
-        .await;
-        if let Err(err) = result {
-            log::warn!("Failed to start manager dtls: {err}");
-        }
+        self.start_dtls_transport(ice_role, remote_dtls_parameters.clone())?;
 
-         */
+        let remote_conn_cred = ConnectionCredentials {
+            ice_params: remote_ice_parameters,
+            dtls_params: remote_dtls_parameters,
+        };
+
+        let local_conn_cred = ConnectionCredentials {
+            ice_params: RTCIceParameters {
+                username_fragment: self.ice_transport().ufrag_pwd.local_ufrag.clone(),
+                password: self.ice_transport().ufrag_pwd.local_pwd.clone(),
+                ice_lite: false,
+            },
+            dtls_params: DTLSParameters {
+                role: self.dtls_transport().role(ice_role),
+                fingerprints: self
+                    .dtls_transport()
+                    .certificates
+                    .first()
+                    .unwrap()
+                    .get_fingerprints(),
+            },
+        };
+
+        let candidate_pair = CandidatePair::new(remote_conn_cred, local_conn_cred);
+        self.pipeline_context
+            .transport_states
+            .add_candidate_pair(candidate_pair.username(), candidate_pair);
+
+        //TODO: self.update_connection_state();
+
         Ok(())
     }
 
@@ -678,7 +672,7 @@ impl RTCPeerConnection {
     fn start_ice_transport(
         &mut self,
         ice_role: RTCIceRole,
-        params: RTCIceParameters,
+        remote_ice_parameters: RTCIceParameters,
     ) -> Result<()> {
         if self.ice_transport().state != RTCIceTransportState::New {
             return Err(Error::ErrICETransportNotInNew);
@@ -686,7 +680,10 @@ impl RTCPeerConnection {
 
         // ICE
         let mut ice_handler = self.get_ice_handler();
-        ice_handler.handle_event(RTCEventInternal::IceTransportStart(ice_role, params))?;
+        ice_handler.handle_event(RTCEventInternal::IceTransportStart(
+            ice_role,
+            remote_ice_parameters,
+        ))?;
 
         /*TODO
         let on_connection_state_change_handler =
@@ -772,7 +769,7 @@ impl RTCPeerConnection {
     fn start_dtls_transport(
         &mut self,
         ice_role: RTCIceRole,
-        remote_parameters: DTLSParameters,
+        remote_dtls_parameters: DTLSParameters,
     ) -> Result<()> {
         let (
             srtp_protection_profiles,
@@ -793,7 +790,7 @@ impl RTCPeerConnection {
             .endpoint_handler_context
             .dtls_handshake_config = self.dtls_transport_mut().prepare_transport(
             ice_role,
-            remote_parameters,
+            remote_dtls_parameters,
             srtp_protection_profiles,
             allow_insecure_verification_algorithm,
             dtls_replay_protection_window,

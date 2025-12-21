@@ -566,7 +566,7 @@ impl RTCPeerConnection {
             if !is_renegotiation {
                 let remote_is_lite = is_lite_set(parsed_remote_description);
 
-                let (fingerprint, fingerprint_hash) =
+                let (remote_fingerprint, remote_fingerprint_hash) =
                     extract_fingerprint(parsed_remote_description)?;
 
                 // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
@@ -581,23 +581,22 @@ impl RTCPeerConnection {
                     RTCIceRole::Controlled
                 };
 
-                let dtls_role = DTLSRole::from(parsed_remote_description);
-                log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
-                self.ops_enqueue_start(RTCEventInternal::IceTransportStart(
+                let remote_dtls_role = DTLSRole::from(parsed_remote_description);
+                log::trace!(
+                    "start_transports: ice_role={ice_role}, remote_dtls_role={remote_dtls_role}"
+                );
+                self.ops_enqueue_start(RTCEventInternal::StartTransports(
                     ice_role,
                     RTCIceParameters {
                         username_fragment: remote_ufrag,
                         password: remote_pwd,
-                        ice_lite: false,
+                        ice_lite: remote_is_lite,
                     },
-                ))?;
-                self.ops_enqueue_start(RTCEventInternal::DtlsTransportStart(
-                    ice_role,
                     DTLSParameters {
-                        role: dtls_role,
+                        role: remote_dtls_role,
                         fingerprints: vec![RTCDtlsFingerprint {
-                            algorithm: fingerprint_hash,
-                            value: fingerprint,
+                            algorithm: remote_fingerprint_hash,
+                            value: remote_fingerprint,
                         }],
                     },
                 ))?;

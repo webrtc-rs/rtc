@@ -90,14 +90,7 @@ pub enum RTCEvent {}
 pub(crate) enum RTCEventInternal {
     StartRtpSenders,
     StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
-    /*StartTransports(
-        RTCIceRole,
-        DTLSRole,
-        String, /*remote_ufrag*/
-        String, /*remote_pwd*/
-        String, /*fingerprint*/
-        String, /*fingerprint_hash*/
-    ),*/
+    StartTransports(RTCIceRole, RTCIceParameters, DTLSParameters),
     IceTransportStart(RTCIceRole, RTCIceParameters),
     DtlsTransportStart(RTCIceRole, DTLSParameters),
     SctpTransportStart(

@@ -116,7 +116,7 @@ impl RTCDtlsTransport {
     pub(crate) fn prepare_transport(
         &mut self,
         ice_role: RTCIceRole,
-        remote_parameters: DTLSParameters,
+        remote_dtls_parameters: DTLSParameters,
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
         allow_insecure_verification_algorithm: bool,
         dtls_replay_protection_window: usize,
@@ -125,7 +125,7 @@ impl RTCDtlsTransport {
             return Err(Error::ErrInvalidDTLSStart);
         }
 
-        self.remote_parameters = remote_parameters;
+        self.remote_parameters = remote_dtls_parameters;
 
         let certificate = if let Some(cert) = self.certificates.first() {
             cert.dtls_certificate.clone()

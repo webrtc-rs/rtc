@@ -25,6 +25,15 @@ pub(crate) struct CandidatePair {
 }
 
 impl CandidatePair {
+    pub(crate) fn new(
+        remote_conn_cred: ConnectionCredentials,
+        local_conn_cred: ConnectionCredentials,
+    ) -> Self {
+        Self {
+            remote_conn_cred,
+            local_conn_cred,
+        }
+    }
     pub(crate) fn username(&self) -> UserName {
         format!(
             "{}:{}",
