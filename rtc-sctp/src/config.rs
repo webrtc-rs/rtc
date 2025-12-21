@@ -226,7 +226,9 @@ impl Default for ClientConfig {
 
 impl ClientConfig {
     /// Create a default configuration with a particular cryptographic configuration
-    pub fn new() -> Self {
-        ClientConfig::default()
+    pub fn new(transport: TransportConfig) -> Self {
+        ClientConfig {
+            transport: Arc::new(transport),
+        }
     }
 }

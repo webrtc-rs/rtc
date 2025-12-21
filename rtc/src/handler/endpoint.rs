@@ -18,6 +18,10 @@ use stun::xoraddr::XorMappedAddress;
 
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
+    pub(crate) dtls_handshake_config: ::dtls::config::HandshakeConfig,
+    pub(crate) sctp_endpoint_config: ::sctp::EndpointConfig,
+    pub(crate) sctp_server_config: ::sctp::ServerConfig,
+
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
 }
@@ -25,25 +29,16 @@ pub(crate) struct EndpointHandlerContext {
 /// EndpointHandler implements DataChannel/Media Endpoint handling
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
 pub(crate) struct EndpointHandler<'a> {
-    dtls_handshake_config: &'a ::dtls::config::HandshakeConfig,
-    sctp_endpoint_config: &'a ::sctp::EndpointConfig,
-    sctp_server_config: &'a ::sctp::ServerConfig,
     transport_states: &'a mut TransportStates,
     ctx: &'a mut EndpointHandlerContext,
 }
 
 impl<'a> EndpointHandler<'a> {
     pub(crate) fn new(
-        dtls_handshake_config: &'a ::dtls::config::HandshakeConfig,
-        sctp_endpoint_config: &'a ::sctp::EndpointConfig,
-        sctp_server_config: &'a ::sctp::ServerConfig,
         transport_states: &'a mut TransportStates,
         ctx: &'a mut EndpointHandlerContext,
     ) -> Self {
         EndpointHandler {
-            dtls_handshake_config,
-            sctp_endpoint_config,
-            sctp_server_config,
             transport_states,
             ctx,
         }
@@ -634,9 +629,9 @@ impl<'a> EndpointHandler<'a> {
             four_tuple,
             transport_context.transport_protocol,
             candidate_pair,
-            self.dtls_handshake_config,
-            self.sctp_endpoint_config,
-            self.sctp_server_config,
+            &self.ctx.dtls_handshake_config,
+            &self.ctx.sctp_endpoint_config,
+            &self.ctx.sctp_server_config,
         );
 
         self.transport_states.add_transport(four_tuple, transport);

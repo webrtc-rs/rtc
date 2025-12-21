@@ -97,11 +97,6 @@ macro_rules! for_each_handler {
 
 #[derive(Default)]
 pub(crate) struct PipelineContext {
-    // Immutable Configs
-    pub(crate) dtls_handshake_config: ::dtls::config::HandshakeConfig,
-    pub(crate) sctp_endpoint_config: ::sctp::EndpointConfig,
-    pub(crate) sctp_server_config: ::sctp::ServerConfig,
-
     // Shared states
     pub(crate) transport_states: TransportStates,
 
@@ -164,9 +159,6 @@ impl RTCPeerConnection {
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
         EndpointHandler::new(
-            &self.pipeline_context.dtls_handshake_config,
-            &self.pipeline_context.sctp_endpoint_config,
-            &self.pipeline_context.sctp_server_config,
             &mut self.pipeline_context.transport_states,
             &mut self.pipeline_context.endpoint_handler_context,
         )

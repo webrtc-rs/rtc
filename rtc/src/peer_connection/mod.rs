@@ -120,33 +120,11 @@ impl RTCPeerConnection {
             RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size);
 
         // Create Pipeline Context
-        // Immutable Configs
-        let dtls_handshake_config = ::dtls::config::ConfigBuilder::default()
-            .with_certificates(
-                dtls_transport
-                    .certificates
-                    .iter()
-                    .map(|c| c.dtls_certificate.clone())
-                    .collect(),
-            )
-            .with_srtp_protection_profiles(vec![
-                (dtls_transport.srtp_protection_profile as u16).into(), //FIXME: it should be set after SDP Negotiation
-            ])
-            .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
-            .build(false, None)?; //FIXME: it should be set after SDP Negotiation
-        let sctp_endpoint_config = ::sctp::EndpointConfig::default();
-        let sctp_server_config = ::sctp::ServerConfig::default();
-
-        // Handler contexts
         let ice_handler_context = IceHandlerContext::new(ice_transport);
         let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
         let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
 
         let pipeline_context = PipelineContext {
-            dtls_handshake_config,
-            sctp_endpoint_config,
-            sctp_server_config,
-
             ice_handler_context,
             dtls_handler_context,
             sctp_handler_context,

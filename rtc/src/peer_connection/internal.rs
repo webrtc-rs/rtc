@@ -789,7 +789,9 @@ impl RTCPeerConnection {
             self.configuration.setting_engine.replay_protection.dtls,
         );
 
-        self.pipeline_context.dtls_handshake_config = self.dtls_transport_mut().prepare_transport(
+        self.pipeline_context
+            .endpoint_handler_context
+            .dtls_handshake_config = self.dtls_transport_mut().prepare_transport(
             ice_role,
             remote_parameters,
             srtp_protection_profiles,
@@ -921,8 +923,12 @@ impl RTCPeerConnection {
             .internal_buffer
             .resize(max_message_size as usize, 0u8);
 
-        self.pipeline_context.sctp_endpoint_config = ::sctp::EndpointConfig::default();
-        self.pipeline_context.sctp_server_config = ::sctp::ServerConfig::new(
+        self.pipeline_context
+            .endpoint_handler_context
+            .sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        self.pipeline_context
+            .endpoint_handler_context
+            .sctp_server_config = ::sctp::ServerConfig::new(
             ::sctp::TransportConfig::default()
                 .with_max_message_size(max_message_size)
                 .with_sctp_port(local_port),

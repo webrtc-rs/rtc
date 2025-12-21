@@ -63,11 +63,11 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
 }
 
 pub fn client_config() -> ClientConfig {
-    ClientConfig::new()
+    ClientConfig::new(TransportConfig::default())
 }
 
 pub fn server_config() -> ServerConfig {
-    ServerConfig::new()
+    ServerConfig::new(TransportConfig::default())
 }
 
 struct TestEndpoint {
