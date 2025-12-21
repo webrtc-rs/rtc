@@ -69,54 +69,54 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
 
             let try_read = || -> Result<Vec<BytesMut>> {
                 let mut messages = vec![];
+                let mut contexts = vec![];
 
-                if let Some(transport) = self.transport_states.find_transport_mut(&four_tuple) {
-                    let mut contexts = vec![];
+                let transport = self
+                    .transport_states
+                    .find_transport_mut(&four_tuple)
+                    .ok_or(Error::ErrTransportNoExisted)?;
 
-                    let dtls_endpoint = transport.get_dtls_endpoint_mut();
-                    for message in dtls_endpoint.read(
-                        msg.now,
-                        msg.transport.peer_addr,
-                        msg.transport.ecn,
-                        dtls_message,
-                    )? {
-                        match message {
-                            EndpointEvent::HandshakeComplete => {
-                                if let Some(state) =
-                                    dtls_endpoint.get_connection_state(msg.transport.peer_addr)
-                                {
-                                    debug!("recv dtls handshake complete");
-                                    let (local_context, remote_context) =
-                                        DtlsHandler::update_srtp_contexts(state)?;
-                                    contexts.push((local_context, remote_context));
-                                } else {
-                                    warn!(
-                                        "Unable to find connection state for {}",
-                                        msg.transport.peer_addr
-                                    );
-                                }
-                            }
-                            EndpointEvent::ApplicationData(message) => {
-                                debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                                messages.push(message);
+                let dtls_endpoint = transport.get_dtls_endpoint_mut();
+                for message in dtls_endpoint.read(
+                    msg.now,
+                    msg.transport.peer_addr,
+                    msg.transport.ecn,
+                    dtls_message,
+                )? {
+                    match message {
+                        EndpointEvent::HandshakeComplete => {
+                            if let Some(state) =
+                                dtls_endpoint.get_connection_state(msg.transport.peer_addr)
+                            {
+                                debug!("recv dtls handshake complete");
+                                let (local_context, remote_context) =
+                                    DtlsHandler::update_srtp_contexts(state)?;
+                                contexts.push((local_context, remote_context));
+                            } else {
+                                warn!(
+                                    "Unable to find connection state for {}",
+                                    msg.transport.peer_addr
+                                );
                             }
                         }
+                        EndpointEvent::ApplicationData(message) => {
+                            debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
+                            messages.push(message);
+                        }
                     }
+                }
 
-                    while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                        self.ctx.write_outs.push_back(TaggedRTCMessage {
-                            now: transmit.now,
-                            transport: transmit.transport,
-                            message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
-                        });
-                    }
+                while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                    self.ctx.write_outs.push_back(TaggedRTCMessage {
+                        now: transmit.now,
+                        transport: transmit.transport,
+                        message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                    });
+                }
 
-                    for (local_context, remote_context) in contexts {
-                        transport.set_local_srtp_context(local_context);
-                        transport.set_remote_srtp_context(remote_context);
-                    }
-                } else {
-                    warn!("no DTLS transport found for {:?}, it may be due to DTLS packet received earlier than STUN Binding Request", four_tuple);
+                for (local_context, remote_context) in contexts {
+                    transport.set_local_srtp_context(local_context);
+                    transport.set_remote_srtp_context(remote_context);
                 }
 
                 Ok(messages)
@@ -158,19 +158,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
             debug!("send dtls RAW {:?}", msg.transport.peer_addr);
 
             let four_tuple = (&msg.transport).into();
-            if let Some(transport) = self.transport_states.find_transport_mut(&four_tuple) {
-                let dtls_endpoint = transport.get_dtls_endpoint_mut();
+            let transport = self
+                .transport_states
+                .find_transport_mut(&four_tuple)
+                .ok_or(Error::ErrTransportNoExisted)?;
 
-                dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
-                while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                    self.ctx.write_outs.push_back(TaggedRTCMessage {
-                        now: transmit.now,
-                        transport: transmit.transport,
-                        message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
-                    });
-                }
-            } else {
-                warn!("no DTLS transport found for {:?}", four_tuple);
+            let dtls_endpoint = transport.get_dtls_endpoint_mut();
+
+            dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
+            while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                self.ctx.write_outs.push_back(TaggedRTCMessage {
+                    now: transmit.now,
+                    transport: transmit.transport,
+                    message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                });
             }
         } else {
             // Bypass

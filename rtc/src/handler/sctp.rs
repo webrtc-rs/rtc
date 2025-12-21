@@ -1,13 +1,19 @@
 use super::message::{
-    DTLSMessage, DataChannelMessage, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
+    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCMessage,
+    TaggedRTCMessage,
 };
+use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::sctp::RTCSctpTransport;
 use crate::transport::TransportStates;
-use log::debug;
-use sctp::{Payload, PayloadProtocolIdentifier};
+use bytes::BytesMut;
+use log::{debug, error};
+use sctp::{
+    AssociationEvent, AssociationHandle, DatagramEvent, EndpointEvent, Event, Payload,
+    PayloadProtocolIdentifier, StreamEvent,
+};
 use shared::error::{Error, Result};
 use shared::TransportMessage;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 #[derive(Default)]
@@ -65,17 +71,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(_dtls_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
-            todo!()
-            /*
+
             let four_tuple = (&msg.transport).into();
 
             let try_read = || -> Result<Vec<SctpMessage>> {
-                let mut server_states = self.server_states.borrow_mut();
-                let transport = server_states.get_mut_transport(&four_tuple)?;
+                let transport = self
+                    .transport_states
+                    .find_transport_mut(&four_tuple)
+                    .ok_or(Error::ErrTransportNoExisted)?;
+
                 let (sctp_endpoint, sctp_associations) =
-                    transport.get_mut_sctp_endpoint_associations();
+                    transport.get_sctp_endpoint_associations_mut();
 
                 let mut sctp_events: HashMap<AssociationHandle, VecDeque<AssociationEvent>> =
                     HashMap::new();
@@ -164,12 +172,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                                     for raw in raw_data {
                                         self.ctx.write_outs.push_back(TaggedRTCMessage {
                                             now: transmit.now,
-                                            transport: TransportContext {
-                                                local_addr: self.local_addr,
-                                                peer_addr: transmit.transport.peer_addr,
-                                                transport_protocol: TransportProtocol::UDP,
-                                                ecn: transmit.transport.ecn,
-                                            },
+                                            transport: transmit.transport,
                                             message: RTCMessage::Dtls(DTLSMessage::Raw(
                                                 BytesMut::from(&raw[..]),
                                             )),
@@ -184,7 +187,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                     error!("try_read with error {}", err);
                     return Err(err);
                 }
-            };*/
+            };
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -198,30 +201,26 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Sctp(_message)) = msg.message {
+        if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "send sctp data channel message {:?}",
                 msg.transport.peer_addr
             );
-            /*
+
             let four_tuple = (&msg.transport).into();
 
-            let try_write = || -> Result<Vec<TransportMessage<Payload>>> {
+            let mut try_write = || -> Result<Vec<TransportMessage<Payload>>> {
                 let mut transmits = vec![];
-                let mut server_states = self.server_states.borrow_mut();
-                let max_message_size = {
-                    server_states
-                        .server_config()
-                        .sctp_server_config
-                        .transport
-                        .max_message_size() as usize
-                };
-                if message.payload.len() > max_message_size {
+                if message.payload.len() > self.ctx.internal_buffer.len() {
                     return Err(Error::ErrOutboundPacketTooLarge);
                 }
 
-                let transport = server_states.get_mut_transport(&four_tuple)?;
-                let sctp_associations = transport.get_mut_sctp_associations();
+                let transport = self
+                    .transport_states
+                    .find_transport_mut(&four_tuple)
+                    .ok_or(Error::ErrTransportNoExisted)?;
+
+                let sctp_associations = transport.get_sctp_associations_mut();
                 if let Some(conn) =
                     sctp_associations.get_mut(&AssociationHandle(message.association_handle))
                 {
@@ -258,15 +257,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                             for raw in raw_data {
                                 self.ctx.write_outs.push_back(TaggedRTCMessage {
                                     now: transmit.now,
-                                    transport: TransportContext {
-                                        local_addr: self.local_addr,
-                                        peer_addr: transmit.transport.peer_addr,
-                                        transport_protocol: TransportProtocol::UDP,
-                                        ecn: transmit.transport.ecn,
-                                    },
-                                    message: RTCMessage::Dtls(DTLSMessage::Raw(
-                                        BytesMut::from(&raw[..]),
-                                    )),
+                                    transport: transmit.transport,
+                                    message: RTCMessage::Dtls(DTLSMessage::Raw(BytesMut::from(
+                                        &raw[..],
+                                    ))),
                                 });
                             }
                         }
@@ -276,7 +270,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                     error!("try_write with error {}", err);
                     return Err(err);
                 }
-            }*/
+            }
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -297,36 +291,30 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
         None
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
-        /*TODO:
-        let try_timeout = || -> Result<Vec<TransportMessage<Payload>>> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        let mut try_timeout = || -> Result<Vec<TransportMessage<Payload>>> {
             let mut transmits = vec![];
-            let mut server_states = self.server_states.borrow_mut();
 
-            for session in server_states.get_mut_sessions().values_mut() {
-                for endpoint in session.get_mut_endpoints().values_mut() {
-                    for transport in endpoint.get_mut_transports().values_mut() {
-                        let (sctp_endpoint, sctp_associations) =
-                            transport.get_mut_sctp_endpoint_associations();
+            for transport in self.transport_states.get_transports_mut().values_mut() {
+                let (sctp_endpoint, sctp_associations) =
+                    transport.get_sctp_endpoint_associations_mut();
 
-                        let mut endpoint_events: Vec<(AssociationHandle, EndpointEvent)> = vec![];
-                        for (ch, conn) in sctp_associations.iter_mut() {
-                            conn.handle_timeout(now);
+                let mut endpoint_events: Vec<(AssociationHandle, EndpointEvent)> = vec![];
+                for (ch, conn) in sctp_associations.iter_mut() {
+                    conn.handle_timeout(now);
 
-                            while let Some(event) = conn.poll_endpoint_event() {
-                                endpoint_events.push((*ch, event));
-                            }
-
-                            while let Some(x) = conn.poll_transmit(now) {
-                                transmits.extend(split_transmit(x));
-                            }
-                        }
-
-                        for (ch, event) in endpoint_events {
-                            sctp_endpoint.handle_event(ch, event); // handle drain event
-                            sctp_associations.remove(&ch);
-                        }
+                    while let Some(event) = conn.poll_endpoint_event() {
+                        endpoint_events.push((*ch, event));
                     }
+
+                    while let Some(x) = conn.poll_transmit(now) {
+                        transmits.extend(split_transmit(x));
+                    }
+                }
+
+                for (ch, event) in endpoint_events {
+                    sctp_endpoint.handle_event(ch, event); // handle drain event
+                    sctp_associations.remove(&ch);
                 }
             }
 
@@ -339,12 +327,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                         for raw in raw_data {
                             self.ctx.write_outs.push_back(TaggedRTCMessage {
                                 now: transmit.now,
-                                transport: TransportContext {
-                                    local_addr: self.local_addr,
-                                    peer_addr: transmit.transport.peer_addr,
-                                    transport_protocol: TransportProtocol::UDP,
-                                    ecn: transmit.transport.ecn,
-                                },
+                                transport: transmit.transport,
                                 message: RTCMessage::Dtls(DTLSMessage::Raw(BytesMut::from(
                                     &raw[..],
                                 ))),
@@ -352,36 +335,34 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
                         }
                     }
                 }
+                Ok(())
             }
             Err(err) => {
                 error!("try_timeout with error {}", err);
-                return Err(err);
+                Err(err)
             }
-        }*/
-
-        Ok(())
+        }
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
-        /*TODO:
-        {
-            let server_states = self.server_states.borrow();
-            for session in server_states.get_sessions().values() {
-                for endpoint in session.get_endpoints().values() {
-                    for transport in endpoint.get_transports().values() {
-                        let sctp_associations = transport.get_sctp_associations();
-                        for conn in sctp_associations.values() {
-                            if let Some(timeout) = conn.poll_timeout() {
-                                if timeout < *eto {
-                                    *eto = timeout;
-                                }
-                            }
-                        }
+        let max_eto = Instant::now() + DEFAULT_TIMEOUT_DURATION;
+        let mut eto = max_eto;
+        for transport in self.transport_states.get_transports().values() {
+            let sctp_associations = transport.get_sctp_associations();
+            for conn in sctp_associations.values() {
+                if let Some(timeout) = conn.poll_timeout() {
+                    if timeout < eto {
+                        eto = timeout;
                     }
                 }
             }
-        }*/
-        None
+        }
+
+        if eto != max_eto {
+            Some(eto)
+        } else {
+            None
+        }
     }
 
     fn close(&mut self) -> Result<()> {

@@ -1100,6 +1100,8 @@ pub enum Error {
     ErrStreamNotExisted,
     #[error("Association not existed")]
     ErrAssociationNotExisted,
+    #[error("Transport not existed")]
+    ErrTransportNoExisted,
     #[error("Io EOF")]
     ErrEof,
     #[error("Invalid SystemTime")]

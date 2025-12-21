@@ -135,6 +135,25 @@ impl Transport {
         &self.sctp_endpoint
     }
 
+    pub(crate) fn get_sctp_associations_mut(
+        &mut self,
+    ) -> &mut HashMap<AssociationHandle, Association> {
+        &mut self.sctp_associations
+    }
+
+    pub(crate) fn get_sctp_associations(&self) -> &HashMap<AssociationHandle, Association> {
+        &self.sctp_associations
+    }
+
+    pub(crate) fn get_sctp_endpoint_associations_mut(
+        &mut self,
+    ) -> (
+        &mut ::sctp::Endpoint,
+        &mut HashMap<AssociationHandle, Association>,
+    ) {
+        (&mut self.sctp_endpoint, &mut self.sctp_associations)
+    }
+
     pub(crate) fn local_srtp_context(&mut self) -> Option<&mut Context> {
         self.local_srtp_context.as_mut()
     }
