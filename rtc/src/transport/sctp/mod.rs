@@ -50,4 +50,16 @@ impl RTCSctpTransport {
             setting_engine,*/
         }
     }
+
+    pub(crate) fn calc_message_size(remote_max_message_size: u32, can_send_size: u32) -> u32 {
+        if remote_max_message_size == 0 && can_send_size == 0 {
+            u32::MAX
+        } else if remote_max_message_size == 0 {
+            can_send_size
+        } else if can_send_size == 0 || can_send_size > remote_max_message_size {
+            remote_max_message_size
+        } else {
+            can_send_size
+        }
+    }
 }

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use super::message::TaggedRTCMessage;
+use super::message::{RTCEventInternal, TaggedRTCMessage};
 use crate::transport::ice::RTCIceTransport;
 use log::debug;
 use shared::error::{Error, Result};
@@ -39,7 +39,7 @@ impl<'a> IceHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for IceHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> for IceHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
     type Eout = ();
@@ -70,7 +70,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for IceHandler
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
         Ok(())
     }
 

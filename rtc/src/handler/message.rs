@@ -99,7 +99,7 @@ pub(crate) enum RTCEventInternal {
         String, /*fingerprint_hash*/
     ),*/
     IceTransportStart(RTCIceRole, RTCIceParameters),
-    DtlsTransportStart(DTLSParameters),
+    DtlsTransportStart(RTCIceRole, DTLSParameters),
     SctpTransportStart(
         SCTPTransportCapabilities,
         u16, /*local_port*/

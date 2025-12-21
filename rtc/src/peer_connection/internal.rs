@@ -5,9 +5,11 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::transport::dtls::state::RTCDtlsTransportState;
+use crate::transport::ice::state::RTCIceTransportState;
 use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use sansio::Protocol;
 
 impl RTCPeerConnection {
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
@@ -486,8 +488,8 @@ impl RTCPeerConnection {
             RTCEventInternal::IceTransportStart(ice_role, ice_parameters) => {
                 self.start_ice_transport(ice_role, ice_parameters)?;
             }
-            RTCEventInternal::DtlsTransportStart(dtls_parameters) => {
-                self.start_dtls_transport(dtls_parameters)?
+            RTCEventInternal::DtlsTransportStart(ice_role, dtls_parameters) => {
+                self.start_dtls_transport(ice_role, dtls_parameters)?
             }
             RTCEventInternal::SctpTransportStart(capabilities, local_port, remote_port) => {
                 self.start_sctp_transport(capabilities, local_port, remote_port)?
@@ -675,15 +677,18 @@ impl RTCPeerConnection {
     /// Start incoming connectivity checks based on its configured role.
     fn start_ice_transport(
         &mut self,
-        _ice_role: RTCIceRole,
-        _params: RTCIceParameters,
+        ice_role: RTCIceRole,
+        params: RTCIceParameters,
     ) -> Result<()> {
-        /*if self.state() != RTCIceTransportState::New {
+        if self.ice_transport().state != RTCIceTransportState::New {
             return Err(Error::ErrICETransportNotInNew);
         }
 
-        let state = Arc::clone(&self.state);
+        // ICE
+        let mut ice_handler = self.get_ice_handler();
+        ice_handler.handle_event(RTCEventInternal::IceTransportStart(ice_role, params))?;
 
+        /*TODO
         let on_connection_state_change_handler =
             Arc::clone(&self.on_connection_state_change_handler);
         agent.on_connection_state_change(Box::new(move |ice_state: ConnectionState| {
@@ -709,8 +714,7 @@ impl RTCPeerConnection {
                 let local = RTCIceCandidate::from(local);
                 let remote = RTCIceCandidate::from(remote);
                 Box::pin(async move {
-                    if let Some(handler) =
-                        &*on_selected_candidate_pair_change_handler_clone.load()
+                    if let Some(handler) = &*on_selected_candidate_pair_change_handler_clone.load()
                     {
                         let mut f = handler.lock().await;
                         f(RTCIceCandidatePair::new(local, remote)).await;
@@ -719,12 +723,6 @@ impl RTCPeerConnection {
             },
         ));
 
-        let role = if let Some(role) = role {
-            role
-        } else {
-            RTCIceRole::Controlled
-        };
-
         let (cancel_tx, cancel_rx) = mpsc::channel(1);
         {
             let mut internal = self.internal.lock().await;
@@ -732,7 +730,7 @@ impl RTCPeerConnection {
             internal.cancel_tx = Some(cancel_tx);
         }
 
-        let conn: Arc<dyn Conn + Send + Sync> = match role {
+        let conn: Arc<dyn Conn + Send + Sync> = match ice_role {
             RTCIceRole::Controlling => {
                 agent
                     .dial(
@@ -767,119 +765,57 @@ impl RTCPeerConnection {
             internal.mux = Some(Mux::new(config));
         }*/
 
-        self.update_connection_state();
+        //TODO: self.update_connection_state();
         Ok(())
     }
 
-    /// Start the SCTPTransport. Since both local and remote parties must mutually
-    /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
-    /// a connection over SCTP.
-    fn start_sctp_transport(
+    fn start_dtls_transport(
         &mut self,
-        _remote_caps: SCTPTransportCapabilities,
-        _local_port: u16,
-        _remote_port: u16,
+        ice_role: RTCIceRole,
+        remote_parameters: DTLSParameters,
     ) -> Result<()> {
-        /*
-        if self.is_started.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        self.is_started.store(true, Ordering::SeqCst);
-
-        let dtls_transport = self.transport();
-
-        let max_message_size = Self::calc_message_size(
-            remote_caps.max_message_size,
-            self.setting_engine.sctp_max_message_size_can_send.as_u32(),
+        let (
+            srtp_protection_profiles,
+            allow_insecure_verification_algorithm,
+            dtls_replay_protection_window,
+        ) = (
+            self.configuration
+                .setting_engine
+                .srtp_protection_profiles
+                .clone(),
+            self.configuration
+                .setting_engine
+                .allow_insecure_verification_algorithm,
+            self.configuration.setting_engine.replay_protection.dtls,
         );
 
-        if let Some(net_conn) = &dtls_transport.conn().await {
-            let sctp_association = loop {
-                tokio::select! {
-                    _ = self.notify_tx.notified() => {
-                        // It seems like notify_tx is only notified on Stop so perhaps this check
-                        // is redundant.
-                        // TODO: Consider renaming notify_tx to shutdown_tx.
-                        if self.state.load(Ordering::SeqCst) == RTCSctpTransportState::Closed as u8 {
-                            return Err(Error::ErrSCTPTransportDTLS);
-                        }
-                    },
-                    association = sctp::association::Association::client(sctp::association::Config {
-                        net_conn: Arc::clone(net_conn) as Arc<dyn Conn + Send + Sync>,
-                        max_receive_buffer_size: 0,
-                        max_message_size,
-                        name: String::new(),
-                        local_port,
-                        remote_port,
-                    }) => {
-                        break Arc::new(association?);
-                    }
-                };
-            };
+        self.pipeline_context.dtls_handshake_config = self.dtls_transport_mut().prepare_transport(
+            ice_role,
+            remote_parameters,
+            srtp_protection_profiles,
+            allow_insecure_verification_algorithm,
+            dtls_replay_protection_window,
+        )?;
 
-            {
-                let mut sa = self.sctp_association.lock().await;
-                *sa = Some(Arc::clone(&sctp_association));
-            }
-            self.state
-                .store(RTCSctpTransportState::Connected as u8, Ordering::SeqCst);
-
-            let param = AcceptDataChannelParams {
-                notify_rx: self.notify_tx.clone(),
-                sctp_association,
-                data_channels: Arc::clone(&self.data_channels),
-                on_error_handler: Arc::clone(&self.on_error_handler),
-                on_data_channel_handler: Arc::clone(&self.on_data_channel_handler),
-                on_data_channel_opened_handler: Arc::clone(&self.on_data_channel_opened_handler),
-                data_channels_opened: Arc::clone(&self.data_channels_opened),
-                data_channels_accepted: Arc::clone(&self.data_channels_accepted),
-                setting_engine: Arc::clone(&self.setting_engine),
-            };
-            tokio::spawn(async move {
-                RTCSctpTransport::accept_data_channels(param).await;
-            });
-
-            Ok(())
+        // Connect as DTLS Client/Server, function is blocking and we
+        // must not hold the DTLSTransport lock
+        /*TODO: if role == DTLSRole::Client {
+            dtls::conn::DTLSConn::new(
+                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
+                dtls_config,
+                true,
+                None,
+            )
+            .await
         } else {
-            Err(Error::ErrSCTPTransportDTLS)
-        }*/
-        Ok(())
-    }
-
-    fn start_dtls_transport(&mut self, _remote_parameters: DTLSParameters) -> Result<()> {
-        /*
-        let dtls_conn_result = if let Some(dtls_endpoint) =
-            self.ice_transport.new_endpoint(Box::new(match_dtls)).await
-        {
-            let (role, mut dtls_config) = self.prepare_transport(remote_parameters).await?;
-            if self.setting_engine.replay_protection.dtls != 0 {
-                dtls_config.replay_protection_window = self.setting_engine.replay_protection.dtls;
-            }
-
-            // Connect as DTLS Client/Server, function is blocking and we
-            // must not hold the DTLSTransport lock
-            if role == DTLSRole::Client {
-                dtls::conn::DTLSConn::new(
-                    dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                    dtls_config,
-                    true,
-                    None,
-                )
-                .await
-            } else {
-                dtls::conn::DTLSConn::new(
-                    dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                    dtls_config,
-                    false,
-                    None,
-                )
-                .await
-            }
-        } else {
-            Err(dtls::Error::Other(
-                "ice_transport.new_endpoint failed".to_owned(),
-            ))
-        };
+            dtls::conn::DTLSConn::new(
+                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
+                dtls_config,
+                false,
+                None,
+            )
+            .await
+        }
 
         let dtls_conn = match dtls_conn_result {
             Ok(dtls_conn) => dtls_conn,
@@ -952,11 +888,94 @@ impl RTCPeerConnection {
         }
         self.state_change(RTCDtlsTransportState::Connected).await;
 
-         self.start_srtp().await
+        self.start_srtp().await
+        */
 
-         */
+        //TODO: self.update_connection_state();
+        Ok(())
+    }
 
-        self.update_connection_state();
+    /// Start the SCTPTransport. Since both local and remote parties must mutually
+    /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
+    /// a connection over SCTP.
+    fn start_sctp_transport(
+        &mut self,
+        remote_caps: SCTPTransportCapabilities,
+        local_port: u16,
+        _remote_port: u16,
+    ) -> Result<()> {
+        if self.sctp_transport().is_started {
+            return Ok(());
+        }
+        self.sctp_transport_mut().is_started = true;
+
+        let max_message_size = RTCSctpTransport::calc_message_size(
+            remote_caps.max_message_size,
+            self.configuration
+                .setting_engine
+                .sctp_max_message_size
+                .as_usize() as u32,
+        );
+        self.pipeline_context
+            .sctp_handler_context
+            .internal_buffer
+            .resize(max_message_size as usize, 0u8);
+
+        self.pipeline_context.sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        self.pipeline_context.sctp_server_config = ::sctp::ServerConfig::new(
+            ::sctp::TransportConfig::default()
+                .with_max_message_size(max_message_size)
+                .with_sctp_port(local_port),
+            //TODO: add remote_port support
+        );
+
+        /*
+        let sctp_association = loop {
+            tokio::select! {
+                _ = self.notify_tx.notified() => {
+                    // It seems like notify_tx is only notified on Stop so perhaps this check
+                    // is redundant.
+                    // TODO: Consider renaming notify_tx to shutdown_tx.
+                    if self.state.load(Ordering::SeqCst) == RTCSctpTransportState::Closed as u8 {
+                        return Err(Error::ErrSCTPTransportDTLS);
+                    }
+                },
+                association = sctp::association::Association::client(sctp::association::Config {
+                    net_conn: Arc::clone(net_conn) as Arc<dyn Conn + Send + Sync>,
+                    max_receive_buffer_size: 0,
+                    max_message_size,
+                    name: String::new(),
+                    local_port,
+                    remote_port,
+                }) => {
+                    break Arc::new(association?);
+                }
+            };
+        };
+
+        {
+            let mut sa = self.sctp_association.lock().await;
+            *sa = Some(Arc::clone(&sctp_association));
+        }
+        self.state
+            .store(RTCSctpTransportState::Connected as u8, Ordering::SeqCst);
+
+        let param = AcceptDataChannelParams {
+            notify_rx: self.notify_tx.clone(),
+            sctp_association,
+            data_channels: Arc::clone(&self.data_channels),
+            on_error_handler: Arc::clone(&self.on_error_handler),
+            on_data_channel_handler: Arc::clone(&self.on_data_channel_handler),
+            on_data_channel_opened_handler: Arc::clone(&self.on_data_channel_opened_handler),
+            data_channels_opened: Arc::clone(&self.data_channels_opened),
+            data_channels_accepted: Arc::clone(&self.data_channels_accepted),
+            setting_engine: Arc::clone(&self.setting_engine),
+        };
+        tokio::spawn(async move {
+            RTCSctpTransport::accept_data_channels(param).await;
+        });
+        */
+
         Ok(())
     }
 

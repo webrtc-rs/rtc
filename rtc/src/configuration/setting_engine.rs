@@ -57,17 +57,17 @@ pub struct ReplayProtection {
 
 #[derive(Copy, Clone)]
 pub enum SctpMaxMessageSize {
-    Bounded(usize),
+    Bounded(u32),
     Unbounded,
 }
 
 impl SctpMaxMessageSize {
-    pub const DEFAULT_MESSAGE_SIZE: usize = 65536;
-    pub const MAX_MESSAGE_SIZE: usize = 262144;
+    pub const DEFAULT_MESSAGE_SIZE: u32 = 65536;
+    pub const MAX_MESSAGE_SIZE: u32 = 262144;
     pub fn as_usize(&self) -> usize {
         match self {
-            Self::Bounded(result) => *result,
-            Self::Unbounded => Self::MAX_MESSAGE_SIZE,
+            Self::Bounded(result) => *result as usize,
+            Self::Unbounded => Self::MAX_MESSAGE_SIZE as usize,
         }
     }
 }

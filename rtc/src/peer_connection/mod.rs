@@ -4,6 +4,7 @@ mod internal;
 pub mod sdp;
 pub mod state;
 
+use crate::configuration::setting_engine::SctpMaxMessageSize;
 use crate::configuration::{
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
     RTCConfiguration,
@@ -24,7 +25,8 @@ use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    extract_fingerprint, extract_ice_details, get_mid_value, get_peer_direction, is_lite_set,
+    extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
+    get_application_media_section_sctp_port, get_mid_value, get_peer_direction, is_lite_set,
     sdp_type::RTCSdpType, update_sdp_origin,
 };
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
@@ -41,6 +43,7 @@ use crate::transport::ice::candidate::RTCIceCandidateInit;
 use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::RTCIceTransport;
+use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::transport::sctp::RTCSctpTransport;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
@@ -304,33 +307,38 @@ impl RTCPeerConnection {
     }
 
     /// set_local_description sets the SessionDescription of the local peer
-    pub fn set_local_description(&mut self, mut description: RTCSessionDescription) -> Result<()> {
+    pub fn set_local_description(
+        &mut self,
+        mut local_description: RTCSessionDescription,
+    ) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
+        let is_renegotiation = self.current_local_description.is_some();
+
         // JSEP 5.4
-        if description.sdp.is_empty() {
-            match description.sdp_type {
+        if local_description.sdp.is_empty() {
+            match local_description.sdp_type {
                 RTCSdpType::Answer | RTCSdpType::Pranswer => {
-                    description.sdp.clone_from(&self.last_answer);
+                    local_description.sdp.clone_from(&self.last_answer);
                 }
                 RTCSdpType::Offer => {
-                    description.sdp.clone_from(&self.last_offer);
+                    local_description.sdp.clone_from(&self.last_offer);
                 }
                 _ => return Err(Error::ErrPeerConnSDPTypeInvalidValueSetLocalDescription),
             }
         }
 
-        description.parsed = Some(description.unmarshal()?);
-        self.set_description(&description, StateChangeOp::SetLocal)?;
+        local_description.parsed = Some(local_description.unmarshal()?);
+        self.set_description(&local_description, StateChangeOp::SetLocal)?;
 
-        let we_answer = description.sdp_type == RTCSdpType::Answer;
+        let we_answer = local_description.sdp_type == RTCSdpType::Answer;
         if we_answer {
-            if let Some(parsed) = description.parsed {
+            if let Some(parsed_local_description) = &local_description.parsed {
                 // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
                 // Section 4.4.1.5
-                for media in &parsed.media_descriptions {
+                for media in &parsed_local_description.media_descriptions {
                     if media.media_name.media == MEDIA_SECTION_APPLICATION {
                         continue;
                     }
@@ -358,14 +366,36 @@ impl RTCPeerConnection {
                     t.set_current_direction(direction);
                     t.process_new_current_direction(previous_direction)?;
                 }
-            }
 
-            if let Some(remote_desc) = self.remote_description().cloned() {
-                self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
-                self.ops_enqueue_start(RTCEventInternal::StartRtp(
-                    self.current_local_description.is_some(),
-                    remote_desc,
-                ))?;
+                if let Some(remote_description) = self.remote_description().cloned() {
+                    if let Some(parsed_remote_description) = remote_description.parsed.as_ref() {
+                        if let Some(remote_port) =
+                            get_application_media_section_sctp_port(parsed_remote_description)
+                        {
+                            if let Some(local_port) =
+                                get_application_media_section_sctp_port(parsed_local_description)
+                            {
+                                let max_message_size =
+                                    get_application_media_section_max_message_size(
+                                        parsed_remote_description,
+                                    )
+                                    .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+
+                                self.ops_enqueue_start(RTCEventInternal::SctpTransportStart(
+                                    SCTPTransportCapabilities { max_message_size },
+                                    local_port,
+                                    remote_port,
+                                ))?;
+                            }
+                        }
+                    }
+
+                    self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
+                    self.ops_enqueue_start(RTCEventInternal::StartRtp(
+                        is_renegotiation,
+                        remote_description,
+                    ))?;
+                }
             }
         }
 
@@ -385,20 +415,25 @@ impl RTCPeerConnection {
     }
 
     /// set_remote_description sets the SessionDescription of the remote peer
-    pub fn set_remote_description(&mut self, mut description: RTCSessionDescription) -> Result<()> {
+    pub fn set_remote_description(
+        &mut self,
+        mut remote_description: RTCSessionDescription,
+    ) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        description.parsed = Some(description.unmarshal()?);
-        self.set_description(&description, StateChangeOp::SetRemote)?;
+        let is_renegotiation = self.current_remote_description.is_some();
 
-        if let Some(parsed) = &description.parsed {
+        remote_description.parsed = Some(remote_description.unmarshal()?);
+        self.set_description(&remote_description, StateChangeOp::SetRemote)?;
+
+        if let Some(parsed_remote_description) = &remote_description.parsed {
             self.configuration
                 .media_engine
-                .update_from_remote_description(parsed)?;
+                .update_from_remote_description(parsed_remote_description)?;
 
-            let we_offer = description.sdp_type == RTCSdpType::Answer;
+            let we_offer = remote_description.sdp_type == RTCSdpType::Answer;
 
             // Extract media descriptions to avoid borrowing conflicts
             let media_descriptions = self
@@ -529,8 +564,8 @@ impl RTCPeerConnection {
                 }
             }
 
-            let (remote_ufrag, remote_pwd, candidates) = extract_ice_details(parsed)?;
-            let is_renegotiation = self.current_remote_description.is_some();
+            let (remote_ufrag, remote_pwd, candidates) =
+                extract_ice_details(parsed_remote_description)?;
 
             if is_renegotiation
                 && self
@@ -550,59 +585,77 @@ impl RTCPeerConnection {
                 self.ice_transport_mut().add_remote_candidate(candidate)?;
             }
 
-            if is_renegotiation {
-                if we_offer {
-                    self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
-                    self.ops_enqueue_start(RTCEventInternal::StartRtp(
-                        is_renegotiation,
-                        description.clone(),
-                    ))?;
+            if !is_renegotiation {
+                let remote_is_lite = is_lite_set(parsed_remote_description);
+
+                let (fingerprint, fingerprint_hash) =
+                    extract_fingerprint(parsed_remote_description)?;
+
+                // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
+                // If both or neither agents are lite the offering agent is controlling.
+                // RFC 8445 S6.1.1
+                let ice_role = if (we_offer
+                    && remote_is_lite == self.configuration.setting_engine.candidates.ice_lite)
+                    || (remote_is_lite && !self.configuration.setting_engine.candidates.ice_lite)
+                {
+                    RTCIceRole::Controlling
+                } else {
+                    RTCIceRole::Controlled
+                };
+
+                let dtls_role = DTLSRole::from(parsed_remote_description);
+                log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
+                self.ops_enqueue_start(RTCEventInternal::IceTransportStart(
+                    ice_role,
+                    RTCIceParameters {
+                        username_fragment: remote_ufrag,
+                        password: remote_pwd,
+                        ice_lite: false,
+                    },
+                ))?;
+                self.ops_enqueue_start(RTCEventInternal::DtlsTransportStart(
+                    ice_role,
+                    DTLSParameters {
+                        role: dtls_role,
+                        fingerprints: vec![RTCDtlsFingerprint {
+                            algorithm: fingerprint_hash,
+                            value: fingerprint,
+                        }],
+                    },
+                ))?;
+            }
+
+            if we_offer {
+                if let Some(parsed_local_description) = self
+                    .current_local_description
+                    .as_ref()
+                    .and_then(|desc| desc.parsed.as_ref())
+                {
+                    if let Some(remote_port) =
+                        get_application_media_section_sctp_port(parsed_remote_description)
+                    {
+                        if let Some(local_port) =
+                            get_application_media_section_sctp_port(parsed_local_description)
+                        {
+                            let max_message_size = get_application_media_section_max_message_size(
+                                parsed_remote_description,
+                            )
+                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+
+                            self.ops_enqueue_start(RTCEventInternal::SctpTransportStart(
+                                SCTPTransportCapabilities { max_message_size },
+                                local_port,
+                                remote_port,
+                            ))?;
+                        }
+                    }
                 }
-                return Ok(());
-            }
 
-            let remote_is_lite = is_lite_set(parsed);
-
-            let (fingerprint, fingerprint_hash) = extract_fingerprint(parsed)?;
-
-            // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
-            // If both or neither agents are lite the offering agent is controlling.
-            // RFC 8445 S6.1.1
-            let ice_role = if (we_offer
-                && remote_is_lite == self.configuration.setting_engine.candidates.ice_lite)
-                || (remote_is_lite && !self.configuration.setting_engine.candidates.ice_lite)
-            {
-                RTCIceRole::Controlling
-            } else {
-                RTCIceRole::Controlled
-            };
-
-            // Start the networking in a new routine since it will block until
-            // the connection is actually established.
-            if we_offer {
                 self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
-            }
-
-            let dtls_role = DTLSRole::from(parsed);
-            log::trace!("start_transports: ice_role={ice_role}, dtls_role={dtls_role}");
-            self.ops_enqueue_start(RTCEventInternal::IceTransportStart(
-                ice_role,
-                RTCIceParameters {
-                    username_fragment: remote_ufrag,
-                    password: remote_pwd,
-                    ice_lite: false,
-                },
-            ))?;
-            self.ops_enqueue_start(RTCEventInternal::DtlsTransportStart(DTLSParameters {
-                role: dtls_role,
-                fingerprints: vec![RTCDtlsFingerprint {
-                    algorithm: fingerprint_hash,
-                    value: fingerprint,
-                }],
-            }))?;
-
-            if we_offer {
-                self.ops_enqueue_start(RTCEventInternal::StartRtp(false, description.clone()))?;
+                self.ops_enqueue_start(RTCEventInternal::StartRtp(
+                    is_renegotiation,
+                    remote_description,
+                ))?;
             }
         }
 

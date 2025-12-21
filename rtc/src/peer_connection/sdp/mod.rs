@@ -20,6 +20,7 @@ use sdp::util::ConnectionRole;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::io::BufReader;
+use std::str::FromStr;
 
 pub(crate) const SDP_ATTRIBUTE_RID: &str = "rid";
 pub(crate) const SDP_ATTRIBUTE_SIMULCAST: &str = "simulcast";
@@ -1012,7 +1013,6 @@ pub(crate) fn is_lite_set(desc: &SessionDescription) -> bool {
     false
 }
 
-/*
 pub(crate) fn get_application_media_section_sctp_port(desc: &SessionDescription) -> Option<u16> {
     for m in &desc.media_descriptions {
         if m.media_name.media == MEDIA_SECTION_APPLICATION {
@@ -1050,7 +1050,7 @@ pub(crate) fn get_application_media_section_max_message_size(
         .parse()
         .ok()
 }
-*/
+
 pub(crate) fn get_by_mid<'a>(
     search_mid: &str,
     desc: &'a session_description::RTCSessionDescription,
@@ -1066,7 +1066,7 @@ pub(crate) fn get_by_mid<'a>(
     }
     None
 }
-/*
+
 pub(crate) fn get_application_media(desc: &SessionDescription) -> Option<&MediaDescription> {
     desc.media_descriptions
         .iter()
@@ -1079,7 +1079,7 @@ pub(crate) fn have_data_channel(
 ) -> Option<&MediaDescription> {
     get_application_media(desc.parsed.as_ref()?)
 }
-*/
+
 pub(crate) fn codecs_from_media_description(
     m: &MediaDescription,
 ) -> Result<Vec<RTCRtpCodecParameters>> {

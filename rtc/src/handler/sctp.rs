@@ -22,10 +22,9 @@ pub(crate) struct SctpHandlerContext {
 
 impl SctpHandlerContext {
     pub(crate) fn new(sctp_transport: RTCSctpTransport) -> Self {
-        let max_message_size = sctp_transport.max_message_size.as_usize();
         Self {
             sctp_transport,
-            internal_buffer: vec![0u8; max_message_size],
+            internal_buffer: vec![], // will be resized in start_sctp_transport after SDP negotiation is done
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
         }

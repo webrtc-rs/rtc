@@ -4,6 +4,8 @@ use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
 use crate::transport::dtls::state::RTCDtlsTransportState;
 use crate::transport::ice::role::RTCIceRole;
 use bytes::Bytes;
+use dtls::config::ClientAuthType;
+use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use srtp::protection_profile::ProtectionProfile;
@@ -13,6 +15,15 @@ pub mod fingerprint;
 pub mod parameters;
 pub mod role;
 pub mod state;
+
+pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
+    vec![
+        SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm,
+        SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm,
+        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+        SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32,
+    ]
+}
 
 /// DTLSTransport allows an application access to information about the DTLS
 /// transport over which RTP and RTCP packets are sent and received by
@@ -100,6 +111,42 @@ impl RTCDtlsTransport {
         }
 
         DEFAULT_DTLS_ROLE_ANSWER
+    }
+
+    pub(crate) fn prepare_transport(
+        &mut self,
+        ice_role: RTCIceRole,
+        remote_parameters: DTLSParameters,
+        srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+        allow_insecure_verification_algorithm: bool,
+        dtls_replay_protection_window: usize,
+    ) -> Result<::dtls::config::HandshakeConfig> {
+        if self.state != RTCDtlsTransportState::New {
+            return Err(Error::ErrInvalidDTLSStart);
+        }
+
+        self.remote_parameters = remote_parameters;
+
+        let certificate = if let Some(cert) = self.certificates.first() {
+            cert.dtls_certificate.clone()
+        } else {
+            return Err(Error::ErrNonCertificate);
+        };
+        self.state_change(RTCDtlsTransportState::Connecting);
+
+        ::dtls::config::ConfigBuilder::default()
+            .with_certificates(vec![certificate])
+            .with_srtp_protection_profiles(if !srtp_protection_profiles.is_empty() {
+                srtp_protection_profiles
+            } else {
+                default_srtp_protection_profiles()
+            })
+            .with_client_auth(ClientAuthType::RequireAnyClientCert)
+            .with_insecure_skip_verify(true)
+            .with_insecure_verification(allow_insecure_verification_algorithm)
+            //TODO: .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)?
+            .with_replay_protection_window(dtls_replay_protection_window)
+            .build(self.role(ice_role) == DTLSRole::Client, None)
     }
 
     /// set DTLS transport negotiation with the parameters of the remote DTLS transport

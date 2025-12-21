@@ -199,8 +199,11 @@ impl Default for ServerConfig {
 
 impl ServerConfig {
     /// Create a default configuration with a particular handshake token key
-    pub fn new() -> Self {
-        ServerConfig::default()
+    pub fn new(transport: TransportConfig) -> Self {
+        ServerConfig {
+            transport: Arc::new(transport),
+            concurrent_associations: 100_000,
+        }
     }
 }
 
