@@ -2,12 +2,14 @@
 mod agent_test;
 
 pub mod agent_config;
+mod agent_proto;
 pub mod agent_selector;
 pub mod agent_stats;
 
 use agent_config::*;
 use bytes::BytesMut;
 use log::{debug, error, info, trace, warn};
+use sansio::Protocol;
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -403,7 +405,7 @@ impl Agent {
         self.connection_state
     }
 
-    pub fn handle_read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
+    pub fn read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
         if let Some(local_index) =
             self.find_local_candidate(msg.transport.local_addr, msg.transport.transport_protocol)
         {
@@ -422,30 +424,6 @@ impl Agent {
             );
             Err(Error::ErrUnhandledStunpacket)
         }
-    }
-
-    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
-        self.transmits.pop_front()
-    }
-
-    pub fn handle_timeout(&mut self, now: Instant) {
-        if self.ufrag_pwd.remote_credentials.is_some()
-            && self.last_checking_time + self.get_timeout_interval() <= now
-        {
-            self.contact(now);
-        }
-    }
-
-    pub fn poll_timeout(&self) -> Option<Instant> {
-        if self.ufrag_pwd.remote_credentials.is_some() {
-            Some(self.last_checking_time + self.get_timeout_interval())
-        } else {
-            None
-        }
-    }
-
-    pub fn poll_event(&mut self) -> Option<Event> {
-        self.events.pop_front()
     }
 
     fn get_timeout_interval(&self) -> Duration {
@@ -477,15 +455,6 @@ impl Agent {
         update_interval(disconnected_timeout);
         update_interval(failed_timeout);
         interval
-    }
-
-    /// Cleans up the Agent.
-    pub fn close(&mut self) -> Result<()> {
-        self.set_selected_pair(None);
-        self.delete_all_candidates(false);
-        self.update_connection_state(ConnectionState::Closed);
-
-        Ok(())
     }
 
     /// Returns the selected pair (local_candidate, remote_candidate) or none

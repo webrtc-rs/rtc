@@ -19,6 +19,7 @@ rand = "0.8.5"
 serde = { version = "1.0.197", features = ["derive"] }
 url = "2.5.0"
 bytes = "1.5.0"
+sansio = "1.0.1"
 
 [dev-dependencies]
 regex = "1.10.3"

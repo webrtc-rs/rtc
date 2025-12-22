@@ -1,4 +1,3 @@
-use bytes::BytesMut;
 use clap::Parser;
 use futures::StreamExt;
 use hyper::service::{make_service_fn, service_fn};
@@ -9,6 +8,7 @@ use rtc_ice::candidate::candidate_host::CandidateHostConfig;
 use rtc_ice::candidate::*;
 use rtc_ice::state::*;
 use rtc_ice::{Credentials, Event};
+use sansio::Protocol;
 use shared::error::Error;
 use shared::{TransportContext, TransportMessage, TransportProtocol};
 use std::io;
@@ -16,6 +16,7 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use stun::message::Message;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch, Mutex};
 
@@ -288,7 +289,7 @@ async fn main() -> Result<(), Error> {
     // Start the ICE Agent. One side must be controlled, and the other must be controlling
     let mut buf = vec![0u8; 2048];
     loop {
-        while let Some(transmit) = ice_agent.poll_transmit() {
+        while let Some(transmit) = ice_agent.poll_write() {
             udp_socket
                 .send_to(&transmit.message[..], transmit.transport.peer_addr)
                 .await?;
@@ -327,7 +328,7 @@ async fn main() -> Result<(), Error> {
                 break;
             }
             _ = timeout.as_mut() => {
-                ice_agent.handle_timeout(Instant::now());
+                ice_agent.handle_timeout(Instant::now())?;
             }
             res = udp_socket.recv_from(&mut buf) => {
                 if let Ok((n, remote_addr)) = res {
@@ -336,7 +337,13 @@ async fn main() -> Result<(), Error> {
                     }
 
                     if stun::message::is_message(&buf[0..n]) {
-                        ice_agent.handle_read(TransportMessage::<BytesMut>{
+                        let mut message = Message {
+                            raw: buf[0..n].to_vec(),
+                            ..Default::default()
+                        };
+                        message.decode()?;
+
+                        ice_agent.handle_read(TransportMessage::<Message>{
                             now: Instant::now(),
                             transport: TransportContext{
                                 local_addr: udp_socket.local_addr()?,
@@ -344,7 +351,7 @@ async fn main() -> Result<(), Error> {
                                 ecn: None,
                                 transport_protocol: TransportProtocol::UDP,
                             },
-                            message: BytesMut::from(&buf[0..n]),
+                            message,
                         })?;
                     } else {
                         println!("{}", String::from_utf8((&buf[0..n]).to_vec())?);
