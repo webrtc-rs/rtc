@@ -2,6 +2,8 @@ use super::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEvent, RTCMessage, RTPMessage,
     STUNMessage, TaggedRTCMessage,
 };
+use crate::data_channel::event::RTCDataChannelEvent;
+use crate::data_channel::message::RTCDataChannelMessage;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::transport::{CandidatePair, Transport, TransportStates};
 use bytes::BytesMut;
@@ -28,6 +30,7 @@ pub(crate) struct EndpointHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
 }
 
 /// EndpointHandler implements DataChannel/Media Endpoint handling
@@ -104,7 +107,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for Endp
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
@@ -188,12 +191,13 @@ impl<'a> EndpointHandler<'a> {
                 message.association_handle,
                 message.stream_id,
             ),
-            DataChannelEvent::Message(payload) => self.handle_datachannel_message(
+            DataChannelEvent::Message(is_string, data) => self.handle_datachannel_message(
                 now,
                 transport_context,
                 message.association_handle,
                 message.stream_id,
-                payload,
+                is_string,
+                data,
             ),
             DataChannelEvent::Close => self.handle_datachannel_close(
                 now,
@@ -337,10 +341,23 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        _association_handle: usize,
-        _stream_id: u16,
+        association_handle: usize,
+        stream_id: u16,
     ) -> Result<()> {
         debug!("data channel is open for {:?}", transport_context);
+
+        let four_tuple = transport_context.into();
+        let transport = self
+            .transport_states
+            .find_transport_mut(&four_tuple)
+            .ok_or(Error::ErrTransportNoExisted)?;
+        transport.set_association_handle(association_handle);
+
+        self.ctx
+            .event_outs
+            .push_back(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnOpen(stream_id),
+            ));
 
         Ok(())
     }
@@ -350,9 +367,14 @@ impl<'a> EndpointHandler<'a> {
         _now: Instant,
         transport_context: TransportContext,
         _association_handle: usize,
-        _stream_id: u16,
+        stream_id: u16,
     ) -> Result<()> {
         debug!("data channel is close for {:?}", transport_context);
+        self.ctx
+            .event_outs
+            .push_back(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnClose(stream_id),
+            ));
 
         Ok(())
     }
@@ -362,10 +384,19 @@ impl<'a> EndpointHandler<'a> {
         _now: Instant,
         transport_context: TransportContext,
         _association_handle: usize,
-        _stream_id: u16,
-        _payload: BytesMut,
+        stream_id: u16,
+        is_string: bool,
+        data: BytesMut,
     ) -> Result<()> {
         debug!("data channel recv message for {:?}", transport_context);
+        self.ctx
+            .event_outs
+            .push_back(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnMessage(
+                    stream_id,
+                    RTCDataChannelMessage { is_string, data },
+                ),
+            ));
 
         Ok(())
     }

@@ -75,8 +75,7 @@ pub(crate) struct Transport {
     pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // DataChannel
-    pub(crate) association_handle: Option<usize>, //TODO: support multiple association_handle in DataChannel
-    pub(crate) stream_id: Option<u16>, //TODO: support multiple streams in one association_handle
+    pub(crate) association_handle: Option<usize>,
 
     // SRTP
     pub(crate) local_srtp_context: Option<Context>,
@@ -112,7 +111,6 @@ impl Transport {
             sctp_associations: HashMap::new(),
 
             association_handle: None,
-            stream_id: None,
 
             local_srtp_context: None,
             remote_srtp_context: None,
@@ -168,6 +166,14 @@ impl Transport {
 
     pub(crate) fn set_remote_srtp_context(&mut self, remote_srtp_context: Context) {
         self.remote_srtp_context = Some(remote_srtp_context);
+    }
+
+    pub(crate) fn set_association_handle(&mut self, association_handle: usize) {
+        self.association_handle = Some(association_handle);
+    }
+
+    pub(crate) fn association_handle(&mut self) -> Option<usize> {
+        self.association_handle
     }
 }
 

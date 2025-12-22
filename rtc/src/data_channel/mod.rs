@@ -1,6 +1,6 @@
 use crate::data_channel::state::RTCDataChannelState;
 use crate::peer_connection::RTCPeerConnection;
-use bytes::Bytes;
+use bytes::BytesMut;
 use shared::error::{Error, Result};
 
 pub mod event;
@@ -145,7 +145,7 @@ impl RTCDataChannel<'_> {
     }
 
     /// send sends the binary message to the DataChannel peer
-    pub fn send(&mut self, _data: &Bytes) -> Result<()> {
+    pub fn send(&mut self, _data: &BytesMut) -> Result<()> {
         Ok(())
     }
 

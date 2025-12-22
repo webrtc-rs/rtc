@@ -86,7 +86,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DataChanne
                             Some(ApplicationMessage {
                                 association_handle: message.association_handle,
                                 stream_id: message.stream_id,
-                                data_channel_event: DataChannelEvent::Message(message.payload),
+                                data_channel_event: DataChannelEvent::Message(
+                                    message.data_message_type == DataChannelMessageType::Text,
+                                    message.payload,
+                                ),
                             }),
                             None,
                         ))
@@ -138,14 +141,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DataChanne
         if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
             debug!("send application message {:?}", msg.transport.peer_addr);
 
-            if let DataChannelEvent::Message(payload) = message.data_channel_event {
+            if let DataChannelEvent::Message(is_string, payload) = message.data_channel_event {
                 self.ctx.write_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
                     message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
                         association_handle: message.association_handle,
                         stream_id: message.stream_id,
-                        data_message_type: DataChannelMessageType::Text,
+                        data_message_type: if is_string {
+                            DataChannelMessageType::Text
+                        } else {
+                            DataChannelMessageType::Binary
+                        },
                         params: None,
                         payload,
                     })),

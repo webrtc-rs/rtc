@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::BytesMut;
 
 /// RTCDataChannelMessage represents a message received from the
 /// data channel. IsString will be set to true if the incoming
@@ -7,5 +7,5 @@ use bytes::Bytes;
 #[derive(Default, Debug, Clone)]
 pub struct RTCDataChannelMessage {
     pub is_string: bool,
-    pub data: Bytes,
+    pub data: BytesMut,
 }

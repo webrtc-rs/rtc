@@ -28,7 +28,7 @@ pub(crate) struct DataChannelMessageParams {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelEvent {
     Open,
-    Message(BytesMut),
+    Message(bool /*is_string*/, BytesMut /*payload*/),
     Close,
 }
 
