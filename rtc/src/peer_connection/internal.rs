@@ -5,12 +5,10 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::transport::dtls::state::RTCDtlsTransportState;
-use crate::transport::ice::state::RTCIceTransportState;
 use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::transport::{CandidatePair, ConnectionCredentials};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
-use sansio::Protocol;
 
 impl RTCPeerConnection {
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
@@ -490,7 +488,7 @@ impl RTCPeerConnection {
                 self.start_transports(ice_role, ice_parameters, dtls_parameters)?;
             }
             RTCEventInternal::IceTransportStart(ice_role, ice_parameters) => {
-                self.start_ice_transport(ice_role, ice_parameters)?;
+                self.ice_transport_mut().start(ice_role, ice_parameters)?;
             }
             RTCEventInternal::DtlsTransportStart(ice_role, dtls_parameters) => {
                 self.start_dtls_transport(ice_role, dtls_parameters)?
@@ -631,7 +629,8 @@ impl RTCPeerConnection {
         remote_dtls_parameters: DTLSParameters,
     ) -> Result<()> {
         // Start the ice transport
-        self.start_ice_transport(ice_role, remote_ice_parameters.clone())?;
+        self.ice_transport_mut()
+            .start(ice_role, remote_ice_parameters.clone())?;
 
         // Start the dtls_transport transport
         self.start_dtls_transport(ice_role, remote_dtls_parameters.clone())?;
@@ -641,10 +640,11 @@ impl RTCPeerConnection {
             dtls_params: remote_dtls_parameters,
         };
 
+        let (local_ufrag, local_pwd) = self.ice_transport().get_local_user_credentials();
         let local_conn_cred = ConnectionCredentials {
             ice_params: RTCIceParameters {
-                username_fragment: self.ice_transport().ufrag_pwd.local_ufrag.clone(),
-                password: self.ice_transport().ufrag_pwd.local_pwd.clone(),
+                username_fragment: local_ufrag.to_string(),
+                password: local_pwd.to_string(),
                 ice_lite: false,
             },
             dtls_params: DTLSParameters {
@@ -665,104 +665,6 @@ impl RTCPeerConnection {
 
         //TODO: self.update_connection_state();
 
-        Ok(())
-    }
-
-    /// Start incoming connectivity checks based on its configured role.
-    fn start_ice_transport(
-        &mut self,
-        ice_role: RTCIceRole,
-        remote_ice_parameters: RTCIceParameters,
-    ) -> Result<()> {
-        if self.ice_transport().state != RTCIceTransportState::New {
-            return Err(Error::ErrICETransportNotInNew);
-        }
-
-        // ICE
-        let mut ice_handler = self.get_ice_handler();
-        ice_handler.handle_event(RTCEventInternal::IceTransportStart(
-            ice_role,
-            remote_ice_parameters,
-        ))?;
-
-        /*TODO
-        let on_connection_state_change_handler =
-            Arc::clone(&self.on_connection_state_change_handler);
-        agent.on_connection_state_change(Box::new(move |ice_state: ConnectionState| {
-            let s = RTCIceTransportState::from(ice_state);
-            let on_connection_state_change_handler_clone =
-                Arc::clone(&on_connection_state_change_handler);
-            state.store(s as u8, Ordering::SeqCst);
-            Box::pin(async move {
-                if let Some(handler) = &*on_connection_state_change_handler_clone.load() {
-                    let mut f = handler.lock().await;
-                    f(s).await;
-                }
-            })
-        }));
-
-        let on_selected_candidate_pair_change_handler =
-            Arc::clone(&self.on_selected_candidate_pair_change_handler);
-        agent.on_selected_candidate_pair_change(Box::new(
-            move |local: &Arc<dyn Candidate + Send + Sync>,
-                  remote: &Arc<dyn Candidate + Send + Sync>| {
-                let on_selected_candidate_pair_change_handler_clone =
-                    Arc::clone(&on_selected_candidate_pair_change_handler);
-                let local = RTCIceCandidate::from(local);
-                let remote = RTCIceCandidate::from(remote);
-                Box::pin(async move {
-                    if let Some(handler) = &*on_selected_candidate_pair_change_handler_clone.load()
-                    {
-                        let mut f = handler.lock().await;
-                        f(RTCIceCandidatePair::new(local, remote)).await;
-                    }
-                })
-            },
-        ));
-
-        let (cancel_tx, cancel_rx) = mpsc::channel(1);
-        {
-            let mut internal = self.internal.lock().await;
-            internal.role = role;
-            internal.cancel_tx = Some(cancel_tx);
-        }
-
-        let conn: Arc<dyn Conn + Send + Sync> = match ice_role {
-            RTCIceRole::Controlling => {
-                agent
-                    .dial(
-                        cancel_rx,
-                        params.username_fragment.clone(),
-                        params.password.clone(),
-                    )
-                    .await?
-            }
-
-            RTCIceRole::Controlled => {
-                agent
-                    .accept(
-                        cancel_rx,
-                        params.username_fragment.clone(),
-                        params.password.clone(),
-                    )
-                    .await?
-            }
-
-            _ => return Err(Error::ErrICERoleUnknown),
-        };
-
-        let config = Config {
-            conn: Arc::clone(&conn),
-            buffer_size: self.gatherer.setting_engine.get_receive_mtu(),
-        };
-
-        {
-            let mut internal = self.internal.lock().await;
-            internal.conn = Some(conn);
-            internal.mux = Some(Mux::new(config));
-        }*/
-
-        //TODO: self.update_connection_state();
         Ok(())
     }
 

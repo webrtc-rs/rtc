@@ -551,8 +551,28 @@ impl RTCPeerConnection {
                     .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
             {
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
+                let (local_ufrag, local_pwd, keep_local_candidates) = (
+                    self.configuration
+                        .setting_engine
+                        .candidates
+                        .username_fragment
+                        .clone(),
+                    self.configuration
+                        .setting_engine
+                        .candidates
+                        .password
+                        .clone(),
+                    self.configuration
+                        .setting_engine
+                        .candidates
+                        .keep_local_candidates_during_ice_restart,
+                );
                 if !we_offer {
-                    self.ice_transport_mut().restart()?;
+                    self.ice_transport_mut().restart(
+                        local_ufrag,
+                        local_pwd,
+                        keep_local_candidates,
+                    )?;
                 }
 
                 self.ice_transport_mut()
@@ -692,7 +712,24 @@ impl RTCPeerConnection {
     /// restart_ice restart ICE and triggers negotiation needed
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-restartice>
     pub fn restart_ice(&mut self) -> Result<()> {
-        self.ice_transport_mut().restart()?;
+        let (local_ufrag, local_pwd, keep_local_candidates) = (
+            self.configuration
+                .setting_engine
+                .candidates
+                .username_fragment
+                .clone(),
+            self.configuration
+                .setting_engine
+                .candidates
+                .password
+                .clone(),
+            self.configuration
+                .setting_engine
+                .candidates
+                .keep_local_candidates_during_ice_restart,
+        );
+        self.ice_transport_mut()
+            .restart(local_ufrag, local_pwd, keep_local_candidates)?;
         self.trigger_negotiation_needed();
         Ok(())
     }

@@ -138,6 +138,42 @@ pub struct Agent {
     pub(crate) events: VecDeque<Event>,
 }
 
+impl Default for Agent {
+    fn default() -> Self {
+        Self {
+            tie_breaker: 0,
+            is_controlling: false,
+            lite: false,
+            start_time: Instant::now(),
+            connection_state: Default::default(),
+            last_connection_state: Default::default(),
+            ufrag_pwd: Default::default(),
+            local_candidates: vec![],
+            remote_candidates: vec![],
+            candidate_pairs: vec![],
+            nominated_pair: None,
+            selected_pair: None,
+            pending_binding_requests: vec![],
+            insecure_skip_verify: false,
+            max_binding_requests: 0,
+            host_acceptance_min_wait: Default::default(),
+            srflx_acceptance_min_wait: Default::default(),
+            prflx_acceptance_min_wait: Default::default(),
+            relay_acceptance_min_wait: Default::default(),
+            disconnected_timeout: Default::default(),
+            failed_timeout: Default::default(),
+            keepalive_interval: Default::default(),
+            check_interval: Default::default(),
+            checking_duration: Instant::now(),
+            last_checking_time: Instant::now(),
+            candidate_types: vec![],
+            urls: vec![],
+            transmits: Default::default(),
+            events: Default::default(),
+        }
+    }
+}
+
 impl Agent {
     /// Creates a new Agent.
     pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
@@ -345,6 +381,26 @@ impl Agent {
     /// Returns the local credentials.
     pub fn get_local_credentials(&self) -> &Credentials {
         &self.ufrag_pwd.local_credentials
+    }
+
+    pub fn role(&self) -> bool {
+        self.is_controlling
+    }
+
+    pub fn set_role(&mut self, is_controlling: bool) {
+        self.is_controlling = is_controlling;
+    }
+
+    pub fn lite(&self) -> bool {
+        self.lite
+    }
+
+    pub fn set_lite(&mut self, ice_lite: bool) {
+        self.lite = ice_lite;
+    }
+
+    pub fn state(&self) -> ConnectionState {
+        self.connection_state
     }
 
     pub fn handle_read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {

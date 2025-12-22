@@ -5,7 +5,7 @@ use log::{error, info, trace, warn};
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::time::{Duration, Instant};
-use std::{io::Write, str::FromStr};
+use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
 use rtc::configuration::RTCConfigurationBuilder;
@@ -33,6 +33,8 @@ struct Cli {
     debug: bool,
     #[arg(short, long, default_value_t = format!("INFO"))]
     log_level: String,
+    #[arg(short, long, default_value_t =  format!(""))]
+    input_sdp_file: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,
     #[arg(long, default_value_t = 8080)]
@@ -44,6 +46,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let host = cli.host;
     let port = cli.port;
+    let input_sdp_file = cli.input_sdp_file;
     let log_level = log::LevelFilter::from_str(&cli.log_level)?;
     if cli.debug {
         env_logger::Builder::new()
@@ -77,7 +80,7 @@ async fn main() -> Result<()> {
         .expect("Error setting Ctrl-C handler");
     });
 
-    if let Err(err) = run(stop_rx, message_rx, event_rx, host, port).await {
+    if let Err(err) = run(stop_rx, message_rx, event_rx, host, port, input_sdp_file).await {
         error!("run got error: {}", err);
     }
 
@@ -90,6 +93,7 @@ async fn run(
     mut event_rx: broadcast::Receiver<RTCEvent>,
     host: String,
     port: u16,
+    input_sdp_file: String,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
@@ -141,7 +145,11 @@ async fn run(
     }
 
     // Wait for the answer to be pasted
-    let line = signal::must_read_stdin()?;
+    let line = if input_sdp_file.is_empty() {
+        signal::must_read_stdin()?
+    } else {
+        fs::read_to_string(&input_sdp_file)?
+    };
     let desc_data = signal::decode(line.as_str())?;
     let answer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
     info!("answer received: {:?}", answer.sdp);

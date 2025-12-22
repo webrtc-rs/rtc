@@ -45,6 +45,7 @@ pub struct Candidates {
     //TODO: pub multicast_dns_host_name: String,
     pub username_fragment: String,
     pub password: String,
+    pub keep_local_candidates_during_ice_restart: bool,
     pub include_loopback_candidate: bool,
 }
 

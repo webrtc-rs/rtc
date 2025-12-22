@@ -3,9 +3,10 @@ use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
 use crate::transport::ice::state::RTCIceTransportState;
 use ice::candidate::{Candidate, CandidateType};
-use ice::rand::{generate_pwd, generate_ufrag};
 use ice::tcp_type::TcpType;
+use ice::{Agent, AgentConfig};
 use shared::error::{Error, Result};
+use std::sync::Arc;
 
 pub mod candidate;
 pub mod candidate_pair;
@@ -26,48 +27,34 @@ pub(crate) struct UfragPwd {
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RTCIceTransport {
-    //pub(crate) gatherer: Arc<RTCIceGatherer>,
-    //on_connection_state_change_handler: Arc<ArcSwapOption<Mutex<OnConnectionStateChangeHdlrFn>>>,
-    //on_selected_candidate_pair_change_handler:
-    //    Arc<ArcSwapOption<Mutex<OnSelectedCandidatePairChangeHdlrFn>>>,
-    pub(crate) state: RTCIceTransportState,
-    pub(crate) role: RTCIceRole,
-
-    pub(crate) ufrag_pwd: UfragPwd,
-    pub(crate) local_candidates: Vec<Candidate>,
-    pub(crate) remote_candidates: Vec<Candidate>,
+    pub(crate) agent: Agent,
 }
 
 impl RTCIceTransport {
     /// creates a new RTCIceTransport
-    pub(crate) fn new(mut ufrag: String, mut pwd: String) -> Result<Self> {
-        if ufrag.is_empty() {
-            ufrag = generate_ufrag();
-        }
-        if pwd.is_empty() {
-            pwd = generate_pwd();
-        }
+    pub(crate) fn new(local_ufrag: String, local_pwd: String) -> Result<Self> {
+        let agent = Agent::new(Arc::new(AgentConfig {
+            urls: vec![],
+            local_ufrag,
+            local_pwd,
+            disconnected_timeout: None,
+            failed_timeout: None,
+            keepalive_interval: None,
+            candidate_types: vec![],
+            check_interval: Default::default(),
+            max_binding_requests: None,
+            is_controlling: false,
+            lite: false,
+            host_acceptance_min_wait: None,
+            srflx_acceptance_min_wait: None,
+            prflx_acceptance_min_wait: None,
+            relay_acceptance_min_wait: None,
+            insecure_skip_verify: false,
+        }))?;
 
-        if ufrag.len() * 8 < 24 {
-            return Err(Error::ErrLocalUfragInsufficientBits);
-        }
-        if pwd.len() * 8 < 128 {
-            return Err(Error::ErrLocalPwdInsufficientBits);
-        }
-
-        Ok(RTCIceTransport {
-            state: RTCIceTransportState::New,
-            role: RTCIceRole::Unspecified,
-            ufrag_pwd: UfragPwd {
-                local_ufrag: ufrag,
-                local_pwd: pwd,
-                remote_ufrag: String::new(),
-                remote_pwd: String::new(),
-            },
-            ..Default::default()
-        })
+        Ok(RTCIceTransport { agent })
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.
@@ -84,24 +71,28 @@ impl RTCIceTransport {
     /// get_local_candidates returns the sequence of valid local candidates associated with the ICEGatherer.
     pub(crate) fn get_local_candidates(&self) -> Result<Vec<RTCIceCandidate>> {
         Ok(RTCIceTransport::rtc_ice_candidates_from_ice_candidates(
-            &self.local_candidates,
+            self.agent.get_local_candidates(),
         ))
     }
 
     /// Returns the local user credentials.
     pub(crate) fn get_local_user_credentials(&self) -> (&str, &str) {
         (
-            self.ufrag_pwd.local_ufrag.as_str(),
-            self.ufrag_pwd.local_pwd.as_str(),
+            self.agent.get_local_credentials().ufrag.as_str(),
+            self.agent.get_local_credentials().pwd.as_str(),
         )
     }
 
     /// Returns the remote user credentials.
     pub(crate) fn get_remote_user_credentials(&self) -> (&str, &str) {
-        (
-            self.ufrag_pwd.remote_ufrag.as_str(),
-            self.ufrag_pwd.remote_pwd.as_str(),
-        )
+        if let Some(remote_credentials) = self.agent.get_remote_credentials() {
+            (
+                remote_credentials.ufrag.as_str(),
+                remote_credentials.pwd.as_str(),
+            )
+        } else {
+            ("", "")
+        }
     }
 
     /// Conversion for ice_candidates
@@ -127,8 +118,8 @@ impl RTCIceTransport {
             return Err(Error::ErrRemotePwdEmpty);
         }
 
-        self.ufrag_pwd.remote_ufrag = remote_ufrag;
-        self.ufrag_pwd.remote_pwd = remote_pwd;
+        self.agent
+            .set_remote_credentials(remote_ufrag, remote_pwd)?;
 
         Ok(())
     }
@@ -154,9 +145,7 @@ impl RTCIceTransport {
             return Ok(());
         }
 
-        self.remote_candidates.push(c);
-
-        Ok(())
+        self.agent.add_remote_candidate(c)
     }
 
     pub(crate) fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
@@ -170,25 +159,59 @@ impl RTCIceTransport {
             return Ok(());
         }
 
-        self.local_candidates.push(c);
-
-        Ok(())
+        self.agent.add_local_candidate(c)
     }
 
     /// Role indicates the current role of the ICE transport.
     pub(crate) fn role(&self) -> RTCIceRole {
-        self.role
+        if self.agent.role() {
+            RTCIceRole::Controlling
+        } else {
+            RTCIceRole::Controlled
+        }
     }
 
     /// set current role of the ICE transport.
     pub(crate) fn set_role(&mut self, role: RTCIceRole) {
-        self.role = role;
+        self.agent.set_role(role == RTCIceRole::Controlling);
+    }
+
+    pub(crate) fn set_lite(&mut self, ice_lite: bool) {
+        self.agent.set_lite(ice_lite);
+    }
+
+    pub(crate) fn state(&self) -> RTCIceTransportState {
+        self.agent.state().into()
     }
 
     /// restart is not exposed currently because ORTC has users create a whole new ICETransport
     /// so for now lets keep it private so we don't cause ORTC users to depend on non-standard APIs
-    pub(crate) fn restart(&mut self) -> Result<()> {
-        //TODO:
+    pub(crate) fn restart(
+        &mut self,
+        ufrag: String,
+        pwd: String,
+        keep_local_candidates: bool,
+    ) -> Result<()> {
+        self.agent.restart(ufrag, pwd, keep_local_candidates)
+    }
+
+    pub(crate) fn start(
+        &mut self,
+        ice_role: RTCIceRole,
+        remote_ice_parameters: RTCIceParameters,
+    ) -> Result<()> {
+        if self.state() != RTCIceTransportState::New {
+            return Err(Error::ErrICETransportNotInNew);
+        }
+
+        self.set_lite(remote_ice_parameters.ice_lite);
+
+        self.agent.start_connectivity_checks(
+            ice_role == RTCIceRole::Controlling,
+            remote_ice_parameters.username_fragment,
+            remote_ice_parameters.password,
+        )?;
+
         Ok(())
     }
 }
