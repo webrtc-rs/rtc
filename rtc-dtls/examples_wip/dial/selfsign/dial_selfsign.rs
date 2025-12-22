@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use util::Conn;
 
-// cargo run --example dial_selfsign -- --state 127.0.0.1:4444
+// cargo run --example dial_selfsign -- --server 127.0.0.1:4444
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Error> {
                 .long("fullhelp"),
         )
         .arg(
-            Arg::with_name("state")
+            Arg::with_name("server")
                 .required_unless("FULLHELP")
                 .takes_value(true)
                 .default_value("127.0.0.1:4444")
@@ -52,7 +52,7 @@ async fn main() -> Result<(), Error> {
         std::process::exit(0);
     }
 
-    let server = matches.value_of("state").unwrap();
+    let server = matches.value_of("server").unwrap();
 
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     conn.connect(server).await?;

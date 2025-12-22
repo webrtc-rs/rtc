@@ -56,15 +56,16 @@ async fn main() -> Result<(), Error> {
     let host = matches.value_of("host").unwrap().to_owned();
 
     let certificate = hub::utilities::load_key_and_certificate(
-        "dtls/examples/certificates/state.pem.private_key.pem".into(),
-        "dtls/examples/certificates/state.pub.pem".into(),
+        "dtls/examples/certificates/server.pem.private_key.pem".into(),
+        "dtls/examples/certificates/server.pub.pem".into(),
     )?;
 
     let mut cert_pool = rustls::RootCertStore::empty();
-    let f = File::open("dtls/examples/certificates/state.pub.pem")?;
-    let mut reader = BufReader::new(f);
-    if cert_pool.add_pem_file(&mut reader).is_err() {
-        return Err(Error::Other("cert_pool add_pem_file failed".to_owned()));
+    let certs = load_certificate("dtls/examples/certificates/server.pub.pem".into())?;
+    for cert in &certs {
+        if cert_pool.add(cert.to_owned()).is_err() {
+            return Err(Error::Other("cert_pool add_pem_file failed".to_owned()));
+        }
     }
 
     let cfg = Config {

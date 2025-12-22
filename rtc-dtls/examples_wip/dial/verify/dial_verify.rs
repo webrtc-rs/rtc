@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use util::Conn;
 
-// cargo run --example dial_verify -- --state 127.0.0.1:4444
+// cargo run --example dial_verify -- --server 127.0.0.1:4444
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -38,11 +38,11 @@ async fn main() -> Result<(), Error> {
                 .long("fullhelp"),
         )
         .arg(
-            Arg::with_name("state")
+            Arg::with_name("server")
                 .required_unless("FULLHELP")
                 .takes_value(true)
                 .default_value("127.0.0.1:4444")
-                .long("state")
+                .long("server")
                 .help("DTLS Server name."),
         );
 
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Error> {
         std::process::exit(0);
     }
 
-    let server = matches.value_of("state").unwrap();
+    let server = matches.value_of("server").unwrap();
 
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     conn.connect(server).await?;
@@ -65,10 +65,11 @@ async fn main() -> Result<(), Error> {
     )?;
 
     let mut cert_pool = rustls::RootCertStore::empty();
-    let f = File::open("dtls/examples/certificates/state.pub.pem")?;
-    let mut reader = BufReader::new(f);
-    if cert_pool.add_pem_file(&mut reader).is_err() {
-        return Err(Error::Other("cert_pool add_pem_file failed".to_owned()));
+    let certs = load_certificate("dtls/examples/certificates/server.pub.pem".into())?;
+    for cert in &certs {
+        if cert_pool.add(cert.to_owned()).is_err() {
+            return Err(Error::Other("cert_pool add_pem_file failed".to_owned()));
+        }
     }
 
     let config = Config {

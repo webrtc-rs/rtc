@@ -31,12 +31,12 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day 
 struct Cli {
     #[arg(short, long)]
     debug: bool,
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,
     #[arg(long, default_value_t = 8080)]
     port: u16,
-    #[arg(long, default_value_t = format!("INFO"))]
-    log_level: String,
 }
 
 #[tokio::main]
