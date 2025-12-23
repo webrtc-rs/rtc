@@ -9,12 +9,11 @@ use crate::extension::*;
 use crate::record_layer::record_layer_header::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::warn;
 use std::fmt;
 use std::io::{BufReader, BufWriter};
 
 /*
-The state will send this message in response to a ClientHello
+The server will send this message in response to a ClientHello
 message when it was able to find an acceptable set of algorithms.
 If it cannot find such a match, it will respond with a handshake
 failure alert.
@@ -126,7 +125,7 @@ impl HandshakeMessageServerHello {
             if let Ok(extension) = Extension::unmarshal(&mut extension_reader) {
                 extensions.push(extension);
             } else {
-                warn!(
+                log::warn!(
                     "Unsupported Extension Type {} {}",
                     extension_buffer[offset],
                     extension_buffer[offset + 1]

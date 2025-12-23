@@ -104,7 +104,7 @@ impl Flight for Flight4 {
             };
 
             state.peer_certificates.clone_from(&h.certificate);
-            debug!(
+            trace!(
                 "[handshake] PeerCertificates4 {}",
                 state.peer_certificates.len()
             );
@@ -677,7 +677,7 @@ impl Flight for Flight4 {
                 });
             }
         } else if let Some(local_psk_identity_hint) = &cfg.local_psk_identity_hint {
-            // To help the client in selecting which identity to use, the state
+            // To help the client in selecting which identity to use, the server
             // can provide a "PSK identity hint" in the ServerKeyExchange message.
             // If no hint is provided, the ServerKeyExchange message is omitted.
             //

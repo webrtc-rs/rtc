@@ -7,7 +7,6 @@ pub mod crypto_chacha20;
 pub mod crypto_gcm;
 pub mod padding;
 
-use log::trace;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
@@ -255,7 +254,7 @@ impl CryptoPrivateKey {
 }
 
 // If the client provided a "signature_algorithms" extension, then all
-// certificates provided by the state MUST be signed by a
+// certificates provided by the server MUST be signed by a
 // hash/signature algorithm pair that appears in that extension
 //
 // https://tools.ietf.org/html/rfc5246#section-7.4.2
@@ -343,7 +342,7 @@ fn verify_signature(
         _ => return Err(Error::ErrKeySignatureVerifyUnimplemented),
     };
 
-    trace!("Picked an algorithm {:?}", verify_alg);
+    log::trace!("Picked an algorithm {verify_alg:?}");
 
     let public_key = ring::signature::UnparsedPublicKey::new(
         verify_alg,
@@ -377,7 +376,7 @@ pub(crate) fn verify_key_signature(
     )
 }
 
-// If the state has sent a CertificateRequest message, the client MUST send the Certificate
+// If the server has sent a CertificateRequest message, the client MUST send the Certificate
 // message.  The ClientKeyExchange message is now sent, and the content
 // of that message will depend on the public key algorithm selected
 // between the ClientHello and the ServerHello.  If the client has sent

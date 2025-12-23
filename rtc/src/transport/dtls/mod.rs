@@ -167,7 +167,7 @@ impl RTCDtlsTransport {
             .with_insecure_skip_verify(true)
             .with_insecure_verification(self.allow_insecure_verification_algorithm)
             .with_verify_peer_certificate(Some(verify_peer_certificate))
-            //TODO: .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)?
+            .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
             .with_replay_protection_window(self.dtls_replay_protection_window)
             .build(self.dtls_role == DTLSRole::Client, None)
     }

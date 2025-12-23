@@ -9,11 +9,11 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 
 /*
-A non-anonymous state can optionally request a certificate from
+A non-anonymous server can optionally request a certificate from
 the client, if appropriate for the selected cipher suite.  This
 message, if sent, will immediately follow the ServerKeyExchange
 message (if it is sent; otherwise, this message follows the
-state's Certificate message).
+server's Certificate message).
 */
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeMessageCertificateRequest {

@@ -9,12 +9,11 @@ use crate::extension::*;
 use crate::record_layer::record_layer_header::*;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::warn;
 use std::fmt;
 use std::io::{BufReader, BufWriter};
 
 /*
-When a client first connects to a state it is required to send
+When a client first connects to a server it is required to send
 the client hello as its first message.  The client can also send a
 client hello in response to a hello request or on its own
 initiative in order to renegotiate the security parameters in an
@@ -170,7 +169,7 @@ impl HandshakeMessageClientHello {
             if let Ok(extension) = Extension::unmarshal(&mut extension_reader) {
                 extensions.push(extension);
             } else {
-                warn!(
+                log::warn!(
                     "Unsupported Extension Type {} {}",
                     extension_buffer[offset],
                     extension_buffer[offset + 1]

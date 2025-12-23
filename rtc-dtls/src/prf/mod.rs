@@ -22,7 +22,7 @@ pub(crate) const PRF_MASTER_SECRET_LABEL: &str = "master secret";
 pub(crate) const PRF_EXTENDED_MASTER_SECRET_LABEL: &str = "extended master secret";
 pub(crate) const PRF_KEY_EXPANSION_LABEL: &str = "key expansion";
 pub(crate) const PRF_VERIFY_DATA_CLIENT_LABEL: &str = "client finished";
-pub(crate) const PRF_VERIFY_DATA_SERVER_LABEL: &str = "state finished";
+pub(crate) const PRF_VERIFY_DATA_SERVER_LABEL: &str = "server finished";
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) struct EncryptionKeys {
