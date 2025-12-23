@@ -22,7 +22,7 @@ fn test_pair_search() -> Result<()> {
         "TestPairSearch is only a valid test if a.validPairs is empty on construction"
     );
 
-    let cp = a.get_best_available_candidate_pair();
+    let cp = a.get_best_available_pair();
     assert!(cp.is_none(), "No Candidate pairs should exist");
 
     a.close()?;
@@ -118,7 +118,7 @@ fn test_pair_priority() -> Result<()> {
                 a.candidate_pairs[p].state = CandidatePairState::Succeeded;
             }
 
-            if let Some(best_pair) = a.get_best_available_candidate_pair() {
+            if let Some(best_pair) = a.get_best_available_pair() {
                 assert_eq!(
                     a.candidate_pairs[best_pair].to_string(),
                     CandidatePair::new(

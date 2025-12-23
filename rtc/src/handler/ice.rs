@@ -6,7 +6,8 @@ use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::TransportStates;
-use log::debug;
+use ice::state::ConnectionState;
+use log::{debug, trace};
 use shared::error::{Error, Result};
 use shared::TransportMessage;
 
@@ -64,10 +65,22 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
                 transport: msg.transport,
                 message,
             })?
-        } else {
+        } else if self.ctx.ice_transport.agent.state() == ConnectionState::Connected //TODO: is it required?
+            && self
+                .ctx
+                .ice_transport
+                .agent
+                .is_valid_non_stun_traffic(msg.transport)
+        {
             // Bypass
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
             self.ctx.read_outs.push_back(msg);
+        } else {
+            trace!(
+                "drop message from {:?} to {:?} before ICE connection is connected and valid",
+                msg.transport.peer_addr,
+                msg.transport.local_addr,
+            );
         }
 
         Ok(())
@@ -77,10 +90,35 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        // Bypass
-        debug!("Bypass ice write {:?}", msg.transport.peer_addr);
-        self.ctx.write_outs.push_back(msg);
+    fn handle_write(&mut self, mut msg: TaggedRTCMessage) -> Result<()> {
+        let candidate_pair_opt = if let Some((local, remote)) =
+            self.ctx.ice_transport.agent.get_selected_candidate_pair()
+        {
+            Some((local, remote))
+        } else if let Some((local, remote)) = self
+            .ctx
+            .ice_transport
+            .agent
+            .get_best_available_candidate_pair()
+        {
+            Some((local, remote))
+        } else {
+            None
+        };
+
+        if let Some((local, remote)) = candidate_pair_opt {
+            // use ICE selected or best available candidate pair to replace local/peer addr
+            msg.transport.local_addr = local.addr();
+            msg.transport.peer_addr = remote.addr();
+            debug!("Bypass ice write {:?}", msg.transport.peer_addr);
+            self.ctx.write_outs.push_back(msg);
+        } else {
+            trace!(
+                "drop message from {:?} to {:?} before ICE connection is connected",
+                msg.transport.peer_addr,
+                msg.transport.local_addr
+            );
+        }
 
         Ok(())
     }

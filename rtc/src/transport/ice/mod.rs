@@ -17,14 +17,6 @@ pub mod role;
 pub mod server;
 pub mod state;
 
-#[derive(Default, Clone)]
-pub(crate) struct UfragPwd {
-    pub(crate) local_ufrag: String,
-    pub(crate) local_pwd: String,
-    pub(crate) remote_ufrag: String,
-    pub(crate) remote_pwd: String,
-}
-
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
 #[derive(Default)]

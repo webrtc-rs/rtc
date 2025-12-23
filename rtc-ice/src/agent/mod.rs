@@ -426,6 +426,12 @@ impl Agent {
         }
     }
 
+    pub fn is_valid_non_stun_traffic(&mut self, transport: TransportContext) -> bool {
+        self.find_local_candidate(transport.local_addr, transport.transport_protocol)
+            .is_some()
+            && self.validate_non_stun_traffic(transport.peer_addr)
+    }
+
     fn get_timeout_interval(&self) -> Duration {
         let (check_interval, keepalive_interval, disconnected_timeout, failed_timeout) = (
             self.check_interval,
@@ -460,6 +466,18 @@ impl Agent {
     /// Returns the selected pair (local_candidate, remote_candidate) or none
     pub fn get_selected_candidate_pair(&self) -> Option<(Candidate, Candidate)> {
         if let Some(pair_index) = self.get_selected_pair() {
+            let candidate_pair = &self.candidate_pairs[pair_index];
+            Some((
+                self.local_candidates[candidate_pair.local_index].clone(),
+                self.remote_candidates[candidate_pair.remote_index].clone(),
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_best_available_candidate_pair(&self) -> Option<(Candidate, Candidate)> {
+        if let Some(pair_index) = self.get_best_available_pair() {
             let candidate_pair = &self.candidate_pairs[pair_index];
             Some((
                 self.local_candidates[candidate_pair.local_index].clone(),
@@ -1145,7 +1163,7 @@ impl Agent {
         self.selected_pair
     }
 
-    pub(crate) fn get_best_available_candidate_pair(&self) -> Option<usize> {
+    pub(crate) fn get_best_available_pair(&self) -> Option<usize> {
         let mut best_pair_index: Option<usize> = None;
 
         for (index, p) in self.candidate_pairs.iter().enumerate() {

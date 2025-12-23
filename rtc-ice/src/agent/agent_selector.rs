@@ -358,7 +358,7 @@ impl ControllingSelector for Agent {
                 && nominated_pair_is_none
                 && self.get_selected_pair().is_none()
             {
-                if let Some(best_pair_index) = self.get_best_available_candidate_pair() {
+                if let Some(best_pair_index) = self.get_best_available_pair() {
                     trace!(
                         "controllingSelector: getBestAvailableCandidatePair {}",
                         best_pair_index
