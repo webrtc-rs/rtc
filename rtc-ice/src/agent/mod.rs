@@ -136,8 +136,8 @@ pub struct Agent {
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
 
-    pub(crate) transmits: VecDeque<TransportMessage<BytesMut>>,
-    pub(crate) events: VecDeque<Event>,
+    pub(crate) write_outs: VecDeque<TransportMessage<BytesMut>>,
+    pub(crate) event_outs: VecDeque<Event>,
 }
 
 impl Default for Agent {
@@ -170,8 +170,8 @@ impl Default for Agent {
             last_checking_time: Instant::now(),
             candidate_types: vec![],
             urls: vec![],
-            transmits: Default::default(),
-            events: Default::default(),
+            write_outs: Default::default(),
+            event_outs: Default::default(),
         }
     }
 }
@@ -294,8 +294,8 @@ impl Agent {
             candidate_types,
             urls: config.urls.clone(),
 
-            transmits: VecDeque::new(),
-            events: VecDeque::new(),
+            write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
         };
 
         // Restart is also used to initialize the agent for the first time
@@ -403,27 +403,6 @@ impl Agent {
 
     pub fn state(&self) -> ConnectionState {
         self.connection_state
-    }
-
-    pub fn read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
-        if let Some(local_index) =
-            self.find_local_candidate(msg.transport.local_addr, msg.transport.transport_protocol)
-        {
-            self.handle_inbound_candidate_msg(
-                local_index,
-                &msg.message,
-                msg.transport.peer_addr,
-                msg.transport.local_addr,
-            )
-        } else {
-            warn!(
-                "[{}]: Discarded message, not a valid local candidate from {:?}:{}",
-                self.get_name(),
-                msg.transport.transport_protocol,
-                msg.transport.local_addr,
-            );
-            Err(Error::ErrUnhandledStunpacket)
-        }
     }
 
     pub fn is_valid_non_stun_traffic(&mut self, transport: TransportContext) -> bool {
@@ -603,7 +582,7 @@ impl Agent {
                 new_state
             );
             self.connection_state = new_state;
-            self.events
+            self.event_outs
                 .push_back(Event::ConnectionStateChange(new_state));
         }
     }
@@ -623,10 +602,11 @@ impl Agent {
 
             // Notify when the selected pair changes
             let candidate_pair = &self.candidate_pairs[pair_index];
-            self.events.push_back(Event::SelectedCandidatePairChange(
-                Box::new(self.local_candidates[candidate_pair.local_index].clone()),
-                Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
-            ));
+            self.event_outs
+                .push_back(Event::SelectedCandidatePairChange(
+                    Box::new(self.local_candidates[candidate_pair.local_index].clone()),
+                    Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
+                ));
         } else {
             self.selected_pair = None;
         }
@@ -1092,7 +1072,7 @@ impl Agent {
             TransportProtocol::UDP
         };
 
-        self.transmits.push_back(TransportMessage {
+        self.write_outs.push_back(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr,
@@ -1109,42 +1089,38 @@ impl Agent {
     fn handle_inbound_candidate_msg(
         &mut self,
         local_index: usize,
-        buf: &[u8],
-        remote_addr: SocketAddr,
-        local_addr: SocketAddr,
+        msg: TransportMessage<BytesMut>,
     ) -> Result<()> {
-        if stun::message::is_message(buf) {
+        if is_stun_message(&msg.message) {
             let mut m = Message {
-                raw: vec![],
+                raw: msg.message.to_vec(),
                 ..Message::default()
             };
-            // Explicitly copy raw buffer so Message can own the memory.
-            m.raw.extend_from_slice(buf);
 
             if let Err(err) = m.decode() {
                 warn!(
                     "[{}]: Failed to handle decode ICE from {} to {}: {}",
                     self.get_name(),
-                    local_addr,
-                    remote_addr,
+                    msg.transport.local_addr,
+                    msg.transport.peer_addr,
                     err
                 );
                 Err(err)
             } else {
-                self.handle_inbound(&mut m, local_index, remote_addr)
+                self.handle_inbound(&mut m, local_index, msg.transport.peer_addr)
             }
         } else {
-            if !self.validate_non_stun_traffic(remote_addr) {
+            if !self.validate_non_stun_traffic(msg.transport.peer_addr) {
                 warn!(
                     "[{}]: Discarded message, not a valid remote candidate from {}",
                     self.get_name(),
-                    remote_addr,
+                    msg.transport.peer_addr,
                 );
             } else {
-                error!(
+                warn!(
                     "[{}]: non-STUN traffic message from a valid remote candidate from {}",
                     self.get_name(),
-                    remote_addr
+                    msg.transport.peer_addr
                 );
             }
             Err(Error::ErrNonStunmessage)

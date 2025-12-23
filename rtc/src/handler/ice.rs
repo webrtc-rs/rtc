@@ -6,7 +6,6 @@ use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::TransportStates;
-use ice::state::ConnectionState;
 use log::{debug, trace};
 use shared::error::{Error, Result};
 use shared::TransportMessage;
@@ -59,28 +58,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Stun(STUNMessage::Stun(message)) = msg.message {
+        if let RTCMessage::Stun(STUNMessage::Raw(message)) = msg.message {
             self.ctx.ice_transport.agent.handle_read(TransportMessage {
                 now: msg.now,
                 transport: msg.transport,
                 message,
-            })?
-        } else if self.ctx.ice_transport.agent.state() == ConnectionState::Connected //TODO: is it required?
-            && self
-                .ctx
-                .ice_transport
-                .agent
-                .is_valid_non_stun_traffic(msg.transport)
-        {
+            })?;
+        } else {
             // Bypass
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
             self.ctx.read_outs.push_back(msg);
-        } else {
-            trace!(
-                "drop message from {:?} to {:?} before ICE connection is connected and valid",
-                msg.transport.peer_addr,
-                msg.transport.local_addr,
-            );
         }
 
         Ok(())

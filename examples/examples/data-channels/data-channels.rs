@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
-use log::{error, info, trace, warn};
+use log::trace;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::time::{Duration, Instant};
@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     let (_message_tx, message_rx) = broadcast::channel::<RTCMessage>(8);
     let (_event_tx, event_rx) = broadcast::channel::<RTCEvent>(8);
 
-    info!("Press Ctrl-C to stop");
+    println!("Press Ctrl-C to stop");
     std::thread::spawn(move || {
         let mut stop_tx = Some(stop_tx);
         ctrlc::set_handler(move || {
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     });
 
     if let Err(err) = run(stop_rx, message_rx, event_rx, host, port, input_sdp_file).await {
-        error!("run got error: {}", err);
+        eprintln!("run got error: {}", err);
     }
 
     Ok(())
@@ -117,7 +117,7 @@ async fn run(
     };
     let desc_data = signal::decode(line.as_str())?;
     let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
-    info!("Offer received: {:?}", offer.sdp);
+    println!("Offer received: {}", offer);
 
     // Set the remote SessionDescription
     peer_connection.set_remote_description(offer)?;
@@ -145,7 +145,7 @@ async fn run(
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
-        info!("answer created: {:?}", local_desc.sdp);
+        println!("answer created: {}", local_desc);
         let json_str = serde_json::to_string(local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("{b64}");
@@ -168,7 +168,7 @@ async fn run(
                     );
                 }
                 Err(err) => {
-                    warn!(
+                    eprintln!(
                         "socket write to {} with error {}",
                         msg.transport.peer_addr, err
                     );
@@ -180,9 +180,9 @@ async fn run(
         while let Some(event) = peer_connection.poll_event() {
             match event {
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(peer_connection_state) => {
-                    info!("Peer Connection State has changed: {peer_connection_state}");
+                    println!("Peer Connection State has changed: {peer_connection_state}");
                     if peer_connection_state == RTCPeerConnectionState::Failed {
-                        warn!("Peer Connection State has gone to failed! Exiting...");
+                        eprintln!("Peer Connection State has gone to failed! Exiting...");
                         break 'EventLoop;
                     }
                 }
@@ -192,14 +192,14 @@ async fn run(
                             let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
-                            info!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
+                            println!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
                         }
                         RTCDataChannelEvent::OnMessage(channel_id, message) => {
                             let mut dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             let msg_str = String::from_utf8(message.data.to_vec())?;
-                            info!(
+                            println!(
                                 "Message from DataChannel '{}': '{}', Echoing back",
                                 dc.label()?,
                                 msg_str
@@ -242,7 +242,7 @@ async fn run(
                         peer_connection.handle_write(message)?;
                     }
                     Err(err) => {
-                        warn!("write_rx error: {}", err);
+                        eprintln!("write_rx error: {}", err);
                         break 'EventLoop;
                     }
                 }
@@ -253,7 +253,7 @@ async fn run(
                         peer_connection.handle_event(event)?;
                     }
                     Err(err) => {
-                        warn!("event_rx error: {}", err);
+                        eprintln!("event_rx error: {}", err);
                         break 'EventLoop;
                     }
                 }
@@ -277,7 +277,7 @@ async fn run(
                         })?;
                     }
                     Err(err) => {
-                        warn!("socket read error {}", err);
+                        eprintln!("socket read error {}", err);
                         break 'EventLoop;
                     }
                 }

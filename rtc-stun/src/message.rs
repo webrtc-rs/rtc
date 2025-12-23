@@ -62,10 +62,10 @@ pub trait Checker {
     fn check(&self, m: &Message) -> Result<()>;
 }
 
-// is_message returns true if b looks like STUN message.
-// Useful for multiplexing. is_message does not guarantee
+// is_stun_message returns true if b looks like STUN message.
+// Useful for multiplexing. is_stun_message does not guarantee
 // that decoding will be successful.
-pub fn is_message(b: &[u8]) -> bool {
+pub fn is_stun_message(b: &[u8]) -> bool {
     b.len() >= MESSAGE_HEADER_SIZE && u32::from_be_bytes([b[4], b[5], b[6], b[7]]) == MAGIC_COOKIE
 }
 // Message represents a single STUN packet. It uses aggressive internal

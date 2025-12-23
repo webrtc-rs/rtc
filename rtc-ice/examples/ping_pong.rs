@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use clap::Parser;
 use futures::StreamExt;
 use hyper::service::{make_service_fn, service_fn};
@@ -16,7 +17,6 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use stun::message::Message;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch, Mutex};
 
@@ -336,14 +336,8 @@ async fn main() -> Result<(), Error> {
                         break;
                     }
 
-                    if stun::message::is_message(&buf[0..n]) {
-                        let mut message = Message {
-                            raw: buf[0..n].to_vec(),
-                            ..Default::default()
-                        };
-                        message.decode()?;
-
-                        ice_agent.handle_read(TransportMessage::<Message>{
+                    if stun::message::is_stun_message(&buf[0..n]) {
+                        ice_agent.handle_read(TransportMessage::<BytesMut>{
                             now: Instant::now(),
                             transport: TransportContext{
                                 local_addr: udp_socket.local_addr()?,
@@ -351,7 +345,7 @@ async fn main() -> Result<(), Error> {
                                 ecn: None,
                                 transport_protocol: TransportProtocol::UDP,
                             },
-                            message,
+                            message:BytesMut::from(&buf[0..n]),
                         })?;
                     } else {
                         println!("{}", String::from_utf8((&buf[0..n]).to_vec())?);

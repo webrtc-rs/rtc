@@ -7,7 +7,6 @@ pub(crate) mod interceptor;
 pub mod message;
 pub(crate) mod sctp;
 pub(crate) mod srtp;
-pub(crate) mod stun;
 
 use crate::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
 use crate::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
@@ -18,7 +17,6 @@ use crate::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext}
 use crate::handler::message::{RTCEvent, RTCMessage, TaggedRTCMessage};
 use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
-use crate::handler::stun::{StunHandler, StunHandlerContext};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::RTCPeerConnection;
 use crate::transport::TransportStates;
@@ -37,7 +35,6 @@ macro_rules! forward_handlers {
             $($args)*,
             [
                 get_demuxer_handler,
-                get_stun_handler,
                 get_ice_handler,
                 get_dtls_handler,
                 get_sctp_handler,
@@ -63,7 +60,6 @@ macro_rules! reverse_handlers {
                 get_sctp_handler,
                 get_dtls_handler,
                 get_ice_handler,
-                get_stun_handler,
                 get_demuxer_handler
             ]
         )
@@ -102,7 +98,6 @@ pub(crate) struct PipelineContext {
 
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,
-    pub(crate) stun_handler_context: StunHandlerContext,
     pub(crate) ice_handler_context: IceHandlerContext,
     pub(crate) dtls_handler_context: DtlsHandlerContext,
     pub(crate) sctp_handler_context: SctpHandlerContext,
@@ -119,18 +114,14 @@ pub(crate) struct PipelineContext {
 impl RTCPeerConnection {
     /*
      Pipeline Flow (Read Path):
-     Raw Bytes -> Demuxer -> STUN -> ICE -> DTLS -> SCTP -> DataChannel -> SRTP -> Interceptor -> Endpoint -> Application
+     Raw Bytes -> Demuxer -> ICE -> DTLS -> SCTP -> DataChannel -> SRTP -> Interceptor -> Endpoint -> Application
 
      Pipeline Flow (Write Path):
-     Application -> Endpoint -> Interceptor -> SRTP -> DataChannel -> SCTP -> DTLS -> ICE -> STUN -> Demuxer -> Raw Bytes
+     Application -> Endpoint -> Interceptor -> SRTP -> DataChannel -> SCTP -> DTLS -> ICE -> Demuxer -> Raw Bytes
     */
 
     pub(crate) fn get_demuxer_handler(&mut self) -> DemuxerHandler<'_> {
         DemuxerHandler::new(&mut self.pipeline_context.demuxer_handler_context)
-    }
-
-    pub(crate) fn get_stun_handler(&mut self) -> StunHandler<'_> {
-        StunHandler::new(&mut self.pipeline_context.stun_handler_context)
     }
 
     pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {

@@ -1,20 +1,17 @@
 use super::*;
 
-impl sansio::Protocol<TransportMessage<Message>, (), ()> for Agent {
-    type Rout = ();
+impl sansio::Protocol<TransportMessage<BytesMut>, (), ()> for Agent {
+    type Rout = TransportMessage<BytesMut>;
     type Wout = TransportMessage<BytesMut>;
     type Eout = Event;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(
-        &mut self,
-        mut msg: TransportMessage<Message>,
-    ) -> std::result::Result<(), Self::Error> {
+    fn handle_read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
         if let Some(local_index) =
             self.find_local_candidate(msg.transport.local_addr, msg.transport.transport_protocol)
         {
-            self.handle_inbound(&mut msg.message, local_index, msg.transport.peer_addr)
+            self.handle_inbound_candidate_msg(local_index, msg)
         } else {
             warn!(
                 "[{}]: Discarded message, not a valid local candidate from {:?}:{}",
@@ -35,7 +32,7 @@ impl sansio::Protocol<TransportMessage<Message>, (), ()> for Agent {
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        self.transmits.pop_front()
+        self.write_outs.pop_front()
     }
 
     fn handle_event(&mut self, _evt: ()) -> std::result::Result<(), Self::Error> {
@@ -43,7 +40,7 @@ impl sansio::Protocol<TransportMessage<Message>, (), ()> for Agent {
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.events.pop_front()
+        self.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> std::result::Result<(), Self::Error> {

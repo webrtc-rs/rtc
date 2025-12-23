@@ -236,7 +236,7 @@ impl Client {
         //  - STUN message was a request
         //  - Non-STUN message from the STUN state
 
-        if is_message(data) {
+        if is_stun_message(data) {
             self.handle_stun_message(data)
         } else if ChannelData::is_channel_data(data) {
             self.handle_channel_data(data)

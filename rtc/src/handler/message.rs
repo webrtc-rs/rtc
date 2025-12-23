@@ -51,7 +51,6 @@ pub struct ApplicationMessage {
 #[derive(Debug, Clone)]
 pub enum STUNMessage {
     Raw(BytesMut),
-    Stun(stun::message::Message),
 }
 
 #[derive(Debug, Clone)]

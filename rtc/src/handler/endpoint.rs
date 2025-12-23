@@ -70,11 +70,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for Endp
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        self.ctx.write_outs.push_back(TaggedRTCMessage {
-            now: Instant::now(),
-            transport: TransportContext::default(), //TODO: rewrite transport context
-            message: msg.message,
-        });
+        self.ctx.write_outs.push_back(msg);
         Ok(())
     }
 

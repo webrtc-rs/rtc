@@ -595,7 +595,7 @@ fn test_is_message() -> Result<()> {
     ];
 
     for (input, output) in tests {
-        let got = is_message(&input);
+        let got = is_stun_message(&input);
         assert_eq!(got, output, "IsMessage({input:?}) {got} != {output}");
     }
 
