@@ -1,4 +1,5 @@
-use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
+use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
+use crate::transport::dtls::role::DTLSRole;
 use crate::transport::TransportStates;
 use bytes::BytesMut;
 use log::{debug, error};
@@ -12,6 +13,7 @@ use std::time::Instant;
 pub(crate) struct SrtpHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
@@ -36,10 +38,12 @@ impl<'a> SrtpHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for SrtpHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -183,12 +187,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SrtpHandle
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        //TODO: should DTLSHandshakeComplete be terminated at SRTP handler?
+        if let RTCEventInternal::DTLSHandshakeComplete(local, remote) = &evt {
+            //TODO:
+        }
+
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<()> {

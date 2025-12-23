@@ -1,11 +1,9 @@
-use crate::peer_connection::sdp::session_description::RTCSessionDescription;
-use crate::transport::dtls::parameters::DTLSParameters;
-use crate::transport::ice::parameters::RTCIceParameters;
-use crate::transport::ice::role::RTCIceRole;
-use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
+use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
+use ice::candidate::Candidate;
 use sctp::ReliabilityType;
 use shared::TransportContext;
+use srtp::context::Context;
 use std::time::Instant;
 
 pub type Mid = String;
@@ -85,15 +83,12 @@ pub struct TaggedRTCMessage {
 pub enum RTCEvent {}
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone)]
 pub(crate) enum RTCEventInternal {
-    StartRtpSenders,
-    StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
-    StartTransports(RTCIceRole, RTCIceParameters, DTLSParameters),
-    StartSctpTransport(
-        SCTPTransportCapabilities,
-        u16, /*local_port*/
-        u16, /*remote_port*/
-    ),
-    DoNegotiationNeeded,
+    RTCEvent(RTCEvent),
+    RTCPeerConnectionEvent(RTCPeerConnectionEvent),
+
+    // ICE Event
+    ICESelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
+    // DTLS Event
+    DTLSHandshakeComplete(Box<Context>, Box<Context>),
 }

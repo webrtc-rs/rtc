@@ -1,6 +1,6 @@
 use super::message::{
-    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType, RTCMessage,
-    TaggedRTCMessage,
+    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType,
+    RTCEventInternal, RTCMessage, TaggedRTCMessage,
 };
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::sctp::RTCSctpTransport;
@@ -63,10 +63,12 @@ enum SctpMessage {
     Outbound(TransportMessage<Payload>),
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for SctpHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -283,7 +285,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for SctpHandle
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
         Ok(())
     }
 

@@ -14,7 +14,6 @@ use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
 use crate::handler::dtls::DtlsHandlerContext;
 use crate::handler::ice::IceHandlerContext;
-use crate::handler::message::RTCEventInternal;
 use crate::handler::sctp::SctpHandlerContext;
 use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
@@ -367,20 +366,17 @@ impl RTCPeerConnection {
                                     )
                                     .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                                self.ops_enqueue_start(RTCEventInternal::StartSctpTransport(
+                                self.start_sctp_transport(
                                     SCTPTransportCapabilities { max_message_size },
                                     local_port,
                                     remote_port,
-                                ))?;
+                                )?;
                             }
                         }
                     }
 
-                    self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
-                    self.ops_enqueue_start(RTCEventInternal::StartRtp(
-                        is_renegotiation,
-                        remote_description,
-                    ))?;
+                    self.start_rtp_senders()?;
+                    self.start_rtp(is_renegotiation, remote_description)?;
                 }
             }
         }
@@ -613,7 +609,7 @@ impl RTCPeerConnection {
                 log::trace!(
                     "start_transports: ice_role={ice_role}, remote_dtls_role={remote_dtls_role}"
                 );
-                self.ops_enqueue_start(RTCEventInternal::StartTransports(
+                self.start_transports(
                     ice_role,
                     RTCIceParameters {
                         username_fragment: remote_ufrag,
@@ -627,7 +623,7 @@ impl RTCPeerConnection {
                             value: remote_fingerprint,
                         }],
                     },
-                ))?;
+                )?;
             }
 
             if we_offer {
@@ -647,20 +643,17 @@ impl RTCPeerConnection {
                             )
                             .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                            self.ops_enqueue_start(RTCEventInternal::StartSctpTransport(
+                            self.start_sctp_transport(
                                 SCTPTransportCapabilities { max_message_size },
                                 local_port,
                                 remote_port,
-                            ))?;
+                            )?;
                         }
                     }
                 }
 
-                self.ops_enqueue_start(RTCEventInternal::StartRtpSenders)?;
-                self.ops_enqueue_start(RTCEventInternal::StartRtp(
-                    is_renegotiation,
-                    remote_description,
-                ))?;
+                self.start_rtp_senders()?;
+                self.start_rtp(is_renegotiation, remote_description)?;
             }
         }
 

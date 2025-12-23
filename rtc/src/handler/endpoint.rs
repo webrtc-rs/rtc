@@ -1,5 +1,5 @@
 use super::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEvent, RTCMessage, RTPMessage,
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage, RTPMessage,
     TaggedRTCMessage,
 };
 use crate::data_channel::event::RTCDataChannelEvent;
@@ -20,7 +20,7 @@ pub(crate) struct EndpointHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 /// EndpointHandler implements DataChannel/Media Endpoint handling
@@ -40,10 +40,12 @@ impl<'a> EndpointHandler<'a> {
 }
 
 // Implement Protocol trait for message processing
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for EndpointHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for EndpointHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = RTCPeerConnectionEvent;
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -78,7 +80,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEvent> for Endp
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEvent) -> Result<()> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
         Ok(())
     }
 
@@ -164,8 +166,8 @@ impl<'a> EndpointHandler<'a> {
 
         self.ctx
             .event_outs
-            .push_back(RTCPeerConnectionEvent::OnDataChannel(
-                RTCDataChannelEvent::OnOpen(stream_id),
+            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(stream_id)),
             ));
 
         Ok(())
@@ -181,8 +183,8 @@ impl<'a> EndpointHandler<'a> {
         debug!("data channel is close for {:?}", transport_context);
         self.ctx
             .event_outs
-            .push_back(RTCPeerConnectionEvent::OnDataChannel(
-                RTCDataChannelEvent::OnClose(stream_id),
+            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(stream_id)),
             ));
 
         Ok(())
@@ -200,11 +202,11 @@ impl<'a> EndpointHandler<'a> {
         debug!("data channel recv message for {:?}", transport_context);
         self.ctx
             .event_outs
-            .push_back(RTCPeerConnectionEvent::OnDataChannel(
-                RTCDataChannelEvent::OnMessage(
+            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
                     stream_id,
                     RTCDataChannelMessage { is_string, data },
-                ),
+                )),
             ));
 
         Ok(())

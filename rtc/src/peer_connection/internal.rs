@@ -1,5 +1,4 @@
 use super::*;
-use crate::handler::message::RTCEventInternal;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
@@ -432,7 +431,7 @@ impl RTCPeerConnection {
         if !self.do_negotiation_needed_inner() {
             return;
         }
-        let _ = self.ops_enqueue_start(RTCEventInternal::DoNegotiationNeeded);
+        let _ = self.negotiation_needed_op();
     }
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
@@ -475,27 +474,8 @@ impl RTCPeerConnection {
         self.trigger_negotiation_needed();
     }
 
-    pub(super) fn ops_enqueue_start(&mut self, event: RTCEventInternal) -> Result<()> {
-        match event {
-            RTCEventInternal::StartRtpSenders => {
-                self.start_rtp_senders()?;
-            }
-            RTCEventInternal::StartRtp(is_renegotiation, remote_desc) => {
-                self.start_rtp(is_renegotiation, remote_desc)?
-            }
-            RTCEventInternal::StartTransports(ice_role, ice_parameters, dtls_parameters) => {
-                self.start_transports(ice_role, ice_parameters, dtls_parameters)?;
-            }
-            RTCEventInternal::StartSctpTransport(capabilities, local_port, remote_port) => {
-                self.start_sctp_transport(capabilities, local_port, remote_port)?
-            }
-            RTCEventInternal::DoNegotiationNeeded => self.negotiation_needed_op()?,
-        }
-        Ok(())
-    }
-
     /// start_rtp_senders starts all outbound RTP streams
-    fn start_rtp_senders(&mut self) -> Result<()> {
+    pub(crate) fn start_rtp_senders(&mut self) -> Result<()> {
         /*TODO: let current_transceivers = self.internal.rtp_transceivers.lock().await;
         for transceiver in &*current_transceivers {
             let sender = transceiver.sender().await;
@@ -510,7 +490,7 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    fn start_rtp(
+    pub(crate) fn start_rtp(
         &mut self,
         _is_renegotiation: bool,
         _remote_desc: RTCSessionDescription,
@@ -615,7 +595,7 @@ impl RTCPeerConnection {
     }
 
     /// Start all transports. PeerConnection now has enough state
-    fn start_transports(
+    pub(crate) fn start_transports(
         &mut self,
         ice_role: RTCIceRole,
         remote_ice_parameters: RTCIceParameters,
@@ -637,7 +617,7 @@ impl RTCPeerConnection {
     /// Start the SCTPTransport. Since both local and remote parties must mutually
     /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
     /// a connection over SCTP.
-    fn start_sctp_transport(
+    pub(crate) fn start_sctp_transport(
         &mut self,
         remote_caps: SCTPTransportCapabilities,
         local_port: u16,

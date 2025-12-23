@@ -14,7 +14,7 @@ use crate::handler::dtls::{DtlsHandler, DtlsHandlerContext};
 use crate::handler::endpoint::{EndpointHandler, EndpointHandlerContext};
 use crate::handler::ice::{IceHandler, IceHandlerContext};
 use crate::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
-use crate::handler::message::{RTCEvent, RTCMessage, TaggedRTCMessage};
+use crate::handler::message::{RTCEvent, RTCEventInternal, RTCMessage, TaggedRTCMessage};
 use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
@@ -22,7 +22,7 @@ use crate::peer_connection::RTCPeerConnection;
 use crate::transport::TransportStates;
 use log::warn;
 use shared::error::Error;
-use shared::{TaggedBytesMut, TransportContext};
+use shared::TaggedBytesMut;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -108,7 +108,8 @@ pub(crate) struct PipelineContext {
 
     // Pipeline
     pub(crate) read_outs: VecDeque<RTCMessage>,
-    pub(crate) write_outs: VecDeque<RTCMessage>,
+    pub(crate) write_outs: VecDeque<TaggedBytesMut>,
+    pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
 }
 
 impl RTCPeerConnection {
@@ -204,19 +205,17 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     }
 
     fn handle_write(&mut self, msg: RTCMessage) -> Result<(), Self::Error> {
-        self.pipeline_context.write_outs.push_back(msg);
-        Ok(())
+        // Only endpoint can handle user write message
+        let mut endpoint_handler = self.get_endpoint_handler();
+        endpoint_handler.handle_write(TaggedRTCMessage {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: msg,
+        })
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
         let mut intermediate_wouts = VecDeque::new();
-        while let Some(msg) = self.pipeline_context.write_outs.pop_front() {
-            intermediate_wouts.push_back(TaggedRTCMessage {
-                now: Instant::now(),
-                transport: TransportContext::default(),
-                message: msg,
-            });
-        }
 
         for_each_handler!(reverse: process_handler!(self, handler, {
             while let Some(msg) = intermediate_wouts.pop_front() {
@@ -230,27 +229,47 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
         }));
 
         // Final poll write out to pipeline's write out
-        if let Some(msg) = intermediate_wouts.pop_front() {
+        while let Some(msg) = intermediate_wouts.pop_front() {
             if let RTCMessage::Raw(message) = msg.message {
-                return Some(TaggedBytesMut {
+                self.pipeline_context.write_outs.push_back(TaggedBytesMut {
                     now: msg.now,
                     transport: msg.transport,
                     message,
                 });
             }
         }
-        None
+
+        self.pipeline_context.write_outs.pop_front()
     }
 
     fn handle_event(&mut self, evt: RTCEvent) -> Result<(), Self::Error> {
-        // Endpoint
+        // Only endpoint can handle user event
         let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.handle_event(evt)
+        endpoint_handler.handle_event(RTCEventInternal::RTCEvent(evt))
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.poll_event()
+        let mut intermediate_eouts = VecDeque::new();
+
+        for_each_handler!(forward: process_handler!(self, handler, {
+            while let Some(evt) = intermediate_eouts.pop_front() {
+                if let Err(err) = handler.handle_event(evt) {
+                    warn!("{}.handle_event got error: {}", handler.name(), err);
+                }
+            }
+            while let Some(msg) = handler.poll_event() {
+                intermediate_eouts.push_back(msg);
+            }
+        }));
+
+        // Finally, put intermediate_eouts into RTCPeerConnection's eouts
+        while let Some(RTCEventInternal::RTCPeerConnectionEvent(evt)) =
+            intermediate_eouts.pop_front()
+        {
+            self.pipeline_context.event_outs.push_back(evt);
+        }
+
+        self.pipeline_context.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
@@ -275,84 +294,6 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
             handler.close()?;
         }));
 
-        /*
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #1)
-        if self.internal.is_closed.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #2)
-        self.internal.is_closed.store(true, Ordering::SeqCst);
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #3)
-        self.internal
-            .signaling_state
-            .store(RTCSignalingState::Closed as u8, Ordering::SeqCst);
-
-        // Try closing everything and collect the errors
-        // Shutdown strategy:
-        // 1. All Conn close by closing their underlying Conn.
-        // 2. A Mux stops this chain. It won't close the underlying
-        //    Conn if one of the endpoints is closed down. To
-        //    continue the chain the Mux has to be closed.
-        let mut close_errs = vec![];
-
-        if let Err(err) = self.interceptor.close().await {
-            close_errs.push(Error::new(format!("interceptor: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #4)
-        {
-            let mut rtp_transceivers = self.internal.rtp_transceivers.lock().await;
-            for t in &*rtp_transceivers {
-                if let Err(err) = t.stop().await {
-                    close_errs.push(Error::new(format!("rtp_transceivers: {err}")));
-                }
-            }
-            rtp_transceivers.clear();
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #5)
-        {
-            let mut data_channels = self.internal.sctp_transport.data_channels.lock().await;
-            for d in &*data_channels {
-                if let Err(err) = d.close().await {
-                    close_errs.push(Error::new(format!("data_channels: {err}")));
-                }
-            }
-            data_channels.clear();
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #6)
-        if let Err(err) = self.internal.sctp_transport.stop().await {
-            close_errs.push(Error::new(format!("sctp_transport: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #7)
-        if let Err(err) = self.internal.dtls_transport.stop().await {
-            close_errs.push(Error::new(format!("dtls_transport: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #8, #9, #10)
-        if let Err(err) = self.internal.ice_transport.stop().await {
-            close_errs.push(Error::new(format!("ice_transport: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #11)
-        RTCPeerConnection::update_connection_state(
-            &self.internal.on_peer_connection_state_change_handler,
-            &self.internal.is_closed,
-            &self.internal.peer_connection_state,
-            self.ice_connection_state(),
-            self.internal.dtls_transport.state(),
-        )
-        .await;
-
-        if let Err(err) = self.internal.ops.close().await {
-            close_errs.push(Error::new(format!("ops: {err}")));
-        }
-
-        flatten_errs(close_errs)*/
         Ok(())
     }
 }

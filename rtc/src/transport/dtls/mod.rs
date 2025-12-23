@@ -34,7 +34,7 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
 #[derive(Default)]
 pub struct RTCDtlsTransport {
     pub(crate) dtls_role: DTLSRole,
-    pub(crate) dtls_handshake_config: Option<::dtls::config::HandshakeConfig>,
+    pub(crate) dtls_handshake_config: Option<Arc<::dtls::config::HandshakeConfig>>,
     pub(crate) dtls_endpoint: Option<::dtls::endpoint::Endpoint>,
 
     pub(crate) state: RTCDtlsTransportState,
@@ -115,7 +115,7 @@ impl RTCDtlsTransport {
         &mut self,
         ice_role: RTCIceRole,
         remote_dtls_parameters: DTLSParameters,
-    ) -> Result<::dtls::config::HandshakeConfig> {
+    ) -> Result<Arc<::dtls::config::HandshakeConfig>> {
         if self.state != RTCDtlsTransportState::New {
             return Err(Error::ErrInvalidDTLSStart);
         }
@@ -156,20 +156,22 @@ impl RTCDtlsTransport {
         };
         self.state_change(RTCDtlsTransportState::Connecting);
 
-        ::dtls::config::ConfigBuilder::default()
-            .with_certificates(vec![certificate])
-            .with_srtp_protection_profiles(if !self.srtp_protection_profiles.is_empty() {
-                self.srtp_protection_profiles.clone()
-            } else {
-                default_srtp_protection_profiles()
-            })
-            .with_client_auth(ClientAuthType::RequireAnyClientCert)
-            .with_insecure_skip_verify(true)
-            .with_insecure_verification(self.allow_insecure_verification_algorithm)
-            .with_verify_peer_certificate(Some(verify_peer_certificate))
-            .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
-            .with_replay_protection_window(self.dtls_replay_protection_window)
-            .build(self.dtls_role == DTLSRole::Client, None)
+        Ok(Arc::new(
+            ::dtls::config::ConfigBuilder::default()
+                .with_certificates(vec![certificate])
+                .with_srtp_protection_profiles(if !self.srtp_protection_profiles.is_empty() {
+                    self.srtp_protection_profiles.clone()
+                } else {
+                    default_srtp_protection_profiles()
+                })
+                .with_client_auth(ClientAuthType::RequireAnyClientCert)
+                .with_insecure_skip_verify(true)
+                .with_insecure_verification(self.allow_insecure_verification_algorithm)
+                .with_verify_peer_certificate(Some(verify_peer_certificate))
+                .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
+                .with_replay_protection_window(self.dtls_replay_protection_window)
+                .build(self.dtls_role == DTLSRole::Client, None)?,
+        ))
     }
 
     pub(crate) fn start(
@@ -190,7 +192,7 @@ impl RTCDtlsTransport {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
                 "127.0.0.1:0".parse()?, //local_addr doesn't matter
                 TransportProtocol::UDP, // TransportProtocol doesn't matter
-                Some(dtls_handshake_config.into()),
+                Some(dtls_handshake_config),
             ));
         }
 

@@ -1,5 +1,6 @@
-use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
+use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
+use crate::transport::dtls::role::DTLSRole;
 use crate::transport::dtls::RTCDtlsTransport;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
@@ -19,6 +20,7 @@ pub(crate) struct DtlsHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 impl DtlsHandlerContext {
@@ -27,6 +29,7 @@ impl DtlsHandlerContext {
             dtls_transport,
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
         }
     }
 }
@@ -46,10 +49,12 @@ impl<'a> DtlsHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for DtlsHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -105,10 +110,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
                     });
                 }
 
-                if let Some((_local_srtp_context, _remote_srtp_context)) = srtp_contexts {
-                    /*TODO: Update local_srtp_context and remote_srtp_context
-                    transport.set_local_srtp_context(local_srtp_context);
-                    transport.set_remote_srtp_context(remote_srtp_context);*/
+                if let Some((local_srtp_context, remote_srtp_context)) = srtp_contexts {
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::DTLSHandshakeComplete(
+                            Box::new(local_srtp_context),
+                            Box::new(remote_srtp_context),
+                        ));
                 }
 
                 Ok(messages)
@@ -173,12 +181,31 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        //TODO: should ICESelectedCandidatePairChange be terminated at DTLS handler?
+        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, remote) = &evt {
+            //TODO: what if ICESelectedCandidatePairChange happens multiple times?
+            if self.ctx.dtls_transport.dtls_role == DTLSRole::Client {
+                if let Some(dtls_handshake_config) =
+                    self.ctx.dtls_transport.dtls_handshake_config.clone()
+                {
+                    let dtls_endpoint = self
+                        .ctx
+                        .dtls_transport
+                        .dtls_endpoint
+                        .as_mut()
+                        .ok_or(Error::ErrDtlsTransportNotStarted)?;
+                    dtls_endpoint.connect(remote.addr(), dtls_handshake_config, None)?;
+                };
+            }
+        }
+
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {

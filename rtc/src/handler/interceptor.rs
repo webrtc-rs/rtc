@@ -1,4 +1,4 @@
-use super::message::{RTCMessage, RTPMessage, TaggedRTCMessage};
+use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
 use crate::transport::TransportStates;
 use log::debug;
 use shared::error::{Error, Result};
@@ -33,10 +33,12 @@ impl<'a> InterceptorHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for InterceptorHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for InterceptorHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -140,7 +142,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for Intercepto
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
         Ok(())
     }
 

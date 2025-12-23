@@ -1,6 +1,7 @@
 use super::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, DataChannelMessage,
-    DataChannelMessageParams, DataChannelMessageType, RTCMessage, TaggedRTCMessage,
+    DataChannelMessageParams, DataChannelMessageType, RTCEventInternal, RTCMessage,
+    TaggedRTCMessage,
 };
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
 use log::{debug, error, warn};
@@ -31,10 +32,12 @@ impl<'a> DataChannelHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DataChannelHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for DataChannelHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -175,7 +178,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DataChanne
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<()> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
         Ok(())
     }
 

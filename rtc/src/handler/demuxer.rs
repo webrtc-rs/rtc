@@ -1,4 +1,6 @@
-use super::message::{DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage};
+use super::message::{
+    DTLSMessage, RTCEventInternal, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage,
+};
 
 use log::{debug, error};
 use shared::error::Error;
@@ -60,10 +62,12 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DemuxerHandler<'a> {
+impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+    for DemuxerHandler<'a>
+{
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -123,7 +127,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DemuxerHan
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: ()) -> Result<(), Self::Error> {
+    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<(), Self::Error> {
         Ok(())
     }
 

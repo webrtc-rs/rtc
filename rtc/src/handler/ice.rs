@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use super::message::{RTCEventInternal, RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::TransportStates;
 use log::{debug, trace};
@@ -53,7 +52,7 @@ impl<'a> IceHandler<'a> {
 impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> for IceHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = RTCPeerConnectionEvent;
+    type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -129,14 +128,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     fn poll_event(&mut self) -> Option<Self::Eout> {
         if let Some(evt) = self.ctx.ice_transport.agent.poll_event() {
             match evt {
-                ::ice::Event::ConnectionStateChange(state) => Some(
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
-                ),
-                ::ice::Event::SelectedCandidatePairChange(_, _) => {
-                    Some(RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent(
-                        RTCIceGatheringState::Complete,
+                ::ice::Event::ConnectionStateChange(state) => {
+                    Some(RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
                     ))
                 }
+                ::ice::Event::SelectedCandidatePairChange(local, remote) => Some(
+                    RTCEventInternal::ICESelectedCandidatePairChange(local, remote),
+                ),
             }
         } else {
             None
