@@ -35,25 +35,8 @@ pub struct RTCDtlsTransport {
     pub(crate) state: RTCDtlsTransportState,
 
     pub(crate) certificates: Vec<RTCCertificate>,
-    //pub(crate) setting_engine: Arc<SettingEngine>,
-    pub(crate) remote_parameters: DTLSParameters,
     pub(crate) remote_certificate: Bytes,
     pub(crate) srtp_protection_profile: ProtectionProfile,
-    /*pub(crate) on_state_change_handler: ArcSwapOption<Mutex<OnDTLSTransportStateChangeHdlrFn>>,
-    pub(crate) conn: Mutex<Option<Arc<DTLSConn>>>,
-
-    pub(crate) srtp_session: Mutex<Option<Arc<Session>>>,
-    pub(crate) srtcp_session: Mutex<Option<Arc<Session>>>,
-    pub(crate) srtp_endpoint: Mutex<Option<Arc<Endpoint>>>,
-    pub(crate) srtcp_endpoint: Mutex<Option<Arc<Endpoint>>>,
-
-    pub(crate) simulcast_streams: Mutex<HashMap<SSRC, Arc<Stream>>>,
-
-    pub(crate) srtp_ready_signal: Arc<AtomicBool>,
-    pub(crate) srtp_ready_tx: Mutex<Option<mpsc::Sender<()>>>,
-    pub(crate) srtp_ready_rx: Mutex<Option<mpsc::Receiver<()>>>,
-
-    pub(crate) dtls_matcher: Option<MatchFunc>,*/
     // From SettingEngine
     answering_dtls_role: DTLSRole,
 }
@@ -90,9 +73,9 @@ impl RTCDtlsTransport {
         //TODO: put event to events
     }
 
-    pub(crate) fn role(&self, ice_role: RTCIceRole) -> DTLSRole {
+    pub(crate) fn role(&self, ice_role: RTCIceRole, remote_dtls_role: DTLSRole) -> DTLSRole {
         // If remote has an explicit role use the inverse
-        match self.remote_parameters.role {
+        match remote_dtls_role {
             DTLSRole::Client => return DTLSRole::Server,
             DTLSRole::Server => return DTLSRole::Client,
             _ => {}
@@ -125,7 +108,7 @@ impl RTCDtlsTransport {
             return Err(Error::ErrInvalidDTLSStart);
         }
 
-        self.remote_parameters = remote_dtls_parameters;
+        //self.remote_parameters = remote_dtls_parameters;
 
         let certificate = if let Some(cert) = self.certificates.first() {
             cert.dtls_certificate.clone()
@@ -146,56 +129,59 @@ impl RTCDtlsTransport {
             .with_insecure_verification(allow_insecure_verification_algorithm)
             //TODO: .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)?
             .with_replay_protection_window(dtls_replay_protection_window)
-            .build(self.role(ice_role) == DTLSRole::Client, None)
+            .build(
+                self.role(ice_role, remote_dtls_parameters.role) == DTLSRole::Client,
+                None,
+            )
     }
 
-    /// set DTLS transport negotiation with the parameters of the remote DTLS transport
-    pub(crate) fn set_parameters(&mut self, remote_parameters: DTLSParameters) -> Result<()> {
-        //(DTLSRole, dtls::config::Config)
-        //self.ensure_ice_conn()?;
+    // set DTLS transport negotiation with the parameters of the remote DTLS transport
+    //pub(crate) fn set_parameters(&mut self, remote_parameters: DTLSParameters) -> Result<()> {
+    //(DTLSRole, dtls::config::Config)
+    //self.ensure_ice_conn()?;
 
-        //if self.state != RTCDtlsTransportState::New {
-        //    return Err(Error::ErrInvalidDTLSStart);
-        //}
+    //if self.state != RTCDtlsTransportState::New {
+    //    return Err(Error::ErrInvalidDTLSStart);
+    //}
 
-        /*{
-            let mut srtp_endpoint = self.srtp_endpoint.lock().await;
-            *srtp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtp)).await;
-        }
-        {
-            let mut srtcp_endpoint = self.srtcp_endpoint.lock().await;
-            *srtcp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtcp)).await;
-        }*/
-        self.remote_parameters = remote_parameters;
+    /*{
+        let mut srtp_endpoint = self.srtp_endpoint.lock().await;
+        *srtp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtp)).await;
+    }
+    {
+        let mut srtcp_endpoint = self.srtcp_endpoint.lock().await;
+        *srtcp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtcp)).await;
+    }*/
+    //self.remote_parameters = remote_parameters;
 
-        /*let certificate = if let Some(cert) = self.certificates.first() {
-            cert.dtls_certificate.clone()
-        } else {
-            return Err(Error::ErrNonCertificate);
-        };*/
-        self.state_change(RTCDtlsTransportState::Connecting);
+    /*let certificate = if let Some(cert) = self.certificates.first() {
+        cert.dtls_certificate.clone()
+    } else {
+        return Err(Error::ErrNonCertificate);
+    };*/
+    // self.state_change(RTCDtlsTransportState::Connecting);
 
-        /*Ok((
-            self.role().await,
-            dtls::config::Config {
-                certificates: vec![certificate],
-                srtp_protection_profiles: if !self
-                    .setting_engine
-                    .srtp_protection_profiles
-                    .is_empty()
-                {
-                    self.setting_engine.srtp_protection_profiles.clone()
-                } else {
-                    default_srtp_protection_profiles()
-                },
-                client_auth: ClientAuthType::RequireAnyClientCert,
-                insecure_skip_verify: true,
-                insecure_verification: self.setting_engine.allow_insecure_verification_algorithm,
-                ..Default::default()
+    /*Ok((
+        self.role().await,
+        dtls::config::Config {
+            certificates: vec![certificate],
+            srtp_protection_profiles: if !self
+                .setting_engine
+                .srtp_protection_profiles
+                .is_empty()
+            {
+                self.setting_engine.srtp_protection_profiles.clone()
+            } else {
+                default_srtp_protection_profiles()
             },
-        ))*/
-        Ok(())
-    }
+            client_auth: ClientAuthType::RequireAnyClientCert,
+            insecure_skip_verify: true,
+            insecure_verification: self.setting_engine.allow_insecure_verification_algorithm,
+            ..Default::default()
+        },
+    ))*/
+    //   Ok(())
+    //}
 
     //pub fn set_parameters(&mut self, _remote_parameters: DTLSParameters) {
     /*
