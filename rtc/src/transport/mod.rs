@@ -179,23 +179,10 @@ impl Transport {
 
 #[derive(Default)]
 pub(crate) struct TransportStates {
-    candidates: HashMap<UserName, CandidatePair>,
     transports: HashMap<FourTuple, Transport>,
 }
 
 impl TransportStates {
-    pub(crate) fn add_candidate_pair(&mut self, username: UserName, pair: CandidatePair) {
-        self.candidates.insert(username, pair);
-    }
-
-    pub(crate) fn remove_candidate_pair(&mut self, username: &UserName) -> Option<CandidatePair> {
-        self.candidates.remove(username)
-    }
-
-    pub(crate) fn find_candidate_pair(&self, username: &UserName) -> Option<&CandidatePair> {
-        self.candidates.get(username)
-    }
-
     pub(crate) fn has_transport(&self, four_tuple: &FourTuple) -> bool {
         self.transports.contains_key(four_tuple)
     }
@@ -205,10 +192,7 @@ impl TransportStates {
     }
 
     pub(crate) fn remove_transport(&mut self, four_tuple: FourTuple) {
-        let transport = self.transports.remove(&four_tuple);
-        if let Some(transport) = transport {
-            self.remove_candidate_pair(&transport.candidate_pair.username());
-        }
+        let _ = self.transports.remove(&four_tuple);
     }
 
     pub(crate) fn find_transport(&self, four_tuple: &FourTuple) -> Option<&Transport> {

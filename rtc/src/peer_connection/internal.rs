@@ -6,7 +6,6 @@ use crate::peer_connection::sdp::{
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::transport::dtls::state::RTCDtlsTransportState;
 use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
-use crate::transport::{CandidatePair, ConnectionCredentials};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 
@@ -634,34 +633,6 @@ impl RTCPeerConnection {
 
         // Start the dtls_transport transport
         self.start_dtls_transport(ice_role, remote_dtls_parameters.clone())?;
-
-        let remote_conn_cred = ConnectionCredentials {
-            ice_params: remote_ice_parameters,
-            dtls_params: remote_dtls_parameters,
-        };
-
-        let (local_ufrag, local_pwd) = self.ice_transport().get_local_user_credentials();
-        let local_conn_cred = ConnectionCredentials {
-            ice_params: RTCIceParameters {
-                username_fragment: local_ufrag.to_string(),
-                password: local_pwd.to_string(),
-                ice_lite: false,
-            },
-            dtls_params: DTLSParameters {
-                role: self.dtls_transport().role(ice_role),
-                fingerprints: self
-                    .dtls_transport()
-                    .certificates
-                    .first()
-                    .unwrap()
-                    .get_fingerprints(),
-            },
-        };
-
-        let candidate_pair = CandidatePair::new(remote_conn_cred, local_conn_cred);
-        self.pipeline_context
-            .transport_states
-            .add_candidate_pair(candidate_pair.username(), candidate_pair);
 
         //TODO: self.update_connection_state();
 

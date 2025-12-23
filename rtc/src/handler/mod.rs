@@ -173,10 +173,7 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
-        EndpointHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.endpoint_handler_context,
-        )
+        EndpointHandler::new(&mut self.pipeline_context.endpoint_handler_context)
     }
 }
 
