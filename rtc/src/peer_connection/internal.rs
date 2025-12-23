@@ -486,13 +486,7 @@ impl RTCPeerConnection {
             RTCEventInternal::StartTransports(ice_role, ice_parameters, dtls_parameters) => {
                 self.start_transports(ice_role, ice_parameters, dtls_parameters)?;
             }
-            RTCEventInternal::IceTransportStart(ice_role, ice_parameters) => {
-                self.ice_transport_mut().start(ice_role, ice_parameters)?;
-            }
-            RTCEventInternal::DtlsTransportStart(ice_role, dtls_parameters) => {
-                self.start_dtls_transport(ice_role, dtls_parameters)?
-            }
-            RTCEventInternal::SctpTransportStart(capabilities, local_port, remote_port) => {
+            RTCEventInternal::StartSctpTransport(capabilities, local_port, remote_port) => {
                 self.start_sctp_transport(capabilities, local_port, remote_port)?
             }
             RTCEventInternal::DoNegotiationNeeded => self.negotiation_needed_op()?,
@@ -629,141 +623,14 @@ impl RTCPeerConnection {
     ) -> Result<()> {
         // Start the ice transport
         self.ice_transport_mut()
-            .start(ice_role, remote_ice_parameters.clone())?;
+            .start(ice_role, remote_ice_parameters)?;
 
         // Start the dtls_transport transport
-        self.start_dtls_transport(ice_role, remote_dtls_parameters.clone())?;
+        self.dtls_transport_mut()
+            .start(ice_role, remote_dtls_parameters)?;
 
         //TODO: self.update_connection_state();
 
-        Ok(())
-    }
-
-    fn start_dtls_transport(
-        &mut self,
-        ice_role: RTCIceRole,
-        remote_dtls_parameters: DTLSParameters,
-    ) -> Result<()> {
-        let (
-            srtp_protection_profiles,
-            allow_insecure_verification_algorithm,
-            dtls_replay_protection_window,
-        ) = (
-            self.configuration
-                .setting_engine
-                .srtp_protection_profiles
-                .clone(),
-            self.configuration
-                .setting_engine
-                .allow_insecure_verification_algorithm,
-            self.configuration.setting_engine.replay_protection.dtls,
-        );
-
-        self.pipeline_context
-            .endpoint_handler_context
-            .dtls_handshake_config = self.dtls_transport_mut().prepare_transport(
-            ice_role,
-            remote_dtls_parameters,
-            srtp_protection_profiles,
-            allow_insecure_verification_algorithm,
-            dtls_replay_protection_window,
-        )?;
-
-        // Connect as DTLS Client/Server, function is blocking and we
-        // must not hold the DTLSTransport lock
-        /*TODO: if role == DTLSRole::Client {
-            dtls::conn::DTLSConn::new(
-                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                dtls_config,
-                true,
-                None,
-            )
-            .await
-        } else {
-            dtls::conn::DTLSConn::new(
-                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                dtls_config,
-                false,
-                None,
-            )
-            .await
-        }
-
-        let dtls_conn = match dtls_conn_result {
-            Ok(dtls_conn) => dtls_conn,
-            Err(err) => {
-                self.state_change(RTCDtlsTransportState::Failed).await;
-                return Err(err.into());
-            }
-        };
-
-        let srtp_profile = dtls_conn.selected_srtpprotection_profile();
-        {
-            let mut srtp_protection_profile = self.srtp_protection_profile.lock().await;
-            *srtp_protection_profile = match srtp_profile {
-                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => {
-                    srtp::protection_profile::ProtectionProfile::AeadAes128Gcm
-                }
-                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => {
-                    srtp::protection_profile::ProtectionProfile::AeadAes256Gcm
-                }
-                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
-                    srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_80
-                }
-                dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32 => {
-                    srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_32
-                }
-                _ => {
-                    if let Err(err) = dtls_conn.close().await {
-                        log::error!("{err}");
-                    }
-
-                    self.state_change(RTCDtlsTransportState::Failed).await;
-                    return Err(Error::ErrNoSRTPProtectionProfile);
-                }
-            };
-        }
-
-        // Check the fingerprint if a certificate was exchanged
-        let remote_certs = &dtls_conn.connection_state().await.peer_certificates;
-        if remote_certs.is_empty() {
-            if let Err(err) = dtls_conn.close().await {
-                log::error!("{err}");
-            }
-
-            self.state_change(RTCDtlsTransportState::Failed).await;
-            return Err(Error::ErrNoRemoteCertificate);
-        }
-
-        {
-            let mut remote_certificate = self.remote_certificate.lock().await;
-            *remote_certificate = Bytes::from(remote_certs[0].clone());
-        }
-
-        if !self
-            .setting_engine
-            .disable_certificate_fingerprint_verification
-        {
-            if let Err(err) = self.validate_fingerprint(&remote_certs[0]).await {
-                if let Err(close_err) = dtls_conn.close().await {
-                    log::error!("{close_err}");
-                }
-
-                self.state_change(RTCDtlsTransportState::Failed).await;
-                return Err(err);
-            }
-        }
-
-        {
-            let mut conn = self.conn.lock().await;
-            *conn = Some(Arc::new(dtls_conn));
-        }
-        self.state_change(RTCDtlsTransportState::Connected).await;
-
-        self.start_srtp().await
-        */
-
-        //TODO: self.update_connection_state();
         Ok(())
     }
 

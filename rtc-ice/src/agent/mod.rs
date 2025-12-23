@@ -393,14 +393,6 @@ impl Agent {
         self.is_controlling = is_controlling;
     }
 
-    pub fn lite(&self) -> bool {
-        self.lite
-    }
-
-    pub fn set_lite(&mut self, ice_lite: bool) {
-        self.lite = ice_lite;
-    }
-
     pub fn state(&self) -> ConnectionState {
         self.connection_state
     }

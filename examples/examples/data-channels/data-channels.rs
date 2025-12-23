@@ -10,12 +10,14 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
+use rtc::configuration::setting_engine::SettingEngine;
 use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::handler::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::RTCPeerConnection;
+use rtc::transport::dtls::role::DTLSRole;
 use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
@@ -115,11 +117,15 @@ async fn run(
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let local_addr = socket.local_addr()?;
 
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_answering_dtls_role(DTLSRole::Server)?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .with_setting_engine(setting_engine)
         .build();
 
     // Create a new RTCPeerConnection

@@ -90,9 +90,7 @@ pub(crate) enum RTCEventInternal {
     StartRtpSenders,
     StartRtp(bool /*is_renegotiation*/, RTCSessionDescription),
     StartTransports(RTCIceRole, RTCIceParameters, DTLSParameters),
-    IceTransportStart(RTCIceRole, RTCIceParameters),
-    DtlsTransportStart(RTCIceRole, DTLSParameters),
-    SctpTransportStart(
+    StartSctpTransport(
         SCTPTransportCapabilities,
         u16, /*local_port*/
         u16, /*remote_port*/

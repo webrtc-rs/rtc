@@ -1,7 +1,6 @@
 use super::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::dtls::RTCDtlsTransport;
-use crate::transport::TransportStates;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
@@ -34,19 +33,12 @@ impl DtlsHandlerContext {
 
 /// DtlsHandler implements DTLS Protocol handling
 pub(crate) struct DtlsHandler<'a> {
-    transport_states: &'a mut TransportStates,
     ctx: &'a mut DtlsHandlerContext,
 }
 
 impl<'a> DtlsHandler<'a> {
-    pub(crate) fn new(
-        transport_states: &'a mut TransportStates,
-        ctx: &'a mut DtlsHandlerContext,
-    ) -> Self {
-        DtlsHandler {
-            transport_states,
-            ctx,
-        }
+    pub(crate) fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
+        DtlsHandler { ctx }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -65,18 +57,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
         if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
-            let four_tuple = (&msg.transport).into();
-
             let try_read = || -> Result<Vec<BytesMut>> {
                 let mut messages = vec![];
-                let mut contexts = vec![];
+                let mut srtp_contexts = None;
 
-                let transport = self
-                    .transport_states
-                    .find_transport_mut(&four_tuple)
-                    .ok_or(Error::ErrTransportNoExisted)?;
+                let dtls_endpoint = self
+                    .ctx
+                    .dtls_transport
+                    .dtls_endpoint
+                    .as_mut()
+                    .ok_or(Error::ErrDtlsTransportNotStarted)?;
 
-                let dtls_endpoint = transport.get_dtls_endpoint_mut();
                 for message in dtls_endpoint.read(
                     msg.now,
                     msg.transport.peer_addr,
@@ -89,9 +80,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
                                 dtls_endpoint.get_connection_state(msg.transport.peer_addr)
                             {
                                 debug!("recv dtls handshake complete");
-                                let (local_context, remote_context) =
+                                let (local_srtp_context, remote_srtp_context) =
                                     DtlsHandler::update_srtp_contexts(state)?;
-                                contexts.push((local_context, remote_context));
+                                srtp_contexts = Some((local_srtp_context, remote_srtp_context));
                             } else {
                                 warn!(
                                     "Unable to find connection state for {}",
@@ -114,9 +105,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
                     });
                 }
 
-                for (local_context, remote_context) in contexts {
-                    transport.set_local_srtp_context(local_context);
-                    transport.set_remote_srtp_context(remote_context);
+                if let Some((_local_srtp_context, _remote_srtp_context)) = srtp_contexts {
+                    /*TODO: Update local_srtp_context and remote_srtp_context
+                    transport.set_local_srtp_context(local_srtp_context);
+                    transport.set_remote_srtp_context(remote_srtp_context);*/
                 }
 
                 Ok(messages)
@@ -135,9 +127,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
                 }
                 Err(err) => {
                     error!("try_read with error {}", err);
-                    if err == Error::ErrAlertFatalOrClose {
-                        self.transport_states.remove_transport(four_tuple);
-                    }
                     return Err(err);
                 }
             };
@@ -157,13 +146,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
         if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("send dtls RAW {:?}", msg.transport.peer_addr);
 
-            let four_tuple = (&msg.transport).into();
-            let transport = self
-                .transport_states
-                .find_transport_mut(&four_tuple)
-                .ok_or(Error::ErrTransportNoExisted)?;
-
-            let dtls_endpoint = transport.get_dtls_endpoint_mut();
+            let dtls_endpoint = self
+                .ctx
+                .dtls_transport
+                .dtls_endpoint
+                .as_mut()
+                .ok_or(Error::ErrDtlsTransportNotStarted)?;
 
             dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
             while let Some(transmit) = dtls_endpoint.poll_transmit() {
@@ -194,36 +182,43 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DtlsHandle
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
-        for transport in self.transport_states.get_transports_mut().values_mut() {
-            let dtls_endpoint = transport.get_dtls_endpoint_mut();
-            let remotes: Vec<SocketAddr> = dtls_endpoint.get_connections_keys().copied().collect();
-            for remote in remotes {
-                let _ = dtls_endpoint.handle_timeout(remote, now);
-            }
-            while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                self.ctx.write_outs.push_back(TaggedRTCMessage {
-                    now: transmit.now,
-                    transport: transmit.transport,
-                    message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
-                });
-            }
+        let dtls_endpoint = self
+            .ctx
+            .dtls_transport
+            .dtls_endpoint
+            .as_mut()
+            .ok_or(Error::ErrDtlsTransportNotStarted)?;
+
+        let remotes: Vec<SocketAddr> = dtls_endpoint.get_connections_keys().copied().collect();
+        for remote in remotes {
+            let _ = dtls_endpoint.handle_timeout(remote, now);
         }
+        while let Some(transmit) = dtls_endpoint.poll_transmit() {
+            self.ctx.write_outs.push_back(TaggedRTCMessage {
+                now: transmit.now,
+                transport: transmit.transport,
+                message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+            });
+        }
+
         Ok(())
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
-        let max_eto = Instant::now() + DEFAULT_TIMEOUT_DURATION;
-        let mut eto = max_eto;
-        for transport in self.transport_states.get_transports().values() {
-            let dtls_endpoint = transport.get_dtls_endpoint();
+        if let Some(dtls_endpoint) = self.ctx.dtls_transport.dtls_endpoint.as_ref() {
+            let max_eto = Instant::now() + DEFAULT_TIMEOUT_DURATION;
+            let mut eto = max_eto;
+
             let remotes = dtls_endpoint.get_connections_keys();
             for remote in remotes {
                 let _ = dtls_endpoint.poll_timeout(*remote, &mut eto);
             }
-        }
 
-        if eto != max_eto {
-            Some(eto)
+            if eto != max_eto {
+                Some(eto)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -241,10 +236,14 @@ impl<'a> DtlsHandler<'a> {
         state: &State,
     ) -> Result<(srtp::context::Context, srtp::context::Context)> {
         let profile = match state.srtp_protection_profile() {
+            SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
+            SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => ProtectionProfile::AeadAes256Gcm,
             SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
                 ProtectionProfile::Aes128CmHmacSha1_80
             }
-            SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
+            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32 => {
+                ProtectionProfile::Aes128CmHmacSha1_32
+            }
             _ => return Err(Error::ErrNoSuchSrtpProfile),
         };
 
@@ -260,7 +259,7 @@ impl<'a> DtlsHandler<'a> {
             srtp_config.remote_rtp_options = Some(srtp::option::srtp_no_replay_protection());
         }*/
 
-        srtp_config.extract_session_keys_from_dtls(state, false)?; //TODO: is_client?
+        srtp_config.extract_session_keys_from_dtls(state, state.is_client())?;
 
         let local_context = srtp::context::Context::new(
             &srtp_config.keys.local_master_key,

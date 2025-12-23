@@ -132,10 +132,7 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_dtls_handler(&mut self) -> DtlsHandler<'_> {
-        DtlsHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.dtls_handler_context,
-        )
+        DtlsHandler::new(&mut self.pipeline_context.dtls_handler_context)
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {

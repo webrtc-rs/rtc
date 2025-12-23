@@ -168,10 +168,6 @@ impl RTCIceTransport {
         self.agent.set_role(role == RTCIceRole::Controlling);
     }
 
-    pub(crate) fn set_lite(&mut self, ice_lite: bool) {
-        self.agent.set_lite(ice_lite);
-    }
-
     pub(crate) fn state(&self) -> RTCIceTransportState {
         self.agent.state().into()
     }
@@ -195,8 +191,6 @@ impl RTCIceTransport {
         if self.state() != RTCIceTransportState::New {
             return Err(Error::ErrICETransportNotInNew);
         }
-
-        self.set_lite(remote_ice_parameters.ice_lite);
 
         self.agent.start_connectivity_checks(
             ice_role == RTCIceRole::Controlling,

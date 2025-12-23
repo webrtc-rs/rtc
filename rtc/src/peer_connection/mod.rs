@@ -113,6 +113,14 @@ impl RTCPeerConnection {
         let dtls_transport = RTCDtlsTransport::new(
             certificates,
             configuration.setting_engine.answering_dtls_role,
+            configuration
+                .setting_engine
+                .srtp_protection_profiles
+                .clone(),
+            configuration
+                .setting_engine
+                .allow_insecure_verification_algorithm,
+            configuration.setting_engine.replay_protection.dtls,
         )?;
 
         // Create the SCTP transport
@@ -359,7 +367,7 @@ impl RTCPeerConnection {
                                     )
                                     .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                                self.ops_enqueue_start(RTCEventInternal::SctpTransportStart(
+                                self.ops_enqueue_start(RTCEventInternal::StartSctpTransport(
                                     SCTPTransportCapabilities { max_message_size },
                                     local_port,
                                     remote_port,
@@ -639,7 +647,7 @@ impl RTCPeerConnection {
                             )
                             .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                            self.ops_enqueue_start(RTCEventInternal::SctpTransportStart(
+                            self.ops_enqueue_start(RTCEventInternal::StartSctpTransport(
                                 SCTPTransportCapabilities { max_message_size },
                                 local_port,
                                 remote_port,

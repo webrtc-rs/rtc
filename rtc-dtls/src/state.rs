@@ -227,6 +227,10 @@ impl State {
     pub fn srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.srtp_protection_profile
     }
+
+    pub fn is_client(&self) -> bool {
+        self.is_client
+    }
 }
 
 impl KeyingMaterialExporter for State {

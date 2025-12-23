@@ -353,7 +353,7 @@ impl ConfigBuilder {
     }
 }
 
-pub(crate) type VerifyPeerCertificateFn =
+pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
 
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {

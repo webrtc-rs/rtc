@@ -3,12 +3,14 @@ use crate::transport::dtls::parameters::DTLSParameters;
 use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
 use crate::transport::dtls::state::RTCDtlsTransportState;
 use crate::transport::ice::role::RTCIceRole;
-use bytes::Bytes;
-use dtls::config::ClientAuthType;
+use dtls::config::{ClientAuthType, VerifyPeerCertificateFn};
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use rcgen::KeyPair;
+use rustls::pki_types::CertificateDer;
+use sha2::{Digest, Sha256};
 use shared::error::{Error, Result};
-use srtp::protection_profile::ProtectionProfile;
+use shared::TransportProtocol;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 pub mod fingerprint;
@@ -29,22 +31,30 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
 /// transport over which RTP and RTCP packets are sent and received by
 /// RTPSender and RTPReceiver, as well other data such as SCTP packets sent
 /// and received by data channels.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RTCDtlsTransport {
-    //TODO: ice_transport: RTCIceTransport,
-    pub(crate) state: RTCDtlsTransportState,
+    pub(crate) dtls_role: DTLSRole,
+    pub(crate) dtls_handshake_config: Option<::dtls::config::HandshakeConfig>,
+    pub(crate) dtls_endpoint: Option<::dtls::endpoint::Endpoint>,
 
+    pub(crate) state: RTCDtlsTransportState,
     pub(crate) certificates: Vec<RTCCertificate>,
-    pub(crate) remote_certificate: Bytes,
-    pub(crate) srtp_protection_profile: ProtectionProfile,
+    //pub(crate) srtp_protection_profile: ProtectionProfile,
+
     // From SettingEngine
     answering_dtls_role: DTLSRole,
+    srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+    allow_insecure_verification_algorithm: bool,
+    dtls_replay_protection_window: usize,
 }
 
 impl RTCDtlsTransport {
     pub(crate) fn new(
         mut certificates: Vec<RTCCertificate>,
         answering_dtls_role: DTLSRole,
+        srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+        allow_insecure_verification_algorithm: bool,
+        dtls_replay_protection_window: usize,
     ) -> Result<Self> {
         if !certificates.is_empty() {
             let now = SystemTime::now();
@@ -60,11 +70,16 @@ impl RTCDtlsTransport {
         };
 
         Ok(Self {
-            certificates,
+            dtls_role: DTLSRole::Auto,
+            dtls_handshake_config: None,
+            dtls_endpoint: None,
             state: RTCDtlsTransportState::New,
+            certificates,
+
             answering_dtls_role,
-            //dtls_matcher: Some(Box::new(match_dtls)),
-            ..Default::default()
+            srtp_protection_profiles,
+            allow_insecure_verification_algorithm,
+            dtls_replay_protection_window,
         })
     }
 
@@ -100,15 +115,39 @@ impl RTCDtlsTransport {
         &mut self,
         ice_role: RTCIceRole,
         remote_dtls_parameters: DTLSParameters,
-        srtp_protection_profiles: Vec<SrtpProtectionProfile>,
-        allow_insecure_verification_algorithm: bool,
-        dtls_replay_protection_window: usize,
     ) -> Result<::dtls::config::HandshakeConfig> {
         if self.state != RTCDtlsTransportState::New {
             return Err(Error::ErrInvalidDTLSStart);
         }
 
-        //self.remote_parameters = remote_dtls_parameters;
+        self.dtls_role = self.role(ice_role, remote_dtls_parameters.role);
+
+        let remote_fingerprints = remote_dtls_parameters.fingerprints;
+        let verify_peer_certificate: VerifyPeerCertificateFn = Arc::new(
+            move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| -> Result<()> {
+                if certs.is_empty() {
+                    return Err(Error::ErrNonCertificate);
+                }
+
+                for fp in &remote_fingerprints {
+                    if fp.algorithm != "sha-256" {
+                        return Err(Error::ErrUnsupportedFingerprintAlgorithm);
+                    }
+
+                    let mut h = Sha256::new();
+                    h.update(&certs[0]);
+                    let hashed = h.finalize();
+                    let values: Vec<String> = hashed.iter().map(|x| format! {"{x:02x}"}).collect();
+                    let remote_value = values.join(":").to_lowercase();
+
+                    if remote_value == fp.value.to_lowercase() {
+                        return Ok(());
+                    }
+                }
+
+                Err(Error::ErrNoMatchingCertificateFingerprint)
+            },
+        );
 
         let certificate = if let Some(cert) = self.certificates.first() {
             cert.dtls_certificate.clone()
@@ -119,176 +158,42 @@ impl RTCDtlsTransport {
 
         ::dtls::config::ConfigBuilder::default()
             .with_certificates(vec![certificate])
-            .with_srtp_protection_profiles(if !srtp_protection_profiles.is_empty() {
-                srtp_protection_profiles
+            .with_srtp_protection_profiles(if !self.srtp_protection_profiles.is_empty() {
+                self.srtp_protection_profiles.clone()
             } else {
                 default_srtp_protection_profiles()
             })
             .with_client_auth(ClientAuthType::RequireAnyClientCert)
             .with_insecure_skip_verify(true)
-            .with_insecure_verification(allow_insecure_verification_algorithm)
+            .with_insecure_verification(self.allow_insecure_verification_algorithm)
+            .with_verify_peer_certificate(Some(verify_peer_certificate))
             //TODO: .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)?
-            .with_replay_protection_window(dtls_replay_protection_window)
-            .build(
-                self.role(ice_role, remote_dtls_parameters.role) == DTLSRole::Client,
-                None,
-            )
+            .with_replay_protection_window(self.dtls_replay_protection_window)
+            .build(self.dtls_role == DTLSRole::Client, None)
     }
 
-    // set DTLS transport negotiation with the parameters of the remote DTLS transport
-    //pub(crate) fn set_parameters(&mut self, remote_parameters: DTLSParameters) -> Result<()> {
-    //(DTLSRole, dtls::config::Config)
-    //self.ensure_ice_conn()?;
+    pub(crate) fn start(
+        &mut self,
+        ice_role: RTCIceRole,
+        remote_dtls_parameters: DTLSParameters,
+    ) -> Result<()> {
+        let dtls_handshake_config = self.prepare_transport(ice_role, remote_dtls_parameters)?;
 
-    //if self.state != RTCDtlsTransportState::New {
-    //    return Err(Error::ErrInvalidDTLSStart);
-    //}
-
-    /*{
-        let mut srtp_endpoint = self.srtp_endpoint.lock().await;
-        *srtp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtp)).await;
-    }
-    {
-        let mut srtcp_endpoint = self.srtcp_endpoint.lock().await;
-        *srtcp_endpoint = self.ice_transport.new_endpoint(Box::new(match_srtcp)).await;
-    }*/
-    //self.remote_parameters = remote_parameters;
-
-    /*let certificate = if let Some(cert) = self.certificates.first() {
-        cert.dtls_certificate.clone()
-    } else {
-        return Err(Error::ErrNonCertificate);
-    };*/
-    // self.state_change(RTCDtlsTransportState::Connecting);
-
-    /*Ok((
-        self.role().await,
-        dtls::config::Config {
-            certificates: vec![certificate],
-            srtp_protection_profiles: if !self
-                .setting_engine
-                .srtp_protection_profiles
-                .is_empty()
-            {
-                self.setting_engine.srtp_protection_profiles.clone()
-            } else {
-                default_srtp_protection_profiles()
-            },
-            client_auth: ClientAuthType::RequireAnyClientCert,
-            insecure_skip_verify: true,
-            insecure_verification: self.setting_engine.allow_insecure_verification_algorithm,
-            ..Default::default()
-        },
-    ))*/
-    //   Ok(())
-    //}
-
-    //pub fn set_parameters(&mut self, _remote_parameters: DTLSParameters) {
-    /*
-    let dtls_conn_result = if let Some(dtls_endpoint) =
-        self.ice_transport.new_endpoint(Box::new(match_dtls)).await
-    {
-        let (role, mut dtls_config) = self.prepare_transport(remote_parameters).await?;
-        if self.setting_engine.replay_protection.dtls != 0 {
-            dtls_config.replay_protection_window = self.setting_engine.replay_protection.dtls;
-        }
-
-        // Connect as DTLS Client/Server, function is blocking and we
-        // must not hold the DTLSTransport lock
-        if role == DTLSRole::Client {
-            dtls::conn::DTLSConn::new(
-                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                dtls_config,
-                true,
+        if self.dtls_role == DTLSRole::Client {
+            self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
+                "127.0.0.1:0".parse()?, //local_addr doesn't matter
+                TransportProtocol::UDP, // TransportProtocol doesn't matter
                 None,
-            )
-            .await
+            ));
+            self.dtls_handshake_config = Some(dtls_handshake_config);
         } else {
-            dtls::conn::DTLSConn::new(
-                dtls_endpoint as Arc<dyn Conn + Send + Sync>,
-                dtls_config,
-                false,
-                None,
-            )
-            .await
-        }
-    } else {
-        Err(dtls::Error::Other(
-            "ice_transport.new_endpoint failed".to_owned(),
-        ))
-    };
-
-    let dtls_conn = match dtls_conn_result {
-        Ok(dtls_conn) => dtls_conn,
-        Err(err) => {
-            self.state_change(RTCDtlsTransportState::Failed).await;
-            return Err(err.into());
-        }
-    };
-
-    let srtp_profile = dtls_conn.selected_srtpprotection_profile();
-    {
-        let mut srtp_protection_profile = self.srtp_protection_profile.lock().await;
-        *srtp_protection_profile = match srtp_profile {
-            dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => {
-                srtp::protection_profile::ProtectionProfile::AeadAes128Gcm
-            }
-            dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => {
-                srtp::protection_profile::ProtectionProfile::AeadAes256Gcm
-            }
-            dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => {
-                srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_80
-            }
-            dtls::extension::extension_use_srtp::SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32 => {
-                srtp::protection_profile::ProtectionProfile::Aes128CmHmacSha1_32
-            }
-            _ => {
-                if let Err(err) = dtls_conn.close().await {
-                    log::error!("{err}");
-                }
-
-                self.state_change(RTCDtlsTransportState::Failed).await;
-                return Err(Error::ErrNoSRTPProtectionProfile);
-            }
-        };
-    }
-
-    // Check the fingerprint if a certificate was exchanged
-    let remote_certs = &dtls_conn.connection_state().await.peer_certificates;
-    if remote_certs.is_empty() {
-        if let Err(err) = dtls_conn.close().await {
-            log::error!("{err}");
+            self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
+                "127.0.0.1:0".parse()?, //local_addr doesn't matter
+                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                Some(dtls_handshake_config.into()),
+            ));
         }
 
-        self.state_change(RTCDtlsTransportState::Failed).await;
-        return Err(Error::ErrNoRemoteCertificate);
+        Ok(())
     }
-
-    {
-        let mut remote_certificate = self.remote_certificate.lock().await;
-        *remote_certificate = Bytes::from(remote_certs[0].clone());
-    }
-
-    if !self
-        .setting_engine
-        .disable_certificate_fingerprint_verification
-    {
-        if let Err(err) = self.validate_fingerprint(&remote_certs[0]).await {
-            if let Err(close_err) = dtls_conn.close().await {
-                log::error!("{close_err}");
-            }
-
-            self.state_change(RTCDtlsTransportState::Failed).await;
-            return Err(err);
-        }
-    }
-
-    {
-        let mut conn = self.conn.lock().await;
-        *conn = Some(Arc::new(dtls_conn));
-    }
-    self.state_change(RTCDtlsTransportState::Connected).await;
-
-    self.start_srtp().await*/
-    //}
 }
