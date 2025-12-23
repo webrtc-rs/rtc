@@ -48,7 +48,7 @@ impl Endpoint {
         }
     }
 
-    /// Replace the state configuration, affecting new incoming associations only
+    /// Replace the server configuration, affecting new incoming associations only
     pub fn set_server_config(&mut self, server_config: Option<Arc<HandshakeConfig>>) {
         self.server_config = server_config;
     }

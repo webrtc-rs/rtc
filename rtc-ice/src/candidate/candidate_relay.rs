@@ -3,7 +3,7 @@ use crate::network_type::determine_network_type;
 use crate::rand::generate_cand_id;
 use shared::error::*;
 
-/// The configuration required to create a new `CandidateRelay`.
+/// The config required to create a new `CandidateRelay`.
 #[derive(Default)]
 pub struct CandidateRelayConfig {
     pub base_config: CandidateConfig,

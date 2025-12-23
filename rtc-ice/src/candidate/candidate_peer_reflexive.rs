@@ -3,7 +3,7 @@ use crate::network_type::determine_network_type;
 use crate::rand::generate_cand_id;
 use shared::error::*;
 
-/// The configuration required to create a new `CandidatePeerReflexive`.
+/// The config required to create a new `CandidatePeerReflexive`.
 #[derive(Default)]
 pub struct CandidatePeerReflexiveConfig {
     pub base_config: CandidateConfig,

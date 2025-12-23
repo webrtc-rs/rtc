@@ -177,11 +177,11 @@ pub struct CandidateStats {
     /// The `priority` field of the ICECandidate.
     pub priority: u32,
 
-    /// The url of the TURN or STUN state indicated in the that translated this IP address.
+    /// The url of the TURN or STUN server indicated in the that translated this IP address.
     /// It is the url address surfaced in an PeerConnectionICEEvent.
     pub url: String,
 
-    /// The protocol used by the endpoint to communicate with the TURN state. This is only present
+    /// The protocol used by the endpoint to communicate with the TURN server. This is only present
     /// for local candidates. Valid values for the TURN url protocol is one of udp, tcp, or tls.
     pub relay_protocol: String,
 

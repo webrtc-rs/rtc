@@ -179,7 +179,7 @@ impl TestEndpoint {
     }
 
     pub fn assert_accept(&mut self) -> AssociationHandle {
-        self.accepted.take().expect("state didn't connect")
+        self.accepted.take().expect("server didn't connect")
     }
 }
 
@@ -261,7 +261,7 @@ impl Pair {
             Some(t) if Some(t) == server_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!("advancing to {:?} for state", self.time);
+                    trace!("advancing to {:?} for server", self.time);
                 }
                 true
             }
@@ -456,9 +456,9 @@ fn close_association_pair(
         Result::<()>::Ok(())
     });
 
-    // Close state
+    // Close server
     tokio::spawn(async move {
-        state.close().await?;
+        server.close().await?;
         let _ = handshake1ch_tx.send(()).await;
         let _ = closed_rx1.recv().await;
 
@@ -830,7 +830,7 @@ fn test_assoc_reliable_retransmission() -> Result<()> {
         .client_stream(client_ch, si)?
         .write_sctp(&msg1, PayloadProtocolIdentifier::Binary)?;
     assert_eq!(msg1.len(), n, "unexpected length of received data");
-    pair.drive_client(); // send data to state
+    pair.drive_client(); // send data to server
     pair.server.inbound.clear(); // Lose it
     debug!("dropping packet");
 
@@ -962,7 +962,7 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
         PayloadProtocolIdentifier::Binary,
     )?;
     assert_eq!(sbuf.len(), n, "unexpected length of received data");
-    pair.drive_client(); // send data to state
+    pair.drive_client(); // send data to server
     pair.server.inbound.clear(); // Lose it
     debug!("dropping packet");
 
@@ -1042,7 +1042,7 @@ fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
         PayloadProtocolIdentifier::Binary,
     )?;
     assert_eq!(sbuf.len(), n, "unexpected length of received data");
-    pair.drive_client(); // send data to state
+    pair.drive_client(); // send data to server
     pair.server.inbound.clear(); // Lose it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
@@ -1116,7 +1116,7 @@ fn test_assoc_unreliable_rexmit_unordered_no_fragment() -> Result<()> {
         PayloadProtocolIdentifier::Binary,
     )?;
     assert_eq!(sbuf.len(), n, "unexpected length of received data");
-    pair.drive_client(); // send data to state
+    pair.drive_client(); // send data to server
     pair.server.inbound.clear(); // Lose it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
@@ -1433,7 +1433,7 @@ fn test_assoc_congestion_control_fast_retransmission() -> Result<()> {
             PayloadProtocolIdentifier::Binary,
         )?;
         assert_eq!(sbuf.len(), n, "unexpected length of received data");
-        pair.client.drive(pair.time, pair.state.addr);
+        pair.client.drive(pair.time, pair.server.addr);
         if i == 0 {
             //drop the first packet
             pair.client.outbound.clear();
@@ -1541,9 +1541,9 @@ fn test_assoc_congestion_control_congestion_avoidance() -> Result<()> {
     {
         /*println!("timestamp: {:?}", pair.time);
         println!(
-            "buffered_amount {}, pair.state.inbound {}, n_packets_received {}, n_packets_to_send {}",
+            "buffered_amount {}, pair.server.inbound {}, n_packets_received {}, n_packets_to_send {}",
             pair.client_conn_mut(client_ch).buffered_amount(),
-            pair.state.inbound.len(),
+            pair.server.inbound.len(),
             n_packets_received,
             n_packets_to_send
         );*/
@@ -1665,9 +1665,9 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
         && n_packets_received < n_packets_to_send
     {
         /*println!(
-            "buffered_amount {}, pair.state.inbound {}, n_packets_received {}, n_packets_to_send {}",
+            "buffered_amount {}, pair.server.inbound {}, n_packets_received {}, n_packets_to_send {}",
             pair.client_conn_mut(client_ch).buffered_amount(),
-            pair.state.inbound.len(),
+            pair.server.inbound.len(),
             n_packets_received,
             n_packets_to_send
         );*/
@@ -2455,11 +2455,11 @@ fn create_assocs() -> Result<(Association, Association)> {
     });
 
     tokio::spawn(async move {
-        let a = Association::state(Config {
+        let a = Association::server(Config {
             net_conn: Arc::new(udp2),
             max_receive_buffer_size: 0,
             max_message_size: 0,
-            name: "state".to_owned(),
+            name: "server".to_owned(),
         })
         .await?;
 

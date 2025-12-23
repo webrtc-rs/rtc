@@ -23,7 +23,7 @@ pub(crate) enum TransactionType {
     ChannelBindRequest(RelayedAddr, SocketAddr),
 }
 
-// TransactionConfig is a set of configuration params used by NewTransaction
+// TransactionConfig is a set of config params used by NewTransaction
 pub(crate) struct TransactionConfig {
     pub(crate) transaction_id: TransactionId,
     pub(crate) transaction_type: TransactionType,

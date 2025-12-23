@@ -425,16 +425,16 @@ async fn test_psk() -> Result<()> {
             let _ = client_res_tx.send(result).await;
         });
 
-        let configuration = Config {
+        let config = Config {
             psk: Some(Arc::new(psk_callback_server)),
             psk_identity_hint: server_identity,
             cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
             ..Default::default()
         };
 
-        let state = create_test_server(Arc::new(cb), configuration, false).await?;
+        let server = create_test_server(Arc::new(cb), config, false).await?;
 
-        let actual_psk_identity_hint = &state.connection_state().await.identity_hint;
+        let actual_psk_identity_hint = &server.connection_state().await.identity_hint;
         assert_eq!(
             actual_psk_identity_hint, client_identity,
             "TestPSK: Server ClientPSKIdentity Mismatch '{name}': expected({client_identity:?}) actual({actual_psk_identity_hint:?})",
@@ -448,7 +448,7 @@ async fn test_psk() -> Result<()> {
             }
         }
 
-        let _ = state.close().await;
+        let _ = server.close().await;
     }
 
     Ok(())
@@ -486,14 +486,14 @@ async fn test_psk_hint_fail() -> Result<()> {
         let _ = client_res_tx.send(result).await;
     });
 
-    let configuration = Config {
+    let config = Config {
         psk: Some(Arc::new(psk_callback_hint_fail)),
         psk_identity_hint: Some(vec![]),
         cipher_suites: vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm_8],
         ..Default::default()
     };
 
-    if let Err(server_err) = create_test_server(Arc::new(cb), configuration, false).await {
+    if let Err(server_err) = create_test_server(Arc::new(cb), config, false).await {
         assert_eq!(
             server_err.to_string(),
             Error::ErrAlertFatalOrClose.to_string(),
@@ -502,7 +502,7 @@ async fn test_psk_hint_fail() -> Result<()> {
             server_err,
         );
     } else {
-        panic!("Expected state error, but got OK");
+        panic!("Expected server error, but got OK");
     }
 
     let result = client_res_rx.recv().await;
@@ -550,7 +550,7 @@ async fn test_client_timeout() -> Result<()> {
         let _ = client_res_tx.send(result).await;
     });
 
-    // no state!
+    // no server!
     let result = client_res_rx.recv().await;
     if let Some(client_timeout_result) = result {
         assert!(client_timeout_result.is_err(), "Expected Error but got Ok");
@@ -612,7 +612,7 @@ async fn test_srtp_configuration() -> Result<()> {
             Some(Error::ErrServerNoMatchingSrtpProfile),
         ),
         (
-            "SRTP state only",
+            "SRTP server only",
             vec![],
             vec![SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80],
             SrtpProtectionProfile::Unsupported,
@@ -664,12 +664,12 @@ async fn test_srtp_configuration() -> Result<()> {
             let _ = client_res_tx.send(result).await;
         });
 
-        let configuration = Config {
+        let config = Config {
             srtp_protection_profiles: server_srtp,
             ..Default::default()
         };
 
-        let result = create_test_server(Arc::new(cb), configuration, true).await;
+        let result = create_test_server(Arc::new(cb), config, true).await;
         if let Some(expected_err) = want_server_err {
             if let Err(err) = result {
                 assert_eq!(
@@ -682,8 +682,8 @@ async fn test_srtp_configuration() -> Result<()> {
             }
         } else {
             match result {
-                Ok(state) => {
-                    let actual_server_srtp = state.selected_srtpprotection_profile();
+                Ok(server) => {
+                    let actual_server_srtp = server.selected_srtpprotection_profile();
                     assert_eq!(actual_server_srtp, expected_profile,
                                "test_srtp_configuration: Server SRTPProtectionProfile Mismatch '{name}': expected({expected_profile:?}) actual({actual_server_srtp:?})");
                 }
@@ -938,10 +938,10 @@ async fn test_client_certificate() -> Result<()> {
             res.err().unwrap()
         );
 
-        let state = result.unwrap();
+        let server = result.unwrap();
         let client = res.unwrap();
 
-        let actual_client_cert = &state.connection_state().await.peer_certificates;
+        let actual_client_cert = &server.connection_state().await.peer_certificates;
         if server_cfg.client_auth == ClientAuthType::RequireAnyClientCert
             || server_cfg.client_auth == ClientAuthType::RequireAndVerifyClientCert
         {
@@ -1458,12 +1458,12 @@ async fn test_cipher_suite_configuration() -> Result<()> {
             let _ = client_res_tx.send(result).await;
         });
 
-        let configuration = Config {
+        let config = Config {
             cipher_suites: server_cipher_suites,
             ..Default::default()
         };
 
-        let result = create_test_server(Arc::new(cb), configuration, true).await;
+        let result = create_test_server(Arc::new(cb), config, true).await;
         if let Some(expected_err) = want_server_error {
             if let Err(err) = result {
                 assert_eq!(
@@ -1608,7 +1608,7 @@ async fn test_psk_configuration() -> Result<()> {
             let _ = client_res_tx.send(result).await;
         });
 
-        let configuration = Config {
+        let config = Config {
             psk: if server_psk {
                 Some(Arc::new(psk_callback))
             } else {
@@ -1618,7 +1618,7 @@ async fn test_psk_configuration() -> Result<()> {
             ..Default::default()
         };
 
-        let result = create_test_server(Arc::new(cb), configuration, server_has_certificate).await;
+        let result = create_test_server(Arc::new(cb), config, server_has_certificate).await;
         if let Some(expected_err) = want_server_error {
             if let Err(err) = result {
                 assert_eq!(
@@ -1771,7 +1771,7 @@ async fn test_server_timeout() -> Result<()> {
         }
     });
 
-    // Start sending ClientHello packets until state responds with first packet
+    // Start sending ClientHello packets until server responds with first packet
     tokio::spawn(async move {
         loop {
             let timer = tokio::time::sleep(Duration::from_millis(10));
@@ -1789,7 +1789,7 @@ async fn test_server_timeout() -> Result<()> {
         }
     });
 
-    let configuration = Config {
+    let config = Config {
         cipher_suites: vec![CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256],
         flight_interval: Duration::from_millis(100),
         ..Default::default()
@@ -1797,17 +1797,17 @@ async fn test_server_timeout() -> Result<()> {
 
     let result = tokio::time::timeout(
         Duration::from_millis(50),
-        create_test_server(Arc::new(cb), configuration, true),
+        create_test_server(Arc::new(cb), config, true),
     )
     .await;
     assert!(result.is_err(), "Expected Error but got Ok");
 
-    // Wait a little longer to ensure no additional messages have been sent by the state
+    // Wait a little longer to ensure no additional messages have been sent by the server
     //tokio::time::sleep(Duration::from_millis(300)).await;
 
     /*tokio::select! {
     case msg := <-caReadChan:
-        t.Fatalf("Expected no additional messages from state, got: %+v", msg)
+        t.Fatalf("Expected no additional messages from server, got: %+v", msg)
     default:
     }*/
 
@@ -1921,14 +1921,14 @@ async fn test_protocol_version_validation() -> Result<()> {
             let (ca, cb) = pipe();
 
             tokio::spawn(async move {
-                let configuration = Config {
+                let config = Config {
                     cipher_suites: vec![CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256],
                     flight_interval: Duration::from_millis(100),
                     ..Default::default()
                 };
                 let timeout_result = tokio::time::timeout(
                     Duration::from_millis(1000),
-                    create_test_server(Arc::new(cb), configuration, true),
+                    create_test_server(Arc::new(cb), config, true),
                 )
                 .await;
                 match timeout_result {
@@ -1947,7 +1947,7 @@ async fn test_protocol_version_validation() -> Result<()> {
                         }
                     }
                     Err(err) => {
-                        panic!("state timeout {err}");
+                        panic!("server timeout {err}");
                     }
                 };
             });
@@ -2064,14 +2064,14 @@ async fn test_protocol_version_validation() -> Result<()> {
             let (ca, cb) = pipe();
 
             tokio::spawn(async move {
-                let configuration = Config {
+                let config = Config {
                     cipher_suites: vec![CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256],
                     flight_interval: Duration::from_millis(100),
                     ..Default::default()
                 };
                 let timeout_result = tokio::time::timeout(
                     Duration::from_millis(1000),
-                    create_test_client(Arc::new(cb), configuration, true),
+                    create_test_client(Arc::new(cb), config, true),
                 )
                 .await;
                 match timeout_result {
@@ -2090,7 +2090,7 @@ async fn test_protocol_version_validation() -> Result<()> {
                         }
                     }
                     Err(err) => {
-                        panic!("state timeout {err}");
+                        panic!("server timeout {err}");
                     }
                 };
             });

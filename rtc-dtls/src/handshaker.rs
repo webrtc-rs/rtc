@@ -68,7 +68,7 @@ pub(crate) fn srv_cli_str(is_client: bool) -> String {
     if is_client {
         return "client".to_owned();
     }
-    "state".to_owned()
+    "server".to_owned()
 }
 
 impl DTLSConn {

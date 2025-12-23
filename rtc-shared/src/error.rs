@@ -290,7 +290,7 @@ pub enum Error {
     ErrNonZeroKdrNotSupported,
     #[error("exporter called with wrong label")]
     ErrExporterWrongLabel,
-    #[error("no configuration provided")]
+    #[error("no config provided")]
     ErrNoConfig,
     #[error("no conn provided")]
     ErrNoConn,
@@ -447,13 +447,13 @@ pub enum Error {
     ErrAllRetransmissionsFailed,
     #[error("no binding found for channel")]
     ErrChannelBindNotFound,
-    #[error("STUN state address is not set for the client")]
+    #[error("STUN server address is not set for the client")]
     ErrStunserverAddressNotSet,
     #[error("only one Allocate() caller is allowed")]
     ErrOneAllocateOnly,
     #[error("already allocated")]
     ErrAlreadyAllocated,
-    #[error("non-STUN message from STUN state")]
+    #[error("non-STUN message from STUN server")]
     ErrNonStunmessage,
     #[error("failed to decode STUN message")]
     ErrFailedToDecodeStun,
@@ -750,21 +750,21 @@ pub enum Error {
     ErrReservedExportKeyingMaterial,
     #[error("client sent certificate verify but we have no certificate to verify")]
     ErrCertificateVerifyNoCertificate,
-    #[error("client+state do not support any shared cipher suites")]
+    #[error("client+server do not support any shared cipher suites")]
     ErrCipherSuiteNoIntersection,
-    #[error("state hello can not be created without a cipher suite")]
+    #[error("server hello can not be created without a cipher suite")]
     ErrCipherSuiteUnset,
     #[error("client sent certificate but did not verify it")]
     ErrClientCertificateNotVerified,
-    #[error("state required client verification, but got none")]
+    #[error("server required client verification, but got none")]
     ErrClientCertificateRequired,
-    #[error("state responded with SRTP Profile we do not support")]
+    #[error("server responded with SRTP Profile we do not support")]
     ErrClientNoMatchingSrtpProfile,
-    #[error("client required Extended Master Secret extension, but state does not support it")]
+    #[error("client required Extended Master Secret extension, but server does not support it")]
     ErrClientRequiredButNoServerEms,
-    #[error("state hello can not be created without a compression method")]
+    #[error("server hello can not be created without a compression method")]
     ErrCompressionMethodUnset,
-    #[error("client+state cookie does not match")]
+    #[error("client+server cookie does not match")]
     ErrCookieMismatch,
     #[error("cookie must not be longer then 255 bytes")]
     ErrCookieTooLong,
@@ -794,7 +794,7 @@ pub enum Error {
     ErrInvalidPrivateKey,
     #[error("named curve and private key type does not match")]
     ErrNamedCurveAndPrivateKeyMismatch,
-    #[error("invalid state name format")]
+    #[error("invalid server name format")]
     ErrInvalidSniFormat,
     #[error("invalid signature algorithm")]
     ErrInvalidSignatureAlgorithm,
@@ -808,9 +808,9 @@ pub enum Error {
     ErrNoAvailableSignatureSchemes,
     #[error("no certificates configured")]
     ErrNoCertificates,
-    #[error("no configuration provided")]
+    #[error("no config provided")]
     ErrNoConfigProvided,
-    #[error("client requested zero or more elliptic curves that are not supported by the state")]
+    #[error("client requested zero or more elliptic curves that are not supported by the server")]
     ErrNoSupportedEllipticCurves,
     #[error("unsupported protocol version")]
     ErrUnsupportedProtocolVersion,
@@ -818,14 +818,14 @@ pub enum Error {
     ErrPskAndCertificate,
     #[error("PSK and PSK Identity Hint must both be set for client")]
     ErrPskAndIdentityMustBeSetForClient,
-    #[error("SRTP support was requested but state did not respond with use_srtp extension")]
+    #[error("SRTP support was requested but server did not respond with use_srtp extension")]
     ErrRequestedButNoSrtpExtension,
-    #[error("Certificate is mandatory for state")]
+    #[error("Certificate is mandatory for server")]
     ErrServerMustHaveCertificate,
     #[error("client requested SRTP but we have no matching profiles")]
     ErrServerNoMatchingSrtpProfile,
     #[error(
-        "state requires the Extended Master Secret extension, but the client does not support it"
+        "server requires the Extended Master Secret extension, but the client does not support it"
     )]
     ErrServerRequiredButNoClientEms,
     #[error("expected and actual verify data does not match")]
@@ -886,10 +886,10 @@ pub enum Error {
     #[error("invalid remote address: {0}")]
     InvalidRemoteAddress(SocketAddr),
     /// No client configuration was set up
-    #[error("no client configuration")]
+    #[error("no client config")]
     NoClientConfig,
-    /// No state configuration was set up
-    #[error("no state configuration")]
+    /// No server configuration was set up
+    #[error("no server config")]
     NoServerConfig,
 
     //SCTP errors
@@ -1145,14 +1145,14 @@ pub enum Error {
     #[error("x509Cert expired")]
     ErrCertificateExpired,
 
-    /// ErrNoTurnCredentials indicates that a TURN state URL was provided
+    /// ErrNoTurnCredentials indicates that a TURN server URL was provided
     /// without required credentials.
-    #[error("turn state credentials required")]
+    #[error("turn server credentials required")]
     ErrNoTurnCredentials,
 
     /// ErrTurnCredentials indicates that provided TURN credentials are partial
     /// or malformed.
-    #[error("invalid turn state credentials")]
+    #[error("invalid turn server credentials")]
     ErrTurnCredentials,
 
     /// ErrExistingTrack indicates that a track already exists.

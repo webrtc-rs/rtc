@@ -7,19 +7,19 @@ use std::fmt;
 
 use shared::error::*;
 
-/// The type of state used in the ice.URL structure.
+/// The type of server used in the ice.URL structure.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
 pub enum SchemeType {
-    /// The URL represents a STUN state.
+    /// The URL represents a STUN server.
     Stun,
 
-    /// The URL represents a STUNS (secure) state.
+    /// The URL represents a STUNS (secure) server.
     Stuns,
 
-    /// The URL represents a TURN state.
+    /// The URL represents a TURN server.
     Turn,
 
-    /// The URL represents a TURNS (secure) state.
+    /// The URL represents a TURNS (secure) server.
     Turns,
 
     #[default]

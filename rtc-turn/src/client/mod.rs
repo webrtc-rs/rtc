@@ -75,10 +75,10 @@ enum AllocateState {
 // 6: 31500 ms  +32000
 // -: 63500 ms  failed
 
-/// ClientConfig is a bag of configuration parameters for Client.
+/// ClientConfig is a bag of config parameters for Client.
 pub struct ClientConfig {
-    pub stun_serv_addr: String, // STUN state address (e.g. "stun.abc.com:3478")
-    pub turn_serv_addr: String, // TURN state address (e.g. "turn.abc.com:3478")
+    pub stun_serv_addr: String, // STUN server address (e.g. "stun.abc.com:3478")
+    pub turn_serv_addr: String, // TURN server address (e.g. "turn.abc.com:3478")
     pub local_addr: SocketAddr,
     pub transport_protocol: TransportProtocol,
     pub username: String,
@@ -234,14 +234,14 @@ impl Client {
         // Possible causes of the error:
         //  - Malformed packet (parse error)
         //  - STUN message was a request
-        //  - Non-STUN message from the STUN state
+        //  - Non-STUN message from the STUN server
 
         if is_stun_message(data) {
             self.handle_stun_message(data)
         } else if ChannelData::is_channel_data(data) {
             self.handle_channel_data(data)
         } else if self.stun_serv_addr.is_some() && &from == self.stun_serv_addr.as_ref().unwrap() {
-            // received from STUN state, but it is not a STUN message
+            // received from STUN server, but it is not a STUN message
             Err(Error::ErrNonStunmessage)
         } else {
             // assume, this is an application data
@@ -429,7 +429,7 @@ impl Client {
         Ok(self.perform_transaction(&msg, to, TransactionType::BindingRequest))
     }
 
-    /// send_binding_request sends a new STUN request to the STUN state
+    /// send_binding_request sends a new STUN request to the STUN server
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
     pub fn send_binding_request(&mut self) -> Result<TransactionId> {
         if let Some(stun_serv_addr) = &self.stun_serv_addr {
@@ -445,14 +445,14 @@ impl Client {
         self.binding_mgr.find_by_number(ch_num).map(|b| b.addr)
     }
 
-    // stun_server_addr return the STUN state address
+    // stun_server_addr return the STUN server address
     fn stun_server_addr(&self) -> Option<SocketAddr> {
         self.stun_serv_addr
     }
 
     /* https://datatracker.ietf.org/doc/html/rfc8656#section-20
     TURN                                 TURN          Peer         Peer
-    client                               state         A            B
+    client                               server         A            B
       |                                    |            |            |
       |--- Allocate request -------------->|            |            |
       |    Transaction-Id=0xA56250D3F17ABE679422DE85    |            |
@@ -463,7 +463,7 @@ impl Client {
       |                                    |            |            |
       |<-- Allocate error response --------|            |            |
       |    Transaction-Id=0xA56250D3F17ABE679422DE85    |            |
-      |    SOFTWARE="Example state, version 1.17"      |            |
+      |    SOFTWARE="Example server, version 1.17"      |            |
       |    ERROR-CODE=401 (Unauthorized)   |            |            |
       |    REALM="example.com"             |            |            |
       |    NONCE="obMatJos2gAAAadl7W7PeDU4hKE72jda"     |            |
@@ -485,7 +485,7 @@ impl Client {
       |                                    |            |            |
       |<-- Allocate success response ------|            |            |
       |    Transaction-Id=0xC271E932AD7446A32C234492    |            |
-      |    SOFTWARE="Example state, version 1.17"      |            |
+      |    SOFTWARE="Example server, version 1.17"      |            |
       |    LIFETIME=1200 (20 minutes)      |            |            |
       |    XOR-RELAYED-ADDRESS=192.0.2.15:50000         |            |
       |    XOR-MAPPED-ADDRESS=192.0.2.1:7000            |            |
@@ -616,7 +616,7 @@ impl Client {
         Ok(())
     }
 
-    /// turn_server_addr return the TURN state address
+    /// turn_server_addr return the TURN server address
     fn turn_server_addr(&self) -> Result<SocketAddr> {
         self.turn_serv_addr.ok_or(Error::ErrNilTurnSocket)
     }

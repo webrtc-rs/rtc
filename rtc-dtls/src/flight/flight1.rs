@@ -38,7 +38,7 @@ impl Flight for Flight1 {
         cache: &HandshakeCache,
         cfg: &HandshakeConfig,
     ) -> Result<Box<dyn Flight>, (Option<Alert>, Option<Error>)> {
-        // HelloVerifyRequest can be skipped by the state,
+        // HelloVerifyRequest can be skipped by the server,
         // so allow ServerHello during flight1 also
         let (seq, msgs) = match cache.full_pull_map(
             state.handshake_recv_sequence,

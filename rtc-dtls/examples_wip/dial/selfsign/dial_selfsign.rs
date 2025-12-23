@@ -41,7 +41,7 @@ async fn main() -> Result<(), Error> {
                 .required_unless("FULLHELP")
                 .takes_value(true)
                 .default_value("127.0.0.1:4444")
-                .long("state")
+                .long("server")
                 .help("DTLS Server name."),
         );
 

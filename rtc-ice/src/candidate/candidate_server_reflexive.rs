@@ -3,7 +3,7 @@ use crate::network_type::determine_network_type;
 use crate::rand::generate_cand_id;
 use shared::error::*;
 
-/// The configuration required to create a new `CandidateServerReflexive`.
+/// The config required to create a new `CandidateServerReflexive`.
 #[derive(Default)]
 pub struct CandidateServerReflexiveConfig {
     pub base_config: CandidateConfig,
@@ -13,7 +13,7 @@ pub struct CandidateServerReflexiveConfig {
 }
 
 impl CandidateServerReflexiveConfig {
-    /// Creates a new state reflective candidate.
+    /// Creates a new server reflective candidate.
     pub fn new_candidate_server_reflexive(self) -> Result<Candidate> {
         let mut candidate_id = self.base_config.candidate_id;
         if candidate_id.is_empty() {

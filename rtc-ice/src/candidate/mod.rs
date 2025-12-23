@@ -73,7 +73,7 @@ impl CandidateType {
     ///
     /// 4.1.2.2.  Guidelines for Choosing Type and Local Preferences
     /// The RECOMMENDED values are 126 for host candidates, 100
-    /// for state reflexive candidates, 110 for peer reflexive candidates,
+    /// for server reflexive candidates, 110 for peer reflexive candidates,
     /// and 0 for relayed candidates.
     #[must_use]
     pub const fn preference(self) -> u16 {
@@ -375,7 +375,7 @@ impl Candidate {
             // (both inclusive), with 8191 being the most preferred.  It is
             // RECOMMENDED that the host, UDP-tunneled, and relayed TCP candidates
             // have the direction-pref assigned as follows: 6 for active, 4 for
-            // passive, and 2 for S-O.  For the NAT-assisted and state reflexive
+            // passive, and 2 for S-O.  For the NAT-assisted and server reflexive
             // candidates, the RECOMMENDED values are: 6 for S-O, 4 for active, and
             // 2 for passive.
             //

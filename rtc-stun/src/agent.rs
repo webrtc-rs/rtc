@@ -169,7 +169,7 @@ impl Agent {
     }
 
     /// collect terminates all transactions that have deadline before provided
-    /// time, blocking until all handler will process ErrTransactionTimeOut.
+    /// time, blocking until all handlers will process ErrTransactionTimeOut.
     /// Will return ErrAgentClosed if agent is already closed.
     ///
     /// It is safe to call Collect concurrently but makes no sense.

@@ -47,7 +47,7 @@ pub struct Endpoint {
     local_cid_generator: Box<dyn AssociationIdGenerator>,
     endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
-    /// Whether incoming associations should be unconditionally rejected by a state
+    /// Whether incoming associations should be unconditionally rejected by a server
     ///
     /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
     reject_new_associations: bool,
@@ -59,7 +59,7 @@ impl fmt::Debug for Endpoint {
             .field("association_ids_initial", &self.association_ids_init)
             .field("association_ids", &self.association_ids)
             .field("associations", &self.associations)
-            .field("configuration", &self.endpoint_config)
+            .field("config", &self.endpoint_config)
             .field("server_config", &self.server_config)
             .field("reject_new_associations", &self.reject_new_associations)
             .finish()
@@ -89,7 +89,7 @@ impl Endpoint {
         }
     }
 
-    /// Replace the state configuration, affecting new incoming associations only
+    /// Replace the server configuration, affecting new incoming associations only
     pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
         self.server_config = server_config;
     }
@@ -380,6 +380,6 @@ pub enum ConnectError {
     /// No default client configuration was set up
     ///
     /// Use `Endpoint::connect_with` to specify a client configuration.
-    #[error("no default client configuration")]
+    #[error("no default client config")]
     NoDefaultClientConfig,
 }

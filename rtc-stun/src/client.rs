@@ -106,7 +106,7 @@ impl ClientBuilder {
     }
 }
 
-/// Client simulates "connection" to STUN state.
+/// Client simulates "connection" to STUN server.
 pub struct Client {
     local: SocketAddr,
     remote: SocketAddr,
