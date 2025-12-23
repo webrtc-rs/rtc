@@ -834,8 +834,8 @@ impl Agent {
             warn!(
                 "[{}]: Failed to handle inbound ICE from: {} to: {} error: {}",
                 self.get_name(),
-                local_index,
-                remote_index,
+                self.local_candidates[local_index],
+                self.remote_candidates[remote_index],
                 err
             );
         } else {
@@ -909,7 +909,7 @@ impl Agent {
                 "[{}]: unhandled STUN from {} to {} class({}) method({})",
                 self.get_name(),
                 remote_addr,
-                local_index,
+                self.local_candidates[local_index],
                 m.typ.class,
                 m.typ.method
             );
@@ -1038,7 +1038,7 @@ impl Agent {
                 "[{}]: inbound STUN (Request) from {} to {}",
                 self.get_name(),
                 remote_addr,
-                local_index
+                self.local_candidates[local_index]
             );
 
             if let Some(remote_index) = &remote_candidate_index {

@@ -1,9 +1,11 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
+use env_logger::Target;
 use log::trace;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::fs::OpenOptions;
 use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
@@ -35,6 +37,8 @@ struct Cli {
     log_level: String,
     #[arg(short, long, default_value_t =  format!(""))]
     input_sdp_file: String,
+    #[arg(short, long, default_value_t =  format!(""))]
+    output_log_file: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,
     #[arg(long, default_value_t = 0)]
@@ -47,9 +51,21 @@ async fn main() -> Result<()> {
     let host = cli.host;
     let port = cli.port;
     let input_sdp_file = cli.input_sdp_file;
+    let output_log_file = cli.output_log_file;
     let log_level = log::LevelFilter::from_str(&cli.log_level)?;
     if cli.debug {
         env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
             .format(|buf, record| {
                 writeln!(
                     buf,
@@ -175,7 +191,6 @@ async fn run(
                         "socket write to {} with error {}",
                         msg.transport.peer_addr, err
                     );
-                    break 'EventLoop;
                 }
             }
         }

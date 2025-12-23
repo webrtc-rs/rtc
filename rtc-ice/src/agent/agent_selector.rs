@@ -309,8 +309,8 @@ impl ControllingSelector for Agent {
 
             trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
-                remote_index,
-                local_index
+                self.remote_candidates[remote_index],
+                self.local_candidates[local_index]
             );
             let selected_pair_is_none = self.get_selected_pair().is_none();
 
@@ -334,7 +334,7 @@ impl ControllingSelector for Agent {
         } else {
             warn!(
                 "discard message from ({}), unknown TransactionID 0x{:?}",
-                remote_index, m.transaction_id
+                self.remote_candidates[remote_index], m.transaction_id
             );
         }
     }
@@ -456,8 +456,8 @@ impl ControlledSelector for Agent {
 
             trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
-                remote_index,
-                local_index
+                self.remote_candidates[remote_index],
+                self.local_candidates[local_index]
             );
 
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
@@ -471,7 +471,7 @@ impl ControlledSelector for Agent {
         } else {
             warn!(
                 "discard message from ({}), unknown TransactionID 0x{:?}",
-                remote_index, m.transaction_id
+                self.remote_candidates[remote_index], m.transaction_id
             );
         }
     }
