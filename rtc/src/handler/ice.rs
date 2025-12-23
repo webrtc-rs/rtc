@@ -1,11 +1,14 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use super::message::{RTCEventInternal, TaggedRTCMessage};
+use super::message::{RTCEventInternal, RTCMessage, STUNMessage, TaggedRTCMessage};
+use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice::RTCIceTransport;
 use crate::transport::TransportStates;
 use log::debug;
 use shared::error::{Error, Result};
+use shared::TransportMessage;
 
 #[derive(Default)]
 pub(crate) struct IceHandlerContext {
@@ -50,14 +53,22 @@ impl<'a> IceHandler<'a> {
 impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> for IceHandler<'a> {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedRTCMessage;
-    type Eout = ();
+    type Eout = RTCPeerConnectionEvent;
     type Error = Error;
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        // Bypass
-        debug!("bypass ice read {:?}", msg.transport.peer_addr);
-        self.ctx.read_outs.push_back(msg);
+        if let RTCMessage::Stun(STUNMessage::Stun(message)) = msg.message {
+            self.ctx.ice_transport.agent.handle_read(TransportMessage {
+                now: msg.now,
+                transport: msg.transport,
+                message,
+            })?
+        } else {
+            // Bypass
+            debug!("bypass ice read {:?}", msg.transport.peer_addr);
+            self.ctx.read_outs.push_back(msg);
+        }
 
         Ok(())
     }
@@ -75,6 +86,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        while let Some(transmit) = self.ctx.ice_transport.agent.poll_write() {
+            self.ctx.write_outs.push_back(TaggedRTCMessage {
+                now: transmit.now,
+                transport: transmit.transport,
+                message: RTCMessage::Stun(STUNMessage::Raw(transmit.message)),
+            });
+        }
+
         self.ctx.write_outs.pop_front()
     }
 
@@ -83,18 +102,31 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        if let Some(evt) = self.ctx.ice_transport.agent.poll_event() {
+            match evt {
+                ::ice::Event::ConnectionStateChange(state) => Some(
+                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
+                ),
+                ::ice::Event::SelectedCandidatePairChange(_, _) => {
+                    Some(RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent(
+                        RTCIceGatheringState::Complete,
+                    ))
+                }
+            }
+        } else {
+            None
+        }
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
-        Ok(())
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        self.ctx.ice_transport.agent.handle_timeout(now)
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
-        None
+        self.ctx.ice_transport.agent.poll_timeout()
     }
 
     fn close(&mut self) -> Result<()> {
-        Ok(())
+        self.ctx.ice_transport.agent.close()
     }
 }

@@ -1,3 +1,4 @@
+use ice::state::ConnectionState;
 use std::fmt;
 
 /// RTCIceConnectionState indicates signaling state of the ICE Connection.
@@ -101,6 +102,36 @@ impl fmt::Display for RTCIceConnectionState {
             RTCIceConnectionState::Unspecified => crate::configuration::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
+    }
+}
+
+impl From<ConnectionState> for RTCIceConnectionState {
+    fn from(raw: ConnectionState) -> Self {
+        match raw {
+            ConnectionState::New => RTCIceConnectionState::New,
+            ConnectionState::Checking => RTCIceConnectionState::Checking,
+            ConnectionState::Connected => RTCIceConnectionState::Connected,
+            ConnectionState::Completed => RTCIceConnectionState::Completed,
+            ConnectionState::Failed => RTCIceConnectionState::Failed,
+            ConnectionState::Disconnected => RTCIceConnectionState::Disconnected,
+            ConnectionState::Closed => RTCIceConnectionState::Closed,
+            _ => RTCIceConnectionState::Unspecified,
+        }
+    }
+}
+
+impl RTCIceConnectionState {
+    pub(crate) fn to_ice(self) -> ConnectionState {
+        match self {
+            RTCIceConnectionState::New => ConnectionState::New,
+            RTCIceConnectionState::Checking => ConnectionState::Checking,
+            RTCIceConnectionState::Connected => ConnectionState::Connected,
+            RTCIceConnectionState::Completed => ConnectionState::Completed,
+            RTCIceConnectionState::Failed => ConnectionState::Failed,
+            RTCIceConnectionState::Disconnected => ConnectionState::Disconnected,
+            RTCIceConnectionState::Closed => ConnectionState::Closed,
+            _ => ConnectionState::Unspecified,
+        }
     }
 }
 

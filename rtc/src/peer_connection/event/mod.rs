@@ -1,6 +1,8 @@
 use crate::data_channel::event::RTCDataChannelEvent;
 use crate::peer_connection::event::ice_error_event::RTCPeerConnectionIceErrorEvent;
 use crate::peer_connection::event::ice_event::RTCPeerConnectionIceEvent;
+use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
+use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 
@@ -15,8 +17,8 @@ pub enum RTCPeerConnectionEvent {
     OnIceCandidateEvent(RTCPeerConnectionIceEvent),
     OnIceCandidateErrorEvent(RTCPeerConnectionIceErrorEvent),
     OnSignalingStateChangeEvent(RTCSignalingState),
-    OnIceConnectionStateChangeEvent,
-    OnIceGatheringStateChangeEvent,
+    OnIceConnectionStateChangeEvent(RTCIceConnectionState),
+    OnIceGatheringStateChangeEvent(RTCIceGatheringState),
     OnConnectionStateChangeEvent(RTCPeerConnectionState),
 
     // The Peer-to-peer data API extends the RTCPeerConnection interface as described below.

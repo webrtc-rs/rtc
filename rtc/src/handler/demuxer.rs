@@ -102,7 +102,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, ()> for DemuxerHan
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
         match msg.message {
-            RTCMessage::Stun(STUNMessage::Raw(message))
+            RTCMessage::Raw(message)
+            | RTCMessage::Stun(STUNMessage::Raw(message))
             | RTCMessage::Dtls(DTLSMessage::Raw(message))
             | RTCMessage::Rtp(RTPMessage::Raw(message)) => {
                 self.ctx.write_outs.push_back(TaggedRTCMessage {
