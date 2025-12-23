@@ -37,7 +37,7 @@ struct Cli {
     input_sdp_file: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,
-    #[arg(long, default_value_t = 8080)]
+    #[arg(long, default_value_t = 0)]
     port: u16,
 }
 

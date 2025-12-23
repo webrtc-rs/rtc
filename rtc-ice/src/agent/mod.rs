@@ -794,8 +794,8 @@ impl Agent {
         trace!(
             "[{}]: ping STUN from {} to {}",
             self.get_name(),
-            local_index,
-            remote_index
+            self.local_candidates[local_index],
+            self.remote_candidates[remote_index],
         );
 
         self.invalidate_pending_binding_requests(Instant::now());
