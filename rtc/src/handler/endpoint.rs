@@ -8,7 +8,6 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
 use crate::media::rtp_transceiver::RTCRtpTransceiver;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use bytes::BytesMut;
 use log::{debug, warn};
 use shared::error::{Error, Result};
 use shared::TransportContext;
@@ -122,12 +121,11 @@ impl<'a> EndpointHandler<'a> {
             DataChannelEvent::Open => {
                 self.handle_datachannel_open(now, transport_context, message.data_channel_id)
             }
-            DataChannelEvent::Message(is_string, data) => self.handle_datachannel_message(
+            DataChannelEvent::Message(data_channel_message) => self.handle_datachannel_message(
                 now,
                 transport_context,
                 message.data_channel_id,
-                is_string,
-                data,
+                data_channel_message,
             ),
             DataChannelEvent::Close => {
                 self.handle_datachannel_close(now, transport_context, message.data_channel_id)
@@ -196,8 +194,7 @@ impl<'a> EndpointHandler<'a> {
         _now: Instant,
         transport_context: TransportContext,
         data_channel_id: u16,
-        is_string: bool,
-        data: BytesMut,
+        data_channel_message: RTCDataChannelMessage,
     ) -> Result<()> {
         debug!("data channel recv message for {:?}", transport_context);
         self.ctx
@@ -205,7 +202,7 @@ impl<'a> EndpointHandler<'a> {
             .push_back(RTCEventInternal::RTCPeerConnectionEvent(
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
                     data_channel_id,
-                    RTCDataChannelMessage { is_string, data },
+                    data_channel_message,
                 )),
             ));
 

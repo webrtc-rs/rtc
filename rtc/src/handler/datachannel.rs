@@ -4,6 +4,7 @@ use super::message::{
     TaggedRTCMessage,
 };
 use crate::data_channel::internal::RTCDataChannelInternal;
+use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::RTCDataChannelId;
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
@@ -105,8 +106,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                 //association_handle: message.association_handle,
                                 data_channel_id: message.stream_id,
                                 data_channel_event: DataChannelEvent::Message(
-                                    message.data_message_type == DataChannelMessageType::Text,
-                                    message.payload,
+                                    RTCDataChannelMessage {
+                                        is_string: message.data_message_type
+                                            == DataChannelMessageType::Text,
+                                        data: message.payload,
+                                    },
                                 ),
                             }),
                             None,
@@ -166,20 +170,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     return Err(Error::ErrAssociationNotExisted);
                 };
 
-            if let DataChannelEvent::Message(is_string, payload) = message.data_channel_event {
+            if let DataChannelEvent::Message(data_channel_message) = message.data_channel_event {
                 self.ctx.write_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
                     message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
                         association_handle,
                         stream_id: message.data_channel_id,
-                        data_message_type: if is_string {
+                        data_message_type: if data_channel_message.is_string {
                             DataChannelMessageType::Text
                         } else {
                             DataChannelMessageType::Binary
                         },
                         params: None,
-                        payload,
+                        payload: data_channel_message.data,
                     })),
                 });
             } else {

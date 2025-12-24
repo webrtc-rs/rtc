@@ -428,7 +428,7 @@ impl MediaEngine {
 
     /// get_header_extension_id returns the negotiated ID for a header extension.
     /// If the Header Extension isn't enabled ok will be false
-    pub async fn get_header_extension_id(
+    pub fn get_header_extension_id(
         &self,
         extension: RTCRtpHeaderExtensionCapability,
     ) -> (isize, bool, bool) {

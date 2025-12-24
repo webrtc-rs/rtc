@@ -1,6 +1,9 @@
+use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
+use crate::handler::message::{ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage};
 use crate::peer_connection::RTCPeerConnection;
 use bytes::BytesMut;
+use sansio::Protocol;
 use shared::error::{Error, Result};
 
 pub mod event;
@@ -128,7 +131,7 @@ impl RTCDataChannel<'_> {
     /// increase with each call to the send() method as long as the ready_state is
     /// open; however, buffered_amount does not reset to zero once the channel
     /// closes.
-    pub async fn buffered_amount(&self) -> Result<usize> {
+    pub fn buffered_amount(&self) -> Result<usize> {
         //TODO:
         Ok(0)
     }
@@ -139,18 +142,36 @@ impl RTCDataChannel<'_> {
     /// event fires. buffered_amount_low_threshold is initially zero on each new
     /// DataChannel, but the application may change its value at any time.
     /// The threshold is set to 0 by default.
-    pub async fn buffered_amount_low_threshold(&self) -> Result<usize> {
+    pub fn buffered_amount_low_threshold(&self) -> Result<usize> {
         //TODO:
         Ok(0)
     }
 
     /// send sends the binary message to the DataChannel peer
-    pub fn send(&mut self, _data: &BytesMut) -> Result<()> {
-        Ok(())
+    pub fn send(&mut self, data: BytesMut) -> Result<()> {
+        self.peer_connection
+            .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
+                ApplicationMessage {
+                    data_channel_id: self.id,
+                    data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
+                        is_string: false,
+                        data,
+                    }),
+                },
+            )))
     }
 
     /// send_text sends the text message to the DataChannel peer
-    pub fn send_text(&mut self, _s: impl Into<String>) -> Result<()> {
-        Ok(())
+    pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
+        self.peer_connection
+            .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
+                ApplicationMessage {
+                    data_channel_id: self.id,
+                    data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
+                        is_string: false,
+                        data: BytesMut::from(s.into().as_str()),
+                    }),
+                },
+            )))
     }
 }

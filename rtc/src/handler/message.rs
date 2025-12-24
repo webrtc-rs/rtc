@@ -1,3 +1,4 @@
+use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
@@ -25,7 +26,7 @@ pub(crate) struct DataChannelMessageParams {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelEvent {
     Open,
-    Message(bool /*is_string*/, BytesMut /*payload*/),
+    Message(RTCDataChannelMessage),
     Close,
 }
 

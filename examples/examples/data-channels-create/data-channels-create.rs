@@ -254,7 +254,7 @@ async fn run(
                                 dc.label()?,
                                 msg_str
                             );
-                            dc.send(&message.data)?;
+                            dc.send(message.data)?;
                         }
                         _ => {}
                     }
