@@ -234,6 +234,7 @@ async fn run(
                     }
                 }
                 RTCPeerConnectionEvent::OnDataChannel(data_channel_event) => {
+                    println!("OnDataChannel event: {:?}", data_channel_event);
                     match data_channel_event {
                         RTCDataChannelEvent::OnOpen(channel_id) => {
                             let dc = peer_connection

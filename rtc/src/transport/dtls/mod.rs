@@ -176,10 +176,11 @@ impl RTCDtlsTransport {
 
     pub(crate) fn start(
         &mut self,
-        ice_role: RTCIceRole,
+        local_ice_role: RTCIceRole,
         remote_dtls_parameters: DTLSParameters,
     ) -> Result<()> {
-        let dtls_handshake_config = self.prepare_transport(ice_role, remote_dtls_parameters)?;
+        let dtls_handshake_config =
+            self.prepare_transport(local_ice_role, remote_dtls_parameters)?;
 
         if self.dtls_role == DTLSRole::Client {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(

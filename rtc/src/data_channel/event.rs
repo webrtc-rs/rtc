@@ -2,7 +2,7 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub enum RTCDataChannelEvent {
     #[default]
     Unspecified,

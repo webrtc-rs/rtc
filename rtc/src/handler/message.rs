@@ -1,3 +1,4 @@
+use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
 use ice::candidate::Candidate;
@@ -39,8 +40,7 @@ pub struct DataChannelMessage {
 
 #[derive(Debug, Clone)]
 pub struct ApplicationMessage {
-    pub(crate) association_handle: usize,
-    pub(crate) stream_id: u16,
+    pub(crate) data_channel_id: RTCDataChannelId,
     pub(crate) data_channel_event: DataChannelEvent,
 }
 

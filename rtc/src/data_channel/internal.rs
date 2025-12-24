@@ -11,8 +11,9 @@ pub(crate) struct RTCDataChannelInternal {
     pub(crate) protocol: String,
     pub(crate) negotiated: bool,
     pub(crate) ready_state: RTCDataChannelState,
-    buffered_amount_low_threshold: usize,
-    binary_type: BinaryType,
+    pub(crate) buffered_amount_low_threshold: usize,
+    pub(crate) binary_type: BinaryType,
+    pub(crate) association_handle: usize,
 }
 
 impl RTCDataChannelInternal {
@@ -30,6 +31,7 @@ impl RTCDataChannelInternal {
             ready_state: RTCDataChannelState::Connecting,
             buffered_amount_low_threshold: 0,
             binary_type: BinaryType::default(),
+            association_handle: 0,
         }
     }
 }

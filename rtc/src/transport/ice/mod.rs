@@ -185,7 +185,7 @@ impl RTCIceTransport {
 
     pub(crate) fn start(
         &mut self,
-        ice_role: RTCIceRole,
+        local_ice_role: RTCIceRole,
         remote_ice_parameters: RTCIceParameters,
     ) -> Result<()> {
         if self.state() != RTCIceTransportState::New {
@@ -193,7 +193,7 @@ impl RTCIceTransport {
         }
 
         self.agent.start_connectivity_checks(
-            ice_role == RTCIceRole::Controlling,
+            local_ice_role == RTCIceRole::Controlling,
             remote_ice_parameters.username_fragment,
             remote_ice_parameters.password,
         )?;

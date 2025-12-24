@@ -596,7 +596,7 @@ impl RTCPeerConnection {
                 // If one of the agents is lite and the other one is not, the lite agent must be the controlling agent.
                 // If both or neither agents are lite the offering agent is controlling.
                 // RFC 8445 S6.1.1
-                let ice_role = if (we_offer
+                let local_ice_role = if (we_offer
                     && remote_is_lite == self.configuration.setting_engine.candidates.ice_lite)
                     || (remote_is_lite && !self.configuration.setting_engine.candidates.ice_lite)
                 {
@@ -607,15 +607,21 @@ impl RTCPeerConnection {
 
                 let remote_dtls_role = DTLSRole::from(parsed_remote_description);
                 log::trace!(
-                    "start_transports: ice_role={ice_role}, remote_dtls_role={remote_dtls_role}"
+                    "start_transports: local_ice_role={local_ice_role}, remote_dtls_role={remote_dtls_role}"
                 );
-                self.start_transports(
-                    ice_role,
+                // Start the ice transport
+                self.ice_transport_mut().start(
+                    local_ice_role,
                     RTCIceParameters {
                         username_fragment: remote_ufrag,
                         password: remote_pwd,
                         ice_lite: remote_is_lite,
                     },
+                )?;
+
+                // Start the dtls transport
+                self.dtls_transport_mut().start(
+                    local_ice_role,
                     DTLSParameters {
                         role: remote_dtls_role,
                         fingerprints: vec![RTCDtlsFingerprint {

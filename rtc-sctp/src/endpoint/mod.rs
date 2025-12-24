@@ -323,7 +323,7 @@ pub(crate) struct AssociationMeta {
 }
 
 /// Internal identifier for an `Association` currently associated with an endpoint
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AssociationHandle(pub usize);
 
 impl From<AssociationHandle> for usize {

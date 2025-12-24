@@ -3,13 +3,16 @@ use super::message::{
     TaggedRTCMessage,
 };
 use crate::data_channel::event::RTCDataChannelEvent;
+use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
+use crate::data_channel::RTCDataChannelId;
+use crate::media::rtp_transceiver::RTCRtpTransceiver;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
 use log::{debug, warn};
 use shared::error::{Error, Result};
 use shared::TransportContext;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 #[derive(Default)]
@@ -23,11 +26,21 @@ pub(crate) struct EndpointHandlerContext {
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
 pub(crate) struct EndpointHandler<'a> {
     ctx: &'a mut EndpointHandlerContext,
+    data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
 }
 
 impl<'a> EndpointHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut EndpointHandlerContext) -> Self {
-        EndpointHandler { ctx }
+    pub(crate) fn new(
+        ctx: &'a mut EndpointHandlerContext,
+        data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
+    ) -> Self {
+        EndpointHandler {
+            ctx,
+            data_channels,
+            rtp_transceivers,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -106,26 +119,19 @@ impl<'a> EndpointHandler<'a> {
         message: ApplicationMessage,
     ) -> Result<()> {
         match message.data_channel_event {
-            DataChannelEvent::Open => self.handle_datachannel_open(
-                now,
-                transport_context,
-                message.association_handle,
-                message.stream_id,
-            ),
+            DataChannelEvent::Open => {
+                self.handle_datachannel_open(now, transport_context, message.data_channel_id)
+            }
             DataChannelEvent::Message(is_string, data) => self.handle_datachannel_message(
                 now,
                 transport_context,
-                message.association_handle,
-                message.stream_id,
+                message.data_channel_id,
                 is_string,
                 data,
             ),
-            DataChannelEvent::Close => self.handle_datachannel_close(
-                now,
-                transport_context,
-                message.association_handle,
-                message.stream_id,
-            ),
+            DataChannelEvent::Close => {
+                self.handle_datachannel_close(now, transport_context, message.data_channel_id)
+            }
         }
     }
 
@@ -155,16 +161,13 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        _association_handle: usize,
-        stream_id: u16,
+        data_channel_id: u16,
     ) -> Result<()> {
         debug!("data channel is open for {:?}", transport_context);
-        //TODO: store association_handle?
-
         self.ctx
             .event_outs
             .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(stream_id)),
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(data_channel_id)),
             ));
 
         Ok(())
@@ -174,14 +177,15 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        _association_handle: usize,
-        stream_id: u16,
+        data_channel_id: u16,
     ) -> Result<()> {
         debug!("data channel is close for {:?}", transport_context);
         self.ctx
             .event_outs
             .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(stream_id)),
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
+                    data_channel_id,
+                )),
             ));
 
         Ok(())
@@ -191,8 +195,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        _association_handle: usize,
-        stream_id: u16,
+        data_channel_id: u16,
         is_string: bool,
         data: BytesMut,
     ) -> Result<()> {
@@ -201,7 +204,7 @@ impl<'a> EndpointHandler<'a> {
             .event_outs
             .push_back(RTCEventInternal::RTCPeerConnectionEvent(
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
-                    stream_id,
+                    data_channel_id,
                     RTCDataChannelMessage { is_string, data },
                 )),
             ));

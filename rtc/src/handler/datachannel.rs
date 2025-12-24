@@ -3,12 +3,15 @@ use super::message::{
     DataChannelMessageParams, DataChannelMessageType, RTCEventInternal, RTCMessage,
     TaggedRTCMessage,
 };
+use crate::data_channel::internal::RTCDataChannelInternal;
+use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::RTCDataChannelId;
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
 use log::{debug, error, warn};
 use sctp::ReliabilityType;
 use shared::error::{Error, Result};
 use shared::marshal::*;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 #[derive(Default)]
@@ -21,11 +24,15 @@ pub(crate) struct DataChannelHandlerContext {
 /// DataChannelHandler implements DataChannel Protocol handling
 pub(crate) struct DataChannelHandler<'a> {
     ctx: &'a mut DataChannelHandlerContext,
+    data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
 }
 
 impl<'a> DataChannelHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut DataChannelHandlerContext) -> Self {
-        DataChannelHandler { ctx }
+    pub(crate) fn new(
+        ctx: &'a mut DataChannelHandlerContext,
+        data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    ) -> Self {
+        DataChannelHandler { ctx, data_channels }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -62,23 +69,30 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                             let (unordered, reliability_type) =
                                 get_reliability_params(data_channel_open.channel_type);
 
+                            let params = DataChannelMessageParams {
+                                unordered,
+                                reliability_type,
+                                reliability_parameter: data_channel_open.reliability_parameter,
+                            };
+
+                            self.create_data_channel_if_not_existed(
+                                &params,
+                                message.association_handle,
+                                message.stream_id,
+                            )?;
+
                             let payload = Message::DataChannelAck(DataChannelAck {}).marshal()?;
                             Ok((
                                 Some(ApplicationMessage {
-                                    association_handle: message.association_handle,
-                                    stream_id: message.stream_id,
+                                    //association_handle: message.association_handle,
+                                    data_channel_id: message.stream_id,
                                     data_channel_event: DataChannelEvent::Open,
                                 }),
                                 Some(DataChannelMessage {
                                     association_handle: message.association_handle,
                                     stream_id: message.stream_id,
                                     data_message_type: DataChannelMessageType::Control,
-                                    params: Some(DataChannelMessageParams {
-                                        unordered,
-                                        reliability_type,
-                                        reliability_parameter: data_channel_open
-                                            .reliability_parameter,
-                                    }),
+                                    params: Some(params),
                                     payload,
                                 }),
                             ))
@@ -88,8 +102,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     } else {
                         Ok((
                             Some(ApplicationMessage {
-                                association_handle: message.association_handle,
-                                stream_id: message.stream_id,
+                                //association_handle: message.association_handle,
+                                data_channel_id: message.stream_id,
                                 data_channel_event: DataChannelEvent::Message(
                                     message.data_message_type == DataChannelMessageType::Text,
                                     message.payload,
@@ -145,13 +159,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
             debug!("send application message {:?}", msg.transport.peer_addr);
 
+            let association_handle =
+                if let Some(data_channel) = self.data_channels.get(&message.data_channel_id) {
+                    data_channel.association_handle
+                } else {
+                    return Err(Error::ErrAssociationNotExisted);
+                };
+
             if let DataChannelEvent::Message(is_string, payload) = message.data_channel_event {
                 self.ctx.write_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
                     message: RTCMessage::Dtls(DTLSMessage::Sctp(DataChannelMessage {
-                        association_handle: message.association_handle,
-                        stream_id: message.stream_id,
+                        association_handle,
+                        stream_id: message.data_channel_id,
                         data_message_type: if is_string {
                             DataChannelMessageType::Text
                         } else {
@@ -212,4 +233,26 @@ fn get_reliability_params(channel_type: ChannelType) -> (bool, ReliabilityType) 
     };
 
     (unordered, reliability_type)
+}
+
+impl DataChannelHandler<'_> {
+    fn create_data_channel_if_not_existed(
+        &mut self,
+        params: &DataChannelMessageParams,
+        association_handle: usize,
+        stream_id: u16,
+    ) -> Result<()> {
+        if let Some(data_channel) = self.data_channels.get_mut(&stream_id) {
+            data_channel.association_handle = association_handle;
+        } else {
+            let mut data_channel = RTCDataChannelInternal::new(DataChannelParameters {
+                ordered: !params.unordered,
+                //TODO: fill correctly based on DataChannelMessageParams
+                ..Default::default()
+            });
+            data_channel.association_handle = association_handle;
+            self.data_channels.insert(stream_id, data_channel);
+        }
+        Ok(())
+    }
 }

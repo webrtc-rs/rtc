@@ -593,26 +593,6 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    /// Start all transports. PeerConnection now has enough state
-    pub(crate) fn start_transports(
-        &mut self,
-        ice_role: RTCIceRole,
-        remote_ice_parameters: RTCIceParameters,
-        remote_dtls_parameters: DTLSParameters,
-    ) -> Result<()> {
-        // Start the ice transport
-        self.ice_transport_mut()
-            .start(ice_role, remote_ice_parameters)?;
-
-        // Start the dtls_transport transport
-        self.dtls_transport_mut()
-            .start(ice_role, remote_dtls_parameters)?;
-
-        //TODO: self.update_connection_state();
-
-        Ok(())
-    }
-
     fn negotiation_needed_op(&mut self) -> Result<()> {
         /*
         // Don't run NegotiatedNeeded checks if on_negotiation_needed is not set
