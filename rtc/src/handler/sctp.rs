@@ -5,10 +5,10 @@ use super::message::{
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
-use log::{debug, error};
+use log::{debug, error, warn};
 use sctp::{
-    AssociationEvent, AssociationHandle, DatagramEvent, EndpointEvent, Event, Payload,
-    PayloadProtocolIdentifier, StreamEvent,
+    AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
+    Payload, PayloadProtocolIdentifier, StreamEvent,
 };
 use shared::error::{Error, Result};
 use shared::TransportMessage;
@@ -68,6 +68,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
 
+            if self.ctx.sctp_transport.sctp_endpoint.is_none() {
+                warn!(
+                    "drop sctp RAW {:?} due to sctp_endpoint is not ready yet",
+                    msg.transport.peer_addr
+                );
+                return Ok(());
+            }
+
             let try_read = || -> Result<Vec<SctpMessage>> {
                 let (sctp_endpoint, sctp_associations) = (
                     self.ctx
@@ -111,21 +119,29 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         }
 
                         while let Some(event) = conn.poll() {
-                            if let Event::Stream(StreamEvent::Readable { id }) = event {
-                                let mut stream = conn.stream(id)?;
-                                while let Some(chunks) = stream.read_sctp()? {
-                                    let n = chunks
-                                        .read(&mut self.ctx.sctp_transport.internal_buffer)?;
-                                    messages.push(SctpMessage::Inbound(DataChannelMessage {
-                                        association_handle: ch.0,
-                                        stream_id: id,
-                                        data_message_type: to_data_message_type(chunks.ppi),
-                                        params: None,
-                                        payload: BytesMut::from(
-                                            &self.ctx.sctp_transport.internal_buffer[0..n],
-                                        ),
-                                    }));
+                            match event {
+                                Event::Stream(StreamEvent::Readable { id }) => {
+                                    let mut stream = conn.stream(id)?;
+                                    while let Some(chunks) = stream.read_sctp()? {
+                                        let n = chunks
+                                            .read(&mut self.ctx.sctp_transport.internal_buffer)?;
+                                        messages.push(SctpMessage::Inbound(DataChannelMessage {
+                                            association_handle: ch.0,
+                                            stream_id: id,
+                                            data_message_type: to_data_message_type(chunks.ppi),
+                                            params: None,
+                                            payload: BytesMut::from(
+                                                &self.ctx.sctp_transport.internal_buffer[0..n],
+                                            ),
+                                        }));
+                                    }
                                 }
+                                Event::Connected => {
+                                    self.ctx
+                                        .event_outs
+                                        .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
+                                }
+                                _ => {}
                             }
                         }
 
@@ -275,7 +291,37 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
+        let remote_addr = if let RTCEventInternal::DTLSHandshakeComplete(remote_addr, _, _) = &evt {
+            Some(*remote_addr)
+        } else {
+            None
+        };
+
         self.ctx.event_outs.push_back(evt);
+
+        if let Some(remote_addr) = remote_addr {
+            if let Some(sctp_transport_config) =
+                self.ctx.sctp_transport.sctp_transport_config.clone()
+            {
+                let (sctp_endpoint, sctp_associations) = (
+                    self.ctx
+                        .sctp_transport
+                        .sctp_endpoint
+                        .as_mut()
+                        .ok_or(Error::ErrSCTPNotEstablished)?,
+                    &mut self.ctx.sctp_transport.sctp_associations,
+                );
+
+                debug!("sctp endpoint initiates connection for dtls client role");
+                let (ch, conn) = sctp_endpoint
+                    .connect(ClientConfig::new(sctp_transport_config), remote_addr)
+                    .map_err(|e| Error::Other(e.to_string()))?;
+
+                sctp_associations.insert(ch, conn);
+            }
+        }
+
         Ok(())
     }
 
@@ -284,6 +330,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        if self.ctx.sctp_transport.sctp_endpoint.is_none() {
+            return Ok(());
+        }
+
         let mut try_timeout = || -> Result<Vec<TransportMessage<Payload>>> {
             let mut transmits = vec![];
 

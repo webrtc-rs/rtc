@@ -6,6 +6,7 @@ use ice::candidate::Candidate;
 use sctp::ReliabilityType;
 use shared::TransportContext;
 use srtp::context::Context;
+use std::net::SocketAddr;
 use std::time::Instant;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -89,5 +90,7 @@ pub(crate) enum RTCEventInternal {
     // ICE Event
     ICESelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
     // DTLS Event
-    DTLSHandshakeComplete(Box<Context>, Box<Context>),
+    DTLSHandshakeComplete(SocketAddr, Box<Context>, Box<Context>),
+    // SCTP Event
+    SCTPHandshakeComplete(usize /*AssociationHandle*/),
 }

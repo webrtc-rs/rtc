@@ -6,6 +6,7 @@ use super::message::{
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannelId;
 use datachannel::message::{message_channel_ack::*, message_channel_open::*, message_type::*, *};
 use log::{debug, error, warn};
@@ -17,6 +18,7 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct DataChannelHandlerContext {
+    pub(crate) association_handle: Option<usize>,
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
@@ -205,7 +207,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        self.ctx.event_outs.push_back(evt);
+        if let RTCEventInternal::SCTPHandshakeComplete(association_handle) = evt {
+            self.ctx.association_handle = Some(association_handle);
+        } else {
+            self.ctx.event_outs.push_back(evt);
+        }
         Ok(())
     }
 
@@ -248,6 +254,7 @@ impl DataChannelHandler<'_> {
     ) -> Result<()> {
         if let Some(data_channel) = self.data_channels.get_mut(&stream_id) {
             data_channel.association_handle = association_handle;
+            data_channel.ready_state = RTCDataChannelState::Open;
         } else {
             let mut data_channel = RTCDataChannelInternal::new(DataChannelParameters {
                 ordered: !params.unordered,
@@ -255,6 +262,7 @@ impl DataChannelHandler<'_> {
                 ..Default::default()
             });
             data_channel.association_handle = association_handle;
+            data_channel.ready_state = RTCDataChannelState::Open;
             self.data_channels.insert(stream_id, data_channel);
         }
         Ok(())

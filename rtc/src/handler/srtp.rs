@@ -168,9 +168,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        if let RTCEventInternal::DTLSHandshakeComplete(local, remote) = evt {
-            self.ctx.local_srtp_context = Some(local);
-            self.ctx.remote_srtp_context = Some(remote);
+        if let RTCEventInternal::DTLSHandshakeComplete(_, local_srtp_context, remote_srtp_context) =
+            evt
+        {
+            self.ctx.local_srtp_context = Some(local_srtp_context);
+            self.ctx.remote_srtp_context = Some(remote_srtp_context);
         } else {
             self.ctx.event_outs.push_back(evt);
         }

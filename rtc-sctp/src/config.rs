@@ -15,7 +15,7 @@ pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
 
 /// Config collects the arguments to create_association construction into
 /// a single structure
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransportConfig {
     sctp_port: u16,
     max_receive_buffer_size: u32,

@@ -22,7 +22,7 @@ use crate::Payload;
 use shared::{EcnCodepoint, TransportContext, TransportMessage, TransportProtocol};
 
 use bytes::Bytes;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use slab::Slab;
 use thiserror::Error;
 
@@ -217,7 +217,12 @@ impl Endpoint {
             return None;
         }
 
-        let server_config = self.server_config.as_ref().unwrap();
+        let server_config = if let Some(server_config) = self.server_config.as_ref() {
+            server_config
+        } else {
+            warn!("refusing first packet due to empty server_config");
+            return None;
+        };
 
         if self.associations.len() >= server_config.concurrent_associations as usize
             || self.reject_new_associations

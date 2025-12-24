@@ -365,8 +365,10 @@ impl RTCPeerConnection {
                                         parsed_remote_description,
                                     )
                                     .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+                                let dtls_role = self.dtls_transport().role();
 
                                 self.sctp_transport_mut().start(
+                                    dtls_role,
                                     SCTPTransportCapabilities { max_message_size },
                                     local_port,
                                     remote_port,
@@ -648,8 +650,10 @@ impl RTCPeerConnection {
                                 parsed_remote_description,
                             )
                             .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+                            let dtls_role = self.dtls_transport().role();
 
                             self.sctp_transport_mut().start(
+                                dtls_role,
                                 SCTPTransportCapabilities { max_message_size },
                                 local_port,
                                 remote_port,

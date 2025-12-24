@@ -114,6 +114,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::DTLSHandshakeComplete(
+                            msg.transport.peer_addr,
                             Box::new(local_srtp_context),
                             Box::new(remote_srtp_context),
                         ));
@@ -182,8 +183,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        //TODO: should ICESelectedCandidatePairChange be terminated at DTLS handler?
-        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, remote) = &evt {
+        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, remote) = evt {
             //TODO: what if ICESelectedCandidatePairChange happens multiple times?
             if self.ctx.dtls_transport.dtls_role == DTLSRole::Client {
                 if let Some(dtls_handshake_config) =
@@ -198,9 +198,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     dtls_endpoint.connect(remote.addr(), dtls_handshake_config, None)?;
                 };
             }
+        } else {
+            self.ctx.event_outs.push_back(evt);
         }
-
-        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 

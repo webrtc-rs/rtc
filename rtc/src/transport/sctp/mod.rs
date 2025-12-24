@@ -1,4 +1,5 @@
 use crate::configuration::setting_engine::SctpMaxMessageSize;
+use crate::transport::dtls::role::DTLSRole;
 use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::transport::sctp::state::RTCSctpTransportState;
 use sctp::{Association, AssociationHandle};
@@ -15,6 +16,7 @@ const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 #[derive(Default)]
 pub struct RTCSctpTransport {
     pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
+    pub(crate) sctp_transport_config: Option<::sctp::TransportConfig>,
     pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // State represents the current state of the SCTP transport.
@@ -40,6 +42,7 @@ impl RTCSctpTransport {
     pub(crate) fn new(max_message_size: SctpMaxMessageSize) -> Self {
         Self {
             sctp_endpoint: None,
+            sctp_transport_config: None,
             sctp_associations: HashMap::new(),
 
             state: RTCSctpTransportState::Connecting,
@@ -67,6 +70,7 @@ impl RTCSctpTransport {
     /// a connection over SCTP.
     pub(crate) fn start(
         &mut self,
+        dtls_role: DTLSRole,
         remote_caps: SCTPTransportCapabilities,
         local_port: u16,
         _remote_port: u16,
@@ -83,21 +87,27 @@ impl RTCSctpTransport {
         self.internal_buffer.resize(max_message_size as usize, 0u8);
 
         let sctp_endpoint_config = ::sctp::EndpointConfig::default();
-        let sctp_server_config = ::sctp::ServerConfig::new(
-            ::sctp::TransportConfig::default()
-                .with_max_message_size(max_message_size)
-                .with_sctp_port(local_port),
-            //TODO: add remote_port support
-        );
+        let sctp_transport_config = ::sctp::TransportConfig::default()
+            .with_max_message_size(max_message_size)
+            .with_sctp_port(local_port);
+        //TODO: add remote_port support
 
-        let sctp_endpoint = ::sctp::Endpoint::new(
-            "127.0.0.1:0".parse()?, //local_addr doesn't matter
-            TransportProtocol::UDP, // TransportProtocol doesn't matter
-            sctp_endpoint_config.into(),
-            Some(sctp_server_config.into()),
-        );
-
-        self.sctp_endpoint = Some(sctp_endpoint);
+        if dtls_role == DTLSRole::Client {
+            self.sctp_endpoint = Some(sctp::Endpoint::new(
+                "127.0.0.1:0".parse()?, //local_addr doesn't matter
+                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                sctp_endpoint_config.into(),
+                None,
+            ));
+            self.sctp_transport_config = Some(sctp_transport_config);
+        } else {
+            self.sctp_endpoint = Some(::sctp::Endpoint::new(
+                "127.0.0.1:0".parse()?, //local_addr doesn't matter
+                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                sctp_endpoint_config.into(),
+                Some(::sctp::ServerConfig::new(sctp_transport_config).into()),
+            ));
+        }
 
         Ok(())
     }

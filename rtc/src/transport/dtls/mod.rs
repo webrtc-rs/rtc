@@ -88,7 +88,7 @@ impl RTCDtlsTransport {
         //TODO: put event to events
     }
 
-    pub(crate) fn role(&self, ice_role: RTCIceRole, remote_dtls_role: DTLSRole) -> DTLSRole {
+    fn derive_role(&self, ice_role: RTCIceRole, remote_dtls_role: DTLSRole) -> DTLSRole {
         // If remote has an explicit role use the inverse
         match remote_dtls_role {
             DTLSRole::Client => return DTLSRole::Server,
@@ -120,7 +120,7 @@ impl RTCDtlsTransport {
             return Err(Error::ErrInvalidDTLSStart);
         }
 
-        self.dtls_role = self.role(ice_role, remote_dtls_parameters.role);
+        self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
 
         let remote_fingerprints = remote_dtls_parameters.fingerprints;
         let verify_peer_certificate: VerifyPeerCertificateFn = Arc::new(
@@ -172,6 +172,10 @@ impl RTCDtlsTransport {
                 .with_replay_protection_window(self.dtls_replay_protection_window)
                 .build(self.dtls_role == DTLSRole::Client, None)?,
         ))
+    }
+
+    pub(crate) fn role(&self) -> DTLSRole {
+        self.dtls_role
     }
 
     pub(crate) fn start(
