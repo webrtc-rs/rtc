@@ -1,5 +1,4 @@
 use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
-use crate::transport::TransportStates;
 use log::debug;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
@@ -14,19 +13,12 @@ pub(crate) struct InterceptorHandlerContext {
 
 /// InterceptorHandler implements RTCP feedback handling
 pub(crate) struct InterceptorHandler<'a> {
-    transport_states: &'a mut TransportStates,
     ctx: &'a mut InterceptorHandlerContext,
 }
 
 impl<'a> InterceptorHandler<'a> {
-    pub(crate) fn new(
-        transport_states: &'a mut TransportStates,
-        ctx: &'a mut InterceptorHandlerContext,
-    ) -> Self {
-        InterceptorHandler {
-            transport_states,
-            ctx,
-        }
+    pub(crate) fn new(ctx: &'a mut InterceptorHandlerContext) -> Self {
+        InterceptorHandler { ctx }
     }
 
     pub(crate) fn name(&self) -> &'static str {

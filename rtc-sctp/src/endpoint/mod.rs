@@ -213,7 +213,7 @@ impl Endpoint {
         if partial_decode.first_chunk_type != CT_INIT
             || (partial_decode.first_chunk_type == CT_INIT && partial_decode.initiate_tag.is_none())
         {
-            debug!("refusing first packet with Non-INIT or emtpy initial_tag INIT");
+            debug!("refusing first packet with Non-INIT or empty initial_tag INIT");
             return None;
         }
 

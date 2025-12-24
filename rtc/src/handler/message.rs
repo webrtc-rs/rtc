@@ -6,8 +6,6 @@ use shared::TransportContext;
 use srtp::context::Context;
 use std::time::Instant;
 
-pub type Mid = String;
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelMessageType {
     None,
@@ -73,7 +71,7 @@ pub enum RTCMessage {
     Rtp(RTPMessage),
 }
 
-pub struct TaggedRTCMessage {
+pub(crate) struct TaggedRTCMessage {
     pub now: Instant,
     pub transport: TransportContext,
     pub message: RTCMessage,

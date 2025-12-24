@@ -19,7 +19,6 @@ use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::RTCPeerConnection;
-use crate::transport::TransportStates;
 use log::warn;
 use shared::error::Error;
 use shared::TaggedBytesMut;
@@ -93,9 +92,6 @@ macro_rules! for_each_handler {
 
 #[derive(Default)]
 pub(crate) struct PipelineContext {
-    // Shared states
-    pub(crate) transport_states: TransportStates,
-
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,
     pub(crate) ice_handler_context: IceHandlerContext,
@@ -126,10 +122,7 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {
-        IceHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.ice_handler_context,
-        )
+        IceHandler::new(&mut self.pipeline_context.ice_handler_context)
     }
 
     pub(crate) fn get_dtls_handler(&mut self) -> DtlsHandler<'_> {
@@ -137,10 +130,7 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
-        SctpHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.sctp_handler_context,
-        )
+        SctpHandler::new(&mut self.pipeline_context.sctp_handler_context)
     }
 
     pub(crate) fn get_datachannel_handler(&mut self) -> DataChannelHandler<'_> {
@@ -148,17 +138,11 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_srtp_handler(&mut self) -> SrtpHandler<'_> {
-        SrtpHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.srtp_handler_context,
-        )
+        SrtpHandler::new(&mut self.pipeline_context.srtp_handler_context)
     }
 
     pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
-        InterceptorHandler::new(
-            &mut self.pipeline_context.transport_states,
-            &mut self.pipeline_context.interceptor_handler_context,
-        )
+        InterceptorHandler::new(&mut self.pipeline_context.interceptor_handler_context)
     }
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {

@@ -366,7 +366,7 @@ impl RTCPeerConnection {
                                     )
                                     .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                                self.start_sctp_transport(
+                                self.sctp_transport_mut().start(
                                     SCTPTransportCapabilities { max_message_size },
                                     local_port,
                                     remote_port,
@@ -643,7 +643,7 @@ impl RTCPeerConnection {
                             )
                             .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
 
-                            self.start_sctp_transport(
+                            self.sctp_transport_mut().start(
                                 SCTPTransportCapabilities { max_message_size },
                                 local_port,
                                 remote_port,

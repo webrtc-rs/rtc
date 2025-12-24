@@ -14,10 +14,6 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
-    pub(crate) dtls_handshake_config: ::dtls::config::HandshakeConfig,
-    pub(crate) sctp_endpoint_config: ::sctp::EndpointConfig,
-    pub(crate) sctp_server_config: ::sctp::ServerConfig,
-
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,

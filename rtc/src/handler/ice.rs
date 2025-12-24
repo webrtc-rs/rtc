@@ -4,7 +4,6 @@ use std::time::Instant;
 use super::message::{RTCEventInternal, RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::transport::ice::RTCIceTransport;
-use crate::transport::TransportStates;
 use log::{debug, trace};
 use shared::error::{Error, Result};
 use shared::TransportMessage;
@@ -32,19 +31,12 @@ impl IceHandlerContext {
 
 /// IceHandler implements ICE Protocol handling
 pub(crate) struct IceHandler<'a> {
-    transport_states: &'a mut TransportStates,
     ctx: &'a mut IceHandlerContext,
 }
 
 impl<'a> IceHandler<'a> {
-    pub(crate) fn new(
-        transport_states: &'a mut TransportStates,
-        ctx: &'a mut IceHandlerContext,
-    ) -> Self {
-        IceHandler {
-            transport_states,
-            ctx,
-        }
+    pub(crate) fn new(ctx: &'a mut IceHandlerContext) -> Self {
+        IceHandler { ctx }
     }
 
     pub(crate) fn name(&self) -> &'static str {

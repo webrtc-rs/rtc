@@ -1,15 +1,18 @@
 use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
-use crate::transport::TransportStates;
 use bytes::BytesMut;
 use log::{debug, error};
 use shared::error::{Error, Result};
 use shared::marshal::{Marshal, Unmarshal};
 use shared::util::is_rtcp;
+use srtp::context::Context;
 use std::collections::VecDeque;
 use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct SrtpHandlerContext {
+    pub(crate) local_srtp_context: Option<Box<Context>>,
+    pub(crate) remote_srtp_context: Option<Box<Context>>,
+
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
@@ -17,19 +20,12 @@ pub(crate) struct SrtpHandlerContext {
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
 pub(crate) struct SrtpHandler<'a> {
-    transport_states: &'a mut TransportStates,
     ctx: &'a mut SrtpHandlerContext,
 }
 
 impl<'a> SrtpHandler<'a> {
-    pub(crate) fn new(
-        transport_states: &'a mut TransportStates,
-        ctx: &'a mut SrtpHandlerContext,
-    ) -> Self {
-        SrtpHandler {
-            transport_states,
-            ctx,
-        }
+    pub(crate) fn new(ctx: &'a mut SrtpHandlerContext) -> Self {
+        SrtpHandler { ctx }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -51,15 +47,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
             debug!("srtp read {:?}", msg.transport.peer_addr);
 
             let mut try_read = || -> Result<RTCMessage> {
-                let four_tuple = (&msg.transport).into();
-                let transport = self
-                    .transport_states
-                    .find_transport_mut(&four_tuple)
-                    .ok_or(Error::ErrTransportNoExisted)?;
-
+                #[allow(clippy::collapsible_else_if)]
                 if is_rtcp(&message) {
-                    let mut remote_context = transport.remote_srtp_context();
-                    if let Some(context) = remote_context.as_mut() {
+                    if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
                         let mut decrypted = context.decrypt_rtcp(&message)?;
                         let rtcp_packets = rtcp::packet::unmarshal(&mut decrypted)?;
                         if rtcp_packets.is_empty() {
@@ -69,21 +59,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         Ok(RTCMessage::Rtp(RTPMessage::Rtcp(rtcp_packets)))
                     } else {
                         Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for four_tuple {:?}",
-                            four_tuple
+                            "remote_srtp_context is not set yet for {:?}",
+                            msg.transport.peer_addr
                         )))
                     }
                 } else {
-                    let mut remote_context = transport.remote_srtp_context();
-                    if let Some(context) = remote_context.as_mut() {
+                    if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
                         let mut decrypted = context.decrypt_rtp(&message)?;
                         let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
 
                         Ok(RTCMessage::Rtp(RTPMessage::Rtp(rtp_packet)))
                     } else {
                         Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for four_tuple {:?}",
-                            four_tuple
+                            "remote_srtp_context is not set yet for {:?}",
+                            msg.transport.peer_addr
                         )))
                     }
                 }
@@ -118,38 +107,30 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
             debug!("srtp write {:?}", msg.transport.peer_addr);
 
             let try_write = || -> Result<BytesMut> {
-                let four_tuple = (&msg.transport).into();
-                let transport = self
-                    .transport_states
-                    .find_transport_mut(&four_tuple)
-                    .ok_or(Error::ErrTransportNoExisted)?;
-
                 match message {
                     RTPMessage::Rtcp(rtcp_packets) => {
                         if rtcp_packets.is_empty() {
                             return Err(Error::Other("empty rtcp_packets".to_string()));
                         };
 
-                        let mut local_context = transport.local_srtp_context();
-                        if let Some(context) = local_context.as_mut() {
+                        if let Some(context) = self.ctx.local_srtp_context.as_mut() {
                             let packet = rtcp::packet::marshal(&rtcp_packets)?;
                             context.encrypt_rtcp(&packet)
                         } else {
                             Err(Error::Other(format!(
-                                "local_srtp_context is not set yet for four_tuple {:?}",
-                                four_tuple
+                                "local_srtp_context is not set yet for {:?}",
+                                msg.transport.peer_addr
                             )))
                         }
                     }
                     RTPMessage::Rtp(rtp_message) => {
-                        let mut local_context = transport.local_srtp_context();
-                        if let Some(context) = local_context.as_mut() {
+                        if let Some(context) = self.ctx.local_srtp_context.as_mut() {
                             let packet = rtp_message.marshal()?;
                             context.encrypt_rtp(&packet)
                         } else {
                             Err(Error::Other(format!(
-                                "local_srtp_context is not set yet for four_tuple {:?}",
-                                four_tuple
+                                "local_srtp_context is not set yet for {:?}",
+                                msg.transport.peer_addr
                             )))
                         }
                     }
@@ -187,12 +168,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        //TODO: should DTLSHandshakeComplete be terminated at SRTP handler?
-        if let RTCEventInternal::DTLSHandshakeComplete(_local, _remote) = &evt {
-            //TODO:
+        if let RTCEventInternal::DTLSHandshakeComplete(local, remote) = evt {
+            self.ctx.local_srtp_context = Some(local);
+            self.ctx.remote_srtp_context = Some(remote);
+        } else {
+            self.ctx.event_outs.push_back(evt);
         }
-
-        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 

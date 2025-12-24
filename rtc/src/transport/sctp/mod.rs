@@ -1,5 +1,10 @@
 use crate::configuration::setting_engine::SctpMaxMessageSize;
+use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::transport::sctp::state::RTCSctpTransportState;
+use sctp::{Association, AssociationHandle};
+use shared::error::Result;
+use shared::TransportProtocol;
+use std::collections::HashMap;
 
 pub mod capabilities;
 pub mod state;
@@ -7,9 +12,10 @@ pub mod state;
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
 /// SCTPTransport provides details about the SCTP transport.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct RTCSctpTransport {
-    //TODO: transport: RTCDtlsTransport,
+    pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
+    pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
 
     // State represents the current state of the SCTP transport.
     pub(crate) state: RTCSctpTransportState,
@@ -26,28 +32,21 @@ pub struct RTCSctpTransport {
     // max_channels represents the maximum amount of DataChannel's that can
     // be used simultaneously.
     pub(crate) max_channels: u16,
+
+    pub(crate) internal_buffer: Vec<u8>,
 }
 
 impl RTCSctpTransport {
     pub(crate) fn new(max_message_size: SctpMaxMessageSize) -> Self {
         Self {
+            sctp_endpoint: None,
+            sctp_associations: HashMap::new(),
+
             state: RTCSctpTransportState::Connecting,
             is_started: false,
             max_message_size,
             max_channels: SCTP_MAX_CHANNELS,
-            //sctp_association: Mutex::new(None),
-            /*on_error_handler: Arc::new(ArcSwapOption::empty()),
-            on_data_channel_handler: Arc::new(ArcSwapOption::empty()),
-            on_data_channel_opened_handler: Arc::new(ArcSwapOption::empty()),
-
-            data_channels: Arc::new(Mutex::new(vec![])),
-            data_channels_opened: Arc::new(AtomicU32::new(0)),
-            data_channels_requested: Arc::new(AtomicU32::new(0)),
-            data_channels_accepted: Arc::new(AtomicU32::new(0)),
-
-            notify_tx: Arc::new(Notify::new()),
-
-            setting_engine,*/
+            internal_buffer: vec![],
         }
     }
 
@@ -61,5 +60,45 @@ impl RTCSctpTransport {
         } else {
             can_send_size
         }
+    }
+
+    /// Start the SCTPTransport. Since both local and remote parties must mutually
+    /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
+    /// a connection over SCTP.
+    pub(crate) fn start(
+        &mut self,
+        remote_caps: SCTPTransportCapabilities,
+        local_port: u16,
+        _remote_port: u16,
+    ) -> Result<()> {
+        if self.is_started {
+            return Ok(());
+        }
+        self.is_started = true;
+
+        let max_message_size = RTCSctpTransport::calc_message_size(
+            remote_caps.max_message_size,
+            self.max_message_size.as_usize() as u32,
+        );
+        self.internal_buffer.resize(max_message_size as usize, 0u8);
+
+        let sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        let sctp_server_config = ::sctp::ServerConfig::new(
+            ::sctp::TransportConfig::default()
+                .with_max_message_size(max_message_size)
+                .with_sctp_port(local_port),
+            //TODO: add remote_port support
+        );
+
+        let sctp_endpoint = ::sctp::Endpoint::new(
+            "127.0.0.1:0".parse()?, //local_addr doesn't matter
+            TransportProtocol::UDP, // TransportProtocol doesn't matter
+            sctp_endpoint_config.into(),
+            Some(sctp_server_config.into()),
+        );
+
+        self.sctp_endpoint = Some(sctp_endpoint);
+
+        Ok(())
     }
 }
