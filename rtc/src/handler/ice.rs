@@ -15,14 +15,17 @@ pub(crate) struct IceHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 impl IceHandlerContext {
     pub(crate) fn new(ice_transport: RTCIceTransport) -> Self {
         Self {
             ice_transport,
+
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
         }
     }
 }
@@ -121,7 +124,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
@@ -129,17 +133,21 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         if let Some(evt) = self.ctx.ice_transport.agent.poll_event() {
             match evt {
                 ::ice::Event::ConnectionStateChange(state) => {
-                    Some(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
-                    ))
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
+                        ));
                 }
-                ::ice::Event::SelectedCandidatePairChange(local, remote) => Some(
-                    RTCEventInternal::ICESelectedCandidatePairChange(local, remote),
-                ),
+                ::ice::Event::SelectedCandidatePairChange(local, remote) => {
+                    self.ctx.event_outs.push_back(
+                        RTCEventInternal::ICESelectedCandidatePairChange(local, remote),
+                    );
+                }
             }
-        } else {
-            None
         }
+
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {

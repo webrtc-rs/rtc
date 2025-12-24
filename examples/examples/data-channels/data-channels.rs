@@ -15,6 +15,7 @@ use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::handler::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::transport::dtls::role::DTLSRole;
@@ -218,6 +219,13 @@ async fn run(
 
         while let Some(event) = peer_connection.poll_event() {
             match event {
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(ice_connection_state) => {
+                    println!("ICE Connection State has changed: {ice_connection_state}");
+                    if ice_connection_state == RTCIceConnectionState::Failed {
+                        eprintln!("ICE Connection State has gone to failed! Exiting...");
+                        break 'EventLoop;
+                    }
+                }
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(peer_connection_state) => {
                     println!("Peer Connection State has changed: {peer_connection_state}");
                     if peer_connection_state == RTCPeerConnectionState::Failed {

@@ -80,7 +80,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 

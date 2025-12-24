@@ -9,6 +9,7 @@ use std::time::Instant;
 pub(crate) struct InterceptorHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 /// InterceptorHandler implements RTCP feedback handling
@@ -142,12 +143,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<()> {

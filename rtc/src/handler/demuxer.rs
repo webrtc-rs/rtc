@@ -45,6 +45,7 @@ fn match_srtp(b: &[u8]) -> bool {
 pub(crate) struct DemuxerHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
@@ -127,12 +128,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<(), Self::Error> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> shared::error::Result<()> {
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {

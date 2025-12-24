@@ -10,12 +10,15 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
+use rtc::configuration::setting_engine::SettingEngine;
 use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::handler::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::RTCPeerConnection;
+use rtc::transport::dtls::role::DTLSRole;
 use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
@@ -31,6 +34,8 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day 
 #[command(version = "0.0.0")]
 #[command(about = "An example of Data-Channels-Create", long_about = None)]
 struct Cli {
+    #[arg(short, long)]
+    client: bool,
     #[arg(short, long)]
     debug: bool,
     #[arg(short, long, default_value_t = format!("INFO"))]
@@ -50,6 +55,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let host = cli.host;
     let port = cli.port;
+    let is_client = cli.client;
     let input_sdp_file = cli.input_sdp_file;
     let output_log_file = cli.output_log_file;
     let log_level = log::LevelFilter::from_str(&cli.log_level)?;
@@ -96,7 +102,17 @@ async fn main() -> Result<()> {
         .expect("Error setting Ctrl-C handler");
     });
 
-    if let Err(err) = run(stop_rx, message_rx, event_rx, host, port, input_sdp_file).await {
+    if let Err(err) = run(
+        stop_rx,
+        message_rx,
+        event_rx,
+        host,
+        port,
+        input_sdp_file,
+        is_client,
+    )
+    .await
+    {
         eprintln!("run got error: {}", err);
     }
 
@@ -110,16 +126,25 @@ async fn run(
     host: String,
     port: u16,
     input_sdp_file: String,
+    is_client: bool,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let local_addr = socket.local_addr()?;
+
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_answering_dtls_role(if is_client {
+        DTLSRole::Client
+    } else {
+        DTLSRole::Server
+    })?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .with_setting_engine(setting_engine)
         .build();
 
     // Create a new RTCPeerConnection
@@ -197,6 +222,13 @@ async fn run(
 
         while let Some(event) = peer_connection.poll_event() {
             match event {
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(ice_connection_state) => {
+                    println!("ICE Connection State has changed: {ice_connection_state}");
+                    if ice_connection_state == RTCIceConnectionState::Failed {
+                        eprintln!("ICE Connection State has gone to failed! Exiting...");
+                        break 'EventLoop;
+                    }
+                }
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(peer_connection_state) => {
                     println!("Peer Connection State has changed: {peer_connection_state}");
                     if peer_connection_state == RTCPeerConnectionState::Failed {

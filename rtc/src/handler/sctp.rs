@@ -21,8 +21,10 @@ pub(crate) struct SctpHandlerContext {
     pub(crate) sctp_transport: RTCSctpTransport,
 
     pub(crate) internal_buffer: Vec<u8>,
+
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
 impl SctpHandlerContext {
@@ -32,6 +34,7 @@ impl SctpHandlerContext {
             internal_buffer: vec![], // will be resized in start_sctp_transport after SDP negotiation is done
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
         }
     }
 }
@@ -285,12 +288,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, _evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+        self.ctx.event_outs.push_back(evt);
         Ok(())
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
+        self.ctx.event_outs.pop_front()
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {

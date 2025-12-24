@@ -1,5 +1,4 @@
 use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
-use crate::transport::dtls::role::DTLSRole;
 use crate::transport::TransportStates;
 use bytes::BytesMut;
 use log::{debug, error};
@@ -189,7 +188,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         //TODO: should DTLSHandshakeComplete be terminated at SRTP handler?
-        if let RTCEventInternal::DTLSHandshakeComplete(local, remote) = &evt {
+        if let RTCEventInternal::DTLSHandshakeComplete(_local, _remote) = &evt {
             //TODO:
         }
 
