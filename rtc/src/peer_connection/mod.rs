@@ -835,26 +835,25 @@ impl RTCPeerConnection {
             ..Default::default()
         };
 
-        let mut id = {
-            let mut id = rand::random::<u16>();
-            while self.data_channels.contains_key(&id) {
-                id = rand::random::<u16>();
-            }
-            id
-        };
+        let mut id = self.generate_data_channel_id()?;
 
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #19)
         if let Some(options) = options {
+            // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
+            if options.max_packet_life_time.is_some() && options.max_retransmits.is_some() {
+                return Err(Error::ErrRetransmitsOrPacketLifeTime);
+            }
+
             // Ordered indicates if data is allowed to be delivered out of order. The
             // default value of true, guarantees that data will be delivered in order.
             // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #9)
             params.ordered = options.ordered;
 
             // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #7)
-            params.max_packet_life_time = Some(options.max_packet_life_time);
+            params.max_packet_life_time = options.max_packet_life_time;
 
             // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #8)
-            params.max_retransmits = Some(options.max_retransmits);
+            params.max_retransmits = options.max_retransmits;
 
             // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #10)
             params.protocol = options.protocol;
@@ -872,15 +871,7 @@ impl RTCPeerConnection {
             }
         }
 
-        let data_channel = RTCDataChannelInternal::new(
-            params,
-            //TODO: &self.configuration.setting_engine,
-        );
-
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
-        if data_channel.max_packet_lifetime.is_some() && data_channel.max_retransmits.is_some() {
-            return Err(Error::ErrRetransmitsOrPacketLifeTime);
-        }
+        let data_channel = RTCDataChannelInternal::new(id, params);
 
         self.data_channels.insert(id, data_channel);
 

@@ -65,6 +65,10 @@ impl RTCSctpTransport {
         }
     }
 
+    pub(crate) fn max_channels(&self) -> u16 {
+        self.max_channels
+    }
+
     /// Start the SCTPTransport. Since both local and remote parties must mutually
     /// create an SCTPTransport, SCTP SO (Simultaneous Open) is used to establish
     /// a connection over SCTP.

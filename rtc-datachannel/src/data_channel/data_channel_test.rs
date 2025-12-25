@@ -1,162 +1,17 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc};
-use tokio::time::Duration;
-use util::conn::conn_bridge::*;
-use util::conn::*;
-
 use super::*;
-use crate::error::Result;
+use bytes::Bytes;
+use shared::error::Result;
 
-async fn bridge_process_at_least_one(br: &Arc<Bridge>) {
-    let mut n_sum = 0;
-    loop {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        n_sum += br.tick().await;
-        if br.len(0).await == 0 && br.len(1).await == 0 && n_sum > 0 {
-            break;
-        }
-    }
+fn create_new_association_pair() -> Result<(usize, usize)> {
+    Ok((0, 0))
 }
 
-async fn create_new_association_pair(
-    br: &Arc<Bridge>,
-    ca: Arc<dyn Conn>,
-    cb: Arc<dyn Conn>,
-) -> Result<(Arc<Association>, Arc<Association>)> {
-    let (handshake0ch_tx, mut handshake0ch_rx) = mpsc::channel(1);
-    let (handshake1ch_tx, mut handshake1ch_rx) = mpsc::channel(1);
-    let (closed_tx, mut closed_rx0) = broadcast::channel::<()>(1);
-    let mut closed_rx1 = closed_tx.subscribe();
-
-    // Setup client
-    tokio::spawn(async move {
-        let client = Association::client(sctp::association::Config {
-            net_conn: ca,
-            max_receive_buffer_size: 0,
-            max_message_size: 0,
-            name: "client".to_owned(),
-            local_port: 5000,
-            remote_port: 5000,
-        })
-        .await;
-
-        let _ = handshake0ch_tx.send(client).await;
-        let _ = closed_rx0.recv().await;
-
-        Result::<()>::Ok(())
-    });
-
-    // Setup server
-    tokio::spawn(async move {
-        let server = Association::server(sctp::association::Config {
-            net_conn: cb,
-            max_receive_buffer_size: 0,
-            max_message_size: 0,
-            name: "server".to_owned(),
-            local_port: 5000,
-            remote_port: 5000,
-        })
-        .await;
-
-        let _ = handshake1ch_tx.send(server).await;
-        let _ = closed_rx1.recv().await;
-
-        Result::<()>::Ok(())
-    });
-
-    let mut client = None;
-    let mut server = None;
-    let mut a0handshake_done = false;
-    let mut a1handshake_done = false;
-    let mut i = 0;
-    while (!a0handshake_done || !a1handshake_done) && i < 100 {
-        br.tick().await;
-
-        let timer = tokio::time::sleep(Duration::from_millis(10));
-        tokio::pin!(timer);
-
-        tokio::select! {
-            _ = timer.as_mut() =>{},
-            r0 = handshake0ch_rx.recv() => {
-                if let Ok(c) = r0.unwrap() {
-                    client = Some(c);
-                }
-                a0handshake_done = true;
-            },
-            r1 = handshake1ch_rx.recv() => {
-                if let Ok(s) = r1.unwrap() {
-                    server = Some(s);
-                }
-                a1handshake_done = true;
-            },
-        };
-        i += 1;
-    }
-
-    if !a0handshake_done || !a1handshake_done {
-        return Err(Error::new("handshake failed".to_owned()));
-    }
-
-    drop(closed_tx);
-
-    Ok((Arc::new(client.unwrap()), Arc::new(server.unwrap())))
-}
-
-async fn close_association_pair(
-    br: &Arc<Bridge>,
-    client: Arc<Association>,
-    server: Arc<Association>,
-) {
-    let (handshake0ch_tx, mut handshake0ch_rx) = mpsc::channel(1);
-    let (handshake1ch_tx, mut handshake1ch_rx) = mpsc::channel(1);
-    let (closed_tx, mut closed_rx0) = broadcast::channel::<()>(1);
-    let mut closed_rx1 = closed_tx.subscribe();
-
-    // Close client
-    tokio::spawn(async move {
-        client.close().await?;
-        let _ = handshake0ch_tx.send(()).await;
-        let _ = closed_rx0.recv().await;
-
-        Result::<()>::Ok(())
-    });
-
-    // Close server
-    tokio::spawn(async move {
-        server.close().await?;
-        let _ = handshake1ch_tx.send(()).await;
-        let _ = closed_rx1.recv().await;
-
-        Result::<()>::Ok(())
-    });
-
-    let mut a0handshake_done = false;
-    let mut a1handshake_done = false;
-    let mut i = 0;
-    while (!a0handshake_done || !a1handshake_done) && i < 100 {
-        br.tick().await;
-
-        let timer = tokio::time::sleep(Duration::from_millis(10));
-        tokio::pin!(timer);
-
-        tokio::select! {
-            _ = timer.as_mut() =>{},
-            _ = handshake0ch_rx.recv() => {
-                a0handshake_done = true;
-            },
-            _ = handshake1ch_rx.recv() => {
-                a1handshake_done = true;
-            },
-        };
-        i += 1;
-    }
-
-    drop(closed_tx);
-}
+fn close_association_pair(_client: usize, _server: usize) {}
 
 //use std::io::Write;
 
-async fn pr_ordered_unordered_test(channel_type: ChannelType, is_ordered: bool) -> Result<()> {
+/*
+fn pr_ordered_unordered_test(channel_type: ChannelType, is_ordered: bool) -> Result<()> {
     /*env_logger::Builder::new()
     .format(|buf, record| {
         writeln!(
@@ -256,70 +111,74 @@ async fn pr_ordered_unordered_test(channel_type: ChannelType, is_ordered: bool) 
 
     Ok(())
 }
+*/
 
-#[tokio::test]
-async fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
+#[test]
+fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
     let mut sbuf = vec![0u8; 1000];
-    let mut rbuf = vec![0u8; 1500];
 
-    let (br, ca, cb) = Bridge::new(0, None, None);
+    let (a0, a1) = create_new_association_pair()?;
 
-    let (a0, a1) = create_new_association_pair(&br, Arc::new(ca), Arc::new(cb)).await?;
-
-    let cfg = Config {
+    let cfg = DataChannelConfig {
         channel_type: ChannelType::Reliable,
         reliability_parameter: 123,
         label: "data".to_string(),
         ..Default::default()
     };
 
-    let dc0 = DataChannel::dial(&a0, 100, cfg.clone()).await?;
-    bridge_process_at_least_one(&br).await;
+    let mut dc0 = DataChannel::dial(cfg.clone(), a0, 100)?;
 
-    let existing_data_channels: Vec<DataChannel> = Vec::new();
-    let dc1 = DataChannel::accept(&a1, Config::default(), &existing_data_channels).await?;
-    bridge_process_at_least_one(&br).await;
+    let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
+    let mut dc1 = DataChannel::accept(
+        DataChannelConfig::default(),
+        a1,
+        msg.stream_id,
+        PayloadProtocolIdentifier::Dcep,
+        &msg.payload,
+    )?;
 
     assert_eq!(dc0.config, cfg, "local config should match");
     assert_eq!(dc1.config, cfg, "remote config should match");
 
-    br.reorder_next_nwrites(0, 2); // reordering on the wire
-
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
-    let n = dc0.write(&Bytes::from(sbuf.clone())).await?;
+    let n = dc0.handle_write(&Bytes::from(sbuf.clone()), true)?;
     assert_eq!(sbuf.len(), n, "data length should match");
 
     sbuf[0..4].copy_from_slice(&2u32.to_be_bytes());
-    let n = dc0.write(&Bytes::from(sbuf.clone())).await?;
+    let n = dc0.handle_write(&Bytes::from(sbuf.clone()), false)?;
     assert_eq!(sbuf.len(), n, "data length should match");
 
-    bridge_process_at_least_one(&br).await;
-
-    let n = dc1.read(&mut rbuf[..]).await?;
-    assert_eq!(sbuf.len(), n, "data length should match");
+    let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
+    dc1.handle_read(msg.ppi, &msg.payload)?;
+    let (data, is_string) = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
+    assert!(is_string);
+    assert_eq!(sbuf.len(), data.len(), "data length should match");
     assert_eq!(
         1,
-        u32::from_be_bytes([rbuf[0], rbuf[1], rbuf[2], rbuf[3]]),
+        u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
         "data should match"
     );
 
-    let n = dc1.read(&mut rbuf[..]).await?;
-    assert_eq!(sbuf.len(), n, "data length should match");
+    let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
+    dc1.handle_read(msg.ppi, &msg.payload)?;
+    let (data, is_string) = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
+    assert!(!is_string);
+    assert_eq!(sbuf.len(), data.len(), "data length should match");
     assert_eq!(
         2,
-        u32::from_be_bytes([rbuf[0], rbuf[1], rbuf[2], rbuf[3]]),
+        u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
         "data should match"
     );
 
-    dc0.close().await?;
-    dc1.close().await?;
-    bridge_process_at_least_one(&br).await;
+    dc0.close()?;
+    dc1.close()?;
 
-    close_association_pair(&br, a0, a1).await;
+    close_association_pair(a0, a1);
 
     Ok(())
 }
 
+/*
 #[tokio::test]
 async fn test_data_channel_channel_type_reliable_unordered() -> Result<()> {
     let mut sbuf = vec![0u8; 1000];
@@ -672,3 +531,4 @@ async fn test_poll_data_channel() -> Result<()> {
 
     Ok(())
 }
+*/

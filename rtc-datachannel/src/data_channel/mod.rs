@@ -1,5 +1,5 @@
-//#[cfg(test)]
-//mod data_channel_test;
+#[cfg(test)]
+mod data_channel_test;
 
 use crate::message::{message_channel_ack::*, message_channel_open::*, *};
 use bytes::{Buf, BytesMut};
@@ -11,16 +11,15 @@ use std::collections::VecDeque;
 
 const RECEIVE_MTU: usize = 8192;
 
-/// Config is used to configure the data channel.
+/// DataChannelConfig is used to configure the data channel.
 #[derive(Eq, PartialEq, Default, Clone, Debug)]
-pub struct Config {
+pub struct DataChannelConfig {
     pub channel_type: ChannelType,
     pub negotiated: bool,
     pub priority: u16,
     pub reliability_parameter: u32,
     pub label: String,
     pub protocol: String,
-    pub max_message_size: u32,
 }
 
 /// DataChannelMessage is used to data sent over SCTP
@@ -37,10 +36,12 @@ pub struct DataChannelMessage {
 /// DataChannel represents a data channel
 #[derive(Debug, Default, Clone)]
 pub struct DataChannel {
-    config: Config,
+    config: DataChannelConfig,
     association_handle: usize,
     stream_id: u16,
-    messages: VecDeque<DataChannelMessage>,
+
+    read_outs: VecDeque<(BytesMut, bool)>,
+    write_outs: VecDeque<DataChannelMessage>,
 
     // stats
     messages_sent: usize,
@@ -50,18 +51,23 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
-    fn new(config: Config, association_handle: usize, stream_id: u16) -> Self {
+    fn new(config: DataChannelConfig, association_handle: usize, stream_id: u16) -> Self {
         Self {
             config,
             association_handle,
             stream_id,
-            messages: VecDeque::new(),
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
             ..Default::default()
         }
     }
 
     /// Dial opens a data channels over SCTP
-    pub fn dial(config: Config, association_handle: usize, stream_id: u16) -> Result<Self> {
+    pub fn dial(
+        config: DataChannelConfig,
+        association_handle: usize,
+        stream_id: u16,
+    ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
         if !config.negotiated {
@@ -76,7 +82,7 @@ impl DataChannel {
 
             let (unordered, reliability_type) = data_channel.get_reliability_params();
 
-            data_channel.messages.push_back(DataChannelMessage {
+            data_channel.write_outs.push_back(DataChannelMessage {
                 association_handle,
                 stream_id,
                 ppi: PayloadProtocolIdentifier::Dcep,
@@ -91,7 +97,7 @@ impl DataChannel {
 
     /// Accept is used to accept incoming data channels over SCTP
     pub fn accept(
-        mut config: Config,
+        mut config: DataChannelConfig,
         association_handle: usize,
         stream_id: u16,
         ppi: PayloadProtocolIdentifier,
@@ -121,23 +127,9 @@ impl DataChannel {
         Ok(data_channel)
     }
 
-    /// Returns packets to transmit
-    pub fn poll_transmit(&mut self) -> Option<DataChannelMessage> {
-        self.messages.pop_front()
-    }
-
-    /// Read reads a packet of len(p) bytes as binary data.
-    pub fn read(&mut self, ppi: PayloadProtocolIdentifier, buf: &[u8]) -> Result<BytesMut> {
-        self.read_data_channel(ppi, buf).map(|(b, _)| b)
-    }
-
     /// ReadDataChannel reads a packet of len(p) bytes. It returns the number of bytes read and
     /// `true` if the data read is a string.
-    pub fn read_data_channel(
-        &mut self,
-        ppi: PayloadProtocolIdentifier,
-        buf: &[u8],
-    ) -> Result<(BytesMut, bool)> {
+    pub fn handle_read(&mut self, ppi: PayloadProtocolIdentifier, buf: &[u8]) -> Result<()> {
         let mut is_string = false;
         match ppi {
             PayloadProtocolIdentifier::Dcep => {
@@ -165,8 +157,84 @@ impl DataChannel {
 
         self.messages_received += 1;
         self.bytes_received += 1;
+        self.read_outs.push_back((data, is_string));
 
-        Ok((data, is_string))
+        Ok(())
+    }
+
+    pub fn poll_read(&mut self) -> Option<(BytesMut, bool)> {
+        self.read_outs.pop_front()
+    }
+
+    /// handle_write writes len(p) bytes from p
+    pub fn handle_write(&mut self, data: &[u8], is_string: bool) -> Result<usize> {
+        let data_len = data.len();
+
+        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
+        // SCTP does not support the sending of empty user messages.  Therefore,
+        // if an empty message has to be sent, the appropriate PPID (WebRTC
+        // String Empty or WebRTC Binary Empty) is used and the SCTP user
+        // message of one zero byte is sent.  When receiving an SCTP user
+        // message with one of these PPIDs, the receiver MUST ignore the SCTP
+        // user message and process it as an empty message.
+        let ppi = match (is_string, data_len) {
+            (false, 0) => PayloadProtocolIdentifier::BinaryEmpty,
+            (false, _) => PayloadProtocolIdentifier::Binary,
+            (true, 0) => PayloadProtocolIdentifier::StringEmpty,
+            (true, _) => PayloadProtocolIdentifier::String,
+        };
+
+        let (unordered, reliability_type) = self.get_reliability_params();
+
+        let n = if data_len == 0 {
+            self.write_outs.push_back(DataChannelMessage {
+                association_handle: self.association_handle,
+                stream_id: self.stream_id,
+                ppi,
+                unordered,
+                reliability_type,
+                payload: BytesMut::from(&[0][..]),
+            });
+
+            0
+        } else {
+            self.write_outs.push_back(DataChannelMessage {
+                association_handle: self.association_handle,
+                stream_id: self.stream_id,
+                ppi,
+                unordered,
+                reliability_type,
+                payload: BytesMut::from(data),
+            });
+
+            self.bytes_sent += data.len();
+            data.len()
+        };
+
+        self.messages_sent += 1;
+        Ok(n)
+    }
+
+    /// Returns packets to transmit
+    pub fn poll_write(&mut self) -> Option<DataChannelMessage> {
+        self.write_outs.pop_front()
+    }
+
+    /// Close closes the DataChannel and the underlying SCTP stream.
+    pub fn close(&self) -> Result<()> {
+        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-13#section-6.7
+        // Closing of a data channel MUST be signaled by resetting the
+        // corresponding outgoing streams [RFC6525].  This means that if one
+        // side decides to close the data channel, it resets the corresponding
+        // outgoing stream.  When the peer sees that an incoming stream was
+        // reset, it also resets its corresponding outgoing stream.  Once this
+        // is completed, the data channel is closed.  Resetting a stream sets
+        // the Stream Sequence Numbers (SSNs) of the stream back to 'zero' with
+        // a corresponding notification to the application layer that the reset
+        // has been performed.  Streams are available for reuse after a reset
+        // has been performed.
+        //TODO: Ok(self.stream.shutdown(Shutdown::Both).await?)
+        Ok(())
     }
 
     /// MessagesSent returns the number of messages sent
@@ -221,64 +289,10 @@ impl DataChannel {
         Ok(())
     }
 
-    /// Write writes len(p) bytes from p as binary data
-    pub fn write(&mut self, data: &[u8]) -> Result<usize> {
-        self.write_data_channel(data, false)
-    }
-
-    /// WriteDataChannel writes len(p) bytes from p
-    pub fn write_data_channel(&mut self, data: &[u8], is_string: bool) -> Result<usize> {
-        let data_len = data.len();
-
-        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
-        // SCTP does not support the sending of empty user messages.  Therefore,
-        // if an empty message has to be sent, the appropriate PPID (WebRTC
-        // String Empty or WebRTC Binary Empty) is used and the SCTP user
-        // message of one zero byte is sent.  When receiving an SCTP user
-        // message with one of these PPIDs, the receiver MUST ignore the SCTP
-        // user message and process it as an empty message.
-        let ppi = match (is_string, data_len) {
-            (false, 0) => PayloadProtocolIdentifier::BinaryEmpty,
-            (false, _) => PayloadProtocolIdentifier::Binary,
-            (true, 0) => PayloadProtocolIdentifier::StringEmpty,
-            (true, _) => PayloadProtocolIdentifier::String,
-        };
-
-        let (unordered, reliability_type) = self.get_reliability_params();
-
-        let n = if data_len == 0 {
-            self.messages.push_back(DataChannelMessage {
-                association_handle: self.association_handle,
-                stream_id: self.stream_id,
-                ppi,
-                unordered,
-                reliability_type,
-                payload: BytesMut::from(&[0][..]),
-            });
-
-            0
-        } else {
-            self.messages.push_back(DataChannelMessage {
-                association_handle: self.association_handle,
-                stream_id: self.stream_id,
-                ppi,
-                unordered,
-                reliability_type,
-                payload: BytesMut::from(data),
-            });
-
-            self.bytes_sent += data.len();
-            data.len()
-        };
-
-        self.messages_sent += 1;
-        Ok(n)
-    }
-
     fn write_data_channel_ack(&mut self) -> Result<()> {
         let ack = Message::DataChannelAck(DataChannelAck {}).marshal()?;
         let (unordered, reliability_type) = self.get_reliability_params();
-        self.messages.push_back(DataChannelMessage {
+        self.write_outs.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
@@ -288,23 +302,7 @@ impl DataChannel {
         });
         Ok(())
     }
-    /*
-    /// Close closes the DataChannel and the underlying SCTP stream.
-    pub async fn close(&self) -> Result<()> {
-        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-13#section-6.7
-        // Closing of a data channel MUST be signaled by resetting the
-        // corresponding outgoing streams [RFC6525].  This means that if one
-        // side decides to close the data channel, it resets the corresponding
-        // outgoing stream.  When the peer sees that an incoming stream was
-        // reset, it also resets its corresponding outgoing stream.  Once this
-        // is completed, the data channel is closed.  Resetting a stream sets
-        // the Stream Sequence Numbers (SSNs) of the stream back to 'zero' with
-        // a corresponding notification to the application layer that the reset
-        // has been performed.  Streams are available for reuse after a reset
-        // has been performed.
-        Ok(self.stream.shutdown(Shutdown::Both).await?)
-    }
-
+    /*TODO:
     /// BufferedAmount returns the number of bytes of data currently queued to be
     /// sent over this stream.
     pub fn buffered_amount(&self) -> usize {
@@ -316,13 +314,14 @@ impl DataChannel {
     pub fn buffered_amount_low_threshold(&self) -> usize {
         self.stream.buffered_amount_low_threshold()
     }
-
+    */
     /// SetBufferedAmountLowThreshold is used to update the threshold.
     /// See BufferedAmountLowThreshold().
-    pub fn set_buffered_amount_low_threshold(&self, threshold: usize) {
-        self.stream.set_buffered_amount_low_threshold(threshold)
+    pub fn set_buffered_amount_low_threshold(&self, _threshold: usize) {
+        //TODO: self.stream.set_buffered_amount_low_threshold(threshold)
     }
 
+    /*
     /// OnBufferedAmountLow sets the callback handler which would be called when the
     /// number of bytes of outgoing data buffered is lower than the threshold.
     pub fn on_buffered_amount_low(&self, f: OnBufferedAmountLowFn) {
@@ -340,5 +339,45 @@ impl DataChannel {
         };
 
         (unordered, reliability_type)
+    }
+
+    pub fn get_channel_type_and_reliability_parameter(
+        ordered: bool,
+        max_retransmits: Option<u16>,
+        max_packet_life_time: Option<u16>,
+    ) -> (ChannelType, u32) {
+        let channel_type;
+        let reliability_parameter;
+
+        match (max_retransmits, max_packet_life_time) {
+            (None, None) => {
+                reliability_parameter = 0u32;
+                if ordered {
+                    channel_type = ChannelType::Reliable;
+                } else {
+                    channel_type = ChannelType::ReliableUnordered;
+                }
+            }
+
+            (Some(max_retransmits), _) => {
+                reliability_parameter = max_retransmits as u32;
+                if ordered {
+                    channel_type = ChannelType::PartialReliableRexmit;
+                } else {
+                    channel_type = ChannelType::PartialReliableRexmitUnordered;
+                }
+            }
+
+            (None, Some(max_packet_lifetime)) => {
+                reliability_parameter = max_packet_lifetime as u32;
+                if ordered {
+                    channel_type = ChannelType::PartialReliableTimed;
+                } else {
+                    channel_type = ChannelType::PartialReliableTimedUnordered;
+                }
+            }
+        }
+
+        (channel_type, reliability_parameter)
     }
 }

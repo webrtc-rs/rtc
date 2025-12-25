@@ -6,6 +6,7 @@ use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::transport::dtls::state::RTCDtlsTransportState;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use std::collections::HashSet;
 
 impl RTCPeerConnection {
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
@@ -693,5 +694,25 @@ impl RTCPeerConnection {
             on_peer_connection_state_change_handler,
             connection_state,
         )*/
+    }
+
+    pub(crate) fn generate_data_channel_id(&self) -> Result<RTCDataChannelId> {
+        let mut id = 0u16;
+        if self.dtls_transport().role() != DTLSRole::Client {
+            id += 1;
+        }
+
+        // Create map of ids so we can compare without double-looping each time.
+        let ids: HashSet<RTCDataChannelId> = self.data_channels.keys().cloned().collect();
+        let max = self.sctp_transport().max_channels();
+        while id < max - 1 {
+            if ids.contains(&id) {
+                id += 2;
+            } else {
+                return Ok(id);
+            }
+        }
+
+        Err(Error::ErrMaxDataChannelID)
     }
 }

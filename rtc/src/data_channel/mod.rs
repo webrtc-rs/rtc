@@ -64,9 +64,9 @@ impl RTCDataChannel<'_> {
 
     /// max_packet_lifetime represents the length of the time window (msec) during
     /// which transmissions and retransmissions may occur in unreliable mode.
-    pub fn max_packet_lifetime(&self) -> Result<Option<u16>> {
+    pub fn max_packet_life_time(&self) -> Result<Option<u16>> {
         if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.max_packet_lifetime)
+            Ok(dc.max_packet_life_time)
         } else {
             Err(Error::ErrDataChannelClosed)
         }
