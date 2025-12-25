@@ -168,7 +168,7 @@ impl RTCDataChannel<'_> {
                 ApplicationMessage {
                     data_channel_id: self.id,
                     data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                        is_string: false,
+                        is_string: true,
                         data: BytesMut::from(s.into().as_str()),
                     }),
                 },

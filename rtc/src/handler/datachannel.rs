@@ -105,7 +105,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
             }
 
             while let Some(data_channel_message) = data_channel.poll_write() {
-                debug!("send data channel message");
+                debug!("send data channel message from handle_read");
                 self.ctx.write_outs.push_back(TaggedRTCMessage {
                     now: Instant::now(),
                     transport: TransportContext::default(),
@@ -141,7 +141,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     .handle_write(&data_channel_message.data, data_channel_message.is_string)?;
 
                 while let Some(data_channel_message) = data_channel.poll_write() {
-                    debug!("send data channel message");
+                    debug!("send data channel message from handle_write");
                     self.ctx.write_outs.push_back(TaggedRTCMessage {
                         now: Instant::now(),
                         transport: TransportContext::default(),
@@ -190,7 +190,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         });
 
                         while let Some(data_channel_message) = data_channel.poll_write() {
-                            debug!("send data channel message");
+                            debug!("send data channel message from handle_event");
                             self.ctx.write_outs.push_back(TaggedRTCMessage {
                                 now: Instant::now(),
                                 transport: TransportContext::default(),

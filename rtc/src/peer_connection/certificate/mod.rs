@@ -16,7 +16,7 @@ use shared::error::{Error, Result};
 
 pub(crate) const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 /// math_rand_alpha generates a mathematical random alphabet sequence of the requested length.
-pub(crate) fn math_rand_alpha(n: usize) -> String {
+pub fn math_rand_alpha(n: usize) -> String {
     let mut rng = rng();
 
     let rand_string: String = (0..n)

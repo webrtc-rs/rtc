@@ -214,7 +214,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
         if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
-                "send sctp data channel message {:?}",
+                "send sctp data channel message to {:?}",
                 msg.transport.peer_addr
             );
 
@@ -230,7 +230,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     .sctp_associations
                     .get_mut(&AssociationHandle(message.association_handle))
                 {
-                    let mut stream = conn.stream(message.stream_id)?;
                     if message.ppi == PayloadProtocolIdentifier::Dcep {
                         let mut data_buf = &message.payload[..];
                         if let Message::DataChannelOpen(data_channel_open) =
@@ -240,6 +239,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                 ::datachannel::data_channel::DataChannel::get_reliability_params(
                                     data_channel_open.channel_type,
                                 );
+                            let mut stream = conn.open_stream(message.stream_id, message.ppi)?;
                             stream.set_reliability_params(
                                 unordered,
                                 reliability_type,
@@ -247,6 +247,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                             )?;
                         }
                     }
+                    let mut stream = conn.stream(message.stream_id)?;
                     stream.write_with_ppi(&message.payload, message.ppi)?;
 
                     while let Some(x) = conn.poll_transmit(msg.now) {
@@ -293,6 +294,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
         let remote_addr = if let RTCEventInternal::DTLSHandshakeComplete(remote_addr, _, _) = &evt {
+            debug!("recv dtls handshake complete with {:?}", remote_addr);
             Some(*remote_addr)
         } else {
             None

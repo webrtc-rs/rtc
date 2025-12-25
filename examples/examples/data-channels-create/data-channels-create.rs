@@ -14,6 +14,7 @@ use rtc::configuration::setting_engine::SettingEngine;
 use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::handler::message::{RTCEvent, RTCMessage};
+use rtc::peer_connection::certificate::math_rand_alpha;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
@@ -151,7 +152,9 @@ async fn run(
     let mut peer_connection = RTCPeerConnection::new(config)?;
 
     // Create a datachannel with label 'data'
-    let _data_channel = peer_connection.create_data_channel("data", None)?;
+    let _ = peer_connection.create_data_channel("data", None)?;
+    let mut data_channel_last_sent = Instant::now();
+    let mut data_channel_opened = None;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -244,9 +247,10 @@ async fn run(
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             println!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
+                            data_channel_opened = Some(dc.id());
                         }
                         RTCDataChannelEvent::OnMessage(channel_id, message) => {
-                            let mut dc = peer_connection
+                            let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             let msg_str = String::from_utf8(message.data.to_vec())?;
@@ -255,7 +259,7 @@ async fn run(
                                 dc.label()?,
                                 msg_str
                             );
-                            dc.send(message.data)?;
+                            //dc.send_text(msg_str)?;
                         }
                         _ => {}
                     }
@@ -310,7 +314,20 @@ async fn run(
                 }
             }
             _ = timer.as_mut() => {
-                peer_connection.handle_timeout(Instant::now())?;
+                let now = Instant::now();
+                peer_connection.handle_timeout(now)?;
+
+                if let Some(data_channel_id) = &data_channel_opened{
+                    if now > data_channel_last_sent + Duration::from_secs(5) {
+                        let mut dc = peer_connection
+                                    .data_channel(*data_channel_id)
+                                    .ok_or(Error::ErrDataChannelClosed)?;
+
+                        let message = math_rand_alpha(15);
+                        dc.send_text(message)?;
+                        data_channel_last_sent = now;
+                    }
+                }
             }
             res = socket.recv_from(&mut buf) => {
                 match res {
