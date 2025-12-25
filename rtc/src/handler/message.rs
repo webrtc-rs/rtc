@@ -2,42 +2,18 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
+use datachannel::data_channel::DataChannelMessage;
 use ice::candidate::Candidate;
-use sctp::ReliabilityType;
 use shared::TransportContext;
 use srtp::context::Context;
 use std::net::SocketAddr;
 use std::time::Instant;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum DataChannelMessageType {
-    None,
-    Control,
-    Binary,
-    Text,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DataChannelMessageParams {
-    pub(crate) unordered: bool,
-    pub(crate) reliability_type: ReliabilityType,
-    pub(crate) reliability_parameter: u32,
-}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum DataChannelEvent {
     Open,
     Message(RTCDataChannelMessage),
     Close,
-}
-
-#[derive(Debug, Clone)]
-pub struct DataChannelMessage {
-    pub(crate) association_handle: usize,
-    pub(crate) stream_id: u16,
-    pub(crate) data_message_type: DataChannelMessageType,
-    pub(crate) params: Option<DataChannelMessageParams>,
-    pub(crate) payload: BytesMut,
 }
 
 #[derive(Debug, Clone)]
@@ -93,4 +69,5 @@ pub(crate) enum RTCEventInternal {
     DTLSHandshakeComplete(SocketAddr, Box<Context>, Box<Context>),
     // SCTP Event
     SCTPHandshakeComplete(usize /*AssociationHandle*/),
+    //SCTPStreamOpened(usize /*AssociationHandle*/, u16 /*StreamId*/),
 }

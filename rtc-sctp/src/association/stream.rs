@@ -17,7 +17,7 @@ pub type StreamId = u16;
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     /// One or more new streams has been opened
-    Opened,
+    Opened { id: StreamId },
     /// A currently open stream has data or errors waiting to be read
     Readable {
         /// Which stream is now readable

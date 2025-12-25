@@ -28,8 +28,6 @@ pub struct DataChannelMessage {
     pub association_handle: usize,
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
-    pub unordered: bool,
-    pub reliability_type: ReliabilityType,
     pub payload: BytesMut,
 }
 
@@ -80,14 +78,14 @@ impl DataChannel {
             })
             .marshal()?;
 
-            let (unordered, reliability_type) = data_channel.get_reliability_params();
+            //let (unordered, reliability_type) = data_channel.get_reliability_params();
 
             data_channel.write_outs.push_back(DataChannelMessage {
                 association_handle,
                 stream_id,
                 ppi: PayloadProtocolIdentifier::Dcep,
-                unordered,
-                reliability_type,
+                //unordered,
+                //reliability_type,
                 payload: msg,
             });
         }
@@ -184,15 +182,15 @@ impl DataChannel {
             (true, _) => PayloadProtocolIdentifier::String,
         };
 
-        let (unordered, reliability_type) = self.get_reliability_params();
+        //let (unordered, reliability_type) = self.get_reliability_params();
 
         let n = if data_len == 0 {
             self.write_outs.push_back(DataChannelMessage {
                 association_handle: self.association_handle,
                 stream_id: self.stream_id,
                 ppi,
-                unordered,
-                reliability_type,
+                //unordered,
+                //reliability_type,
                 payload: BytesMut::from(&[0][..]),
             });
 
@@ -202,8 +200,8 @@ impl DataChannel {
                 association_handle: self.association_handle,
                 stream_id: self.stream_id,
                 ppi,
-                unordered,
-                reliability_type,
+                //unordered,
+                //reliability_type,
                 payload: BytesMut::from(data),
             });
 
@@ -291,13 +289,13 @@ impl DataChannel {
 
     fn write_data_channel_ack(&mut self) -> Result<()> {
         let ack = Message::DataChannelAck(DataChannelAck {}).marshal()?;
-        let (unordered, reliability_type) = self.get_reliability_params();
+        //let (unordered, reliability_type) = self.get_reliability_params();
         self.write_outs.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
-            unordered,
-            reliability_type,
+            //unordered,
+            //reliability_type,
             payload: ack,
         });
         Ok(())
@@ -328,17 +326,15 @@ impl DataChannel {
         self.stream.on_buffered_amount_low(f)
     }*/
 
-    fn get_reliability_params(&self) -> (bool, ReliabilityType) {
-        let (unordered, reliability_type) = match self.config.channel_type {
+    pub fn get_reliability_params(channel_type: ChannelType) -> (bool, ReliabilityType) {
+        match channel_type {
             ChannelType::Reliable => (false, ReliabilityType::Reliable),
             ChannelType::ReliableUnordered => (true, ReliabilityType::Reliable),
             ChannelType::PartialReliableRexmit => (false, ReliabilityType::Rexmit),
             ChannelType::PartialReliableRexmitUnordered => (true, ReliabilityType::Rexmit),
             ChannelType::PartialReliableTimed => (false, ReliabilityType::Timed),
             ChannelType::PartialReliableTimedUnordered => (true, ReliabilityType::Timed),
-        };
-
-        (unordered, reliability_type)
+        }
     }
 
     pub fn get_channel_type_and_reliability_parameter(

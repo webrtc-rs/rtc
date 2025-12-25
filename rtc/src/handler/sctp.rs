@@ -1,16 +1,16 @@
-use super::message::{
-    DTLSMessage, DataChannelMessage, DataChannelMessageParams, DataChannelMessageType,
-    RTCEventInternal, RTCMessage, TaggedRTCMessage,
-};
+use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
+use datachannel::data_channel::DataChannelMessage;
+use datachannel::message::Message;
 use log::{debug, error, warn};
 use sctp::{
     AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
     Payload, PayloadProtocolIdentifier, StreamEvent,
 };
 use shared::error::{Error, Result};
+use shared::marshal::Unmarshal;
 use shared::TransportMessage;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
@@ -120,6 +120,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
                         while let Some(event) = conn.poll() {
                             match event {
+                                Event::Connected => {
+                                    self.ctx
+                                        .event_outs
+                                        .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
+                                }
+                                /*Event::Stream(StreamEvent::Opened { id }) => {
+                                    self.ctx
+                                        .event_outs
+                                        .push_back(RTCEventInternal::SCTPStreamOpened(ch.0, id));
+                                }*/
                                 Event::Stream(StreamEvent::Readable { id }) => {
                                     let mut stream = conn.stream(id)?;
                                     while let Some(chunks) = stream.read_sctp()? {
@@ -128,18 +138,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         messages.push(SctpMessage::Inbound(DataChannelMessage {
                                             association_handle: ch.0,
                                             stream_id: id,
-                                            data_message_type: to_data_message_type(chunks.ppi),
-                                            params: None,
+                                            ppi: chunks.ppi,
                                             payload: BytesMut::from(
                                                 &self.ctx.sctp_transport.internal_buffer[0..n],
                                             ),
                                         }));
                                     }
-                                }
-                                Event::Connected => {
-                                    self.ctx
-                                        .event_outs
-                                        .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
                                 }
                                 _ => {}
                             }
@@ -232,22 +236,21 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     .get_mut(&AssociationHandle(message.association_handle))
                 {
                     let mut stream = conn.stream(message.stream_id)?;
-                    if let Some(DataChannelMessageParams {
-                        unordered,
-                        reliability_type,
-                        reliability_parameter,
-                    }) = message.params
-                    {
-                        stream.set_reliability_params(
-                            unordered,
-                            reliability_type,
-                            reliability_parameter,
-                        )?;
+                    if message.ppi == PayloadProtocolIdentifier::Dcep {
+                        let mut data_buf = &message.payload[..];
+                        match Message::unmarshal(&mut data_buf)? {
+                            Message::DataChannelOpen(data_channel_open) => {
+                                let (unordered, reliability_type) = ::datachannel::data_channel::DataChannel::get_reliability_params(data_channel_open.channel_type);
+                                stream.set_reliability_params(
+                                    unordered,
+                                    reliability_type,
+                                    data_channel_open.reliability_parameter,
+                                )?;
+                            }
+                            _ => {}
+                        }
                     }
-                    stream.write_with_ppi(
-                        &message.payload,
-                        to_ppid(message.data_message_type, message.payload.len()),
-                    )?;
+                    stream.write_with_ppi(&message.payload, message.ppi)?;
 
                     while let Some(x) = conn.poll_transmit(msg.now) {
                         transmits.extend(split_transmit(x));
@@ -427,37 +430,4 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
     }
 
     transmits
-}
-
-fn to_data_message_type(ppid: PayloadProtocolIdentifier) -> DataChannelMessageType {
-    match ppid {
-        PayloadProtocolIdentifier::Dcep => DataChannelMessageType::Control,
-        PayloadProtocolIdentifier::String | PayloadProtocolIdentifier::StringEmpty => {
-            DataChannelMessageType::Text
-        }
-        PayloadProtocolIdentifier::Binary | PayloadProtocolIdentifier::BinaryEmpty => {
-            DataChannelMessageType::Binary
-        }
-        _ => DataChannelMessageType::None,
-    }
-}
-
-fn to_ppid(message_type: DataChannelMessageType, length: usize) -> PayloadProtocolIdentifier {
-    match message_type {
-        DataChannelMessageType::Text => {
-            if length > 0 {
-                PayloadProtocolIdentifier::String
-            } else {
-                PayloadProtocolIdentifier::StringEmpty
-            }
-        }
-        DataChannelMessageType::Binary => {
-            if length > 0 {
-                PayloadProtocolIdentifier::Binary
-            } else {
-                PayloadProtocolIdentifier::BinaryEmpty
-            }
-        }
-        _ => PayloadProtocolIdentifier::Dcep,
-    }
 }

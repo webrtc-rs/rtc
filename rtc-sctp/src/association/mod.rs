@@ -1963,7 +1963,9 @@ impl Association {
 
         if accept {
             self.stream_queue.push_back(stream_identifier);
-            self.events.push_back(Event::Stream(StreamEvent::Opened));
+            self.events.push_back(Event::Stream(StreamEvent::Opened {
+                id: stream_identifier,
+            }));
         }
 
         self.streams.insert(stream_identifier, s);
