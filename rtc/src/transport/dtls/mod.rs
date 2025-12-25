@@ -83,9 +83,8 @@ impl RTCDtlsTransport {
         })
     }
 
-    fn state_change(&mut self, state: RTCDtlsTransportState) {
+    pub(crate) fn state_change(&mut self, state: RTCDtlsTransportState) {
         self.state = state;
-        //TODO: put event to events
     }
 
     fn derive_role(&self, ice_role: RTCIceRole, remote_dtls_role: DTLSRole) -> DTLSRole {
@@ -201,6 +200,11 @@ impl RTCDtlsTransport {
             ));
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn stop(&mut self) -> Result<()> {
+        self.state_change(RTCDtlsTransportState::Closed);
         Ok(())
     }
 }

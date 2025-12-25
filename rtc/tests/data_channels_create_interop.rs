@@ -181,7 +181,7 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
 
     // Run event loops for both peers
     let mut buf = vec![0u8; 2000];
-    let mut rtc_ice_connected = false;
+    let mut rtc_connected = false;
     let mut webrtc_connected = false;
     let mut message_sent = false;
     let mut rtc_data_channel_opened = false;
@@ -214,7 +214,6 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
                     }
                     if state == RTCIceConnectionState::Connected {
                         log::info!("RTC ICE connected!");
-                        rtc_ice_connected = true;
                     }
                 }
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
@@ -224,6 +223,7 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
                     }
                     if state == RTCPeerConnectionState::Connected {
                         log::info!("RTC peer connection connected!");
+                        rtc_connected = true;
                     }
                 }
                 RTCPeerConnectionEvent::OnDataChannel(dc_event) => {
@@ -272,7 +272,7 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
         }
 
         // Send message once both are connected and data channel is open
-        if rtc_ice_connected && webrtc_connected && rtc_data_channel_opened && !message_sent {
+        if rtc_connected && webrtc_connected && rtc_data_channel_opened && !message_sent {
             log::info!("Both peers connected and data channel open, sending test message from RTC");
             tokio::time::sleep(Duration::from_millis(500)).await;
 

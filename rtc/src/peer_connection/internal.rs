@@ -1,4 +1,5 @@
 use super::*;
+use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
@@ -60,7 +61,7 @@ impl RTCPeerConnection {
             is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
             extmap_allow_mixed: true,
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
-            ice_gathering_state: self.ice_gathering_state,
+            ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group: None,
         };
         populate_sdp(
@@ -200,7 +201,7 @@ impl RTCPeerConnection {
             is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
             extmap_allow_mixed,
             connection_role,
-            ice_gathering_state: self.ice_gathering_state,
+            ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group,
         };
         populate_sdp(
@@ -436,10 +437,9 @@ impl RTCPeerConnection {
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
         log::info!("signaling state changed to {new_state}");
-        self.events
-            .push_back(RTCPeerConnectionEvent::OnSignalingStateChangeEvent(
-                new_state,
-            ));
+        self.pipeline_context.event_outs.push_back(
+            RTCPeerConnectionEvent::OnSignalingStateChangeEvent(new_state),
+        );
     }
 
     pub(crate) fn ice_transport(&self) -> &RTCIceTransport {
@@ -651,29 +651,29 @@ impl RTCPeerConnection {
 
     /// Update the PeerConnectionState given the state of relevant transports
     /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
-    fn update_connection_state(&mut self) {
+    pub(crate) fn update_connection_state(&mut self, is_closed: bool) {
         let connection_state =
             // The RTCPeerConnection object's [[IsClosed]] slot is true.
-            if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            if is_closed {
                 RTCPeerConnectionState::Closed
-            } else if self.ice_connection_state == RTCIceConnectionState::Failed || self.dtls_transport().state == RTCDtlsTransportState::Failed {
+            } else if self.ice_transport().ice_connection_state == RTCIceConnectionState::Failed || self.dtls_transport().state == RTCDtlsTransportState::Failed {
                 // Any of the RTCIceTransports or RTCDtlsTransports are in a "failed" state.
                 RTCPeerConnectionState::Failed
-            } else if self.ice_connection_state == RTCIceConnectionState::Disconnected {
+            } else if self.ice_transport().ice_connection_state == RTCIceConnectionState::Disconnected {
                 // Any of the RTCIceTransports or RTCDtlsTransports are in the "disconnected"
                 // state and none of them are in the "failed" or "connecting" or "checking" state.
                 RTCPeerConnectionState::Disconnected
-            } else if (self.ice_connection_state == RTCIceConnectionState::New || self.ice_connection_state == RTCIceConnectionState::Closed) &&
+            } else if (self.ice_transport().ice_connection_state == RTCIceConnectionState::New || self.ice_transport().ice_connection_state == RTCIceConnectionState::Closed) &&
                 (self.dtls_transport().state == RTCDtlsTransportState::New || self.dtls_transport().state == RTCDtlsTransportState::Closed) {
                 // None of the previous states apply and all RTCIceTransports are in the "new" or "closed" state,
                 // and all RTCDtlsTransports are in the "new" or "closed" state, or there are no transports.
                 RTCPeerConnectionState::New
-            } else if (self.ice_connection_state == RTCIceConnectionState::New || self.ice_connection_state == RTCIceConnectionState::Checking) ||
+            } else if (self.ice_transport().ice_connection_state == RTCIceConnectionState::New || self.ice_transport().ice_connection_state == RTCIceConnectionState::Checking) ||
                 (self.dtls_transport().state == RTCDtlsTransportState::New || self.dtls_transport().state == RTCDtlsTransportState::Connecting) {
                 // None of the previous states apply and any RTCIceTransport is in the "new" or "checking" state or
                 // any RTCDtlsTransport is in the "new" or "connecting" state.
                 RTCPeerConnectionState::Connecting
-            } else if (self.ice_connection_state == RTCIceConnectionState::Connected || self.ice_connection_state == RTCIceConnectionState::Completed || self.ice_connection_state == RTCIceConnectionState::Closed) &&
+            } else if (self.ice_transport().ice_connection_state == RTCIceConnectionState::Connected || self.ice_transport().ice_connection_state == RTCIceConnectionState::Completed || self.ice_transport().ice_connection_state == RTCIceConnectionState::Closed) &&
                 (self.dtls_transport().state == RTCDtlsTransportState::Connected || self.dtls_transport().state == RTCDtlsTransportState::Closed) {
                 // All RTCIceTransports and RTCDtlsTransports are in the "connected", "completed" or "closed"
                 // state and all RTCDtlsTransports are in the "connected" or "closed" state.
@@ -689,11 +689,9 @@ impl RTCPeerConnection {
         log::info!("peer connection state changed: {connection_state}");
         self.peer_connection_state = connection_state;
 
-        /*TODO: put it into events
-        RTCPeerConnection::do_peer_connection_state_change(
-            on_peer_connection_state_change_handler,
-            connection_state,
-        )*/
+        self.pipeline_context.event_outs.push_back(
+            RTCPeerConnectionEvent::OnConnectionStateChangeEvent(connection_state),
+        );
     }
 
     pub(crate) fn generate_data_channel_id(&self) -> Result<RTCDataChannelId> {

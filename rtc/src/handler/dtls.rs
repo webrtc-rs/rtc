@@ -1,6 +1,7 @@
 use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::transport::dtls::role::DTLSRole;
+use crate::transport::dtls::state::RTCDtlsTransportState;
 use crate::transport::dtls::RTCDtlsTransport;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
@@ -112,11 +113,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
                 if let Some((local_srtp_context, remote_srtp_context)) = srtp_contexts {
                     self.ctx
+                        .dtls_transport
+                        .state_change(RTCDtlsTransportState::Connected);
+
+                    self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::DTLSHandshakeComplete(
                             msg.transport.peer_addr,
-                            Box::new(local_srtp_context),
-                            Box::new(remote_srtp_context),
+                            Some(local_srtp_context),
+                            Some(remote_srtp_context),
                         ));
                 }
 
@@ -252,7 +257,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn close(&mut self) -> Result<()> {
-        Ok(())
+        self.ctx.dtls_transport.stop()
     }
 }
 

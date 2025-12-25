@@ -125,10 +125,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         if let Some(evt) = self.ctx.ice_transport.agent.poll_event() {
             match evt {
                 ::ice::Event::ConnectionStateChange(state) => {
+                    let ice_connection_state = state.into();
+                    self.ctx.ice_transport.ice_connection_state = ice_connection_state;
                     self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state.into()),
+                            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(
+                                ice_connection_state,
+                            ),
                         ));
                 }
                 ::ice::Event::SelectedCandidatePairChange(local, remote) => {

@@ -66,7 +66,7 @@ pub(crate) enum RTCEventInternal {
     // ICE Event
     ICESelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
     // DTLS Event
-    DTLSHandshakeComplete(SocketAddr, Box<Context>, Box<Context>),
+    DTLSHandshakeComplete(SocketAddr, Option<Context>, Option<Context>),
     // SCTP Event
     SCTPHandshakeComplete(usize /*AssociationHandle*/),
 }

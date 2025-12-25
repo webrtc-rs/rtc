@@ -21,7 +21,6 @@ use crate::media::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_sender::RTCRtpSender;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
@@ -29,7 +28,6 @@ use crate::peer_connection::sdp::{
     sdp_type::RTCSdpType, update_sdp_origin,
 };
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
-use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
@@ -49,7 +47,7 @@ use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 /// PeerConnection represents a WebRTC connection that establishes a
 /// peer-to-peer communications with another PeerConnection instance in a
@@ -68,13 +66,9 @@ pub struct RTCPeerConnection {
     current_remote_description: Option<RTCSessionDescription>,
     pending_remote_description: Option<RTCSessionDescription>,
 
-    signaling_state: RTCSignalingState,
-    ice_gathering_state: RTCIceGatheringState,
-    ice_connection_state: RTCIceConnectionState,
-    peer_connection_state: RTCPeerConnectionState,
+    pub(crate) signaling_state: RTCSignalingState,
+    pub(crate) peer_connection_state: RTCPeerConnectionState,
     can_trickle_ice_candidates: bool,
-
-    events: VecDeque<RTCPeerConnectionEvent>,
 
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
@@ -632,6 +626,8 @@ impl RTCPeerConnection {
                         }],
                     },
                 )?;
+
+                self.update_connection_state(false);
             }
 
             if we_offer {

@@ -1,3 +1,5 @@
+use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
+use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::transport::ice::candidate::RTCIceCandidate;
 use crate::transport::ice::parameters::RTCIceParameters;
 use crate::transport::ice::role::RTCIceRole;
@@ -22,6 +24,9 @@ pub mod state;
 #[derive(Default)]
 pub struct RTCIceTransport {
     pub(crate) agent: Agent,
+
+    pub(crate) ice_gathering_state: RTCIceGatheringState,
+    pub(crate) ice_connection_state: RTCIceConnectionState,
 }
 
 impl RTCIceTransport {
@@ -46,7 +51,10 @@ impl RTCIceTransport {
             insecure_skip_verify: false,
         }))?;
 
-        Ok(RTCIceTransport { agent })
+        Ok(RTCIceTransport {
+            agent,
+            ..Default::default()
+        })
     }
 
     /// get_local_parameters returns the ICE parameters of the ICEGatherer.

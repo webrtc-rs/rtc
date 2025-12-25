@@ -18,9 +18,11 @@ use crate::handler::message::{RTCEvent, RTCEventInternal, RTCMessage, TaggedRTCM
 use crate::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::peer_connection::RTCPeerConnection;
 use log::warn;
-use shared::error::Error;
+use shared::error::{flatten_errs, Error};
 use shared::TaggedBytesMut;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -250,10 +252,20 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
         }));
 
         // Finally, put intermediate_eouts into RTCPeerConnection's eouts
-        while let Some(RTCEventInternal::RTCPeerConnectionEvent(evt)) =
-            intermediate_eouts.pop_front()
-        {
-            self.pipeline_context.event_outs.push_back(evt);
+        while let Some(evt_internal) = intermediate_eouts.pop_front() {
+            match &evt_internal {
+                RTCEventInternal::RTCPeerConnectionEvent(
+                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
+                )
+                | RTCEventInternal::DTLSHandshakeComplete(_, _, _) => {
+                    self.update_connection_state(false);
+                }
+                _ => {}
+            };
+
+            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal {
+                self.pipeline_context.event_outs.push_back(evt);
+            }
         }
 
         self.pipeline_context.event_outs.pop_front()
@@ -277,10 +289,71 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     }
 
     fn close(&mut self) -> Result<(), Self::Error> {
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #1)
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Ok(());
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #3)
+        self.signaling_state = RTCSignalingState::Closed;
+
+        // Try closing everything and collect the errors
+        // Shutdown strategy:
+        // 1. All Conn close by closing their underlying Conn.
+        // 2. A Mux stops this chain. It won't close the underlying
+        //    Conn if one of the endpoints is closed down. To
+        //    continue the chain the Mux has to be closed.
         for_each_handler!(forward: process_handler!(self, handler, {
             handler.close()?;
         }));
 
-        Ok(())
+        let close_errs: Vec<Error> = vec![];
+
+        /* TODO:
+        if let Err(err) = self.interceptor.close().await {
+            close_errs.push(Error::new(format!("interceptor: {err}")));
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #4)
+        {
+            let mut rtp_transceivers = self.internal.rtp_transceivers.lock().await;
+            for t in &*rtp_transceivers {
+                if let Err(err) = t.stop().await {
+                    close_errs.push(Error::new(format!("rtp_transceivers: {err}")));
+                }
+            }
+            rtp_transceivers.clear();
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #5)
+        {
+            let mut data_channels = self.internal.sctp_transport.data_channels.lock().await;
+            for d in &*data_channels {
+                if let Err(err) = d.close().await {
+                    close_errs.push(Error::new(format!("data_channels: {err}")));
+                }
+            }
+            data_channels.clear();
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #6)
+        if let Err(err) = self.internal.sctp_transport.stop().await {
+            close_errs.push(Error::new(format!("sctp_transport: {err}")));
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #7)
+        if let Err(err) = self.internal.dtls_transport.stop().await {
+            close_errs.push(Error::new(format!("dtls_transport: {err}")));
+        }
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #8, #9, #10)
+        if let Err(err) = self.internal.ice_transport.stop().await {
+            close_errs.push(Error::new(format!("ice_transport: {err}")));
+        }
+         */
+
+        self.update_connection_state(true);
+
+        flatten_errs(close_errs)
     }
 }

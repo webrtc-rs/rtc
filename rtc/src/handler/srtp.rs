@@ -10,8 +10,8 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct SrtpHandlerContext {
-    pub(crate) local_srtp_context: Option<Box<Context>>,
-    pub(crate) remote_srtp_context: Option<Box<Context>>,
+    pub(crate) local_srtp_context: Option<Context>,
+    pub(crate) remote_srtp_context: Option<Context>,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
@@ -167,15 +167,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, mut evt: RTCEventInternal) -> Result<()> {
         if let RTCEventInternal::DTLSHandshakeComplete(_, local_srtp_context, remote_srtp_context) =
-            evt
+            &mut evt
         {
-            self.ctx.local_srtp_context = Some(local_srtp_context);
-            self.ctx.remote_srtp_context = Some(remote_srtp_context);
-        } else {
-            self.ctx.event_outs.push_back(evt);
+            self.ctx.local_srtp_context = local_srtp_context.take();
+            self.ctx.remote_srtp_context = remote_srtp_context.take()
         }
+
+        self.ctx.event_outs.push_back(evt);
+
         Ok(())
     }
 
