@@ -125,11 +125,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         .event_outs
                                         .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
                                 }
-                                /*Event::Stream(StreamEvent::Opened { id }) => {
-                                    self.ctx
-                                        .event_outs
-                                        .push_back(RTCEventInternal::SCTPStreamOpened(ch.0, id));
-                                }*/
                                 Event::Stream(StreamEvent::Readable { id }) => {
                                     let mut stream = conn.stream(id)?;
                                     while let Some(chunks) = stream.read_sctp()? {
@@ -238,16 +233,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     let mut stream = conn.stream(message.stream_id)?;
                     if message.ppi == PayloadProtocolIdentifier::Dcep {
                         let mut data_buf = &message.payload[..];
-                        match Message::unmarshal(&mut data_buf)? {
-                            Message::DataChannelOpen(data_channel_open) => {
-                                let (unordered, reliability_type) = ::datachannel::data_channel::DataChannel::get_reliability_params(data_channel_open.channel_type);
-                                stream.set_reliability_params(
-                                    unordered,
-                                    reliability_type,
-                                    data_channel_open.reliability_parameter,
-                                )?;
-                            }
-                            _ => {}
+                        if let Message::DataChannelOpen(data_channel_open) =
+                            Message::unmarshal(&mut data_buf)?
+                        {
+                            let (unordered, reliability_type) =
+                                ::datachannel::data_channel::DataChannel::get_reliability_params(
+                                    data_channel_open.channel_type,
+                                );
+                            stream.set_reliability_params(
+                                unordered,
+                                reliability_type,
+                                data_channel_open.reliability_parameter,
+                            )?;
                         }
                     }
                     stream.write_with_ppi(&message.payload, message.ppi)?;

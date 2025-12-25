@@ -1136,10 +1136,10 @@ pub enum Error {
     #[error("data channel closed")]
     ErrDataChannelClosed,
 
-    /// ErrDataChannelExist indicates an operation executed when the data
-    /// channel exists.
-    #[error("data channel exist")]
-    ErrDataChannelExist,
+    /// ErrDataChannelNonExist indicates an operation executed when the data
+    /// channel not existed.
+    #[error("data channel not existed")]
+    ErrDataChannelNotExisted,
 
     /// ErrCertificateExpired indicates that an x509 certificate has expired.
     #[error("x509Cert expired")]

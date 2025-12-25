@@ -3,15 +3,12 @@ use super::message::{
     TaggedRTCMessage,
 };
 use crate::data_channel::event::RTCDataChannelEvent;
-use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
-use crate::data_channel::RTCDataChannelId;
-use crate::media::rtp_transceiver::RTCRtpTransceiver;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use log::{debug, warn};
 use shared::error::{Error, Result};
 use shared::TransportContext;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::time::Instant;
 
 #[derive(Default)]
@@ -25,21 +22,11 @@ pub(crate) struct EndpointHandlerContext {
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
 pub(crate) struct EndpointHandler<'a> {
     ctx: &'a mut EndpointHandlerContext,
-    data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
-    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
 }
 
 impl<'a> EndpointHandler<'a> {
-    pub(crate) fn new(
-        ctx: &'a mut EndpointHandlerContext,
-        data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
-        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
-    ) -> Self {
-        EndpointHandler {
-            ctx,
-            data_channels,
-            rtp_transceivers,
-        }
+    pub(crate) fn new(ctx: &'a mut EndpointHandlerContext) -> Self {
+        EndpointHandler { ctx }
     }
 
     pub(crate) fn name(&self) -> &'static str {

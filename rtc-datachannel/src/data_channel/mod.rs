@@ -265,6 +265,10 @@ impl DataChannel {
         self.stream_id
     }
 
+    pub fn config(&self) -> &DataChannelConfig {
+        &self.config
+    }
+
     fn handle_dcep<B>(&mut self, data: &mut B) -> Result<()>
     where
         B: Buf,

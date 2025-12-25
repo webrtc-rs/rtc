@@ -1,6 +1,8 @@
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::{BinaryType, RTCDataChannelId};
+use datachannel::data_channel::DataChannelConfig;
+use sctp::PayloadProtocolIdentifier;
 use shared::error::Result;
 
 #[derive(Default, Clone)]
@@ -37,7 +39,7 @@ impl RTCDataChannelInternal {
         }
     }
 
-    pub(crate) fn open(&mut self, association_handle: usize) -> Result<()> {
+    pub(crate) fn dial(&mut self, association_handle: usize) -> Result<()> {
         let (channel_type, reliability_parameter) =
             ::datachannel::data_channel::DataChannel::get_channel_type_and_reliability_parameter(
                 self.ordered,
@@ -62,5 +64,43 @@ impl RTCDataChannelInternal {
         self.ready_state = RTCDataChannelState::Open;
 
         Ok(())
+    }
+
+    pub(crate) fn accept(
+        association_handle: usize,
+        stream_id: u16,
+        ppi: PayloadProtocolIdentifier,
+        buf: &[u8],
+    ) -> Result<Self> {
+        let data_channel = ::datachannel::data_channel::DataChannel::accept(
+            DataChannelConfig::default(),
+            association_handle,
+            stream_id,
+            ppi,
+            buf,
+        )?;
+
+        let data_channel_config = data_channel.config();
+
+        let (unordered, _reliability_type) =
+            ::datachannel::data_channel::DataChannel::get_reliability_params(
+                data_channel_config.channel_type,
+            );
+
+        let mut data_channel_internal = RTCDataChannelInternal::new(
+            stream_id,
+            DataChannelParameters {
+                label: data_channel_config.label.clone(),
+                protocol: data_channel_config.protocol.clone(),
+                ordered: !unordered,
+                max_packet_life_time: None,
+                max_retransmits: None,
+                negotiated: None,
+            },
+        );
+        data_channel_internal.data_channel = Some(data_channel);
+        data_channel_internal.ready_state = RTCDataChannelState::Open;
+
+        Ok(data_channel_internal)
     }
 }

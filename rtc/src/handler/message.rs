@@ -69,5 +69,4 @@ pub(crate) enum RTCEventInternal {
     DTLSHandshakeComplete(SocketAddr, Box<Context>, Box<Context>),
     // SCTP Event
     SCTPHandshakeComplete(usize /*AssociationHandle*/),
-    //SCTPStreamOpened(usize /*AssociationHandle*/, u16 /*StreamId*/),
 }
