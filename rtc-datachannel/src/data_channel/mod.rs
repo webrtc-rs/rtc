@@ -3,7 +3,7 @@ mod data_channel_test;
 
 use crate::message::{message_channel_ack::*, message_channel_open::*, *};
 use bytes::{Buf, BytesMut};
-use log::{debug, error};
+use log::debug;
 use sctp::{PayloadProtocolIdentifier, ReliabilityType};
 use shared::error::{Error, Result};
 use shared::marshal::*;
@@ -38,7 +38,7 @@ pub struct DataChannel {
     association_handle: usize,
     stream_id: u16,
 
-    read_outs: VecDeque<(BytesMut, bool)>,
+    read_outs: VecDeque<DataChannelMessage>,
     write_outs: VecDeque<DataChannelMessage>,
 
     // stats
@@ -123,116 +123,6 @@ impl DataChannel {
         data_channel.write_data_channel_ack()?;
 
         Ok(data_channel)
-    }
-
-    /// ReadDataChannel reads a packet of len(p) bytes. It returns the number of bytes read and
-    /// `true` if the data read is a string.
-    pub fn handle_read(&mut self, ppi: PayloadProtocolIdentifier, buf: &[u8]) -> Result<()> {
-        let mut is_string = false;
-        match ppi {
-            PayloadProtocolIdentifier::Dcep => {
-                let mut data_buf = buf;
-                match self.handle_dcep(&mut data_buf) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        error!("Failed to handle DCEP: {:?}", err);
-                        return Err(err);
-                    }
-                }
-            }
-            PayloadProtocolIdentifier::String | PayloadProtocolIdentifier::StringEmpty => {
-                is_string = true;
-            }
-            _ => {}
-        };
-
-        let data = match ppi {
-            PayloadProtocolIdentifier::StringEmpty | PayloadProtocolIdentifier::BinaryEmpty => {
-                BytesMut::new()
-            }
-            _ => BytesMut::from(buf),
-        };
-
-        self.messages_received += 1;
-        self.bytes_received += 1;
-        self.read_outs.push_back((data, is_string));
-
-        Ok(())
-    }
-
-    pub fn poll_read(&mut self) -> Option<(BytesMut, bool)> {
-        self.read_outs.pop_front()
-    }
-
-    /// handle_write writes len(p) bytes from p
-    pub fn handle_write(&mut self, data: &[u8], is_string: bool) -> Result<usize> {
-        let data_len = data.len();
-
-        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
-        // SCTP does not support the sending of empty user messages.  Therefore,
-        // if an empty message has to be sent, the appropriate PPID (WebRTC
-        // String Empty or WebRTC Binary Empty) is used and the SCTP user
-        // message of one zero byte is sent.  When receiving an SCTP user
-        // message with one of these PPIDs, the receiver MUST ignore the SCTP
-        // user message and process it as an empty message.
-        let ppi = match (is_string, data_len) {
-            (false, 0) => PayloadProtocolIdentifier::BinaryEmpty,
-            (false, _) => PayloadProtocolIdentifier::Binary,
-            (true, 0) => PayloadProtocolIdentifier::StringEmpty,
-            (true, _) => PayloadProtocolIdentifier::String,
-        };
-
-        //let (unordered, reliability_type) = self.get_reliability_params();
-
-        let n = if data_len == 0 {
-            self.write_outs.push_back(DataChannelMessage {
-                association_handle: self.association_handle,
-                stream_id: self.stream_id,
-                ppi,
-                //unordered,
-                //reliability_type,
-                payload: BytesMut::from(&[0][..]),
-            });
-
-            0
-        } else {
-            self.write_outs.push_back(DataChannelMessage {
-                association_handle: self.association_handle,
-                stream_id: self.stream_id,
-                ppi,
-                //unordered,
-                //reliability_type,
-                payload: BytesMut::from(data),
-            });
-
-            self.bytes_sent += data.len();
-            data.len()
-        };
-
-        self.messages_sent += 1;
-        Ok(n)
-    }
-
-    /// Returns packets to transmit
-    pub fn poll_write(&mut self) -> Option<DataChannelMessage> {
-        self.write_outs.pop_front()
-    }
-
-    /// Close closes the DataChannel and the underlying SCTP stream.
-    pub fn close(&self) -> Result<()> {
-        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-13#section-6.7
-        // Closing of a data channel MUST be signaled by resetting the
-        // corresponding outgoing streams [RFC6525].  This means that if one
-        // side decides to close the data channel, it resets the corresponding
-        // outgoing stream.  When the peer sees that an incoming stream was
-        // reset, it also resets its corresponding outgoing stream.  Once this
-        // is completed, the data channel is closed.  Resetting a stream sets
-        // the Stream Sequence Numbers (SSNs) of the stream back to 'zero' with
-        // a corresponding notification to the application layer that the reset
-        // has been performed.  Streams are available for reuse after a reset
-        // has been performed.
-        //TODO: Ok(self.stream.shutdown(Shutdown::Both).await?)
-        Ok(())
     }
 
     /// MessagesSent returns the number of messages sent
@@ -379,5 +269,96 @@ impl DataChannel {
         }
 
         (channel_type, reliability_parameter)
+    }
+
+    pub fn get_data_channel_message(is_string: bool, data: BytesMut) -> DataChannelMessage {
+        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
+        // SCTP does not support the sending of empty user messages.  Therefore,
+        // if an empty message has to be sent, the appropriate PPID (WebRTC
+        // String Empty or WebRTC Binary Empty) is used and the SCTP user
+        // message of one zero byte is sent.  When receiving an SCTP user
+        // message with one of these PPIDs, the receiver MUST ignore the SCTP
+        // user message and process it as an empty message.
+        let ppi = match (is_string, data.len()) {
+            (false, 0) => PayloadProtocolIdentifier::BinaryEmpty,
+            (false, _) => PayloadProtocolIdentifier::Binary,
+            (true, 0) => PayloadProtocolIdentifier::StringEmpty,
+            (true, _) => PayloadProtocolIdentifier::String,
+        };
+
+        if data.is_empty() {
+            DataChannelMessage {
+                ppi,
+                payload: BytesMut::from(&[0][..]),
+                ..Default::default()
+            }
+        } else {
+            DataChannelMessage {
+                ppi,
+                payload: data,
+                ..Default::default()
+            }
+        }
+    }
+}
+
+impl sansio::Protocol<DataChannelMessage, DataChannelMessage, ()> for DataChannel {
+    type Rout = DataChannelMessage;
+    type Wout = DataChannelMessage;
+    type Eout = ();
+    type Error = Error;
+    type Time = ();
+
+    /// ReadDataChannel reads a packet of len(p) bytes. It returns the number of bytes read and
+    /// `true` if the data read is a string.
+    fn handle_read(&mut self, msg: DataChannelMessage) -> Result<()> {
+        self.messages_received += 1;
+        self.bytes_received += msg.payload.len();
+
+        if msg.ppi == PayloadProtocolIdentifier::Dcep {
+            let mut data_buf = &msg.payload[..];
+            self.handle_dcep(&mut data_buf)
+        } else {
+            self.read_outs.push_back(msg);
+            Ok(())
+        }
+    }
+
+    fn poll_read(&mut self) -> Option<DataChannelMessage> {
+        self.read_outs.pop_front()
+    }
+
+    /// handle_write writes len(p) bytes from p
+    fn handle_write(&mut self, mut msg: DataChannelMessage) -> Result<()> {
+        self.messages_sent += 1;
+        self.bytes_sent += msg.payload.len();
+
+        msg.association_handle = self.association_handle;
+        msg.stream_id = self.stream_id;
+        self.write_outs.push_back(msg);
+
+        Ok(())
+    }
+
+    /// Returns packets to transmit
+    fn poll_write(&mut self) -> Option<DataChannelMessage> {
+        self.write_outs.pop_front()
+    }
+
+    /// Close closes the DataChannel and the underlying SCTP stream.
+    fn close(&mut self) -> Result<()> {
+        // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-13#section-6.7
+        // Closing of a data channel MUST be signaled by resetting the
+        // corresponding outgoing streams [RFC6525].  This means that if one
+        // side decides to close the data channel, it resets the corresponding
+        // outgoing stream.  When the peer sees that an incoming stream was
+        // reset, it also resets its corresponding outgoing stream.  Once this
+        // is completed, the data channel is closed.  Resetting a stream sets
+        // the Stream Sequence Numbers (SSNs) of the stream back to 'zero' with
+        // a corresponding notification to the application layer that the reset
+        // has been performed.  Streams are available for reuse after a reset
+        // has been performed.
+        //TODO: Ok(self.stream.shutdown(Shutdown::Both).await?)
+        Ok(())
     }
 }

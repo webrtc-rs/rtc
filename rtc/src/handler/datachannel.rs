@@ -7,6 +7,7 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannelId;
 use log::{debug, warn};
+use sctp::PayloadProtocolIdentifier;
 use shared::error::{Error, Result};
 use shared::TransportContext;
 use std::collections::{HashMap, VecDeque};
@@ -54,12 +55,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 msg.transport.peer_addr
             );
 
-            if let Some(data_channel_internal) = self.data_channels.get_mut(&message.stream_id) {
+            let stream_id = message.stream_id;
+
+            if let Some(data_channel_internal) = self.data_channels.get_mut(&stream_id) {
                 let data_channel = data_channel_internal
                     .data_channel
                     .as_mut()
                     .ok_or(Error::ErrDataChannelNotExisted)?;
-                data_channel.handle_read(message.ppi, &message.payload)?;
+                data_channel.handle_read(message)?;
             } else {
                 let data_channel_internal = RTCDataChannelInternal::accept(
                     message.association_handle,
@@ -83,22 +86,25 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
             let data_channel = self
                 .data_channels
-                .get_mut(&message.stream_id)
+                .get_mut(&stream_id)
                 .ok_or(Error::ErrDataChannelNotExisted)?
                 .data_channel
                 .as_mut()
                 .ok_or(Error::ErrDataChannelNotExisted)?;
 
-            while let Some((data, is_string)) = data_channel.poll_read() {
+            while let Some(data_channel_message) = data_channel.poll_read() {
                 debug!("recv application message {:?}", msg.transport.peer_addr);
                 self.ctx.read_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     transport: msg.transport,
                     message: RTCMessage::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
-                        data_channel_id: message.stream_id,
+                        data_channel_id: stream_id,
                         data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                            is_string,
-                            data,
+                            is_string: data_channel_message.ppi
+                                == PayloadProtocolIdentifier::String
+                                || data_channel_message.ppi
+                                    == PayloadProtocolIdentifier::StringEmpty,
+                            data: data_channel_message.payload,
                         }),
                     })),
                 });
@@ -128,7 +134,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         if let RTCMessage::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
             debug!("send application message {:?}", msg.transport.peer_addr);
 
-            if let DataChannelEvent::Message(data_channel_message) = message.data_channel_event {
+            if let DataChannelEvent::Message(RTCDataChannelMessage { is_string, data }) =
+                message.data_channel_event
+            {
                 let data_channel = self
                     .data_channels
                     .get_mut(&message.data_channel_id)
@@ -137,8 +145,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     .as_mut()
                     .ok_or(Error::ErrDataChannelNotExisted)?;
 
-                data_channel
-                    .handle_write(&data_channel_message.data, data_channel_message.is_string)?;
+                let data_channel_message =
+                    ::datachannel::data_channel::DataChannel::get_data_channel_message(
+                        is_string, data,
+                    );
+                data_channel.handle_write(data_channel_message)?;
 
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from handle_write");

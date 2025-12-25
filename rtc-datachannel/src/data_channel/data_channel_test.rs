@@ -1,5 +1,5 @@
 use super::*;
-use bytes::Bytes;
+use sansio::Protocol;
 use shared::error::Result;
 
 fn create_new_association_pair() -> Result<(usize, usize)> {
@@ -141,32 +141,62 @@ fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
     assert_eq!(dc1.config, cfg, "remote config should match");
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
-    let n = dc0.handle_write(&Bytes::from(sbuf.clone()), true)?;
-    assert_eq!(sbuf.len(), n, "data length should match");
+    let data_channel_message =
+        DataChannel::get_data_channel_message(true, BytesMut::from(&sbuf[0..4]));
+    dc0.handle_write(data_channel_message)?;
+    assert_eq!(dc0.bytes_sent(), 4, "data length should match");
 
     sbuf[0..4].copy_from_slice(&2u32.to_be_bytes());
-    let n = dc0.handle_write(&Bytes::from(sbuf.clone()), false)?;
-    assert_eq!(sbuf.len(), n, "data length should match");
+    let data_channel_message =
+        DataChannel::get_data_channel_message(false, BytesMut::from(&sbuf[0..4]));
+    dc0.handle_write(data_channel_message)?;
+    assert_eq!(dc0.bytes_sent(), 8, "data length should match");
 
     let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
-    dc1.handle_read(msg.ppi, &msg.payload)?;
-    let (data, is_string) = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
-    assert!(is_string);
-    assert_eq!(sbuf.len(), data.len(), "data length should match");
+    dc1.handle_read(msg)?;
+    assert_eq!(dc1.bytes_received(), 4, "data length should match");
+    let data_channel_message = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
+    assert!(
+        data_channel_message.ppi == PayloadProtocolIdentifier::String
+            || data_channel_message.ppi == PayloadProtocolIdentifier::StringEmpty
+    );
+    assert_eq!(
+        4,
+        data_channel_message.payload.len(),
+        "data length should match"
+    );
     assert_eq!(
         1,
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+        u32::from_be_bytes([
+            data_channel_message.payload[0],
+            data_channel_message.payload[1],
+            data_channel_message.payload[2],
+            data_channel_message.payload[3]
+        ]),
         "data should match"
     );
 
     let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
-    dc1.handle_read(msg.ppi, &msg.payload)?;
-    let (data, is_string) = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
-    assert!(!is_string);
-    assert_eq!(sbuf.len(), data.len(), "data length should match");
+    dc1.handle_read(msg)?;
+    assert_eq!(dc1.bytes_received(), 8, "data length should match");
+    let data_channel_message = dc1.poll_read().ok_or(Error::ErrAssociationNotExisted)?;
+    assert!(
+        !(data_channel_message.ppi == PayloadProtocolIdentifier::String
+            || data_channel_message.ppi == PayloadProtocolIdentifier::StringEmpty)
+    );
+    assert_eq!(
+        4,
+        data_channel_message.payload.len(),
+        "data length should match"
+    );
     assert_eq!(
         2,
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+        u32::from_be_bytes([
+            data_channel_message.payload[0],
+            data_channel_message.payload[1],
+            data_channel_message.payload[2],
+            data_channel_message.payload[3]
+        ]),
         "data should match"
     );
 
