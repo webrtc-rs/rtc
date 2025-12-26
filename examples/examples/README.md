@@ -16,7 +16,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   playing with the life cycle of data channels.
 - [x] [Data Channels Flow Control](data-channels-flow-control): Example data-channels-flow-control shows how to use flow
   control.
-- [ ] [ORTC](ortc): Example ortc shows how to use the ORTC API for DataChannel communication.
 - [ ] [Offer Answer](offer-answer): Example offer-answer is an example of two webrtc-rs or pion instances communicating
   directly!
 - [ ] [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
