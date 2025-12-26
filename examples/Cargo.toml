@@ -137,11 +137,11 @@ bench = false
 #path = "examples/offer-answer/answer.rs"
 #bench = false
 #
-#[[example]]
-#name = "ice-restart"
-#path = "examples/ice-restart/ice-restart.rs"
-#bench = false
-#
+[[example]]
+name = "ice-restart"
+path = "examples/ice-restart/ice-restart.rs"
+bench = false
+
 #[[example]]
 #name = "broadcast"
 #path = "examples/broadcast/broadcast.rs"
