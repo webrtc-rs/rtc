@@ -12,8 +12,8 @@ use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
 use rtc::configuration::RTCConfigurationBuilder;
-use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::data_channel::init::RTCDataChannelInit;
+use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::ice::server::RTCIceServer;

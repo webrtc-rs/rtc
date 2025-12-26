@@ -1,4 +1,4 @@
-use crate::data_channel::event::RTCDataChannelEvent;
+use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::{

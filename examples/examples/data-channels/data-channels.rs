@@ -12,7 +12,7 @@ use tokio::{net::UdpSocket, sync::broadcast};
 
 use rtc::configuration::setting_engine::SettingEngine;
 use rtc::configuration::RTCConfigurationBuilder;
-use rtc::data_channel::event::RTCDataChannelEvent;
+use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;

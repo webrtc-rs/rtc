@@ -14,8 +14,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 use rtc::configuration::RTCConfigurationBuilder;
-use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::peer_connection::certificate::math_rand_alpha;
+use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;

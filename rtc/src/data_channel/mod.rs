@@ -8,7 +8,6 @@ use bytes::BytesMut;
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
-pub mod event;
 pub mod init;
 pub(crate) mod internal;
 pub mod message;
