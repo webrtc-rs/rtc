@@ -1,5 +1,6 @@
+use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::message::{
-    DTLSMessage, RTCEventInternal, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage,
+    DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage,
 };
 
 use log::{debug, error};

@@ -1,10 +1,11 @@
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage, RTPMessage,
-    TaggedRTCMessage,
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, TaggedRTCMessage,
 };
+
 use log::{debug, warn};
 use shared::error::{Error, Result};
 use shared::TransportContext;

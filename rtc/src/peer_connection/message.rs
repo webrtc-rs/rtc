@@ -1,12 +1,8 @@
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
-use crate::peer_connection::event::RTCPeerConnectionEvent;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
-use ice::candidate::Candidate;
 use shared::TransportContext;
-use srtp::context::Context;
-use std::net::SocketAddr;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -53,21 +49,4 @@ pub(crate) struct TaggedRTCMessage {
     pub now: Instant,
     pub transport: TransportContext,
     pub message: RTCMessage,
-}
-
-#[derive(Debug, Clone)]
-pub enum RTCEvent {}
-
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum RTCEventInternal {
-    RTCEvent(RTCEvent),
-    RTCPeerConnectionEvent(RTCPeerConnectionEvent),
-
-    // ICE Event
-    ICESelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
-    // DTLS Event
-    DTLSHandshakeComplete(SocketAddr, Option<Context>, Option<Context>),
-    // SCTP Event
-    SCTPHandshakeComplete(usize /*AssociationHandle*/),
-    SCTPStreamClosed(usize /*AssociationHandle*/, u16 /*StreamID*/),
 }

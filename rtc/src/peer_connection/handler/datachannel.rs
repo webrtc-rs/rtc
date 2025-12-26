@@ -3,10 +3,9 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::{RTCEventInternal, RTCPeerConnectionEvent};
 use crate::peer_connection::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage,
-    TaggedRTCMessage,
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, TaggedRTCMessage,
 };
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;

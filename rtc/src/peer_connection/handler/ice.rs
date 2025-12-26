@@ -1,10 +1,9 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
+use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::message::{
-    RTCEventInternal, RTCMessage, STUNMessage, TaggedRTCMessage,
-};
+use crate::peer_connection::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use log::{debug, trace};
 use shared::error::{Error, Result};

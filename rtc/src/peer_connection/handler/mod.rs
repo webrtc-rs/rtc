@@ -8,6 +8,7 @@ pub(crate) mod sctp;
 pub(crate) mod srtp;
 
 use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::{RTCEvent, RTCEventInternal};
 use crate::peer_connection::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
 use crate::peer_connection::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
 use crate::peer_connection::handler::dtls::{DtlsHandler, DtlsHandlerContext};
@@ -16,7 +17,7 @@ use crate::peer_connection::handler::ice::{IceHandler, IceHandlerContext};
 use crate::peer_connection::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
 use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
-use crate::peer_connection::message::{RTCEvent, RTCEventInternal, RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::peer_connection::RTCPeerConnection;
