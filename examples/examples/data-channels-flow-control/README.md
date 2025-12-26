@@ -2,17 +2,17 @@
 
 This example demonstrates how to use the following property / methods.
 
-* pub async fn buffered_amount(&self) -> usize
-* pub async fn set_buffered_amount_low_threshold(&self, th: usize)
-* pub async fn buffered_amount_low_threshold(&self) -> usize
-* pub async fn on_buffered_amount_low(&self, f: OnBufferedAmountLowFn)
+* pub fn buffered_amount(&self) -> usize
+* pub fn set_buffered_amount_low_threshold(&self, th: usize)
+* pub fn buffered_amount_low_threshold(&self) -> usize
+* pub fn on_buffered_amount_low(&self, f: OnBufferedAmountLowFn)
 
 These methods are equivalent to that of JavaScript WebRTC API.
 See <https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel> for more details.
 
 ## When do we need it?
 
-Send or SendText methods are called on DataChannel to send data to the connected peer.
+send or send_text methods are called on DataChannel to send data to the connected peer.
 The methods return immediately, but it does not mean the data was actually sent onto
 the wire. Instead, it is queued in a buffer until it actually gets sent out to the wire.
 
