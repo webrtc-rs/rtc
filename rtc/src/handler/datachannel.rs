@@ -228,14 +228,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
             }
 
             RTCEventInternal::SCTPStreamClosed(_association_handle, stream_id) => {
-                self.data_channels.remove(&stream_id);
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
-                            stream_id,
-                        )),
-                    ))
+                if self.data_channels.remove(&stream_id).is_some() {
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
+                                stream_id,
+                            )),
+                        ));
+                }
             }
             _ => {
                 self.ctx.event_outs.push_back(evt);

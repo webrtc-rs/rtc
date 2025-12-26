@@ -112,7 +112,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         for (event_ch, conn_events) in sctp_events.iter_mut() {
                             if ch == event_ch {
                                 for event in conn_events.drain(..) {
-                                    debug!("association_handle {} handle_event", ch.0);
+                                    debug!(
+                                        "association_handle {} handle_event for Datagram from {}",
+                                        ch.0, msg.transport.peer_addr
+                                    );
                                     conn.handle_event(event);
                                 }
                             }
@@ -120,10 +123,27 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
                         while let Some(event) = conn.poll() {
                             match event {
+                                Event::HandshakeFailed { reason } => {
+                                    debug!(
+                                        "association_handle {} handshake failed due to {}",
+                                        ch.0, reason
+                                    );
+                                    //TODO: put it into event_outs?
+                                }
                                 Event::Connected => {
+                                    debug!("association_handle {} is connected", ch.0);
                                     self.ctx
                                         .event_outs
                                         .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
+                                }
+                                Event::AssociationLost { reason, id } => {
+                                    debug!(
+                                        "association_handle {} is closed due to {}",
+                                        ch.0, reason
+                                    );
+                                    self.ctx
+                                        .event_outs
+                                        .push_back(RTCEventInternal::SCTPStreamClosed(ch.0, id));
                                 }
                                 Event::Stream(StreamEvent::Readable { id }) => {
                                     let mut stream = conn.stream(id)?;

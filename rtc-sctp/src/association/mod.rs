@@ -52,11 +52,11 @@ pub(crate) mod timer;
 mod association_test;
 
 /// Reasons why an association might be lost
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum AssociationError {
     /// Handshake failed
-    #[error("{0}")]
-    HandshakeFailed(#[from] Error),
+    #[error("handshake failed due to {0}")]
+    HandshakeFailed(String),
     /// The peer violated the QUIC specification as understood by this implementation
     #[error("transport error")]
     TransportError,
@@ -83,6 +83,12 @@ pub enum AssociationError {
 /// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
+    /// Handshake was failed
+    HandshakeFailed {
+        /// Reason that the association was closed
+        reason: AssociationError,
+    },
+
     /// The association was successfully established
     Connected,
     /// The association was lost
@@ -91,6 +97,7 @@ pub enum Event {
     AssociationLost {
         /// Reason that the association was closed
         reason: AssociationError,
+        id: StreamId,
     },
     /// Stream events
     Stream(StreamEvent),
@@ -390,7 +397,7 @@ impl Association {
         }*/
 
         if let Some(err) = self.error.take() {
-            return Some(Event::AssociationLost { reason: err });
+            return Some(Event::HandshakeFailed { reason: err });
         }
 
         None
@@ -508,7 +515,7 @@ impl Association {
 
                     if let Err(err) = self.handle_inbound(pkt, transmit.now) {
                         error!("handle_inbound got err: {}", err);
-                        let _ = self.close();
+                        let _ = self.close(AssociationError::TransportError);
                     }
                 } else {
                     trace!("discarding invalid partial_decode");
@@ -609,7 +616,7 @@ impl Association {
     }
 
     /// Close ends the SCTP Association and cleans up any state
-    pub fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self, reason: AssociationError) -> Result<()> {
         if self.state() != AssociationState::Closed {
             self.set_state(AssociationState::Closed);
 
@@ -618,7 +625,7 @@ impl Association {
             self.close_all_timers();
 
             for si in self.streams.keys().cloned().collect::<Vec<u16>>() {
-                self.unregister_stream(si);
+                self.unregister_stream(si, reason.clone());
             }
 
             debug!("[{}] association closed", self.side);
@@ -691,6 +698,10 @@ impl Association {
         }
     }
 
+    pub fn stream_ids(&self) -> Vec<StreamId> {
+        self.streams.keys().cloned().collect()
+    }
+
     /// bytes_sent returns the number of bytes sent
     pub(crate) fn bytes_sent(&self) -> usize {
         self.bytes_sent
@@ -713,9 +724,13 @@ impl Association {
 
     /// unregister_stream un-registers a stream from the association
     /// The caller should hold the association write lock.
-    fn unregister_stream(&mut self, stream_identifier: StreamId) {
+    fn unregister_stream(&mut self, stream_identifier: StreamId, reason: AssociationError) {
         if let Some(mut s) = self.streams.remove(&stream_identifier) {
             debug!("[{}] unregister_stream {}", self.side, stream_identifier);
+            self.events.push_back(Event::AssociationLost {
+                reason,
+                id: stream_identifier,
+            });
             s.state = RecvSendState::Closed;
         }
     }
@@ -835,7 +850,7 @@ impl Association {
             for e in &c.error_causes {
                 if matches!(e.code, USER_INITIATED_ABORT) {
                     debug!("User initiated abort received");
-                    let _ = self.close();
+                    let _ = self.close(AssociationError::Reset);
                     return Ok(());
                 }
                 err_str += &format!("({})", e);
@@ -1479,7 +1494,7 @@ impl Association {
         let state = self.state();
         if state == AssociationState::ShutdownAckSent {
             self.timers.stop(Timer::T2Shutdown);
-            self.close()?;
+            self.close(AssociationError::AssociationClosed)?;
         }
 
         Ok(vec![])
@@ -1884,7 +1899,7 @@ impl Association {
                     if respond {
                         sis_to_reset.push(*id);
                     }
-                    self.unregister_stream(*id);
+                    self.unregister_stream(*id, AssociationError::Reset);
                 }
             }
             self.reconfig_requests
@@ -2841,14 +2856,14 @@ impl Association {
             Timer::T1Init => {
                 error!("[{}] retransmission failure: T1-init", self.side);
                 self.error = Some(AssociationError::HandshakeFailed(
-                    Error::ErrHandshakeInitAck,
+                    Error::ErrHandshakeInitAck.to_string(),
                 ));
             }
 
             Timer::T1Cookie => {
                 error!("[{}] retransmission failure: T1-cookie", self.side);
                 self.error = Some(AssociationError::HandshakeFailed(
-                    Error::ErrHandshakeCookieEcho,
+                    Error::ErrHandshakeCookieEcho.to_string(),
                 ));
             }
 

@@ -20,6 +20,7 @@ use crate::chunk::{ErrorCauseProtocolViolation, PROTOCOL_VIOLATION};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
 use crate::param::param_reconfig_response::ParamReconfigResponse;
+use crate::AssociationError;
 use assert_matches::assert_matches;
 use lazy_static::lazy_static;
 use log::{info, trace};
@@ -2226,7 +2227,7 @@ fn test_association_handle_packet_before_init() -> Result<()> {
             },
         )));
 
-        a.close()?;
+        a.close(AssociationError::LocallyClosed)?;
     }
 
     Ok(())
