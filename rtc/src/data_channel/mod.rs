@@ -131,7 +131,7 @@ impl RTCDataChannel<'_> {
     /// increase with each call to the send() method as long as the ready_state is
     /// open; however, buffered_amount does not reset to zero once the channel
     /// closes.
-    pub fn buffered_amount(&self) -> Result<usize> {
+    pub fn buffered_amount(&self) -> Result<u32> {
         if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             if let Some(data_channel) = &dc.data_channel {
                 Ok(data_channel.buffered_amount())
@@ -149,7 +149,7 @@ impl RTCDataChannel<'_> {
     /// event fires. buffered_amount_low_threshold is initially zero on each new
     /// DataChannel, but the application may change its value at any time.
     /// The threshold is set to 0 by default.
-    pub fn buffered_amount_low_threshold(&self) -> Result<usize> {
+    pub fn buffered_amount_low_threshold(&self) -> Result<u32> {
         if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
             Ok(dc.buffered_amount_low_threshold)
         } else {
@@ -159,13 +159,14 @@ impl RTCDataChannel<'_> {
 
     /// set_buffered_amount_low_threshold sets the threshold at which the
     /// bufferedAmount is considered to be low.
-    pub fn set_buffered_amount_low_threshold(&mut self, threshold: usize) -> Result<()> {
+    pub fn set_buffered_amount_low_threshold(&mut self, threshold: u32) -> Result<()> {
         if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
             dc.buffered_amount_low_threshold = threshold;
-            if let Some(data_channel) = &dc.data_channel {
-                data_channel.set_buffered_amount_low_threshold(threshold);
+            if let Some(data_channel) = dc.data_channel.as_mut() {
+                data_channel.set_buffered_amount_low_threshold(threshold)
+            } else {
+                Ok(())
             }
-            Ok(())
         } else {
             Err(Error::ErrDataChannelClosed)
         }

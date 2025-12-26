@@ -2,6 +2,7 @@ use super::*;
 use shared::error::{Error, Result};
 
 // The first byte in a `Message` that specifies its type:
+pub(crate) const MESSAGE_TYPE_LOW_THRESHOLD: u8 = 0x00; // reuse 0x00 for internal usage
 pub(crate) const MESSAGE_TYPE_CLOSE: u8 = 0x01; // reuse 0x01 for internal usage
 pub(crate) const MESSAGE_TYPE_ACK: u8 = 0x02;
 pub(crate) const MESSAGE_TYPE_OPEN: u8 = 0x03;
@@ -10,7 +11,8 @@ pub(crate) const MESSAGE_TYPE_LEN: usize = 1;
 // A parsed DataChannel message
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum MessageType {
-    DataChannelClose, // internal usage only
+    DataChannelLowThreshold, // internal usage only
+    DataChannelClose,        // internal usage only
     DataChannelAck,
     DataChannelOpen,
 }
@@ -24,6 +26,7 @@ impl MarshalSize for MessageType {
 impl Marshal for MessageType {
     fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
         let b = match self {
+            MessageType::DataChannelLowThreshold => MESSAGE_TYPE_LOW_THRESHOLD, // internal usage only
             MessageType::DataChannelClose => MESSAGE_TYPE_CLOSE, // internal usage only
             MessageType::DataChannelAck => MESSAGE_TYPE_ACK,
             MessageType::DataChannelOpen => MESSAGE_TYPE_OPEN,
@@ -51,6 +54,7 @@ impl Unmarshal for MessageType {
         let b = buf.get_u8();
 
         match b {
+            MESSAGE_TYPE_LOW_THRESHOLD => Ok(MessageType::DataChannelLowThreshold), // internal usage only
             MESSAGE_TYPE_CLOSE => Ok(MessageType::DataChannelClose), // internal usage only
             MESSAGE_TYPE_ACK => Ok(Self::DataChannelAck),
             MESSAGE_TYPE_OPEN => Ok(Self::DataChannelOpen),

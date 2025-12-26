@@ -1,5 +1,7 @@
 use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
+use crate::data_channel::event::RTCDataChannelEvent;
 use crate::handler::DEFAULT_TIMEOUT_DURATION;
+use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
@@ -160,6 +162,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         }));
                                     }
                                 }
+                                Event::Stream(StreamEvent::BufferedAmountLow { id }) => {
+                                    debug!(
+                                        "association_handle {} stream id {} is buffered amount low",
+                                        ch.0, id
+                                    );
+                                    self.ctx.event_outs.push_back(
+                                        RTCEventInternal::RTCPeerConnectionEvent(
+                                            RTCPeerConnectionEvent::OnDataChannel(
+                                                RTCDataChannelEvent::OnBufferedAmountLow(id),
+                                            ),
+                                        ),
+                                    );
+                                }
                                 _ => {}
                             }
                         }
@@ -285,6 +300,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         message.association_handle,
                                         message.stream_id,
                                     ));
+                            }
+                            Message::DataChannelLowThreshold(data_channel_low_threshold) => {
+                                debug!(
+                                    "sctp data channel set low threshold {} for stream id {}",
+                                    data_channel_low_threshold.0, message.stream_id
+                                );
+                                let mut stream = conn.stream(message.stream_id)?;
+                                stream.set_buffered_amount_low_threshold(
+                                    data_channel_low_threshold.0 as usize,
+                                )?;
                             }
                             _ => {}
                         }

@@ -2,7 +2,8 @@
 mod data_channel_test;
 
 use crate::message::{
-    message_channel_ack::*, message_channel_close::*, message_channel_open::*, *,
+    message_channel_ack::*, message_channel_close::*, message_channel_low_threshold::*,
+    message_channel_open::*, *,
 };
 use bytes::{Buf, BytesMut};
 use log::debug;
@@ -173,8 +174,8 @@ impl DataChannel {
             Message::DataChannelAck(_) => {
                 debug!("Received DATA_CHANNEL_ACK");
             }
-            Message::DataChannelClose(_) => {
-                debug!("Received DATA_CHANNEL_CLOSE");
+            _ => {
+                return Err(Error::InvalidMessageType(msg.message_type() as u8));
             }
         };
 
@@ -183,7 +184,6 @@ impl DataChannel {
 
     fn write_data_channel_ack(&mut self) -> Result<()> {
         let ack = Message::DataChannelAck(DataChannelAck {}).marshal()?;
-        //let (unordered, reliability_type) = self.get_reliability_params();
         self.write_outs.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
@@ -195,7 +195,6 @@ impl DataChannel {
 
     fn write_data_channel_close(&mut self) -> Result<()> {
         let close = Message::DataChannelClose(DataChannelClose {}).marshal()?;
-        //let (unordered, reliability_type) = self.get_reliability_params();
         self.write_outs.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
@@ -205,24 +204,29 @@ impl DataChannel {
         Ok(())
     }
 
-    /// BufferedAmount returns the number of bytes of data currently queued to be
-    /// sent over this stream.
-    pub fn buffered_amount(&self) -> usize {
-        //TODO: self.stream.buffered_amount()
-        0
+    fn write_data_channel_low_threshold(&mut self, threshold: u32) -> Result<()> {
+        let low_threshold =
+            Message::DataChannelLowThreshold(DataChannelLowThreshold(threshold)).marshal()?;
+        self.write_outs.push_back(DataChannelMessage {
+            association_handle: self.association_handle,
+            stream_id: self.stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: low_threshold,
+        });
+        Ok(())
     }
 
-    /// BufferedAmountLowThreshold returns the number of bytes of buffered outgoing
-    /// data that is considered "low." Defaults to 0.
-    pub fn buffered_amount_low_threshold(&self) -> usize {
-        //TODO: self.stream.buffered_amount_low_threshold()
+    /// BufferedAmount returns the number of bytes of data currently queued to be
+    /// sent over this stream.
+    pub fn buffered_amount(&self) -> u32 {
+        //TODO: self.stream.buffered_amount()
         0
     }
 
     /// SetBufferedAmountLowThreshold is used to update the threshold.
     /// See BufferedAmountLowThreshold().
-    pub fn set_buffered_amount_low_threshold(&self, _threshold: usize) {
-        //TODO: self.stream.set_buffered_amount_low_threshold(threshold)
+    pub fn set_buffered_amount_low_threshold(&mut self, threshold: u32) -> Result<()> {
+        self.write_data_channel_low_threshold(threshold)
     }
 
     /*

@@ -16,7 +16,7 @@ pub(crate) struct RTCDataChannelInternal {
     pub(crate) protocol: String,
     pub(crate) negotiated: bool,
     pub(crate) ready_state: RTCDataChannelState,
-    pub(crate) buffered_amount_low_threshold: usize,
+    pub(crate) buffered_amount_low_threshold: u32,
 
     pub(crate) data_channel: Option<::datachannel::data_channel::DataChannel>,
 }
@@ -55,9 +55,9 @@ impl RTCDataChannelInternal {
             negotiated: self.negotiated,
         };
 
-        let data_channel =
+        let mut data_channel =
             ::datachannel::data_channel::DataChannel::dial(config, association_handle, self.id)?;
-        data_channel.set_buffered_amount_low_threshold(self.buffered_amount_low_threshold);
+        data_channel.set_buffered_amount_low_threshold(self.buffered_amount_low_threshold)?;
 
         self.data_channel = Some(data_channel);
         self.ready_state = RTCDataChannelState::Open;

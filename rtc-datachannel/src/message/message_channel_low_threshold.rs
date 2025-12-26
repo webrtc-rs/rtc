@@ -13,26 +13,28 @@ use shared::error::Result;
 ///+-+-+-+-+-+-+-+-+
 /// ```
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct DataChannelClose; // internal usage only
+pub struct DataChannelLowThreshold(pub u32); // internal usage only
 
-impl MarshalSize for DataChannelClose {
+impl MarshalSize for DataChannelLowThreshold {
     fn marshal_size(&self) -> usize {
-        0
+        4
     }
 }
 
-impl Marshal for DataChannelClose {
-    fn marshal_to(&self, _buf: &mut [u8]) -> Result<usize> {
-        Ok(0)
+impl Marshal for DataChannelLowThreshold {
+    fn marshal_to(&self, mut buf: &mut [u8]) -> Result<usize> {
+        buf.put_u32(self.0);
+        Ok(self.marshal_size())
     }
 }
 
-impl Unmarshal for DataChannelClose {
-    fn unmarshal<B>(_buf: &mut B) -> Result<Self>
+impl Unmarshal for DataChannelLowThreshold {
+    fn unmarshal<B>(buf: &mut B) -> Result<Self>
     where
         Self: Sized,
         B: Buf,
     {
-        Ok(Self)
+        let v = buf.get_u32();
+        Ok(Self(v))
     }
 }

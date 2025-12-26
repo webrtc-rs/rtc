@@ -1,10 +1,14 @@
 use anyhow::Result;
 use bytes::BytesMut;
+use clap::Parser;
+use env_logger::Target;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
 use rtc::configuration::RTCConfigurationBuilder;
@@ -16,12 +20,55 @@ use rtc::peer_connection::RTCPeerConnection;
 use rtc::transport::ice::server::RTCIceServer;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
-const BUFFERED_AMOUNT_LOW_THRESHOLD: usize = 512 * 1024; // 512 KB
-const MAX_BUFFERED_AMOUNT: usize = 1024 * 1024; // 1 MB
+const BUFFERED_AMOUNT_LOW_THRESHOLD: u32 = 512 * 1024; // 512 KB
+const MAX_BUFFERED_AMOUNT: u32 = 1024 * 1024; // 1 MB
+
+#[derive(Parser)]
+#[command(name = "data-channels-flow-control")]
+#[command(author = "Rusty Rain <y@liu.mx>")]
+#[command(version = "0.0.0")]
+#[command(about = "An example of Data-Channels-Flow-Control", long_about = None)]
+struct Cli {
+    #[arg(short, long)]
+    debug: bool,
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    output_log_file: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    let cli = Cli::parse();
+    let output_log_file = cli.output_log_file;
+    let log_level = log::LevelFilter::from_str(&cli.log_level)?;
+    if cli.debug {
+        env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
+            .format(|buf, record| {
+                writeln!(
+                    buf,
+                    "{}:{} [{}] {} - {}",
+                    record.file().unwrap_or("unknown"),
+                    record.line().unwrap_or(0),
+                    record.level(),
+                    chrono::Local::now().format("%H:%M:%S.%6f"),
+                    record.args()
+                )
+            })
+            .filter(None, log_level)
+            .init();
+    }
 
     let (stop_tx, _stop_rx) = tokio::sync::broadcast::channel::<()>(1);
 
@@ -199,7 +246,7 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
             if let Some(mut dc) = requester.data_channel(channel_id) {
                 if let Ok(_) = dc.send(BytesMut::from(&send_buf[..])) {
                     if let Ok(buffered_amount) = dc.buffered_amount() {
-                        if buffered_amount + send_buf.len() > MAX_BUFFERED_AMOUNT {
+                        if buffered_amount + send_buf.len() as u32 > MAX_BUFFERED_AMOUNT {
                             println!("Requester: buffered_amount {} + on the fly {} > MAX_BUFFERED_AMOUNT {} ",
                                      buffered_amount, send_buf.len(), MAX_BUFFERED_AMOUNT);
                             req_can_send_more = false;

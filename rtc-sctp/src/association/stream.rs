@@ -464,15 +464,15 @@ impl StreamState {
         chunks
     }
 
-    /// This method is called by association's read_loop (go-)routine to notify this stream
+    /// This method is called by association to notify this stream
     /// of the specified amount of outgoing data has been delivered to the peer.
     pub(crate) fn on_buffer_released(&mut self, n_bytes_released: i64) -> bool {
         if n_bytes_released <= 0 {
             return false;
         }
 
-        let from_amount = self.buffered_amount;
-        let new_amount = if from_amount < n_bytes_released as usize {
+        let old_amount = self.buffered_amount;
+        let new_amount = if old_amount < n_bytes_released as usize {
             self.buffered_amount = 0;
             error!(
                 "[{}] released buffer size {} should be <= {}",
@@ -482,20 +482,21 @@ impl StreamState {
         } else {
             self.buffered_amount -= n_bytes_released as usize;
 
-            from_amount - n_bytes_released as usize
+            old_amount - n_bytes_released as usize
         };
 
         let buffered_amount_low = self.buffered_amount_low;
 
         trace!(
-            "[{}] bufferedAmount = {}, from_amount = {}, buffered_amount_low = {}",
+            "[{}] new_amount = {}, old_amount = {}, buffered_amount_low = {}, n_bytes_released = {}",
             self.side,
             new_amount,
-            from_amount,
+            old_amount,
             buffered_amount_low,
+            n_bytes_released,
         );
 
-        from_amount > buffered_amount_low && new_amount <= buffered_amount_low
+        old_amount > buffered_amount_low && new_amount <= buffered_amount_low
     }
 
     pub(crate) fn get_num_bytes_in_reassembly_queue(&self) -> usize {
