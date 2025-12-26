@@ -1,6 +1,6 @@
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
-use crate::data_channel::{BinaryType, RTCDataChannelId};
+use crate::data_channel::RTCDataChannelId;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
@@ -17,7 +17,6 @@ pub(crate) struct RTCDataChannelInternal {
     pub(crate) negotiated: bool,
     pub(crate) ready_state: RTCDataChannelState,
     pub(crate) buffered_amount_low_threshold: usize,
-    pub(crate) binary_type: BinaryType,
 
     pub(crate) data_channel: Option<::datachannel::data_channel::DataChannel>,
 }
@@ -35,7 +34,6 @@ impl RTCDataChannelInternal {
             max_retransmits: params.max_retransmits,
             ready_state: RTCDataChannelState::Connecting,
             buffered_amount_low_threshold: 0,
-            binary_type: BinaryType::default(),
             data_channel: None,
         }
     }

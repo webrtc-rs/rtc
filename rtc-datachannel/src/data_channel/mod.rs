@@ -205,19 +205,20 @@ impl DataChannel {
         Ok(())
     }
 
-    /*TODO:
     /// BufferedAmount returns the number of bytes of data currently queued to be
     /// sent over this stream.
     pub fn buffered_amount(&self) -> usize {
-        self.stream.buffered_amount()
+        //TODO: self.stream.buffered_amount()
+        0
     }
 
     /// BufferedAmountLowThreshold returns the number of bytes of buffered outgoing
     /// data that is considered "low." Defaults to 0.
     pub fn buffered_amount_low_threshold(&self) -> usize {
-        self.stream.buffered_amount_low_threshold()
+        //TODO: self.stream.buffered_amount_low_threshold()
+        0
     }
-    */
+
     /// SetBufferedAmountLowThreshold is used to update the threshold.
     /// See BufferedAmountLowThreshold().
     pub fn set_buffered_amount_low_threshold(&self, _threshold: usize) {
