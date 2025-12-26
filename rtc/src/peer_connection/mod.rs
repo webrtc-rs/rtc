@@ -1,4 +1,5 @@
 pub mod certificate;
+pub mod configuration;
 pub mod event;
 pub(crate) mod handler;
 mod internal;
@@ -7,11 +8,6 @@ pub mod sdp;
 pub mod state;
 pub mod transport;
 
-use crate::configuration::setting_engine::SctpMaxMessageSize;
-use crate::configuration::{
-    offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
-    RTCConfiguration,
-};
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
@@ -20,6 +16,11 @@ use crate::media::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_sender::RTCRtpSender;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+use crate::peer_connection::configuration::{
+    offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
+    RTCConfiguration,
+};
 use crate::peer_connection::handler::dtls::DtlsHandlerContext;
 use crate::peer_connection::handler::ice::IceHandlerContext;
 use crate::peer_connection::handler::sctp::SctpHandlerContext;

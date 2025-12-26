@@ -75,7 +75,9 @@ impl fmt::Display for RTCDataChannelState {
             RTCDataChannelState::Open => DATA_CHANNEL_STATE_OPEN_STR,
             RTCDataChannelState::Closing => DATA_CHANNEL_STATE_CLOSING_STR,
             RTCDataChannelState::Closed => DATA_CHANNEL_STATE_CLOSED_STR,
-            RTCDataChannelState::Unspecified => crate::configuration::UNSPECIFIED_STR,
+            RTCDataChannelState::Unspecified => {
+                crate::peer_connection::configuration::UNSPECIFIED_STR
+            }
         };
         write!(f, "{s}")
     }
@@ -89,7 +91,7 @@ mod test {
     fn test_new_data_channel_state() {
         let tests = vec![
             (
-                crate::configuration::UNSPECIFIED_STR,
+                crate::peer_connection::configuration::UNSPECIFIED_STR,
                 RTCDataChannelState::Unspecified,
             ),
             ("connecting", RTCDataChannelState::Connecting),
@@ -112,7 +114,7 @@ mod test {
         let tests = vec![
             (
                 RTCDataChannelState::Unspecified,
-                crate::configuration::UNSPECIFIED_STR,
+                crate::peer_connection::configuration::UNSPECIFIED_STR,
             ),
             (RTCDataChannelState::Connecting, "connecting"),
             (RTCDataChannelState::Open, "open"),

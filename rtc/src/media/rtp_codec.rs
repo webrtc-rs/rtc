@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::fmtp;
-use crate::configuration::media_engine::*;
+use crate::peer_connection::configuration::media_engine::*;
 //use crate::api::media_engine::*;
 use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
 use shared::error::{Error, Result};
@@ -44,7 +44,7 @@ impl fmt::Display for RTPCodecType {
         let s = match *self {
             RTPCodecType::Audio => "audio",
             RTPCodecType::Video => "video",
-            RTPCodecType::Unspecified => crate::configuration::UNSPECIFIED_STR,
+            RTPCodecType::Unspecified => crate::peer_connection::configuration::UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

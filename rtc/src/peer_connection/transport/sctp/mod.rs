@@ -1,4 +1,4 @@
-use crate::configuration::setting_engine::SctpMaxMessageSize;
+use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::transport::dtls::role::DTLSRole;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;

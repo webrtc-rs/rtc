@@ -99,7 +99,11 @@ impl fmt::Display for RTCSignalingState {
                 write!(f, "{SIGNALING_STATE_HAVE_REMOTE_PRANSWER_STR}")
             }
             RTCSignalingState::Closed => write!(f, "{SIGNALING_STATE_CLOSED_STR}"),
-            _ => write!(f, "{}", crate::configuration::UNSPECIFIED_STR),
+            _ => write!(
+                f,
+                "{}",
+                crate::peer_connection::configuration::UNSPECIFIED_STR
+            ),
         }
     }
 }

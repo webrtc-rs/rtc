@@ -13,8 +13,8 @@ use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
-use rtc::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::certificate::math_rand_alpha;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;

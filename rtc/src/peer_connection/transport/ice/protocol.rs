@@ -47,7 +47,11 @@ impl fmt::Display for RTCIceProtocol {
         match *self {
             RTCIceProtocol::Udp => write!(f, "{ICE_PROTOCOL_UDP_STR}"),
             RTCIceProtocol::Tcp => write!(f, "{ICE_PROTOCOL_TCP_STR}"),
-            _ => write!(f, "{}", crate::configuration::UNSPECIFIED_STR),
+            _ => write!(
+                f,
+                "{}",
+                crate::peer_connection::configuration::UNSPECIFIED_STR
+            ),
         }
     }
 }

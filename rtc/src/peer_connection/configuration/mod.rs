@@ -6,9 +6,9 @@ pub mod rtcp_mux_policy;
 pub mod sdp_semantics;
 pub mod setting_engine;
 
-use crate::configuration::media_engine::MediaEngine;
-use crate::configuration::setting_engine::SettingEngine;
 use crate::peer_connection::certificate::RTCCertificate;
+use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::setting_engine::SettingEngine;
 use crate::peer_connection::transport::ice::server::RTCIceServer;
 use bundle_policy::RTCBundlePolicy;
 use ice_transport_policy::RTCIceTransportPolicy;

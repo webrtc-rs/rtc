@@ -61,7 +61,9 @@ impl fmt::Display for RTCSctpTransportState {
             RTCSctpTransportState::Connecting => SCTP_TRANSPORT_STATE_CONNECTING_STR,
             RTCSctpTransportState::Connected => SCTP_TRANSPORT_STATE_CONNECTED_STR,
             RTCSctpTransportState::Closed => SCTP_TRANSPORT_STATE_CLOSED_STR,
-            RTCSctpTransportState::Unspecified => crate::configuration::UNSPECIFIED_STR,
+            RTCSctpTransportState::Unspecified => {
+                crate::peer_connection::configuration::UNSPECIFIED_STR
+            }
         };
         write!(f, "{s}")
     }
@@ -75,7 +77,7 @@ mod test {
     fn test_new_sctp_transport_state() {
         let tests = vec![
             (
-                crate::configuration::UNSPECIFIED_STR,
+                crate::peer_connection::configuration::UNSPECIFIED_STR,
                 RTCSctpTransportState::Unspecified,
             ),
             ("connecting", RTCSctpTransportState::Connecting),
@@ -97,7 +99,7 @@ mod test {
         let tests = vec![
             (
                 RTCSctpTransportState::Unspecified,
-                crate::configuration::UNSPECIFIED_STR,
+                crate::peer_connection::configuration::UNSPECIFIED_STR,
             ),
             (RTCSctpTransportState::Connecting, "connecting"),
             (RTCSctpTransportState::Connected, "connected"),
