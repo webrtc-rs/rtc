@@ -8,9 +8,9 @@ use crate::media::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPC
 use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, RTCRtpTransceiver, SSRC};
 use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
-use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
-use crate::transport::ice::candidate::RTCIceCandidate;
-use crate::transport::ice::parameters::RTCIceParameters;
+use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
+use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
+use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;

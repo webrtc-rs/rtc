@@ -1,13 +1,13 @@
-use super::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage,
-    TaggedRTCMessage,
-};
 use crate::data_channel::event::RTCDataChannelEvent;
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::message::{
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage,
+    TaggedRTCMessage,
+};
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;
 use shared::error::{Error, Result};

@@ -10,7 +10,7 @@ use stats_collector::StatsCollector;
 use std::time::Instant;
 
 use crate::peer_connection::certificate::RTCCertificate;
-use crate::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
+use crate::peer_connection::transport::dtls_transport::dtls_fingerprint::RTCDtlsFingerprint;
 /*
 use crate::data_channel::data_channel_state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannel;

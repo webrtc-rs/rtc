@@ -19,9 +19,9 @@ use rtc::peer_connection::certificate::math_rand_alpha;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
+use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
-use rtc::transport::ice::candidate::RTCIceCandidateInit;
-use rtc::transport::ice::server::RTCIceServer;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
@@ -162,7 +162,9 @@ async fn main() -> Result<()> {
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let local_addr = socket.local_addr()?;
 
-    use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
+    use rtc::peer_connection::transport::ice::candidate::{
+        CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+    };
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),

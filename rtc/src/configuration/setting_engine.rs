@@ -10,8 +10,8 @@ use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
 use std::time::Duration;
 
-use crate::transport::dtls::role::DTLSRole;
-use crate::transport::ice::candidate_type::RTCIceCandidateType;
+use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use shared::error::{Error, Result};
 
 /// Equal to UDP MTU

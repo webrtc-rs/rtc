@@ -1,8 +1,10 @@
-use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
-use crate::handler::DEFAULT_TIMEOUT_DURATION;
-use crate::transport::dtls::role::DTLSRole;
-use crate::transport::dtls::state::RTCDtlsTransportState;
-use crate::transport::dtls::RTCDtlsTransport;
+use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
+use crate::peer_connection::message::{
+    DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage,
+};
+use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;

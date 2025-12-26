@@ -16,8 +16,8 @@ use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::data_channel::init::RTCDataChannelInit;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
-use rtc::transport::ice::server::RTCIceServer;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const BUFFERED_AMOUNT_LOW_THRESHOLD: u32 = 512 * 1024; // 512 KB
@@ -116,7 +116,9 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     println!("Responder listening on {}", resp_local_addr);
 
     // Add ICE candidates
-    use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
+    use rtc::peer_connection::transport::ice::candidate::{
+        CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+    };
 
     let req_candidate = CandidateHostConfig {
         base_config: CandidateConfig {

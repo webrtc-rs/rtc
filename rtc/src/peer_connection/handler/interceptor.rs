@@ -1,4 +1,4 @@
-use super::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{RTCEventInternal, RTCMessage, RTPMessage, TaggedRTCMessage};
 use log::debug;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;

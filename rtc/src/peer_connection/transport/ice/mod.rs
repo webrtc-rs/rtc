@@ -1,9 +1,9 @@
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
-use crate::transport::ice::candidate::RTCIceCandidate;
-use crate::transport::ice::parameters::RTCIceParameters;
-use crate::transport::ice::role::RTCIceRole;
-use crate::transport::ice::state::RTCIceTransportState;
+use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
+use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
+use crate::peer_connection::transport::ice::role::RTCIceRole;
+use crate::peer_connection::transport::ice::state::RTCIceTransportState;
 use ice::candidate::{Candidate, CandidateType};
 use ice::tcp_type::TcpType;
 use ice::{Agent, AgentConfig};

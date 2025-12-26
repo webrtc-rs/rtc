@@ -1,7 +1,7 @@
 use crate::configuration::setting_engine::SctpMaxMessageSize;
-use crate::transport::dtls::role::DTLSRole;
-use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
-use crate::transport::sctp::state::RTCSctpTransportState;
+use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
+use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
 use sctp::{Association, AssociationHandle};
 use shared::error::Result;
 use shared::TransportProtocol;

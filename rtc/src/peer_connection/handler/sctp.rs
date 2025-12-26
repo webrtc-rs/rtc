@@ -1,8 +1,10 @@
-use super::message::{DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage};
 use crate::data_channel::event::RTCDataChannelEvent;
-use crate::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::transport::sctp::RTCSctpTransport;
+use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
+use crate::peer_connection::message::{
+    DTLSMessage, RTCEventInternal, RTCMessage, TaggedRTCMessage,
+};
+use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use datachannel::message::Message;

@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 //TODO:use crate::stats::stats_collector::StatsCollector;
 //TODO:use crate::stats::{CertificateStats, StatsReportType};
-use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
+use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use shared::error::{Error, Result};
 
 pub(crate) const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

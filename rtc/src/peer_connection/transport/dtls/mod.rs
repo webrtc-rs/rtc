@@ -1,8 +1,8 @@
 use crate::peer_connection::certificate::RTCCertificate;
-use crate::transport::dtls::parameters::DTLSParameters;
-use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
-use crate::transport::dtls::state::RTCDtlsTransportState;
-use crate::transport::ice::role::RTCIceRole;
+use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
+use crate::peer_connection::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
+use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::peer_connection::transport::ice::role::RTCIceRole;
 use dtls::config::{ClientAuthType, VerifyPeerCertificateFn};
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use rcgen::KeyPair;

@@ -13,16 +13,18 @@ use tokio::{net::UdpSocket, sync::broadcast};
 use rtc::configuration::setting_engine::SettingEngine;
 use rtc::configuration::RTCConfigurationBuilder;
 use rtc::data_channel::event::RTCDataChannelEvent;
-use rtc::handler::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::message::{RTCEvent, RTCMessage};
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::dtls::role::DTLSRole;
+use rtc::peer_connection::transport::ice::candidate::{
+    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+};
 use rtc::peer_connection::RTCPeerConnection;
-use rtc::transport::dtls::role::DTLSRole;
-use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
-    transport::ice::server::RTCIceServer,
+    peer_connection::transport::ice::server::RTCIceServer,
 };
 use shared::error::Error;
 

@@ -18,10 +18,10 @@ use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::dtls::role::DTLSRole;
+use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
+use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
-use rtc::transport::dtls::role::DTLSRole;
-use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
-use rtc::transport::ice::server::RTCIceServer as RtcIceServer;
 
 use interceptor::registry::Registry;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -145,7 +145,8 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     }
     .new_candidate_host()?;
     let local_candidate_init =
-        rtc::transport::ice::candidate::RTCIceCandidate::from(&candidate).to_json()?;
+        rtc::peer_connection::transport::ice::candidate::RTCIceCandidate::from(&candidate)
+            .to_json()?;
     rtc_pc.add_local_candidate(local_candidate_init)?;
 
     // Create answer from rtc peer

@@ -4,7 +4,7 @@ use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
-use crate::transport::dtls::state::RTCDtlsTransportState;
+use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;

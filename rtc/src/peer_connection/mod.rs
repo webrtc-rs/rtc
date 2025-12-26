@@ -1,8 +1,11 @@
 pub mod certificate;
 pub mod event;
+pub(crate) mod handler;
 mod internal;
+pub mod message;
 pub mod sdp;
 pub mod state;
+pub mod transport;
 
 use crate::configuration::setting_engine::SctpMaxMessageSize;
 use crate::configuration::{
@@ -12,15 +15,15 @@ use crate::configuration::{
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::handler::dtls::DtlsHandlerContext;
-use crate::handler::ice::IceHandlerContext;
-use crate::handler::sctp::SctpHandlerContext;
-use crate::handler::PipelineContext;
 use crate::media::rtp_codec::RTPCodecType;
 use crate::media::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_sender::RTCRtpSender;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::peer_connection::handler::dtls::DtlsHandlerContext;
+use crate::peer_connection::handler::ice::IceHandlerContext;
+use crate::peer_connection::handler::sctp::SctpHandlerContext;
+use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
@@ -32,16 +35,18 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
-use crate::transport::dtls::fingerprint::RTCDtlsFingerprint;
-use crate::transport::dtls::parameters::DTLSParameters;
-use crate::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER};
-use crate::transport::dtls::RTCDtlsTransport;
-use crate::transport::ice::candidate::RTCIceCandidateInit;
-use crate::transport::ice::parameters::RTCIceParameters;
-use crate::transport::ice::role::RTCIceRole;
-use crate::transport::ice::RTCIceTransport;
-use crate::transport::sctp::capabilities::SCTPTransportCapabilities;
-use crate::transport::sctp::RTCSctpTransport;
+use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
+use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
+use crate::peer_connection::transport::dtls::role::{
+    DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
+};
+use crate::peer_connection::transport::dtls::RTCDtlsTransport;
+use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
+use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
+use crate::peer_connection::transport::ice::role::RTCIceRole;
+use crate::peer_connection::transport::ice::RTCIceTransport;
+use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
+use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};

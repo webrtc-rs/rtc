@@ -1,4 +1,4 @@
-use super::message::{
+use crate::peer_connection::message::{
     DTLSMessage, RTCEventInternal, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage,
 };
 

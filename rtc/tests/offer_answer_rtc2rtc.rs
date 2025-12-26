@@ -18,11 +18,13 @@ use rtc::data_channel::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::dtls::role::DTLSRole;
+use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
+use rtc::peer_connection::transport::ice::candidate::{
+    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+};
+use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
-use rtc::transport::dtls::role::DTLSRole;
-use rtc::transport::ice::candidate::RTCIceCandidateInit;
-use rtc::transport::ice::candidate::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
-use rtc::transport::ice::server::RTCIceServer;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const TEST_MESSAGE: &str = "Hello from offer!";
