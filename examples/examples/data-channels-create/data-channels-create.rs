@@ -153,8 +153,6 @@ async fn run(
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;
-    let mut data_channel_last_sent = Instant::now();
-    let mut data_channel_opened = None;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -202,6 +200,10 @@ async fn run(
     peer_connection.set_remote_description(answer)?;
 
     println!("listening {}...", socket.local_addr()?);
+
+    // Track data channel state
+    let mut data_channel_opened = None;
+    let mut data_channel_last_sent = Instant::now();
 
     let mut buf = vec![0; 2000];
     'EventLoop: loop {
@@ -254,12 +256,11 @@ async fn run(
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             let msg_str = String::from_utf8(message.data.to_vec())?;
-                            println!(
-                                "Message from DataChannel '{}': '{}', Echoing back",
-                                dc.label()?,
-                                msg_str
-                            );
-                            //dc.send_text(msg_str)?;
+                            println!("Message from DataChannel '{}': '{}'", dc.label()?, msg_str);
+                        }
+                        RTCDataChannelEvent::OnClose(channel_id) => {
+                            println!("Data channel '{}' closed.", channel_id);
+                            data_channel_opened = None;
                         }
                         _ => {}
                     }
@@ -324,6 +325,7 @@ async fn run(
                                     .ok_or(Error::ErrDataChannelClosed)?;
 
                         let message = math_rand_alpha(15);
+                        println!("Sending '{message}'");
                         dc.send_text(message)?;
                         data_channel_last_sent = now;
                     }
