@@ -2,10 +2,12 @@ use super::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCEventInternal, RTCMessage,
     TaggedRTCMessage,
 };
+use crate::data_channel::event::RTCDataChannelEvent;
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::RTCDataChannelId;
+use crate::peer_connection::event::RTCPeerConnectionEvent;
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;
 use shared::error::{Error, Result};
@@ -174,6 +176,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        for data_channel_internal in self.data_channels.values_mut() {
+            if let Some(data_channel) = data_channel_internal.data_channel.as_mut() {
+                while let Some(data_channel_message) = data_channel.poll_write() {
+                    debug!("send data channel message from poll_write");
+                    self.ctx.write_outs.push_back(TaggedRTCMessage {
+                        now: Instant::now(),
+                        transport: TransportContext::default(),
+                        message: RTCMessage::Dtls(DTLSMessage::Sctp(data_channel_message)),
+                    });
+                }
+            }
+        }
+
         self.ctx.write_outs.pop_front()
     }
 
@@ -210,6 +225,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         }
                     }
                 }
+            }
+
+            RTCEventInternal::SCTPStreamClosed(_association_handle, stream_id) => {
+                self.data_channels.remove(&stream_id);
+                self.ctx
+                    .event_outs
+                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
+                            stream_id,
+                        )),
+                    ))
             }
             _ => {
                 self.ctx.event_outs.push_back(evt);

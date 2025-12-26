@@ -86,17 +86,17 @@ mod tests {
 
     #[test]
     fn test_message_type_unmarshal_invalid() -> Result<()> {
-        let mut bytes = Bytes::from_static(&[0x01]);
+        let mut bytes = Bytes::from_static(&[0x04]);
         match MessageType::unmarshal(&mut bytes) {
             Ok(_) => panic!("expected Error, but got Ok"),
             Err(err) => {
-                if Error::InvalidMessageType(0x01) == err {
+                if Error::InvalidMessageType(0x04) == err {
                     return Ok(());
                 }
                 panic!(
                     "unexpected err {:?}, want {:?}",
                     err,
-                    Error::InvalidMessageType(0x01)
+                    Error::InvalidMessageType(0x04)
                 );
             }
         }

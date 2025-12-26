@@ -43,8 +43,8 @@ fn test_message_unmarshal_ack_success() -> Result<()> {
 
 #[test]
 fn test_message_unmarshal_invalid_message_type() {
-    let mut bytes = Bytes::from_static(&[0x01]);
-    let expected = Error::InvalidMessageType(0x01);
+    let mut bytes = Bytes::from_static(&[0x04]);
+    let expected = Error::InvalidMessageType(0x04);
     let result = Message::unmarshal(&mut bytes);
     let actual = result.expect_err("expected err, but got ok");
     assert_eq!(actual, expected);

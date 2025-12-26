@@ -108,6 +108,73 @@ RUST_LOG=info cargo test --test data_channels_create_interop -- --nocapture
 
 ---
 
+## Test 3: Data Channels Close Interop
+
+**File:** `data_channels_close_interop.rs`
+
+**Purpose:** Verifies that data channels can be properly closed and that close events are detected correctly when RTC sends messages and closes.
+
+### Test Flow
+
+1. **RTC Peer (Offerer)**:
+   - Creates an RTC peer connection using the sansio/polling API
+   - **Creates a data channel**
+   - Generates an offer
+   - Sets up close event handler (OnClose event)
+
+2. **WebRTC Peer (Answerer)**:
+   - Creates a WebRTC peer connection using the async API
+   - Sets up `on_data_channel` handler to receive the channel
+   - Receives the offer from RTC peer
+   - Generates an answer with ICE candidates
+   - Sets up close event handler
+
+3. **Connection Establishment**:
+   - Both peers exchange SDP descriptions
+   - The test runs both event loops in a single async context
+
+4. **Data Exchange and Close**:
+   - Once connected, **RTC sends 3 periodic messages** (every 500ms) to WebRTC
+   - WebRTC receives the messages
+   - After sending all messages, **RTC exits the event loop** (which closes the peer connection and data channel)
+   - WebRTC detects the close event via `on_close` handler
+   - Test succeeds when WebRTC detects the close
+
+### Running the Test
+
+```bash
+RUST_LOG=info cargo test --test data_channels_close_interop -- --nocapture
+```
+
+### Key Features Tested
+
+- ✅ Data channel creation by RTC (offerer)
+- ✅ **Periodic message sending from RTC** (every 500ms)
+- ✅ Message counting before close (sends exactly 3 messages)
+- ✅ **Data channel close initiated by RTC** (via peer connection close)
+- ✅ Close event detection on WebRTC side
+- ✅ Proper cleanup on both sides
+
+### Important Note: Sansio Close Behavior
+
+The RTC sansio API doesn't expose an explicit `close()` method on `RTCDataChannel`. Instead:
+- When RTC finishes sending messages, it **exits the event loop**
+- This triggers `rtc_pc.close()` which closes the peer connection
+- The data channel is implicitly closed as part of the peer connection closure
+- WebRTC detects this via its `on_close` handler
+
+### Difference from Other Tests
+
+| Aspect | Test 1 | Test 2 | Test 3 (data_channels_close_interop) |
+|--------|--------|--------|--------------------------------------|
+| **Offerer** | WebRTC | RTC | **RTC** |
+| **Focus** | Bidirectional echo | Bidirectional echo | **Close behavior** |
+| **Message Pattern** | Single echo | Single echo | **3 periodic messages from RTC** |
+| **Termination** | After echo received | After echo received | **After RTC closes (exit event loop)** |
+| **Close Behavior** | N/A | N/A | **RTC exits → peer connection closes → data channel closes** |
+
+---
+
 ## Dependencies
 
 The tests require:

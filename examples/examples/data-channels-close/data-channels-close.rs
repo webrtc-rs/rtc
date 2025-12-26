@@ -342,7 +342,6 @@ async fn run(
                         if close_after <=  0 {
                             println!("Sent times out. Closing data channel '{}'-'{}'.", dc.label()?, dc.id());
                             let _ = dc.close();
-                            data_channel_opened = None;
                         }
                     }
                 }

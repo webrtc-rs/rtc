@@ -258,6 +258,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                 );
                                 let mut stream = conn.stream(message.stream_id)?;
                                 stream.close()?;
+
+                                self.ctx
+                                    .event_outs
+                                    .push_back(RTCEventInternal::SCTPStreamClosed(
+                                        message.association_handle,
+                                        message.stream_id,
+                                    ));
                             }
                             _ => {}
                         }
