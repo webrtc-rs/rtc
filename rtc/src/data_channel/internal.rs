@@ -2,6 +2,7 @@ use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::{BinaryType, RTCDataChannelId};
 use datachannel::data_channel::DataChannelConfig;
+use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
 use shared::error::Result;
 
@@ -102,5 +103,13 @@ impl RTCDataChannelInternal {
         data_channel_internal.ready_state = RTCDataChannelState::Open;
 
         Ok(data_channel_internal)
+    }
+
+    pub(crate) fn close(&mut self) -> Result<()> {
+        if let Some(data_channel) = self.data_channel.as_mut() {
+            data_channel.close()?;
+        }
+        self.ready_state = RTCDataChannelState::Closed;
+        Ok(())
     }
 }

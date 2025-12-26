@@ -2,11 +2,13 @@
 mod message_test;
 
 pub mod message_channel_ack;
+pub mod message_channel_close;
 pub mod message_channel_open;
 pub mod message_type;
 
 use bytes::{Buf, BufMut};
 use message_channel_ack::*;
+use message_channel_close::*;
 use message_channel_open::*;
 use message_type::*;
 use shared::error::{Error, Result};
@@ -15,6 +17,7 @@ use shared::marshal::*;
 /// A parsed DataChannel message
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Message {
+    DataChannelClose(DataChannelClose),
     DataChannelAck(DataChannelAck),
     DataChannelOpen(DataChannelOpen),
 }
@@ -22,6 +25,7 @@ pub enum Message {
 impl MarshalSize for Message {
     fn marshal_size(&self) -> usize {
         match self {
+            Message::DataChannelClose(m) => m.marshal_size() + MESSAGE_TYPE_LEN,
             Message::DataChannelAck(m) => m.marshal_size() + MESSAGE_TYPE_LEN,
             Message::DataChannelOpen(m) => m.marshal_size() + MESSAGE_TYPE_LEN,
         }
@@ -35,6 +39,7 @@ impl Marshal for Message {
         buf = &mut buf[n..];
         bytes_written += n;
         bytes_written += match self {
+            Message::DataChannelClose(_) => 0,
             Message::DataChannelAck(_) => 0,
             Message::DataChannelOpen(open) => open.marshal_to(buf)?,
         };
@@ -56,6 +61,7 @@ impl Unmarshal for Message {
         }
 
         match MessageType::unmarshal(buf)? {
+            MessageType::DataChannelClose => Ok(Self::DataChannelClose(DataChannelClose {})),
             MessageType::DataChannelAck => Ok(Self::DataChannelAck(DataChannelAck {})),
             MessageType::DataChannelOpen => {
                 Ok(Self::DataChannelOpen(DataChannelOpen::unmarshal(buf)?))
@@ -67,6 +73,7 @@ impl Unmarshal for Message {
 impl Message {
     pub fn message_type(&self) -> MessageType {
         match self {
+            Self::DataChannelClose(_) => MessageType::DataChannelClose,
             Self::DataChannelAck(_) => MessageType::DataChannelAck,
             Self::DataChannelOpen(_) => MessageType::DataChannelOpen,
         }

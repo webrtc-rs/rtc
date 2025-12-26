@@ -232,23 +232,40 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 {
                     if message.ppi == PayloadProtocolIdentifier::Dcep {
                         let mut data_buf = &message.payload[..];
-                        if let Message::DataChannelOpen(data_channel_open) =
-                            Message::unmarshal(&mut data_buf)?
-                        {
-                            let (unordered, reliability_type) =
-                                ::datachannel::data_channel::DataChannel::get_reliability_params(
-                                    data_channel_open.channel_type,
+                        let dcep_message = Message::unmarshal(&mut data_buf)?;
+                        match dcep_message {
+                            Message::DataChannelOpen(data_channel_open) => {
+                                debug!(
+                                    "sctp data channel open {:?} for stream id {}",
+                                    data_channel_open, message.stream_id
                                 );
-                            let mut stream = conn.open_stream(message.stream_id, message.ppi)?;
-                            stream.set_reliability_params(
-                                unordered,
-                                reliability_type,
-                                data_channel_open.reliability_parameter,
-                            )?;
+                                let (unordered, reliability_type) =
+                                    ::datachannel::data_channel::DataChannel::get_reliability_params(
+                                        data_channel_open.channel_type,
+                                    );
+                                let mut stream =
+                                    conn.open_stream(message.stream_id, message.ppi)?;
+                                stream.set_reliability_params(
+                                    unordered,
+                                    reliability_type,
+                                    data_channel_open.reliability_parameter,
+                                )?;
+                            }
+                            Message::DataChannelClose(_) => {
+                                debug!(
+                                    "sctp data channel close for stream id {}",
+                                    message.stream_id
+                                );
+                                let mut stream = conn.stream(message.stream_id)?;
+                                stream.close()?;
+                            }
+                            _ => {}
                         }
                     }
                     let mut stream = conn.stream(message.stream_id)?;
-                    stream.write_with_ppi(&message.payload, message.ppi)?;
+                    if stream.is_writable() {
+                        stream.write_with_ppi(&message.payload, message.ppi)?;
+                    }
 
                     while let Some(x) = conn.poll_transmit(msg.now) {
                         transmits.extend(split_transmit(x));

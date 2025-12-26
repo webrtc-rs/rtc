@@ -235,6 +235,17 @@ impl Stream<'_> {
         Ok(())
     }
 
+    /// Shuts down the read, write, or both halves of this stream.
+    ///
+    /// This function will cause all pending and future I/O on the specified portions to return
+    /// immediately with an appropriate value (see the documentation of [`Shutdown`]).
+    ///
+    /// Resets the stream when both halves of this stream are shutdown.
+    pub fn close(&mut self) -> Result<()> {
+        self.finish()?;
+        self.stop()
+    }
+
     /// stream_identifier returns the Stream identifier associated to the stream.
     pub fn stream_identifier(&self) -> StreamId {
         self.stream_identifier

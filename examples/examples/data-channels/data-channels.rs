@@ -40,9 +40,9 @@ struct Cli {
     debug: bool,
     #[arg(short, long, default_value_t = format!("INFO"))]
     log_level: String,
-    #[arg(short, long, default_value_t =  format!(""))]
+    #[arg(short, long, default_value_t = format!(""))]
     input_sdp_file: String,
-    #[arg(short, long, default_value_t =  format!(""))]
+    #[arg(short, long, default_value_t = format!(""))]
     output_log_file: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,
@@ -181,7 +181,7 @@ async fn run(
     // Create an answer
     let answer = peer_connection.create_answer(None)?;
 
-    // Sets the LocalDescription, and starts our UDP listeners
+    // Sets the LocalDescription
     peer_connection.set_local_description(answer)?;
 
     // Output the answer in base64 so we can paste it in browser

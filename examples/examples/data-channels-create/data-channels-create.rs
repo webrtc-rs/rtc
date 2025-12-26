@@ -41,9 +41,9 @@ struct Cli {
     debug: bool,
     #[arg(short, long, default_value_t = format!("INFO"))]
     log_level: String,
-    #[arg(short, long, default_value_t =  format!(""))]
+    #[arg(short, long, default_value_t = format!(""))]
     input_sdp_file: String,
-    #[arg(short, long, default_value_t =  format!(""))]
+    #[arg(short, long, default_value_t = format!(""))]
     output_log_file: String,
     #[arg(long, default_value_t = format!("127.0.0.1"))]
     host: String,

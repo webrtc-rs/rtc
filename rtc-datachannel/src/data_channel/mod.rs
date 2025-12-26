@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod data_channel_test;
 
-use crate::message::{message_channel_ack::*, message_channel_open::*, *};
+use crate::message::{
+    message_channel_ack::*, message_channel_close::*, message_channel_open::*, *,
+};
 use bytes::{Buf, BytesMut};
 use log::debug;
 use sctp::{PayloadProtocolIdentifier, ReliabilityType};
@@ -78,14 +80,10 @@ impl DataChannel {
             })
             .marshal()?;
 
-            //let (unordered, reliability_type) = data_channel.get_reliability_params();
-
             data_channel.write_outs.push_back(DataChannelMessage {
                 association_handle,
                 stream_id,
                 ppi: PayloadProtocolIdentifier::Dcep,
-                //unordered,
-                //reliability_type,
                 payload: msg,
             });
         }
@@ -174,7 +172,9 @@ impl DataChannel {
             }
             Message::DataChannelAck(_) => {
                 debug!("Received DATA_CHANNEL_ACK");
-                //self.commit_reliability_params();
+            }
+            Message::DataChannelClose(_) => {
+                debug!("Received DATA_CHANNEL_CLOSE");
             }
         };
 
@@ -188,12 +188,23 @@ impl DataChannel {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
-            //unordered,
-            //reliability_type,
             payload: ack,
         });
         Ok(())
     }
+
+    fn write_data_channel_close(&mut self) -> Result<()> {
+        let close = Message::DataChannelClose(DataChannelClose {}).marshal()?;
+        //let (unordered, reliability_type) = self.get_reliability_params();
+        self.write_outs.push_back(DataChannelMessage {
+            association_handle: self.association_handle,
+            stream_id: self.stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: close,
+        });
+        Ok(())
+    }
+
     /*TODO:
     /// BufferedAmount returns the number of bytes of data currently queued to be
     /// sent over this stream.
@@ -358,7 +369,6 @@ impl sansio::Protocol<DataChannelMessage, DataChannelMessage, ()> for DataChanne
         // a corresponding notification to the application layer that the reset
         // has been performed.  Streams are available for reuse after a reset
         // has been performed.
-        //TODO: Ok(self.stream.shutdown(Shutdown::Both).await?)
-        Ok(())
+        self.write_data_channel_close()
     }
 }

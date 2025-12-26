@@ -149,29 +149,49 @@ impl RTCDataChannel<'_> {
 
     /// send sends the binary message to the DataChannel peer
     pub fn send(&mut self, data: BytesMut) -> Result<()> {
-        self.peer_connection
-            .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
-                ApplicationMessage {
-                    data_channel_id: self.id,
-                    data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                        is_string: false,
-                        data,
-                    }),
-                },
-            )))
+        if self.peer_connection.data_channels.contains_key(&self.id) {
+            self.peer_connection
+                .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
+                    ApplicationMessage {
+                        data_channel_id: self.id,
+                        data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
+                            is_string: false,
+                            data,
+                        }),
+                    },
+                )))
+        } else {
+            Err(Error::ErrDataChannelClosed)
+        }
     }
 
     /// send_text sends the text message to the DataChannel peer
     pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
-        self.peer_connection
-            .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
-                ApplicationMessage {
-                    data_channel_id: self.id,
-                    data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                        is_string: true,
-                        data: BytesMut::from(s.into().as_str()),
-                    }),
-                },
-            )))
+        if self.peer_connection.data_channels.contains_key(&self.id) {
+            self.peer_connection
+                .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
+                    ApplicationMessage {
+                        data_channel_id: self.id,
+                        data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
+                            is_string: true,
+                            data: BytesMut::from(s.into().as_str()),
+                        }),
+                    },
+                )))
+        } else {
+            Err(Error::ErrDataChannelClosed)
+        }
+    }
+
+    pub fn close(&mut self) -> Result<()> {
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+            if dc.ready_state == RTCDataChannelState::Closed {
+                return Ok(());
+            }
+            dc.ready_state = RTCDataChannelState::Closing;
+            dc.close()
+        } else {
+            Err(Error::ErrDataChannelClosed)
+        }
     }
 }

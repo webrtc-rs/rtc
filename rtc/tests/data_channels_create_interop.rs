@@ -326,24 +326,20 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
             .poll_timeout()
             .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
 
-        let delay = eto
+        let delay_from_now = eto
             .checked_duration_since(Instant::now())
             .unwrap_or(Duration::from_secs(0));
+        if delay_from_now.is_zero() {
+            rtc_pc.handle_timeout(Instant::now())?;
+            continue;
+        }
 
-        let timeout_duration = if delay.is_zero() {
-            Duration::from_millis(10)
-        } else {
-            delay.min(Duration::from_millis(100))
-        };
-
-        let timer = tokio::time::sleep(timeout_duration);
+        let timer = tokio::time::sleep(delay_from_now);
         tokio::pin!(timer);
 
         tokio::select! {
             _ = timer.as_mut() => {
-                if delay.is_zero() {
-                    rtc_pc.handle_timeout(Instant::now())?;
-                }
+                rtc_pc.handle_timeout(Instant::now())?;
             }
             res = socket.recv_from(&mut buf) => {
                 match res {
