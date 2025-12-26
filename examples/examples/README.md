@@ -5,6 +5,22 @@
 All examples are ported from [Pion](https://github.com/pion/webrtc/tree/master/examples#readme). Please
 check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme) for more details:
 
+#### Data Channel API
+
+- [x] [Data Channels](data-channels): The data-channels example shows how you can send/recv DataChannel messages from a
+  web browser.
+- [x] [Data Channels Create](data-channels-create): Example data-channels-create shows how you can send/recv DataChannel
+  messages from a web browser. The difference with the data-channels example is that the data channel is initialized
+  from the server side in this example.
+- [x] [Data Channels Close](data-channels-close): Example data-channels-close is a variant of data-channels that allow
+  playing with the life cycle of data channels.
+- [ ] [Data Channels Flow Control](data-channels-flow-control): Example data-channels-flow-control shows how to use flow
+  control.
+- [ ] [ORTC](ortc): Example ortc shows how to use the ORTC API for DataChannel communication.
+- [ ] [Offer Answer](offer-answer): Example offer-answer is an example of two webrtc-rs or pion instances communicating
+  directly!
+- [ ] [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
+
 #### Media API
 
 - [ ] [Reflect](reflect): The reflect example demonstrates how to have webrtc-rs send back to the user exactly what it
@@ -32,19 +48,3 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   Simulcast streams. It then returns the media as 3 independent Tracks back to the sender.
 - [ ] [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
   track.
-
-#### Data Channel API
-
-- [x] [Data Channels](data-channels): The data-channels example shows how you can send/recv DataChannel messages from a
-  web browser.
-- [x] [Data Channels Create](data-channels-create): Example data-channels-create shows how you can send/recv DataChannel
-  messages from a web browser. The difference with the data-channels example is that the data channel is initialized
-  from the server side in this example.
-- [x] [Data Channels Close](data-channels-close): Example data-channels-close is a variant of data-channels that allow
-  playing with the life cycle of data channels.
-- [ ] [Data Channels Flow Control](data-channels-flow-control): Example data-channels-flow-control shows how to use flow
-  control.
-- [ ] [ORTC](ortc): Example ortc shows how to use the ORTC API for DataChannel communication.
-- [ ] [Offer Answer](offer-answer): Example offer-answer is an example of two webrtc-rs or pion instances communicating
-  directly!
-- [ ] [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
