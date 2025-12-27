@@ -49,7 +49,7 @@ pub struct Candidates {
     pub include_loopback_candidate: bool,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct ReplayProtection {
     pub dtls: usize,
     pub srtp: usize,
@@ -90,12 +90,12 @@ pub struct SettingEngine {
     pub(crate) timeout: Timeout,
     pub(crate) candidates: Candidates,
     pub(crate) replay_protection: ReplayProtection,
+    //pub(crate) disable_srtp_replay_protection: bool, // duplicated setting as replay_protection
+    //pub(crate) disable_srtcp_replay_protection: bool, // duplicated setting as replay_protection
     pub(crate) sdp_media_level_fingerprints: bool,
     pub(crate) answering_dtls_role: DTLSRole,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) allow_insecure_verification_algorithm: bool,
-    pub(crate) disable_srtp_replay_protection: bool,
-    pub(crate) disable_srtcp_replay_protection: bool,
 
     //BufferFactory                             :func(packetType packetio.BufferPacketType, ssrc uint32) io.ReadWriteCloser,
     //iceTCPMux                                 :ice.TCPMux,?
@@ -286,24 +286,12 @@ impl SettingEngine {
 
     /// set_srtp_replay_protection_window sets a replay attack protection window size of srtp session.
     pub fn set_srtp_replay_protection_window(&mut self, n: usize) {
-        self.disable_srtp_replay_protection = false;
         self.replay_protection.srtp = n;
     }
 
     /// set_srtcp_replay_protection_window sets a replay attack protection window size of srtcp session.
     pub fn set_srtcp_replay_protection_window(&mut self, n: usize) {
-        self.disable_srtcp_replay_protection = false;
         self.replay_protection.srtcp = n;
-    }
-
-    /// disable_srtp_replay_protection disables srtp replay protection.
-    pub fn disable_srtp_replay_protection(&mut self, is_disabled: bool) {
-        self.disable_srtp_replay_protection = is_disabled;
-    }
-
-    /// disable_srtcp_replay_protection disables srtcp replay protection.
-    pub fn disable_srtcp_replay_protection(&mut self, is_disabled: bool) {
-        self.disable_srtcp_replay_protection = is_disabled;
     }
 
     /// set_include_loopback_candidate enables webrtc-rs to gather loopback candidates, it is

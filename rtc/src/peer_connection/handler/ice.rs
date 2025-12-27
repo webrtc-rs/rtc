@@ -142,9 +142,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
                         local.addr(),
                         remote.addr()
                     );
-                    self.ctx.event_outs.push_back(
-                        RTCEventInternal::ICESelectedCandidatePairChange(local, remote),
-                    );
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::ICESelectedCandidatePairChange);
                 }
             }
         }

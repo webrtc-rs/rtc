@@ -1,3 +1,4 @@
+use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
@@ -89,7 +90,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                             {
                                 debug!("recv dtls handshake complete");
                                 let (local_srtp_context, remote_srtp_context) =
-                                    DtlsHandler::update_srtp_contexts(state)?;
+                                    DtlsHandler::update_srtp_contexts(
+                                        state,
+                                        &self.ctx.dtls_transport.replay_protection,
+                                    )?;
                                 srtp_contexts = Some((local_srtp_context, remote_srtp_context));
                             } else {
                                 warn!(
@@ -190,11 +194,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, _remote) = evt {
-            //TODO: what if ICESelectedCandidatePairChange happens multiple times?
+        if let RTCEventInternal::ICESelectedCandidatePairChange = evt {
             if self.ctx.dtls_transport.dtls_role == DTLSRole::Client {
+                // dtls_endpoint only connect once when acts as DTLSRole::Client
                 if let Some(dtls_handshake_config) =
-                    self.ctx.dtls_transport.dtls_handshake_config.clone()
+                    self.ctx.dtls_transport.dtls_handshake_config.take()
                 {
                     let dtls_endpoint = self
                         .ctx
@@ -272,6 +276,7 @@ impl<'a> DtlsHandler<'a> {
     const DEFAULT_SESSION_SRTCP_REPLAY_PROTECTION_WINDOW: usize = 64;
     pub(crate) fn update_srtp_contexts(
         state: &State,
+        replay_protection: &ReplayProtection,
     ) -> Result<(srtp::context::Context, srtp::context::Context)> {
         let profile = match state.srtp_protection_profile() {
             SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
@@ -289,13 +294,16 @@ impl<'a> DtlsHandler<'a> {
             profile,
             ..Default::default()
         };
-        /*TODO: if self.setting_engine.replay_protection.srtp != 0 {
-            srtp_config.remote_rtp_options = Some(srtp::option::srtp_replay_protection(
-                self.setting_engine.replay_protection.srtp,
+        if replay_protection.srtp != 0 {
+            srtp_config.remote_rtp_options =
+                Some(srtp::option::srtp_replay_protection(replay_protection.srtp));
+        }
+
+        if replay_protection.srtcp != 0 {
+            srtp_config.remote_rtcp_options = Some(srtp::option::srtcp_replay_protection(
+                replay_protection.srtcp,
             ));
-        } else if self.setting_engine.disable_srtp_replay_protection {
-            srtp_config.remote_rtp_options = Some(srtp::option::srtp_no_replay_protection());
-        }*/
+        }
 
         srtp_config.extract_session_keys_from_dtls(state, state.is_client())?;
 

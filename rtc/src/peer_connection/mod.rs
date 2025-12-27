@@ -120,7 +120,7 @@ impl RTCPeerConnection {
             configuration
                 .setting_engine
                 .allow_insecure_verification_algorithm,
-            configuration.setting_engine.replay_protection.dtls,
+            configuration.setting_engine.replay_protection,
         )?;
 
         // Create the SCTP transport
@@ -559,7 +559,7 @@ impl RTCPeerConnection {
                             // 4.5.9.2.13.2
                             // Set transceiver.[[CurrentDirection]] and transceiver.[[Direction]]s to direction.
                             t.set_current_direction(reversed_direction);
-                            // TODO: According to the specification we should set
+
                             // transceiver.[[Direction]] here, however libWebrtc doesn't do this.
                             // NOTE: After raising this it seems like the specification might
                             // change to remove the setting of transceiver.[[Direction]].

@@ -6,7 +6,6 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 
-use ice::candidate::Candidate;
 use srtp::context::Context;
 use std::net::SocketAddr;
 
@@ -42,7 +41,7 @@ pub(crate) enum RTCEventInternal {
     RTCPeerConnectionEvent(RTCPeerConnectionEvent),
 
     // ICE Event
-    ICESelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
+    ICESelectedCandidatePairChange,
     // DTLS Event
     DTLSHandshakeComplete(SocketAddr, Option<Context>, Option<Context>),
     // SCTP Event

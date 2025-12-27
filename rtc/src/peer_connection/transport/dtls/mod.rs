@@ -1,4 +1,5 @@
 use crate::peer_connection::certificate::RTCCertificate;
+use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
 use crate::peer_connection::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -39,13 +40,12 @@ pub struct RTCDtlsTransport {
 
     pub(crate) state: RTCDtlsTransportState,
     pub(crate) certificates: Vec<RTCCertificate>,
-    //pub(crate) srtp_protection_profile: ProtectionProfile,
 
     // From SettingEngine
-    answering_dtls_role: DTLSRole,
-    srtp_protection_profiles: Vec<SrtpProtectionProfile>,
-    allow_insecure_verification_algorithm: bool,
-    dtls_replay_protection_window: usize,
+    pub(crate) answering_dtls_role: DTLSRole,
+    pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+    pub(crate) allow_insecure_verification_algorithm: bool,
+    pub(crate) replay_protection: ReplayProtection,
 }
 
 impl RTCDtlsTransport {
@@ -54,7 +54,7 @@ impl RTCDtlsTransport {
         answering_dtls_role: DTLSRole,
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
         allow_insecure_verification_algorithm: bool,
-        dtls_replay_protection_window: usize,
+        replay_protection: ReplayProtection,
     ) -> Result<Self> {
         if !certificates.is_empty() {
             let now = SystemTime::now();
@@ -79,7 +79,7 @@ impl RTCDtlsTransport {
             answering_dtls_role,
             srtp_protection_profiles,
             allow_insecure_verification_algorithm,
-            dtls_replay_protection_window,
+            replay_protection,
         })
     }
 
@@ -168,7 +168,7 @@ impl RTCDtlsTransport {
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
                 .with_verify_peer_certificate(Some(verify_peer_certificate))
                 .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
-                .with_replay_protection_window(self.dtls_replay_protection_window)
+                .with_replay_protection_window(self.replay_protection.dtls)
                 .build(self.dtls_role == DTLSRole::Client, None)?,
         ))
     }
