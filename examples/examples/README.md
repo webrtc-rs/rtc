@@ -18,7 +18,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   control.
 - [x] [Offer Answer](offer-answer): Example offer-answer is an example of two webrtc-rs or pion instances communicating
   directly!
-- [ ] [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
+- [x] [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 
 #### Media API
 

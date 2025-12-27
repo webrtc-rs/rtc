@@ -1,7 +1,8 @@
 use super::*;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
-    get_by_mid, get_peer_direction, get_rids, populate_sdp, MediaSection, PopulateSdpParams,
+    get_by_mid, get_peer_direction, get_rids, have_data_channel, populate_sdp, MediaSection,
+    PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -395,7 +396,7 @@ impl RTCPeerConnection {
             Ok(next_state) => {
                 self.signaling_state = next_state;
                 if self.signaling_state == RTCSignalingState::Stable {
-                    self.is_negotiation_needed = false;
+                    self.is_negotiation_ongoing = false;
                     self.trigger_negotiation_needed();
                 }
                 self.do_signaling_state_change(next_state);
@@ -403,36 +404,6 @@ impl RTCPeerConnection {
             }
             Err(err) => Err(err),
         }
-    }
-
-    /// Helper to trigger a negotiation needed.
-    pub(super) fn trigger_negotiation_needed(&mut self) {
-        self.do_negotiation_needed();
-    }
-
-    pub(super) fn make_negotiation_needed_trigger(&mut self) {
-        self.do_negotiation_needed();
-    }
-
-    fn do_negotiation_needed_inner(&mut self) -> bool {
-        // https://w3c.github.io/webrtc-pc/#updating-the-negotiation-needed-flag
-        // non-canon step 1
-        if self.negotiation_needed_state == NegotiationNeededState::Run {
-            self.negotiation_needed_state = NegotiationNeededState::Queue;
-            false
-        } else if self.negotiation_needed_state == NegotiationNeededState::Queue {
-            false
-        } else {
-            self.negotiation_needed_state = NegotiationNeededState::Run;
-            true
-        }
-    }
-
-    fn do_negotiation_needed(&mut self) {
-        if !self.do_negotiation_needed_inner() {
-            return;
-        }
-        let _ = self.negotiation_needed_op();
     }
 
     pub(super) fn do_signaling_state_change(&mut self, new_state: RTCSignalingState) {
@@ -594,61 +565,6 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    fn negotiation_needed_op(&mut self) -> Result<()> {
-        /*
-        // Don't run NegotiatedNeeded checks if on_negotiation_needed is not set
-        let handler = &*params.on_negotiation_needed_handler.load();
-        if handler.is_none() {
-            return false;
-        }
-
-        // https://www.w3.org/TR/webrtc/#updating-the-negotiation-needed-flag
-        // Step 2.1
-        if params.is_closed.load(Ordering::SeqCst) {
-            return false;
-        }
-        // non-canon step 2.2
-        if !params.ops.is_empty().await {
-            //enqueue negotiation_needed_op again by return true
-            return true;
-        }
-
-        // non-canon, run again if there was a request
-        // starting defer(after_do_negotiation_needed(params).await);
-
-        // Step 2.3
-        if params.signaling_state.load(Ordering::SeqCst) != RTCSignalingState::Stable as u8 {
-            return RTCPeerConnection::after_negotiation_needed_op(params).await;
-        }
-
-        // Step 2.4
-        if !RTCPeerConnection::check_negotiation_needed(&params.check_negotiation_needed_params)
-            .await
-        {
-            params.is_negotiation_needed.store(false, Ordering::SeqCst);
-            return RTCPeerConnection::after_negotiation_needed_op(params).await;
-        }
-
-        // Step 2.5
-        if params.is_negotiation_needed.load(Ordering::SeqCst) {
-            return RTCPeerConnection::after_negotiation_needed_op(params).await;
-        }
-
-        // Step 2.6
-        params.is_negotiation_needed.store(true, Ordering::SeqCst);
-
-        // Step 2.7
-        if let Some(handler) = handler {
-            let mut f = handler.lock().await;
-            f().await;
-        }
-
-        RTCPeerConnection::after_negotiation_needed_op(params).await
-
-         */
-        Ok(())
-    }
-
     /// Update the PeerConnectionState given the state of relevant transports
     /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
     pub(crate) fn update_connection_state(&mut self, is_closed: bool) {
@@ -712,5 +628,207 @@ impl RTCPeerConnection {
         }
 
         Err(Error::ErrMaxDataChannelID)
+    }
+
+    /// Helper to trigger a negotiation needed.
+    pub(super) fn trigger_negotiation_needed(&mut self) {
+        if !self.do_negotiation_needed() {
+            return;
+        }
+        let _ = self.negotiation_needed_op();
+    }
+
+    fn do_negotiation_needed(&mut self) -> bool {
+        // https://w3c.github.io/webrtc-pc/#updating-the-negotiation-needed-flag
+        // non-canon step 1
+        if self.negotiation_needed_state == NegotiationNeededState::Run {
+            self.negotiation_needed_state = NegotiationNeededState::Queue;
+            false
+        } else if self.negotiation_needed_state == NegotiationNeededState::Queue {
+            false
+        } else {
+            self.negotiation_needed_state = NegotiationNeededState::Run;
+            true
+        }
+    }
+
+    fn negotiation_needed_op(&mut self) -> bool {
+        // https://www.w3.org/TR/webrtc/#updating-the-negotiation-needed-flag
+        // Step 2.1
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return false;
+        }
+        // non-canon step 2.2
+        // no need to check ops
+
+        // non-canon, run again if there was a request
+        // starting defer(after_do_negotiation_needed(params).await);
+
+        // Step 2.3
+        if self.signaling_state != RTCSignalingState::Stable {
+            return self.after_negotiation_needed_op();
+        }
+
+        // Step 2.4
+        if !self.check_negotiation_needed() {
+            self.is_negotiation_ongoing = false;
+            return self.after_negotiation_needed_op();
+        }
+
+        // Step 2.5
+        if self.is_negotiation_ongoing {
+            return self.after_negotiation_needed_op();
+        }
+
+        // Step 2.6
+        // set negotiation is in middle of ongoing
+        self.is_negotiation_ongoing = true;
+
+        // Step 2.7
+        self.pipeline_context
+            .event_outs
+            .push_back(RTCPeerConnectionEvent::OnNegotiationNeededEvent);
+
+        //TODO: do we need this call with new event-based handling?
+        self.after_negotiation_needed_op()
+    }
+
+    fn after_negotiation_needed_op(&mut self) -> bool {
+        let old_negotiation_needed_state = self.negotiation_needed_state;
+
+        self.negotiation_needed_state = NegotiationNeededState::Empty;
+
+        if old_negotiation_needed_state == NegotiationNeededState::Queue {
+            self.do_negotiation_needed()
+        } else {
+            false
+        }
+    }
+
+    fn check_negotiation_needed(&self) -> bool {
+        // To check if negotiation is needed for connection, perform the following checks:
+        // Skip 1, 2 steps
+        // Step 3
+
+        if let Some(local_desc) = &self.current_local_description {
+            let len_data_channel = self.data_channels.len();
+
+            if len_data_channel != 0 && have_data_channel(local_desc).is_none() {
+                return true;
+            }
+
+            for t in &self.rtp_transceivers {
+                // https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
+                // Step 5.1
+                // if t.stopping && !t.stopped {
+                // 	return true
+                // }
+                let m = t
+                    .mid
+                    .as_ref()
+                    .and_then(|mid| get_by_mid(mid.as_str(), local_desc));
+                // Step 5.2
+                if !t.stopped {
+                    if m.is_none() {
+                        return true;
+                    }
+
+                    if let Some(m) = m {
+                        // Step 5.3.1
+                        if t.direction.has_send() {
+                            let dmsid = match m.attribute(ATTR_KEY_MSID).and_then(|o| o) {
+                                Some(m) => m,
+                                None => return true, // doesn't contain a single a=msid line
+                            };
+
+                            // (...)or the number of MSIDs from the a=msid lines in this m= section,
+                            // or the MSID values themselves, differ from what is in
+                            // transceiver.sender.[[AssociatedMediaStreamIds]], return true.
+
+                            // TODO: This check should be robuster by storing all streams in the
+                            // local description so we can compare all of them. For no we only
+                            // consider the first one.
+
+                            let stream_ids = &t.sender.associated_media_stream_ids;
+                            // Different number of lines, 1 vs 0
+                            if stream_ids.is_empty() {
+                                return true;
+                            }
+
+                            // different stream id
+                            if dmsid.split_whitespace().next() != Some(&stream_ids[0]) {
+                                return true;
+                            }
+                        }
+                        match local_desc.sdp_type {
+                            RTCSdpType::Offer => {
+                                // Step 5.3.2
+                                if let Some(remote_desc) = &self.current_remote_description {
+                                    if let Some(rm) = t
+                                        .mid
+                                        .as_ref()
+                                        .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
+                                    {
+                                        if get_peer_direction(m) != t.direction
+                                            && get_peer_direction(rm) != t.direction.reverse()
+                                        {
+                                            return true;
+                                        }
+                                    } else {
+                                        return true;
+                                    }
+                                }
+                            }
+                            RTCSdpType::Answer => {
+                                let remote_desc = match &self.current_remote_description {
+                                    Some(d) => d,
+                                    None => return true,
+                                };
+                                let offered_direction = match t
+                                    .mid
+                                    .as_ref()
+                                    .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
+                                {
+                                    Some(d) => {
+                                        let dir = get_peer_direction(d);
+                                        if dir == RTCRtpTransceiverDirection::Unspecified {
+                                            RTCRtpTransceiverDirection::Inactive
+                                        } else {
+                                            dir
+                                        }
+                                    }
+                                    None => RTCRtpTransceiverDirection::Inactive,
+                                };
+
+                                let current_direction = get_peer_direction(m);
+                                // Step 5.3.3
+                                if current_direction
+                                    != t.direction.intersect(offered_direction.reverse())
+                                {
+                                    return true;
+                                }
+                            }
+                            _ => {}
+                        };
+                    }
+                }
+                // Step 5.4
+                if t.stopped {
+                    let search_mid = match t.mid.as_ref() {
+                        Some(mid) => mid,
+                        None => return false,
+                    };
+
+                    if let Some(remote_desc) = &self.current_remote_description {
+                        return get_by_mid(search_mid.as_str(), local_desc).is_some()
+                            || get_by_mid(search_mid.as_str(), remote_desc).is_some();
+                    }
+                }
+            }
+            // Step 6
+            false
+        } else {
+            true
+        }
     }
 }

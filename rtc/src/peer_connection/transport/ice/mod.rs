@@ -188,6 +188,9 @@ impl RTCIceTransport {
         pwd: String,
         keep_local_candidates: bool,
     ) -> Result<()> {
+        //TODO: fix ice-restart.rs's DTLS Flight 1: Errored due to remote peer address changed during ice-restart
+        // rtc-dtls/src/handshaker.rs:77 [DEBUG] 18:58:08.178235 - [handshake:client] Flight 1: Errored
+
         self.agent.restart(ufrag, pwd, keep_local_candidates)
     }
 

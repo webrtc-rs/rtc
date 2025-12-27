@@ -89,7 +89,7 @@ pub struct RTCPeerConnection {
     last_answer: String,
 
     negotiation_needed_state: NegotiationNeededState,
-    is_negotiation_needed: bool,
+    is_negotiation_ongoing: bool,
 }
 
 impl RTCPeerConnection {
@@ -568,10 +568,11 @@ impl RTCPeerConnection {
                         .candidates
                         .password
                         .clone(),
-                    self.configuration
+                    !self
+                        .configuration
                         .setting_engine
                         .candidates
-                        .keep_local_candidates_during_ice_restart,
+                        .discard_local_candidates_during_ice_restart,
                 );
                 if !we_offer {
                     self.ice_transport_mut().restart(
@@ -736,10 +737,11 @@ impl RTCPeerConnection {
                 .candidates
                 .password
                 .clone(),
-            self.configuration
+            !self
+                .configuration
                 .setting_engine
                 .candidates
-                .keep_local_candidates_during_ice_restart,
+                .discard_local_candidates_during_ice_restart,
         );
         self.ice_transport_mut()
             .restart(local_ufrag, local_pwd, keep_local_candidates)?;
@@ -877,6 +879,8 @@ impl RTCPeerConnection {
 
         self.data_channels.insert(id, data_channel);
 
+        self.trigger_negotiation_needed();
+
         Ok(RTCDataChannel {
             id,
             peer_connection: self,
@@ -892,5 +896,98 @@ impl RTCPeerConnection {
         } else {
             None
         }
+    }
+
+    /// add_track adds a Track to the PeerConnection
+    pub fn add_track(
+        &mut self,
+        //track: TrackLocal
+    ) -> Result<RTCRtpSender> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        //TODO:
+        /*
+        {
+            let rtp_transceivers = self.internal.rtp_transceivers.lock().await;
+            for t in &*rtp_transceivers {
+                if !t.stopped.load(Ordering::SeqCst)
+                    && t.kind == track.kind()
+                    && t.sender()
+                        .await
+                        .initial_track_id()
+                        .is_some_and(|id| id == track.id())
+                {
+                    let sender = t.sender().await;
+                    if sender.track().await.is_none() {
+                        if let Err(err) = sender.replace_track(Some(track)).await {
+                            let _ = sender.stop().await;
+                            return Err(err);
+                        }
+
+                        t.set_direction_internal(RTCRtpTransceiverDirection::from_send_recv(
+                            true,
+                            t.direction().has_recv(),
+                        ));
+
+                        self.trigger_negotiation_needed();
+                        return Ok(sender);
+                    }
+                }
+            }
+        }
+
+        let transceiver = self
+            .internal
+            .new_transceiver_from_track(RTCRtpTransceiverDirection::Sendrecv, track)
+            .await?;
+        self.internal
+            .add_rtp_transceiver(Arc::clone(&transceiver))
+            .await;
+         */
+        Ok(RTCRtpSender::default())
+    }
+
+    /// remove_track removes a Track from the PeerConnection
+    pub fn remove_track(&mut self /*sender: RTCRtpSender*/) -> Result<()> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        /*
+        let mut transceiver = None;
+        {
+            let rtp_transceivers = self.internal.rtp_transceivers.lock().await;
+            for t in &*rtp_transceivers {
+                if t.sender().await.id == sender.id {
+                    if sender.track().await.is_none() {
+                        return Ok(());
+                    }
+                    transceiver = Some(t.clone());
+                    break;
+                }
+            }
+        }
+
+        let t = transceiver.ok_or(Error::ErrSenderNotCreatedByConnection)?;
+
+        // This also happens in `set_sending_track` but we need to make sure we do this
+        // before we call sender.stop to avoid a race condition when removing tracks and
+        // generating offers.
+        t.set_direction_internal(RTCRtpTransceiverDirection::from_send_recv(
+            false,
+            t.direction().has_recv(),
+        ));
+        // Stop the sender
+        let sender_result = sender.stop().await;
+        // This also updates direction
+        let sending_track_result = t.set_sending_track(None).await;
+
+        if sender_result.is_ok() && sending_track_result.is_ok() {
+            self.trigger_negotiation_needed();
+        }
+        */
+        Ok(())
     }
 }

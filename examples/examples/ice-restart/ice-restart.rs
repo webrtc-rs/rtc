@@ -329,12 +329,12 @@ async fn main() -> Result<()> {
                             println!("Received ICE restart signaling request");
 
                             // For ICE restart, we process the new offer
+                            println!("Set remote description {} for ICE restart", offer);
                             pc.set_remote_description(offer)?;
-                            println!("Set remote description for ICE restart");
 
                             let answer = pc.create_answer(None)?;
                             pc.set_local_description(answer.clone())?;
-                            println!("Created and set answer for ICE restart");
+                            println!("Created and set answer {} for ICE restart", answer);
 
                             // Send answer back to HTTP handler
                             let _ = response_tx.send(answer).await;
@@ -390,12 +390,12 @@ async fn main() -> Result<()> {
                             pc.add_local_candidate(local_candidate_init)?;
 
                             // Process the offer
+                            println!("Set remote description {}", offer);
                             pc.set_remote_description(offer)?;
-                            println!("Set remote description");
 
                             let answer = pc.create_answer(None)?;
                             pc.set_local_description(answer.clone())?;
-                            println!("Created and set answer");
+                            println!("Created and set answer {}", answer);
 
                             // Send answer back to HTTP handler
                             let _ = response_tx.send(answer).await;

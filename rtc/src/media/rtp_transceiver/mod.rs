@@ -186,7 +186,6 @@ pub struct RTCRtpTransceiver {
     pub(crate) stopped: bool,
     pub(crate) kind: RTPCodecType,
     //TODO: media_engine: Arc<MediaEngine>,
-    //TODO: trigger_negotiation_needed: Mutex<TriggerNegotiationNeededFnOption>,
 }
 
 impl RTCRtpTransceiver {
