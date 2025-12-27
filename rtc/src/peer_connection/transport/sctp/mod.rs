@@ -4,7 +4,7 @@ use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabili
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
 use sctp::{Association, AssociationHandle};
 use shared::error::Result;
-use shared::TransportProtocol;
+use shared::{TransportContext, TransportProtocol};
 use std::collections::HashMap;
 
 pub mod capabilities;
@@ -98,16 +98,16 @@ impl RTCSctpTransport {
 
         if dtls_role == DTLSRole::Client {
             self.sctp_endpoint = Some(sctp::Endpoint::new(
-                "127.0.0.1:0".parse()?, //local_addr doesn't matter
-                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // local_addr doesn't matter
+                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
                 sctp_endpoint_config.into(),
                 None,
             ));
             self.sctp_transport_config = Some(sctp_transport_config);
         } else {
             self.sctp_endpoint = Some(::sctp::Endpoint::new(
-                "127.0.0.1:0".parse()?, //local_addr doesn't matter
-                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // local_addr doesn't matter
+                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
                 sctp_endpoint_config.into(),
                 Some(::sctp::ServerConfig::new(sctp_transport_config).into()),
             ));

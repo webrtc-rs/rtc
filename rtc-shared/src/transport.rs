@@ -1,6 +1,5 @@
 use bytes::BytesMut;
-use std::net::SocketAddr;
-use std::str::FromStr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Instant;
 
 /// Explicit congestion notification codepoint
@@ -56,8 +55,8 @@ pub struct TransportContext {
 impl Default for TransportContext {
     fn default() -> Self {
         Self {
-            local_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
-            peer_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
+            local_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            peer_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 65535),
             transport_protocol: TransportProtocol::UDP,
             ecn: None,
         }

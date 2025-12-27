@@ -9,7 +9,7 @@ use rcgen::KeyPair;
 use rustls::pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
 use shared::error::{Error, Result};
-use shared::TransportProtocol;
+use shared::{TransportContext, TransportProtocol};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -187,15 +187,15 @@ impl RTCDtlsTransport {
 
         if self.dtls_role == DTLSRole::Client {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
-                "127.0.0.1:0".parse()?, //local_addr doesn't matter
-                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // local_addr doesn't matter
+                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
                 None,
             ));
             self.dtls_handshake_config = Some(dtls_handshake_config);
         } else {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
-                "127.0.0.1:0".parse()?, //local_addr doesn't matter
-                TransportProtocol::UDP, // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // local_addr doesn't matter
+                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
                 Some(dtls_handshake_config),
             ));
         }

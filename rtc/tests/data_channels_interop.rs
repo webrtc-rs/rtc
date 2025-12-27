@@ -129,8 +129,8 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     log::info!("Created RTC peer connection");
 
     // Set remote description (the offer from webrtc)
+    log::info!("RTC set remote description {}", rtc_offer);
     rtc_pc.set_remote_description(rtc_offer)?;
-    log::info!("RTC set remote description");
 
     // Add local candidate for rtc peer
     let candidate = CandidateHostConfig {
@@ -155,7 +155,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
 
     // Set local description on rtc peer
     rtc_pc.set_local_description(answer.clone())?;
-    log::info!("RTC set local description");
+    log::info!("RTC set local description {}", answer);
 
     // Convert rtc answer to webrtc SDP
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;

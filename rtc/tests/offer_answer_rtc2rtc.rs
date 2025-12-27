@@ -90,7 +90,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
 
     // Set local description on offer
     offer_pc.set_local_description(offer.clone())?;
-    log::info!("Offer peer set local description");
+    log::info!("Offer peer set local description {}", offer);
 
     // Create answer peer
     let answer_socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -112,8 +112,8 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Created answer peer connection");
 
     // Set remote description on answer (the offer)
+    log::info!("Answer peer set remote description {}", offer);
     answer_pc.set_remote_description(offer)?;
-    log::info!("Answer peer set remote description");
 
     // Add local candidate for answer peer
     let answer_candidate = CandidateHostConfig {
@@ -136,11 +136,11 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
 
     // Set local description on answer
     answer_pc.set_local_description(answer.clone())?;
-    log::info!("Answer peer set local description");
+    log::info!("Answer peer set local description {}", answer);
 
-    // Set remote description on offer (the answer)
+    // Set remote description on answer
+    log::info!("Offer peer set remote description {}", answer);
     offer_pc.set_remote_description(answer)?;
-    log::info!("Offer peer set remote description");
 
     // Add remote candidates (these are actually local candidates for the remote peer)
     // In sansio API, we add the remote peer's local candidate as our remote candidate

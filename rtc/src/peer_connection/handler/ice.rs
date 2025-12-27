@@ -1,13 +1,12 @@
-use std::collections::VecDeque;
-use std::time::Instant;
-
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use log::{debug, trace};
 use shared::error::{Error, Result};
-use shared::TransportMessage;
+use shared::{TransportContext, TransportMessage};
+use std::collections::VecDeque;
+use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct IceHandlerContext {
@@ -52,17 +51,33 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+    fn handle_read(&mut self, mut msg: TaggedRTCMessage) -> Result<()> {
         if let RTCMessage::Stun(STUNMessage::Raw(message)) = msg.message {
             self.ctx.ice_transport.agent.handle_read(TransportMessage {
                 now: msg.now,
                 transport: msg.transport,
                 message,
             })?;
-        } else {
-            // Bypass
+        } else if self
+            .ctx
+            .ice_transport
+            .agent
+            .get_selected_candidate_pair()
+            .is_some()
+        {
+            // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
+            // When ICE restarts and the selected candidate pair changes,
+            // WebRTC treats this as a path migration, and DTLS continues unchanged, bound to the ICE transport, not to a fixed 5-tuple.
+            // Use default for transport to make DTLS tunneled
+            msg.transport = TransportContext::default();
             self.ctx.read_outs.push_back(msg);
+        } else {
+            trace!(
+                "drop message from {:?} to {:?} before ICE connection is connected",
+                msg.transport.peer_addr,
+                msg.transport.local_addr
+            );
         }
 
         Ok(())
@@ -73,23 +88,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
     }
 
     fn handle_write(&mut self, mut msg: TaggedRTCMessage) -> Result<()> {
-        let candidate_pair_opt = if let Some((local, remote)) =
-            self.ctx.ice_transport.agent.get_selected_candidate_pair()
-        {
-            Some((local, remote))
-        } else if let Some((local, remote)) = self
-            .ctx
-            .ice_transport
-            .agent
-            .get_best_available_candidate_pair()
-        {
-            Some((local, remote))
-        } else {
-            None
-        };
-
-        if let Some((local, remote)) = candidate_pair_opt {
-            // use ICE selected or best available candidate pair to replace local/peer addr
+        if let Some((local, remote)) = self.ctx.ice_transport.agent.get_selected_candidate_pair() {
+            // use ICE selected candidate pair to replace local/peer addr
             msg.transport.local_addr = local.addr();
             msg.transport.peer_addr = remote.addr();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
@@ -97,8 +97,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         } else {
             trace!(
                 "drop message from {:?} to {:?} before ICE connection is connected",
+                msg.transport.local_addr,
                 msg.transport.peer_addr,
-                msg.transport.local_addr
             );
         }
 
@@ -137,6 +137,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
                         ));
                 }
                 ::ice::Event::SelectedCandidatePairChange(local, remote) => {
+                    debug!(
+                        "ice selected candidate pair {:?} <-> {:?}",
+                        local.addr(),
+                        remote.addr()
+                    );
                     self.ctx.event_outs.push_back(
                         RTCEventInternal::ICESelectedCandidatePairChange(local, remote),
                     );

@@ -10,6 +10,7 @@ use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, error, warn};
 use shared::error::{Error, Result};
+use shared::TransportContext;
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 use std::collections::VecDeque;
@@ -189,7 +190,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, remote) = evt {
+        if let RTCEventInternal::ICESelectedCandidatePairChange(_local, _remote) = evt {
             //TODO: what if ICESelectedCandidatePairChange happens multiple times?
             if self.ctx.dtls_transport.dtls_role == DTLSRole::Client {
                 if let Some(dtls_handshake_config) =
@@ -201,7 +202,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                         .dtls_endpoint
                         .as_mut()
                         .ok_or(Error::ErrDtlsTransportNotStarted)?;
-                    dtls_endpoint.connect(remote.addr(), dtls_handshake_config, None)?;
+                    dtls_endpoint.connect(
+                        TransportContext::default().peer_addr, // always use default for transport to make DTLS tunneled
+                        dtls_handshake_config,
+                        None,
+                    )?;
                 };
             }
         } else {
