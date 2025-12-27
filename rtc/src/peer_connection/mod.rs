@@ -891,6 +891,7 @@ impl RTCPeerConnection {
         })
     }
 
+    /// data_channel provides the access to RTCDataChannel object with the given id
     pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
         if self.data_channels.contains_key(&id) {
             Some(RTCDataChannel {
@@ -900,6 +901,36 @@ impl RTCPeerConnection {
         } else {
             None
         }
+    }
+
+    /// Returns an iterator over immutable RTP senders.
+    pub fn get_senders(&self) -> impl Iterator<Item = &RTCRtpSender> {
+        self.rtp_transceivers.iter().map(|t| &t.sender)
+    }
+
+    /// Returns an iterator over mutable RTP senders.
+    pub fn get_senders_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpSender> {
+        self.rtp_transceivers.iter_mut().map(|t| &mut t.sender)
+    }
+
+    /// Returns an iterator over immutable RTP receivers.
+    pub fn get_receivers(&self) -> impl Iterator<Item = &RTCRtpReceiver> {
+        self.rtp_transceivers.iter().map(|t| &t.receiver)
+    }
+
+    /// Returns an iterator over mutable RTP receivers.
+    pub fn get_receivers_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpReceiver> {
+        self.rtp_transceivers.iter_mut().map(|t| &mut t.receiver)
+    }
+
+    /// Returns an iterator over immutable RTP transceivers.
+    pub fn get_transceivers(&self) -> impl Iterator<Item = &RTCRtpTransceiver> {
+        self.rtp_transceivers.iter()
+    }
+
+    /// Returns an iterator over mutable RTP transceivers.
+    pub fn get_transceivers_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpTransceiver> {
+        self.rtp_transceivers.iter_mut()
     }
 
     /// add_track adds a Track to the PeerConnection
@@ -954,7 +985,7 @@ impl RTCPeerConnection {
     }
 
     /// remove_track removes a Track from the PeerConnection
-    pub fn remove_track(&mut self /*sender: RTCRtpSender*/) -> Result<()> {
+    pub fn remove_track(&mut self, _sender: &RTCRtpSender) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
