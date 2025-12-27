@@ -70,8 +70,8 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 #[tokio::test]
 async fn test_ice_restart_interop() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        //.is_test(true)
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
         .try_init()
         .ok();
 

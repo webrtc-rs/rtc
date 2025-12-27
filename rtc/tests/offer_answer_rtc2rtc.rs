@@ -34,7 +34,7 @@ const ECHO_MESSAGE: &str = "Echo from answer!";
 #[tokio::test]
 async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Info)
         .is_test(true)
         .try_init()
         .ok();

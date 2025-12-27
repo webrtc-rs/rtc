@@ -40,8 +40,8 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 #[tokio::test]
 async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        //.is_test(true)
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
         .try_init()
         .ok();
 
