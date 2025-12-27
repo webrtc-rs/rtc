@@ -1453,10 +1453,8 @@ pub enum Error {
     ErrSDPZeroTransceivers,
     #[error("invalid Media Section. Media + DataChannel both enabled")]
     ErrSDPMediaSectionMediaDataChanInvalid,
-    #[error(
-        "invalid Media Section. Can not have multiple tracks in one MediaSection in UnifiedPlan"
-    )]
-    ErrSDPMediaSectionMultipleTrackInvalid,
+    #[error("invalid Media Section Track Index")]
+    ErrSDPMediaSectionTrackInvalid,
     #[error("set_answering_dtlsrole must DTLSRoleClient or DTLSRoleServer")]
     ErrSettingEngineSetAnsweringDTLSRole,
     #[error("can't rollback from stable state")]

@@ -22,7 +22,7 @@ impl RTCPeerConnection {
 
         let mut media_sections = vec![];
 
-        for t in &mut self.rtp_transceivers {
+        for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
             if t.stopped || t.mid.is_none() {
                 // An "m=" section is generated for each
                 // RtpTransceiver that has been added to the PeerConnection, excluding
@@ -34,7 +34,7 @@ impl RTCPeerConnection {
                 t.sender.set_negotiated();
                 media_sections.push(MediaSection {
                     id: mid.to_string(),
-                    //TODO: transceivers: vec![t],
+                    transceiver_index: i,
                     ..Default::default()
                 });
             }
@@ -43,6 +43,7 @@ impl RTCPeerConnection {
         if !self.data_channels.is_empty() {
             media_sections.push(MediaSection {
                 id: format!("{}", media_sections.len()),
+                transceiver_index: usize::MAX,
                 data: true,
                 ..Default::default()
             });
@@ -68,7 +69,8 @@ impl RTCPeerConnection {
         populate_sdp(
             d,
             &dtls_fingerprints,
-            //&self.media_engine,
+            &mut self.configuration.media_engine,
+            &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
             &media_sections,
@@ -118,6 +120,7 @@ impl RTCPeerConnection {
                     if media.media_name.media == MEDIA_SECTION_APPLICATION {
                         media_sections.push(MediaSection {
                             id: mid_value.to_owned(),
+                            transceiver_index: usize::MAX,
                             data: true,
                             ..Default::default()
                         });
@@ -135,9 +138,8 @@ impl RTCPeerConnection {
 
                     let extmap_allow_mixed = media.has_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED);
 
-                    if let Some(t) = find_by_mid(mid_value, &mut self.rtp_transceivers) {
-                        t.sender.set_negotiated();
-                        //TODO: let media_transceivers = vec![t];
+                    if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
+                        self.rtp_transceivers[i].sender.set_negotiated();
 
                         // NB: The below could use `then_some`, but with our current MSRV
                         // it's not possible to actually do this. The clippy version that
@@ -145,7 +147,7 @@ impl RTCPeerConnection {
                         #[allow(clippy::unnecessary_lazy_evaluations)]
                         media_sections.push(MediaSection {
                             id: mid_value.to_owned(),
-                            //TODO: transceivers: media_transceivers,
+                            transceiver_index: i,
                             rid_map: get_rids(media),
                             offered_direction: (!include_unmatched).then(|| direction),
                             extmap_allow_mixed,
@@ -160,12 +162,12 @@ impl RTCPeerConnection {
 
         // If we are offering also include unmatched local transceivers
         let match_bundle_group = if include_unmatched {
-            for t in &mut self.rtp_transceivers {
+            for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
                 if let Some(mid) = t.mid.as_ref() {
                     t.sender.set_negotiated();
                     media_sections.push(MediaSection {
                         id: mid.to_string(),
-                        //TODO:transceivers: vec![Arc::clone(t)],
+                        transceiver_index: i,
                         ..Default::default()
                     });
                 }
@@ -174,6 +176,7 @@ impl RTCPeerConnection {
             if !self.data_channels.is_empty() && !already_have_application_media_section {
                 media_sections.push(MediaSection {
                     id: format!("{}", media_sections.len()),
+                    transceiver_index: usize::MAX,
                     data: true,
                     ..Default::default()
                 });
@@ -208,7 +211,8 @@ impl RTCPeerConnection {
         populate_sdp(
             d,
             &dtls_fingerprints,
-            //&self.media_engine,
+            &mut self.configuration.media_engine,
+            &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
             &media_sections,

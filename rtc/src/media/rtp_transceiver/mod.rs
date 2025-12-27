@@ -172,8 +172,6 @@ pub(crate) fn create_stream_info(
     }
 }
 
-pub type TriggerNegotiationNeededFnOption =
-    Option<Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> + Send + Sync>>;
 */
 
 /// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
@@ -200,7 +198,6 @@ impl RTCRtpTransceiver {
         kind: RTPCodecType,
         codecs: Vec<RTCRtpCodecParameters>,
         //media_engine: Arc<MediaEngine>,
-        //trigger_negotiation_needed: TriggerNegotiationNeededFnOption,
     ) -> Self {
         //let codecs = Arc::new(Mutex::new(codecs));
         //receiver.set_transceiver_codecs(Some(Arc::clone(&codecs)));
@@ -216,7 +213,6 @@ impl RTCRtpTransceiver {
             stopped: false,
             kind,
             //media_engine,
-            //trigger_negotiation_needed: Mutex::new(trigger_negotiation_needed),
         }
         /*t.sender()
         .await
@@ -463,14 +459,12 @@ impl RTCRtpTransceiver {
         }
     */
 }
-pub(crate) fn find_by_mid<'a>(
-    mid: &String,
-    local_transceivers: &'a mut [RTCRtpTransceiver],
-) -> Option<&'a mut RTCRtpTransceiver> {
+pub(crate) fn find_by_mid(mid: &String, local_transceivers: &[RTCRtpTransceiver]) -> Option<usize> {
     local_transceivers
-        .iter_mut()
-        .find(|t| t.mid.as_ref() == Some(mid))
-        .map(|v| v as _)
+        .iter()
+        .enumerate()
+        .find(|(_i, t)| t.mid.as_ref() == Some(mid))
+        .map(|(i, _v)| i)
 }
 
 /// Given a direction+type pluck a transceiver from the passed list

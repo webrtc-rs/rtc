@@ -364,15 +364,15 @@ impl RTCPeerConnection {
                         _ => continue,
                     };
 
-                    let t = match find_by_mid(mid_value, &mut self.rtp_transceivers) {
-                        Some(t) => t,
+                    let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
+                        Some(i) => i,
                         None => continue,
                     };
-                    let previous_direction = t.current_direction;
+                    let previous_direction = self.rtp_transceivers[i].current_direction;
                     // 4.9.1.7.3 applying a local answer or pranswer
                     // Set transceiver.[[CurrentDirection]] and transceiver.[[FiredDirection]] to direction.
-                    t.set_current_direction(direction);
-                    t.process_new_current_direction(previous_direction)?;
+                    self.rtp_transceivers[i].set_current_direction(direction);
+                    self.rtp_transceivers[i].process_new_current_direction(previous_direction)?;
                 }
 
                 if let Some(remote_description) = self.remote_description().cloned() {
@@ -474,9 +474,8 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        let t = if let Some(t) = find_by_mid(mid_value, &mut self.rtp_transceivers)
-                        {
-                            Some(t)
+                        let t = if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
+                            Some(&mut self.rtp_transceivers[i])
                         } else {
                             satisfy_type_and_direction(kind, direction, &mut self.rtp_transceivers)
                         };
@@ -545,8 +544,8 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        if let Some(t) = find_by_mid(mid_value, &mut self.rtp_transceivers) {
-                            let previous_direction = t.current_direction;
+                        if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
+                            let previous_direction = self.rtp_transceivers[i].current_direction;
 
                             // 4.5.9.2.9
                             // Let direction be an RTCRtpTransceiverDirection value representing the direction
@@ -557,14 +556,15 @@ impl RTCPeerConnection {
 
                             // 4.5.9.2.13.2
                             // Set transceiver.[[CurrentDirection]] and transceiver.[[Direction]]s to direction.
-                            t.set_current_direction(reversed_direction);
+                            self.rtp_transceivers[i].set_current_direction(reversed_direction);
 
                             // transceiver.[[Direction]] here, however libWebrtc doesn't do this.
                             // NOTE: After raising this it seems like the specification might
                             // change to remove the setting of transceiver.[[Direction]].
                             // See https://github.com/w3c/webrtc-pc/issues/2751#issuecomment-1185901962
                             // t.set_direction_internal(reversed_direction);
-                            t.process_new_current_direction(previous_direction)?;
+                            self.rtp_transceivers[i]
+                                .process_new_current_direction(previous_direction)?;
                         }
                     }
                 }
