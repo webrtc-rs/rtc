@@ -400,7 +400,6 @@ impl RTCPeerConnection {
                         }
                     }
 
-                    self.start_rtp_senders()?;
                     self.start_rtp(is_renegotiation, remote_description)?;
                 }
             }
@@ -689,7 +688,6 @@ impl RTCPeerConnection {
                     }
                 }
 
-                self.start_rtp_senders()?;
                 self.start_rtp(is_renegotiation, remote_description)?;
             }
         }

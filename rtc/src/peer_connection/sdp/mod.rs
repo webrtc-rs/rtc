@@ -41,7 +41,7 @@ pub(crate) struct TrackDetails {
     pub(crate) repair_ssrc: SSRC,
     pub(crate) rids: Vec<String>,
 }
-/*
+
 pub(crate) fn track_details_for_ssrc(
     track_details: &[TrackDetails],
     ssrc: SSRC,
@@ -49,11 +49,11 @@ pub(crate) fn track_details_for_ssrc(
     track_details.iter().find(|x| x.ssrcs.contains(&ssrc))
 }
 
-pub(crate) fn track_details_for_rid(
-    track_details: &[TrackDetails],
-    rid: SmolStr,
-) -> Option<&TrackDetails> {
-    track_details.iter().find(|x| x.rids.contains(&rid))
+pub(crate) fn track_details_for_rid<'a>(
+    track_details: &'a [TrackDetails],
+    rid: &String,
+) -> Option<&'a TrackDetails> {
+    track_details.iter().find(|x| x.rids.contains(rid))
 }
 
 pub(crate) fn filter_track_with_ssrc(incoming_tracks: &mut Vec<TrackDetails>, ssrc: SSRC) {
@@ -173,14 +173,14 @@ pub(crate) fn track_details_from_sdp(
                         }
 
                         if track_idx < tracks_in_media_section.len() {
-                            tracks_in_media_section[track_idx].mid = SmolStr::from(mid_value);
+                            tracks_in_media_section[track_idx].mid = mid_value.to_string();
                             tracks_in_media_section[track_idx].kind = codec_type;
                             stream_id.clone_into(&mut tracks_in_media_section[track_idx].stream_id);
                             track_id.clone_into(&mut tracks_in_media_section[track_idx].id);
                             tracks_in_media_section[track_idx].ssrcs = vec![ssrc];
                         } else {
                             let track_details = TrackDetails {
-                                mid: SmolStr::from(mid_value),
+                                mid: mid_value.to_string(),
                                 kind: codec_type,
                                 stream_id: stream_id.to_owned(),
                                 id: track_id.to_owned(),
@@ -209,11 +209,11 @@ pub(crate) fn track_details_from_sdp(
         let rids = get_rids(media);
         if !rids.is_empty() && !track_id.is_empty() && !stream_id.is_empty() {
             tracks_in_media_section = vec![TrackDetails {
-                mid: SmolStr::from(mid_value),
+                mid: mid_value.to_string(),
                 kind: codec_type,
                 stream_id: stream_id.to_owned(),
                 id: track_id.to_owned(),
-                rids: rids.iter().map(|r| SmolStr::from(&r.id)).collect(),
+                rids: rids.iter().map(|r| r.id.clone()).collect(),
                 ..Default::default()
             }];
         }
@@ -223,7 +223,7 @@ pub(crate) fn track_details_from_sdp(
 
     incoming_tracks
 }
-*/
+
 pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
     let mut rids = vec![];
     let mut simulcast_attr: Option<String> = None;
