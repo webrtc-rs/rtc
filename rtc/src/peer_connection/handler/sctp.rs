@@ -266,6 +266,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     .sctp_associations
                     .get_mut(&AssociationHandle(message.association_handle))
                 {
+                    let mut is_dcep_internal_control_message = false;
                     if message.ppi == PayloadProtocolIdentifier::Dcep {
                         let mut data_buf = &message.payload[..];
                         let dcep_message = Message::unmarshal(&mut data_buf)?;
@@ -288,6 +289,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                 )?;
                             }
                             Message::DataChannelClose(_) => {
+                                is_dcep_internal_control_message = true;
                                 debug!(
                                     "sctp data channel close for stream id {}",
                                     message.stream_id
@@ -303,6 +305,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                     ));
                             }
                             Message::DataChannelLowThreshold(data_channel_low_threshold) => {
+                                is_dcep_internal_control_message = true;
                                 debug!(
                                     "sctp data channel set low threshold {} for stream id {}",
                                     data_channel_low_threshold.0, message.stream_id
@@ -315,8 +318,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                             _ => {}
                         }
                     }
+
                     let mut stream = conn.stream(message.stream_id)?;
-                    if stream.is_writable() {
+                    if !is_dcep_internal_control_message && stream.is_writable() {
                         stream.write_with_ppi(&message.payload, message.ppi)?;
                     }
 

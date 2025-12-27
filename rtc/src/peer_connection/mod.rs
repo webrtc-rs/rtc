@@ -88,6 +88,7 @@ pub struct RTCPeerConnection {
     last_offer: String,
     last_answer: String,
 
+    ice_restart_requested: Option<RTCOfferOptions>,
     negotiation_needed_state: NegotiationNeededState,
     is_negotiation_ongoing: bool,
 }
@@ -150,16 +151,38 @@ impl RTCPeerConnection {
     /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createoffer>
     pub fn create_offer(
         &mut self,
-        options: Option<RTCOfferOptions>,
+        mut options: Option<RTCOfferOptions>,
     ) -> Result<RTCSessionDescription> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        if let Some(options) = options {
-            if options.ice_restart {
-                self.restart_ice()?;
-            }
+        let is_ice_restart_requested = self
+            .ice_restart_requested
+            .take()
+            .is_some_and(|options| options.ice_restart)
+            || options.take().is_some_and(|options| options.ice_restart);
+
+        if is_ice_restart_requested {
+            let (local_ufrag, local_pwd, keep_local_candidates) = (
+                self.configuration
+                    .setting_engine
+                    .candidates
+                    .username_fragment
+                    .clone(),
+                self.configuration
+                    .setting_engine
+                    .candidates
+                    .password
+                    .clone(),
+                !self
+                    .configuration
+                    .setting_engine
+                    .candidates
+                    .discard_local_candidates_during_ice_restart,
+            );
+            self.ice_transport_mut()
+                .restart(local_ufrag, local_pwd, keep_local_candidates)?;
         }
 
         // This may be necessary to recompute if, for example, createOffer was called when only an
@@ -557,24 +580,25 @@ impl RTCPeerConnection {
                     .have_remote_credentials_change(&remote_ufrag, &remote_pwd)
             {
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
-                let (local_ufrag, local_pwd, keep_local_candidates) = (
-                    self.configuration
-                        .setting_engine
-                        .candidates
-                        .username_fragment
-                        .clone(),
-                    self.configuration
-                        .setting_engine
-                        .candidates
-                        .password
-                        .clone(),
-                    !self
-                        .configuration
-                        .setting_engine
-                        .candidates
-                        .discard_local_candidates_during_ice_restart,
-                );
+
                 if !we_offer {
+                    let (local_ufrag, local_pwd, keep_local_candidates) = (
+                        self.configuration
+                            .setting_engine
+                            .candidates
+                            .username_fragment
+                            .clone(),
+                        self.configuration
+                            .setting_engine
+                            .candidates
+                            .password
+                            .clone(),
+                        !self
+                            .configuration
+                            .setting_engine
+                            .candidates
+                            .discard_local_candidates_during_ice_restart,
+                    );
                     self.ice_transport_mut().restart(
                         local_ufrag,
                         local_pwd,
@@ -723,30 +747,10 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    /// restart_ice restart ICE and triggers negotiation needed
-    /// <https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-restartice>
-    pub fn restart_ice(&mut self) -> Result<()> {
-        let (local_ufrag, local_pwd, keep_local_candidates) = (
-            self.configuration
-                .setting_engine
-                .candidates
-                .username_fragment
-                .clone(),
-            self.configuration
-                .setting_engine
-                .candidates
-                .password
-                .clone(),
-            !self
-                .configuration
-                .setting_engine
-                .candidates
-                .discard_local_candidates_during_ice_restart,
-        );
-        self.ice_transport_mut()
-            .restart(local_ufrag, local_pwd, keep_local_candidates)?;
-        self.trigger_negotiation_needed();
-        Ok(())
+    /// The restartIce method tells the RTCPeerConnection that ICE should be restarted.
+    /// Subsequent calls to createOffer will create descriptions that will restart ICE
+    pub fn restart_ice(&mut self) {
+        self.ice_restart_requested = Some(RTCOfferOptions { ice_restart: true });
     }
 
     /// get_configuration returns a Configuration object representing the current

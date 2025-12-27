@@ -15,7 +15,7 @@ pub mod ice_error_event;
 pub mod ice_event;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub enum RTCPeerConnectionEvent {
     #[default]
     OnNegotiationNeededEvent,

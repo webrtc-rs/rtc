@@ -3,8 +3,8 @@
 ## Overview
 
 This directory contains integration tests for the `rtc` library:
-- **Interoperability tests** with the `webrtc` library (Tests 1-4)
-- **Pure rtc-to-rtc tests** using only the sansio API (Test 5)
+- **Interoperability tests** with the `webrtc` library (Tests 1-5)
+- **Pure rtc-to-rtc tests** using only the sansio API (Test 6)
 
 ## Test Summary
 
@@ -14,7 +14,9 @@ This directory contains integration tests for the `rtc` library:
 | 2 | `data_channels_create_interop.rs` | rtc ↔ webrtc (rtc offers) |
 | 3 | `data_channels_close_by_rtc_interop.rs` | Close initiated by rtc |
 | 4 | `data_channels_close_by_webrtc_interop.rs` | Close initiated by webrtc |
-| 5 | `offer_answer_rtc2rtc.rs` | **Pure rtc ↔ rtc (no webrtc)** |
+| 5 | `ice_restart_by_webrtc_interop.rs` | ICE restart initiated by webrtc |
+| 6 | `ice_restart_by_rtc_interop.rs` | ICE restart initiated by rtc |
+| 7 | `offer_answer_rtc2rtc.rs` | **Pure rtc ↔ rtc (no webrtc)** |
 
 ---
 
@@ -340,4 +342,80 @@ This test demonstrates the pure sansio architecture:
 | **Complexity** | Bridge two APIs | **Single consistent API** |
 
 This test proves that the rtc sansio API is fully self-sufficient and can establish peer-to-peer connections without the webrtc library.
+
+
+
+### Test 6: ICE Restart by WebRTC (`ice_restart_by_webrtc_interop.rs`)
+
+**Description**
+Tests ICE restart functionality when initiated by the WebRTC peer (offerer), with RTC as answerer using the sansio API.
+
+**Test Flow**
+1. WebRTC peer creates offer and data channel
+2. RTC peer receives offer and creates answer
+3. Connection establishes and peers exchange messages before restart
+4. WebRTC initiates ICE restart with new offer (ice_restart: true)
+5. RTC processes restart offer and creates restart answer
+6. Connection re-establishes
+7. Peers can communicate again (RTC → WebRTC verified)
+
+**Key Points**
+- ✅ ICE restart initiated by WebRTC using `RTCOfferOptions { ice_restart: true }`
+- ✅ RTC handles restart as answerer
+- ✅ Connection successfully re-establishes
+- ✅ Pre-restart bidirectional communication works
+- ✅ RTC → WebRTC data channel works after restart
+- ⚠️  WebRTC → RTC data channel after restart may have issues (known limitation)
+
+**Architecture Notes**
+The test demonstrates that the rtc sansio library correctly:
+- Processes ICE restart offers from webrtc
+- Creates valid restart answers
+- Re-establishes the peer connection
+- Maintains some data channel functionality post-restart
+
+**Run:**
+```bash
+cargo test --test ice_restart_by_webrtc_interop
+```
+
+---
+
+### Test 7: ICE Restart by RTC (`ice_restart_by_rtc_interop.rs`)
+
+**Description**
+Tests ICE restart functionality when initiated by the RTC peer (offerer) using the sansio `restart_ice()` API, with WebRTC as answerer.
+
+**Test Flow**
+1. WebRTC peer creates offer and data channel
+2. RTC peer receives offer and creates answer
+3. Connection establishes and peers exchange messages before restart
+4. RTC initiates ICE restart using `restart_ice()` method
+5. RTC creates new offer with ICE restart
+6. WebRTC processes restart offer and creates restart answer
+7. RTC sets restart answer as remote description
+8. Connection re-establishes via ICE
+9. Data channel continues working after restart
+
+**Key Points**
+- ✅ ICE restart initiated by RTC using sansio `restart_ice()` API
+- ✅ WebRTC handles restart as answerer
+- ✅ Connection successfully re-establishes
+- ✅ Pre-restart bidirectional communication works
+- ✅ Data channel continues working after restart
+- ✅ ICE connection state transitions properly (checking → connected/completed)
+
+**Architecture Notes**
+The test demonstrates that the rtc sansio library can:
+- Initiate ICE restart via `restart_ice()` method
+- Generate valid restart offers
+- Process restart answers from webrtc
+- Re-establish peer connection successfully
+- Maintain data channel functionality post-restart
+
+**Run:**
+```bash
+cargo test --test ice_restart_by_rtc_interop
+```
+
 

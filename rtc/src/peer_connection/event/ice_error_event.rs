@@ -1,4 +1,4 @@
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct RTCPeerConnectionIceErrorEvent {
     pub address: String,
     pub port: u16,
