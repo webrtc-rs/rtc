@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use crate::media::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
+use crate::media::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 //use crate::media::{
 //    codec_rtx_search, create_stream_info, RTCRtpDecodingParameters, RTCRtpReceiveParameters, SSRC,
 //};

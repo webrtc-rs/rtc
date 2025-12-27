@@ -1,3 +1,4 @@
+use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use std::fmt;
 
 /// RTPTransceiverDirection indicates the direction of the RTPTransceiver.
@@ -75,11 +76,7 @@ impl fmt::Display for RTCRtpTransceiverDirection {
             RTCRtpTransceiverDirection::Inactive => {
                 write!(f, "{RTP_TRANSCEIVER_DIRECTION_INACTIVE_STR}")
             }
-            _ => write!(
-                f,
-                "{}",
-                crate::peer_connection::configuration::UNSPECIFIED_STR
-            ),
+            _ => write!(f, "{}", UNSPECIFIED_STR),
         }
     }
 }

@@ -4,9 +4,11 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType};
+use crate::media::rtp_transceiver::rtp_codec::{
+    RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
+};
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, RTCRtpTransceiver, SSRC};
-use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;

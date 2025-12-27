@@ -1,7 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_sender_test;
 
-use crate::media::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
 use crate::media::rtp_transceiver::PayloadType;
 use ice::rand::generate_crypto_random_string;
 

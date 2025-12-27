@@ -11,11 +11,11 @@ pub mod transport;
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::media::rtp_codec::RTPCodecType;
-use crate::media::rtp_receiver::RTCRtpReceiver;
-use crate::media::rtp_sender::RTCRtpSender;
+use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
-use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},

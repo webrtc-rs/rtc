@@ -1,6 +1,5 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
-
 use log::trace;
 use serde::{Deserialize, Serialize};
 use shared::error::Result;
@@ -22,12 +21,17 @@ use crate::rtp_transceiver::rtp_receiver::{RTCRtpReceiver, RTPReceiverInternal};
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::track::track_local::TrackLocal;
  */
-
-use crate::media::rtp_codec::*;
-use crate::media::rtp_receiver::RTCRtpReceiver;
-use crate::media::rtp_sender::RTCRtpSender;
-use crate::media::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver::rtp_codec::*;
+use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 //use shared::error::{Error, Result};
+
+pub(crate) mod fmtp;
+pub mod rtp_codec;
+pub mod rtp_receiver;
+pub mod rtp_sender;
+pub mod rtp_transceiver_direction;
 
 /// SSRC represents a synchronization source
 /// A synchronization source is a randomly chosen

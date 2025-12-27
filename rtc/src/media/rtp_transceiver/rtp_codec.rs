@@ -4,6 +4,7 @@ use super::fmtp;
 use crate::peer_connection::configuration::media_engine::*;
 //use crate::api::media_engine::*;
 use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
+use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec
@@ -44,7 +45,7 @@ impl fmt::Display for RTPCodecType {
         let s = match *self {
             RTPCodecType::Audio => "audio",
             RTPCodecType::Video => "video",
-            RTPCodecType::Unspecified => crate::peer_connection::configuration::UNSPECIFIED_STR,
+            RTPCodecType::Unspecified => UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }
