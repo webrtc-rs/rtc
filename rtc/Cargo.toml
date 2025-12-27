@@ -30,7 +30,7 @@ sansio = "1"
 datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
 dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }
 ice = { version = "0.2.0", path = "../rtc-ice", package = "rtc-ice" }
-#TODO: interceptor = { version = "0.0.0", path = "../rtc-interceptor", package = "rtc-interceptor"  }
+interceptor = { version = "0.0.0", path = "../rtc-interceptor", package = "rtc-interceptor" }
 #TODO: mdns = { version = "0.0.0", path = "../mdns", package = "rtc-mdns" }
 #TODO: media = { version = "0.0.0", path = "../media", package = "rtc-media" }
 rtcp = { version = "0.2.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
@@ -44,7 +44,7 @@ turn = { version = "0.1.0", path = "../rtc-turn", package = "rtc-turn" }
 
 [dev-dependencies]
 webrtc = "0.14.0"
-interceptor = "0.15.0"
+webrtc_interceptor = { version = "0.15.0", package = "interceptor" }
 tokio = { version = "1", features = ["full"] }
 env_logger = "0.11"
 anyhow = "1"

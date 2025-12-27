@@ -23,7 +23,6 @@ use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, Candidate
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 
-use interceptor::registry::Registry;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -34,6 +33,7 @@ use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
+use webrtc_interceptor::registry::Registry;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const TEST_MESSAGE_1: &str = "Hello before restart!";

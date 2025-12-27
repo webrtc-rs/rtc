@@ -1,62 +1,37 @@
+use interceptor::Attributes;
 use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Weak};
 
-use arc_swap::ArcSwapOption;
-use interceptor::{Attributes, Interceptor};
-use portable_atomic::{AtomicU32, AtomicU8, AtomicUsize};
-use smol_str::SmolStr;
-use tokio::sync::Mutex;
-use util::sync::Mutex as SyncMutex;
+use crate::media::rtp_transceiver::rtp_codec::{
+    RTCRtpCodecParameters, RTCRtpParameters, RTPCodecType,
+};
+//use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_transceiver::{PayloadType, SSRC};
+//use crate::peer_connection::configuration::media_engine::MediaEngine;
+//use shared::error::{Error, Result};
 
-use crate::api::media_engine::MediaEngine;
-use crate::error::{Error, Result};
-use crate::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTCRtpParameters, RTPCodecType};
-use crate::rtp_transceiver::rtp_receiver::RTPReceiverInternal;
-use crate::rtp_transceiver::{PayloadType, SSRC};
-
-lazy_static! {
+/*lazy_static! {
     static ref TRACK_REMOTE_UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
-}
-pub type OnMuteHdlrFn = Box<
-    dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync + 'static,
->;
-
-#[derive(Default)]
-struct Handlers {
-    on_mute: ArcSwapOption<Mutex<OnMuteHdlrFn>>,
-    on_unmute: ArcSwapOption<Mutex<OnMuteHdlrFn>>,
-}
-
-#[derive(Default)]
-struct TrackRemoteInternal {
-    peeked: VecDeque<(rtp::packet::Packet, Attributes)>,
-}
+}*/
 
 /// TrackRemote represents a single inbound source of media
+#[derive(Clone)]
 pub struct TrackRemote {
     tid: usize,
 
-    id: SyncMutex<String>,
-    stream_id: SyncMutex<String>,
+    id: String,
+    stream_id: String,
 
     receive_mtu: usize,
-    payload_type: AtomicU8, //PayloadType,
-    kind: AtomicU8,         //RTPCodecType,
-    ssrc: AtomicU32,        //SSRC,
-    codec: SyncMutex<RTCRtpCodecParameters>,
-    pub(crate) params: SyncMutex<RTCRtpParameters>,
-    rid: SmolStr,
+    payload_type: PayloadType,
+    kind: RTPCodecType,
+    ssrc: SSRC,
+    codec: RTCRtpCodecParameters,
+    pub(crate) params: RTCRtpParameters,
+    rid: String,
 
-    media_engine: Arc<MediaEngine>,
-    interceptor: Arc<dyn Interceptor + Send + Sync>,
-
-    handlers: Arc<Handlers>,
-
-    receiver: Option<Weak<RTPReceiverInternal>>,
-    internal: Mutex<TrackRemoteInternal>,
+    //media_engine: Arc<MediaEngine>,
+    //receiver: Option<RTCRtpReceiver>,
+    peeked: VecDeque<(rtp::packet::Packet, Attributes)>,
 }
 
 impl std::fmt::Debug for TrackRemote {
@@ -75,6 +50,7 @@ impl std::fmt::Debug for TrackRemote {
 }
 
 impl TrackRemote {
+    /*
     pub(crate) fn new(
         receive_mtu: usize,
         kind: RTPCodecType,
@@ -317,5 +293,5 @@ impl TrackRemote {
         if let Some(f) = on_unmute.as_ref() {
             (f.lock().await)().await
         };
-    }
+    }*/
 }

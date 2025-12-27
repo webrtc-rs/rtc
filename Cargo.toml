@@ -5,6 +5,7 @@ members = [
     "rtc-datachannel",
     "rtc-dtls",
     "rtc-ice",
+    "rtc-interceptor",
     "rtc-rtcp",
     "rtc-rtp",
     "rtc-sctp",
@@ -13,7 +14,6 @@ members = [
     "rtc-srtp",
     "rtc-stun",
     "rtc-turn",
-    "reserved/rtc-interceptor",
     "reserved/rtc-mdns",
     "reserved/rtc-media",
 ]
