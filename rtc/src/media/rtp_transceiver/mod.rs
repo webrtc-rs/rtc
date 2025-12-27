@@ -1,5 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
+use interceptor::stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo};
+use interceptor::Attributes;
 use log::trace;
 use serde::{Deserialize, Serialize};
 use shared::error::Result;
@@ -131,7 +133,7 @@ pub struct RTCRtpTransceiverInit {
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
     // Streams       []*Track
 }
-/*
+
 pub(crate) fn create_stream_info(
     id: String,
     ssrc: SSRC,
@@ -171,8 +173,6 @@ pub(crate) fn create_stream_info(
         associated_stream,
     }
 }
-
-*/
 
 /// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
 #[derive(Default, Clone)]

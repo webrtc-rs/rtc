@@ -498,8 +498,13 @@ impl RTCPeerConnection {
 
                             let receiver = RTCRtpReceiver::new(receive_mtu, kind);
 
-                            let sender =
-                                RTCRtpSender::new(kind, false, receive_mtu, enable_sender_rtx);
+                            let sender = RTCRtpSender::new(
+                                None,
+                                kind,
+                                false,
+                                receive_mtu,
+                                enable_sender_rtx,
+                            );
 
                             let mut t = RTCRtpTransceiver::new(
                                 receiver,

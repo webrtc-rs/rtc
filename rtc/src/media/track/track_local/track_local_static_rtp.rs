@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 
-use bytes::{Bytes, BytesMut};
-use tokio::sync::Mutex;
-use util::{Marshal, MarshalSize};
+use bytes::BytesMut;
+use shared::marshal::{Marshal, MarshalSize};
 
 use super::*;
-use crate::error::flatten_errs;
+use shared::error::flatten_errs;
 
 /// TrackLocalStaticRTP  is a TrackLocal that has a pre-set codec and accepts RTP Packets.
 /// If you wish to send a media.Sample use TrackLocalStaticSample
 #[derive(Debug)]
 pub struct TrackLocalStaticRTP {
-    pub(crate) bindings: Mutex<Vec<Arc<TrackBinding>>>,
     codec: RTCRtpCodecCapability,
     id: String,
     rid: Option<String>,
@@ -23,7 +21,6 @@ impl TrackLocalStaticRTP {
     pub fn new(codec: RTCRtpCodecCapability, id: String, stream_id: String) -> Self {
         TrackLocalStaticRTP {
             codec,
-            bindings: Mutex::new(vec![]),
             id,
             rid: None,
             stream_id,
@@ -39,7 +36,6 @@ impl TrackLocalStaticRTP {
     ) -> Self {
         TrackLocalStaticRTP {
             codec,
-            bindings: Mutex::new(vec![]),
             id,
             rid: Some(rid),
             stream_id,
@@ -77,17 +73,16 @@ impl TrackLocalStaticRTP {
     ///
     /// Extensions that are already configured on the packet are overwritten by extensions in
     /// `extensions`.
-    pub async fn write_rtp_with_extensions(
+    pub fn write_rtp_with_extensions(
         &self,
         p: &rtp::packet::Packet,
         extensions: &[rtp::extension::HeaderExtension],
     ) -> Result<usize> {
         let attr = Attributes::new();
         self.write_rtp_with_extensions_attributes(p, extensions, &attr)
-            .await
     }
 
-    pub async fn write_rtp_with_extensions_attributes(
+    pub fn write_rtp_with_extensions_attributes(
         &self,
         p: &rtp::packet::Packet,
         extensions: &[rtp::extension::HeaderExtension],
@@ -165,83 +160,7 @@ impl TrackLocalStaticRTP {
     }
 }
 
-#[async_trait]
 impl TrackLocal for TrackLocalStaticRTP {
-    /// bind is called by the PeerConnection after negotiation is complete
-    /// This asserts that the code requested is supported by the remote peer.
-    /// If so it setups all the state (SSRC and PayloadType) to have a call
-    async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
-        let parameters = RTCRtpCodecParameters {
-            capability: self.codec.clone(),
-            ..Default::default()
-        };
-        let mut hdr_ext_ids = vec![];
-        if let Some(id) = t
-            .header_extensions()
-            .iter()
-            .find(|e| e.uri == ::sdp::extmap::SDES_MID_URI)
-            .map(|e| e.id as u8)
-        {
-            if let Some(payload) = t
-                .mid
-                .as_ref()
-                .map(|mid| Bytes::copy_from_slice(mid.as_bytes()))
-            {
-                hdr_ext_ids.push(rtp::header::Extension { id, payload });
-            }
-        }
-
-        if let Some(id) = t
-            .header_extensions()
-            .iter()
-            .find(|e| e.uri == ::sdp::extmap::SDES_RTP_STREAM_ID_URI)
-            .map(|e| e.id as u8)
-        {
-            if let Some(payload) = self.rid().map(|rid| rid.to_owned().into()) {
-                hdr_ext_ids.push(rtp::header::Extension { id, payload });
-            }
-        }
-
-        let (codec, match_type) = codec_parameters_fuzzy_search(&parameters, t.codec_parameters());
-        if match_type != CodecMatch::None {
-            {
-                let mut bindings = self.bindings.lock().await;
-                bindings.push(Arc::new(TrackBinding {
-                    id: t.id(),
-                    ssrc: t.ssrc(),
-                    payload_type: codec.payload_type,
-                    params: t.params.clone(),
-                    write_stream: t.write_stream(),
-                    sender_paused: t.paused.clone(),
-                    hdr_ext_ids,
-                }));
-            }
-
-            Ok(codec)
-        } else {
-            Err(Error::ErrUnsupportedCodec)
-        }
-    }
-
-    /// unbind implements the teardown logic when the track is no longer needed. This happens
-    /// because a track has been stopped.
-    async fn unbind(&self, t: &TrackLocalContext) -> Result<()> {
-        let mut bindings = self.bindings.lock().await;
-        let mut idx = None;
-        for (index, binding) in bindings.iter().enumerate() {
-            if binding.id == t.id() {
-                idx = Some(index);
-                break;
-            }
-        }
-        if let Some(index) = idx {
-            bindings.remove(index);
-            Ok(())
-        } else {
-            Err(Error::ErrUnbindFailed)
-        }
-    }
-
     /// id is the unique identifier for this Track. This should be unique for the
     /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
     /// and StreamID would be 'desktop' or 'webcam'
@@ -275,7 +194,6 @@ impl TrackLocal for TrackLocalStaticRTP {
     }
 }
 
-#[async_trait]
 impl TrackLocalWriter for TrackLocalStaticRTP {
     /// `write_rtp_with_attributes` writes a RTP Packet to the TrackLocalStaticRTP
     /// If one PeerConnection fails the packets will still be sent to
@@ -286,22 +204,21 @@ impl TrackLocalWriter for TrackLocalStaticRTP {
     /// function are blocked internally. Care must be taken to not increase the sequence number
     /// while the sender is paused. While the actual _sending_ is blocked, the receiver will
     /// miss out when the sequence number "rolls over", which in turn will break SRTP.
-    async fn write_rtp_with_attributes(
+    fn write_rtp_with_attributes(
         &self,
         pkt: &rtp::packet::Packet,
         attr: &Attributes,
     ) -> Result<usize> {
         self.write_rtp_with_extensions_attributes(pkt, &[], attr)
-            .await
     }
 
     /// write writes a RTP Packet as a buffer to the TrackLocalStaticRTP
     /// If one PeerConnection fails the packets will still be sent to
     /// all PeerConnections. The error message will contain the ID of the failed
     /// PeerConnections so you can remove them
-    async fn write(&self, mut b: &[u8]) -> Result<usize> {
+    fn write(&self, mut b: &[u8]) -> Result<usize> {
         let pkt = rtp::packet::Packet::unmarshal(&mut b)?;
-        self.write_rtp(&pkt).await?;
+        self.write_rtp(&pkt)?;
         Ok(b.len())
     }
 }

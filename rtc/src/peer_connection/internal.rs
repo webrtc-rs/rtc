@@ -1,8 +1,9 @@
 use super::*;
+use crate::media::track::TrackDetails;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, have_data_channel, populate_sdp,
-    track_details_from_sdp, MediaSection, PopulateSdpParams, TrackDetails,
+    track_details_from_sdp, MediaSection, PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;

@@ -1304,6 +1304,9 @@ pub enum Error {
     #[error("new track must be of the same kind as previous")]
     ErrRTPSenderNewTrackHasIncorrectKind,
 
+    #[error("new track has incorrect envelope")]
+    ErrRTPSenderNewTrackHasIncorrectEnvelope,
+
     /// ErrRTPSenderDataSent indicates that the sequence number transformer tries to be enabled after the data sending began
     #[error("Sequence number transformer must be enabled before sending data")]
     ErrRTPSenderDataSent,

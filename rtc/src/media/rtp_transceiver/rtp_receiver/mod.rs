@@ -1,13 +1,18 @@
 //TODO: #[cfg(test)]
 //mod rtp_receiver_test;
 
-use crate::media::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
+use crate::media::rtp_transceiver::rtp_codec::{
+    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodecParameters, RTCRtpParameters,
+    RTPCodecType,
+};
+use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver::{RTCRtpDecodingParameters, RTCRtpReceiveParameters};
+use crate::media::track::track_remote::TrackRemote;
+use crate::media::track::{TrackDetails, TrackStreams};
+use crate::peer_connection::configuration::media_engine::MediaEngine;
+use interceptor::stream_info::RTPHeaderExtension;
 use shared::error::{flatten_errs, Error, Result};
 use std::fmt;
-//use crate::media::{
-//    codec_rtx_search, create_stream_info, RTCRtpDecodingParameters, RTCRtpReceiveParameters, SSRC,
-//};
-//use crate::peer_connection::sdp::TrackDetails;
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -81,8 +86,8 @@ pub struct RTCRtpReceiver {
 
     state: State,
 
-    transceiver_codecs: Vec<RTCRtpCodecParameters>,
-    //TODO: tracks: RwLock<Vec<TrackStreams>>,
+    transceiver_codecs: Option<Vec<RTCRtpCodecParameters>>,
+    tracks: Vec<TrackStreams>,
 }
 
 impl RTCRtpReceiver {
@@ -240,18 +245,14 @@ impl RTCRtpReceiver {
             //log::debug!("read_rtp exit tracks with ErrRTPReceiverWithSSRCTrackStreamNotFound");
             Err(Error::ErrRTPReceiverWithSSRCTrackStreamNotFound)
         }
-    }
+    }*/
 
-    async fn get_parameters(&self) -> RTCRtpParameters {
-        let mut parameters = self
-            .media_engine
+    fn get_parameters(&mut self, media_engine: &mut MediaEngine) -> RTCRtpParameters {
+        let mut parameters = media_engine
             .get_rtp_parameters_by_kind(self.kind, RTCRtpTransceiverDirection::Recvonly);
 
-        let transceiver_codecs = self.transceiver_codecs.load();
-        if let Some(codecs) = &*transceiver_codecs {
-            let mut c = codecs.lock().await;
-            parameters.codecs =
-                RTPReceiverInternal::get_codecs(&mut c, self.kind, &self.media_engine);
+        if let Some(codecs) = self.transceiver_codecs.as_mut() {
+            parameters.codecs = RTCRtpReceiver::get_codecs(codecs, self.kind, media_engine);
         }
 
         parameters
@@ -260,7 +261,7 @@ impl RTCRtpReceiver {
     pub(crate) fn get_codecs(
         codecs: &mut [RTCRtpCodecParameters],
         kind: RTPCodecType,
-        media_engine: &Arc<MediaEngine>,
+        media_engine: &MediaEngine,
     ) -> Vec<RTCRtpCodecParameters> {
         let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
         if codecs.is_empty() {
@@ -279,89 +280,30 @@ impl RTCRtpReceiver {
 
         filtered_codecs
     }
-     */
-    // State
 
-    /// Get the current state and a receiver for the next state change.
-    pub(crate) fn current_state(&self) -> State {
-        self.state
-    }
-    /*
-       pub(crate) fn start(&self) -> Result<()> {
-           State::transition(State::Started, &self.state_tx)
-       }
-
-       pub(crate) fn pause(&self) -> Result<()> {
-           let current = self.current_state();
-
-           match current {
-               State::Unstarted => State::transition(State::UnstartedPaused, &self.state_tx),
-               State::Started => State::transition(State::Paused, &self.state_tx),
-               _ => Ok(()),
-           }
-       }
-
-       pub(crate) fn resume(&self) -> Result<()> {
-           let current = self.current_state();
-
-           match current {
-               State::UnstartedPaused => State::transition(State::Unstarted, &self.state_tx),
-               State::Paused => State::transition(State::Started, &self.state_tx),
-               _ => Ok(()),
-           }
-       }
-
-    */
-    pub(crate) fn close(&mut self) -> Result<()> {
-        self.state = State::Stopped;
-        Ok(())
-    }
-}
-
-impl RTCRtpReceiver {
-    pub fn new(
-        receive_mtu: usize,
-        kind: RTPCodecType,
-        //transport: Arc<RTCDtlsTransport>,
-        //media_engine: Arc<MediaEngine>,
-        //interceptor: Arc<dyn Interceptor + Send + Sync>,
-    ) -> Self {
+    pub fn new(receive_mtu: usize, kind: RTPCodecType) -> Self {
         Self {
             receive_mtu,
             kind,
             state: State::Unstarted,
-            transceiver_codecs: vec![],
+            transceiver_codecs: None,
+            tracks: vec![],
         }
     }
 
     pub fn kind(&self) -> RTPCodecType {
         self.kind
     }
-    /*TODO:
-    pub(crate) fn set_transceiver_codecs(
-        &self,
-        codecs: Option<Arc<Mutex<Vec<RTCRtpCodecParameters>>>>,
-    ) {
-        self.internal.transceiver_codecs.store(codecs);
-    }
 
-    /// transport returns the currently-configured *DTLSTransport or nil
-    /// if one has not yet been configured
-    pub fn transport(&self) -> Arc<RTCDtlsTransport> {
-        Arc::clone(&self.internal.transport)
-    }
-
-    /// get_parameters describes the current configuration for the encoding and
-    /// transmission of media on the receiver's track.
-    pub async fn get_parameters(&self) -> RTCRtpParameters {
-        self.internal.get_parameters().await
+    pub(crate) fn set_transceiver_codecs(&mut self, codecs: Option<Vec<RTCRtpCodecParameters>>) {
+        self.transceiver_codecs = codecs;
     }
 
     /// SetRTPParameters applies provided RTPParameters the RTPReceiver's tracks.
     /// This method is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.
     /// The amount of provided codecs must match the number of tracks on the receiver.
-    pub async fn set_rtp_parameters(&self, params: RTCRtpParameters) {
+    pub fn set_rtp_parameters(&mut self, params: RTCRtpParameters) {
         let mut header_extensions = vec![];
         for h in &params.header_extensions {
             header_extensions.push(RTPHeaderExtension {
@@ -370,52 +312,47 @@ impl RTCRtpReceiver {
             });
         }
 
-        let mut tracks = self.internal.tracks.write().await;
         for (idx, codec) in params.codecs.iter().enumerate() {
-            let t = &mut tracks[idx];
+            let t = &mut self.tracks[idx];
             if let Some(stream_info) = &mut t.stream.stream_info {
                 stream_info
                     .rtp_header_extensions
                     .clone_from(&header_extensions);
             }
 
-            let current_track = &t.track;
+            let current_track = &mut t.track;
             current_track.set_codec(codec.clone());
             current_track.set_params(params.clone());
         }
     }
 
-    /// tracks returns the RtpTransceiver traclockks
+    /// tracks returns the RtpTransceiver trackRemote
     /// A RTPReceiver to support Simulcast may now have multiple tracks
-    pub async fn tracks(&self) -> Vec<Arc<TrackRemote>> {
-        let tracks = self.internal.tracks.read().await;
-        tracks.iter().map(|t| Arc::clone(&t.track)).collect()
+    pub fn tracks(&mut self) -> impl Iterator<Item = &mut TrackRemote> {
+        self.tracks.iter_mut().map(|t| &mut t.track)
     }
 
     /// receive initialize the track and starts all the transports
-    pub async fn receive(&self, parameters: &RTCRtpReceiveParameters) -> Result<()> {
-        let receiver = Arc::downgrade(&self.internal);
-
-        let current_state = self.internal.current_state();
+    pub fn receive(
+        &mut self,
+        _parameters: &RTCRtpReceiveParameters,
+        media_engine: &mut MediaEngine,
+    ) -> Result<()> {
+        let current_state = self.current_state();
         if current_state.is_started() {
             return Err(Error::ErrRTPReceiverReceiveAlreadyCalled);
         }
-        self.internal.start()?;
+        self.state = State::Started;
 
-        let (global_params, interceptor, media_engine) = {
-            (
-                self.internal.get_parameters().await,
-                Arc::clone(&self.internal.interceptor),
-                Arc::clone(&self.internal.media_engine),
-            )
-        };
+        let global_params = self.get_parameters(media_engine);
 
-        let codec = if let Some(codec) = global_params.codecs.first() {
+        let _codec = if let Some(codec) = global_params.codecs.first() {
             codec.clone()
         } else {
             RTCRtpCodecParameters::default()
         };
 
+        /*
         for encoding in &parameters.encodings {
             let (stream_info, rtp_read_stream, rtp_interceptor, rtcp_read_stream, rtcp_interceptor) =
                 if encoding.ssrc != 0 {
@@ -513,11 +450,11 @@ impl RTCRtpReceiver {
                 )
                 .await?;
             }
-        }
+        }*/
 
         Ok(())
     }
-
+    /*
     /// read reads incoming RTCP for this RTPReceiver
     pub async fn read(
         &self,
@@ -556,8 +493,8 @@ impl RTCRtpReceiver {
     pub(crate) async fn have_received(&self) -> bool {
         self.internal.current_state().is_started()
     }
-
-    pub(crate) async fn start(&self, incoming: &TrackDetails) {
+    */
+    pub(crate) fn start(&mut self, incoming: &TrackDetails, media_engine: &mut MediaEngine) {
         let mut encoding_size = incoming.ssrcs.len();
         if incoming.rids.len() >= encoding_size {
             encoding_size = incoming.rids.len();
@@ -575,28 +512,28 @@ impl RTCRtpReceiver {
             encoding.rtx.ssrc = incoming.repair_ssrc;
         }
 
-        if let Err(err) = self.receive(&RTCRtpReceiveParameters { encodings }).await {
+        if let Err(err) = self.receive(&RTCRtpReceiveParameters { encodings }, media_engine) {
             log::warn!("RTPReceiver Receive failed {err}");
             return;
         }
 
         // set track id and label early so they can be set as new track information
         // is received from the SDP.
-        let is_unpaused = self.current_state() == State::Started;
-        for track_remote in &self.tracks().await {
+        let _is_unpaused = self.current_state() == State::Started;
+        for track_remote in self.tracks() {
             track_remote.set_id(incoming.id.clone());
             track_remote.set_stream_id(incoming.stream_id.clone());
 
-            if is_unpaused {
-                track_remote.fire_onunmute().await;
-            }
+            /*TODO: if is_unpaused {
+                track_remote.fire_onunmute();
+            }*/
         }
     }
-     */
+
     /// Stop irreversibly stops the RTPReceiver
     pub fn stop(&mut self) -> Result<()> {
         let previous_state = self.current_state();
-        self.close()?;
+        self.state = State::Stopped;
 
         let errs: Vec<Error> = vec![];
         let was_ever_started = previous_state.is_started();
@@ -647,118 +584,130 @@ impl RTCRtpReceiver {
         flatten_errs(errs)
     }
     /*
-       /// read_rtp should only be called by a track, this only exists so we can keep state in one place
-       pub(crate) async fn read_rtp(
-           &self,
-           b: &mut [u8],
-           tid: usize,
-       ) -> Result<(rtp::packet::Packet, Attributes)> {
-           self.internal.read_rtp(b, tid).await
-       }
+    /// read_rtp should only be called by a track, this only exists so we can keep state in one place
+    pub(crate) async fn read_rtp(
+        &self,
+        b: &mut [u8],
+        tid: usize,
+    ) -> Result<(rtp::packet::Packet, Attributes)> {
+        self.internal.read_rtp(b, tid).await
+    }
 
-       /// receive_for_rid is the sibling of Receive expect for RIDs instead of SSRCs
-       /// It populates all the internal state for the given RID
-       pub(crate) async fn receive_for_rid(
-           &self,
-           rid: SmolStr,
-           params: RTCRtpParameters,
-           stream: TrackStream,
-       ) -> Result<Arc<TrackRemote>> {
-           let mut tracks = self.internal.tracks.write().await;
-           for t in &mut *tracks {
-               if *t.track.rid() == rid {
-                   t.track.set_kind(self.internal.kind);
-                   if let Some(codec) = params.codecs.first() {
-                       t.track.set_codec(codec.clone());
-                   }
-                   t.track.set_params(params.clone());
-                   t.track
-                       .set_ssrc(stream.stream_info.as_ref().map_or(0, |s| s.ssrc));
-                   t.stream = stream;
-                   return Ok(Arc::clone(&t.track));
-               }
-           }
+    /// receive_for_rid is the sibling of Receive expect for RIDs instead of SSRCs
+    /// It populates all the internal state for the given RID
+    pub(crate) async fn receive_for_rid(
+        &self,
+        rid: SmolStr,
+        params: RTCRtpParameters,
+        stream: TrackStream,
+    ) -> Result<Arc<TrackRemote>> {
+        let mut tracks = self.internal.tracks.write().await;
+        for t in &mut *tracks {
+            if *t.track.rid() == rid {
+                t.track.set_kind(self.internal.kind);
+                if let Some(codec) = params.codecs.first() {
+                    t.track.set_codec(codec.clone());
+                }
+                t.track.set_params(params.clone());
+                t.track
+                    .set_ssrc(stream.stream_info.as_ref().map_or(0, |s| s.ssrc));
+                t.stream = stream;
+                return Ok(Arc::clone(&t.track));
+            }
+        }
 
-           Err(Error::ErrRTPReceiverForRIDTrackStreamNotFound)
-       }
+        Err(Error::ErrRTPReceiverForRIDTrackStreamNotFound)
+    }
 
-       /// receiveForRtx starts a routine that processes the repair stream
-       /// These packets aren't exposed to the user yet, but we need to process them for
-       /// TWCC
-       pub(crate) async fn receive_for_rtx(
-           &self,
-           ssrc: SSRC,
-           rsid: String,
-           repair_stream: TrackStream,
-       ) -> Result<()> {
-           let mut tracks = self.internal.tracks.write().await;
-           let l = tracks.len();
-           for t in &mut *tracks {
-               if (ssrc != 0 && l == 1) || t.track.rid() == rsid {
-                   t.repair_stream = repair_stream;
+    /// receiveForRtx starts a routine that processes the repair stream
+    /// These packets aren't exposed to the user yet, but we need to process them for
+    /// TWCC
+    pub(crate) async fn receive_for_rtx(
+        &self,
+        ssrc: SSRC,
+        rsid: String,
+        repair_stream: TrackStream,
+    ) -> Result<()> {
+        let mut tracks = self.internal.tracks.write().await;
+        let l = tracks.len();
+        for t in &mut *tracks {
+            if (ssrc != 0 && l == 1) || t.track.rid() == rsid {
+                t.repair_stream = repair_stream;
 
-                   let receive_mtu = self.receive_mtu;
-                   let track = t.clone();
-                   tokio::spawn(async move {
-                       let a = Attributes::new();
-                       let mut b = vec![0u8; receive_mtu];
-                       while let Some(repair_rtp_interceptor) = &track.repair_stream.rtp_interceptor {
-                           //TODO: cancel repair_rtp_interceptor.read gracefully
-                           //println!("repair_rtp_interceptor read begin with ssrc={}", ssrc);
-                           if repair_rtp_interceptor.read(&mut b, &a).await.is_err() {
-                               break;
-                           }
-                       }
-                   });
+                let receive_mtu = self.receive_mtu;
+                let track = t.clone();
+                tokio::spawn(async move {
+                    let a = Attributes::new();
+                    let mut b = vec![0u8; receive_mtu];
+                    while let Some(repair_rtp_interceptor) = &track.repair_stream.rtp_interceptor {
+                        //TODO: cancel repair_rtp_interceptor.read gracefully
+                        //println!("repair_rtp_interceptor read begin with ssrc={}", ssrc);
+                        if repair_rtp_interceptor.read(&mut b, &a).await.is_err() {
+                            break;
+                        }
+                    }
+                });
 
-                   return Ok(());
-               }
-           }
+                return Ok(());
+            }
+        }
 
-           Err(Error::ErrRTPReceiverForRIDTrackStreamNotFound)
-       }
+        Err(Error::ErrRTPReceiverForRIDTrackStreamNotFound)
+    }
+     */
+    // State
 
-       // State
+    pub(crate) fn current_state(&self) -> State {
+        self.state
+    }
 
-       pub(crate) fn current_state(&self) -> State {
-           self.internal.current_state()
-       }
+    pub(crate) fn pause(&mut self) -> Result<()> {
+        let current = self.current_state();
 
-       pub(crate) async fn pause(&self) -> Result<()> {
-           self.internal.pause()?;
+        match current {
+            State::Unstarted => self.state = State::UnstartedPaused,
+            State::Started => self.state = State::Paused,
+            _ => {}
+        }
 
-           if !self.internal.current_state().is_started() {
-               return Ok(());
-           }
+        if !self.current_state().is_started() {
+            return Ok(());
+        }
 
-           let streams = self.internal.tracks.read().await;
+        /* TODO:
+        let streams = self.internal.tracks.read().await;
 
-           for stream in streams.iter() {
-               // TODO: If we introduce futures as a direct dependency this and other futures could be
-               // ran concurrently with [`join_all`](https://docs.rs/futures/0.3.21/futures/future/fn.join_all.html)
-               stream.track.fire_onmute().await;
-           }
+        for stream in streams.iter() {
+            // TODO: If we introduce futures as a direct dependency this and other futures could be
+            // ran concurrently with [`join_all`](https://docs.rs/futures/0.3.21/futures/future/fn.join_all.html)
+            stream.track.fire_onmute().await;
+        }*/
 
-           Ok(())
-       }
+        Ok(())
+    }
 
-       pub(crate) async fn resume(&self) -> Result<()> {
-           self.internal.resume()?;
+    pub(crate) fn resume(&mut self) -> Result<()> {
+        let current = self.current_state();
 
-           if !self.internal.current_state().is_started() {
-               return Ok(());
-           }
+        match current {
+            State::UnstartedPaused => self.state = State::Unstarted,
+            State::Paused => self.state = State::Started,
+            _ => {}
+        }
 
-           let streams = self.internal.tracks.read().await;
+        if !self.current_state().is_started() {
+            return Ok(());
+        }
 
-           for stream in streams.iter() {
-               // TODO: If we introduce futures as a direct dependency this and other futures could be
-               // ran concurrently with [`join_all`](https://docs.rs/futures/0.3.21/futures/future/fn.join_all.html)
-               stream.track.fire_onunmute().await;
-           }
+        /*TODO:
+        let streams = self.internal.tracks.read().await;
 
-           Ok(())
-       }
+        for stream in streams.iter() {
+            // TODO: If we introduce futures as a direct dependency this and other futures could be
+            // ran concurrently with [`join_all`](https://docs.rs/futures/0.3.21/futures/future/fn.join_all.html)
+            stream.track.fire_onunmute().await;
+        }*/
 
-    */
+        Ok(())
+    }
 }

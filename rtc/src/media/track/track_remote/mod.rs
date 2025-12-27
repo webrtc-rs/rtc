@@ -4,14 +4,7 @@ use std::collections::VecDeque;
 use crate::media::rtp_transceiver::rtp_codec::{
     RTCRtpCodecParameters, RTCRtpParameters, RTPCodecType,
 };
-//use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_transceiver::{PayloadType, SSRC};
-//use crate::peer_connection::configuration::media_engine::MediaEngine;
-//use shared::error::{Error, Result};
-
-/*lazy_static! {
-    static ref TRACK_REMOTE_UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
-}*/
 
 /// TrackRemote represents a single inbound source of media
 #[derive(Clone)]
@@ -50,33 +43,25 @@ impl std::fmt::Debug for TrackRemote {
 }
 
 impl TrackRemote {
-    /*
     pub(crate) fn new(
         receive_mtu: usize,
         kind: RTPCodecType,
         ssrc: SSRC,
-        rid: SmolStr,
-        receiver: Weak<RTPReceiverInternal>,
-        media_engine: Arc<MediaEngine>,
-        interceptor: Arc<dyn Interceptor + Send + Sync>,
+        rid: String,
+        //receiver: Weak<RTPReceiverInternal>,
     ) -> Self {
         TrackRemote {
-            tid: TRACK_REMOTE_UNIQUE_ID.fetch_add(1, Ordering::SeqCst),
+            tid: 0, //TODO: randomize it
             id: Default::default(),
             stream_id: Default::default(),
             receive_mtu,
             payload_type: Default::default(),
-            kind: AtomicU8::new(kind as u8),
-            ssrc: AtomicU32::new(ssrc),
+            kind,
+            ssrc,
             codec: Default::default(),
             params: Default::default(),
             rid,
-            receiver: Some(receiver),
-            media_engine,
-            interceptor,
-            handlers: Default::default(),
-
-            internal: Default::default(),
+            peeked: VecDeque::new(),
         }
     }
 
@@ -87,25 +72,21 @@ impl TrackRemote {
     /// id is the unique identifier for this Track. This should be unique for the
     /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
     /// and StreamID would be 'desktop' or 'webcam'
-    pub fn id(&self) -> String {
-        let id = self.id.lock();
-        id.clone()
+    pub fn id(&self) -> &str {
+        self.id.as_ref()
     }
 
-    pub fn set_id(&self, s: String) {
-        let mut id = self.id.lock();
-        *id = s;
+    pub fn set_id(&mut self, id: String) {
+        self.id = id;
     }
 
     /// stream_id is the group this track belongs too. This must be unique
-    pub fn stream_id(&self) -> String {
-        let stream_id = self.stream_id.lock();
-        stream_id.clone()
+    pub fn stream_id(&self) -> &str {
+        self.stream_id.as_str()
     }
 
-    pub fn set_stream_id(&self, s: String) {
-        let mut stream_id = self.stream_id.lock();
-        *stream_id = s;
+    pub fn set_stream_id(&mut self, stream_id: String) {
+        self.stream_id = stream_id;
     }
 
     /// rid gets the RTP Stream ID of this Track
@@ -117,29 +98,29 @@ impl TrackRemote {
 
     /// payload_type gets the PayloadType of the track
     pub fn payload_type(&self) -> PayloadType {
-        self.payload_type.load(Ordering::SeqCst)
+        self.payload_type
     }
 
-    pub fn set_payload_type(&self, payload_type: PayloadType) {
-        self.payload_type.store(payload_type, Ordering::SeqCst);
+    pub fn set_payload_type(&mut self, payload_type: PayloadType) {
+        self.payload_type = payload_type;
     }
 
     /// kind gets the Kind of the track
     pub fn kind(&self) -> RTPCodecType {
-        self.kind.load(Ordering::SeqCst).into()
+        self.kind
     }
 
-    pub fn set_kind(&self, kind: RTPCodecType) {
-        self.kind.store(kind as u8, Ordering::SeqCst);
+    pub fn set_kind(&mut self, kind: RTPCodecType) {
+        self.kind = kind;
     }
 
     /// ssrc gets the SSRC of the track
     pub fn ssrc(&self) -> SSRC {
-        self.ssrc.load(Ordering::SeqCst)
+        self.ssrc
     }
 
-    pub fn set_ssrc(&self, ssrc: SSRC) {
-        self.ssrc.store(ssrc, Ordering::SeqCst);
+    pub fn set_ssrc(&mut self, ssrc: SSRC) {
+        self.ssrc = ssrc;
     }
 
     /// msid gets the Msid of the track
@@ -148,49 +129,28 @@ impl TrackRemote {
     }
 
     /// codec gets the Codec of the track
-    pub fn codec(&self) -> RTCRtpCodecParameters {
-        let codec = self.codec.lock();
-        codec.clone()
+    pub fn codec(&self) -> &RTCRtpCodecParameters {
+        &self.codec
     }
 
-    pub fn set_codec(&self, codec: RTCRtpCodecParameters) {
-        let mut c = self.codec.lock();
-        *c = codec;
+    pub fn set_codec(&mut self, codec: RTCRtpCodecParameters) {
+        self.codec = codec;
     }
 
-    pub fn params(&self) -> RTCRtpParameters {
-        let p = self.params.lock();
-        p.clone()
+    pub fn params(&self) -> &RTCRtpParameters {
+        &self.params
     }
 
-    pub fn set_params(&self, params: RTCRtpParameters) {
-        let mut p = self.params.lock();
-        *p = params;
+    pub fn set_params(&mut self, params: RTCRtpParameters) {
+        self.params = params;
     }
 
-    pub fn onmute<F>(&self, handler: F)
-    where
-        F: FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + 'static + Sync,
-    {
-        self.handlers
-            .on_mute
-            .store(Some(Arc::new(Mutex::new(Box::new(handler)))));
-    }
-
-    pub fn onunmute<F>(&self, handler: F)
-    where
-        F: FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + 'static + Sync,
-    {
-        self.handlers
-            .on_unmute
-            .store(Some(Arc::new(Mutex::new(Box::new(handler)))));
-    }
-
+    /*
     /// Reads data from the track.
     ///
     /// **Cancel Safety:** This method is not cancel safe. Dropping the resulting [`Future`] before
     /// it returns [`std::task::Poll::Ready`] will cause data loss.
-    pub async fn read(&self, b: &mut [u8]) -> Result<(rtp::packet::Packet, Attributes)> {
+    pub fn read(&self, b: &mut [u8]) -> Result<(rtp::packet::Packet, Attributes)> {
         {
             // Internal lock scope
             let mut internal = self.internal.lock().await;
