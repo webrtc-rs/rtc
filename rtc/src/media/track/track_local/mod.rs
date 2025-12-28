@@ -7,7 +7,10 @@
 use interceptor::Attributes;
 use shared::marshal::Unmarshal;
 
-use crate::media::rtp_transceiver::rtp_codec::*;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::*;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
 use crate::media::rtp_transceiver::*;
 use shared::error::Result;
 
@@ -16,7 +19,7 @@ use shared::error::Result;
 /// the implementations in pkg/media
 #[derive(Default, Debug, Clone)]
 pub struct TrackLocal {
-    codec: RTCRtpCodecCapability,
+    codec: RTCRtpCodec,
     rid: Option<String>,
     stream_id: String,
 
@@ -49,6 +52,10 @@ impl TrackLocal {
     /// id is a unique identifier that is used for both bind/unbind
     pub fn id(&self) -> &str {
         self.id.as_str()
+    }
+
+    pub fn rid(&self) -> Option<&str> {
+        self.rid.as_deref()
     }
 
     /// mid returns the id of media associated with the RTP stream

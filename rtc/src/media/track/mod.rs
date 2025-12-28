@@ -1,7 +1,7 @@
 pub mod track_local;
 pub mod track_remote;
 
-use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
 use crate::media::rtp_transceiver::SSRC;
 use crate::media::track::track_local::TrackLocal;
 use interceptor::stream_info::StreamInfo;

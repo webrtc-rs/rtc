@@ -1,11 +1,28 @@
 //TODO: #[cfg(test)]
 //mod rtp_sender_test;
 
-use crate::media::rtp_transceiver::rtp_codec::RTPCodecType;
-use crate::media::rtp_transceiver::{PayloadType, RTCRtpSendParameters};
+pub mod rtcp_parameters;
+pub mod rtp_capabilities;
+pub mod rtp_codec;
+pub mod rtp_codec_parameters;
+pub mod rtp_coding_parameters;
+pub mod rtp_encoding_parameters;
+pub mod rtp_header_extension_capability;
+pub mod rtp_header_extension_parameters;
+pub mod rtp_parameters;
+pub mod rtp_receiver_parameters;
+pub mod rtp_send_parameters;
+pub mod set_parameter_options;
+
+use crate::media::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
+use crate::media::rtp_transceiver::PayloadType;
 use crate::media::track::track_local::TrackLocal;
-use crate::media::track::TrackEncoding;
+use crate::media::track::{RtxEncoding, TrackEncoding};
+use crate::peer_connection::configuration::media_engine::MediaEngine;
 use ice::rand::generate_crypto_random_string;
+use interceptor::stream_info::StreamInfo;
 use shared::error::{Error, Result};
 
 /// RTPSender allows an application to control how a given Track is encoded and transmitted to a remote peer
@@ -17,7 +34,7 @@ use shared::error::{Error, Result};
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct RTCRtpSender {
     pub(crate) track_encodings: Vec<TrackEncoding>,
 
@@ -48,6 +65,7 @@ impl RTCRtpSender {
         start_paused: bool,
         receive_mtu: usize,
         enable_rtx: bool,
+        media_engine: &MediaEngine,
     ) -> Self {
         let id = generate_crypto_random_string(
             32,
@@ -59,8 +77,18 @@ impl RTCRtpSender {
             .map(|track| vec![track.stream_id().to_string()])
             .unwrap_or_default();
 
+        let mut track_encodings = vec![];
+        if let Some(track) = track {
+            RTCRtpSender::add_encoding_internal(
+                &mut track_encodings,
+                track,
+                enable_rtx,
+                media_engine,
+            );
+        }
+
         Self {
-            track_encodings: vec![],
+            track_encodings,
 
             kind,
             payload_type: 0,
@@ -77,150 +105,20 @@ impl RTCRtpSender {
         }
     }
 
-    /*
-            /// AddEncoding adds an encoding to RTPSender. Used by simulcast senders.
-            pub async fn add_encoding(&self, track: Arc<dyn TrackLocal + Send + Sync>) -> Result<()> {
-                let mut track_encodings = self.track_encodings.lock().await;
-
-                if track.rid().is_none() {
-                    return Err(Error::ErrRTPSenderRidNil);
-                }
-
-                if self.has_stopped().await {
-                    return Err(Error::ErrRTPSenderStopped);
-                }
-
-                if self.has_sent() {
-                    return Err(Error::ErrRTPSenderSendAlreadyCalled);
-                }
-
-                let base_track = track_encodings
-                    .first()
-                    .map(|e| &e.track)
-                    .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
-                if base_track.rid().is_none() {
-                    return Err(Error::ErrRTPSenderNoBaseEncoding);
-                }
-
-                if base_track.id() != track.id()
-                    || base_track.stream_id() != track.stream_id()
-                    || base_track.kind() != track.kind()
-                {
-                    return Err(Error::ErrRTPSenderBaseEncodingMismatch);
-                }
-
-                if track_encodings.iter().any(|e| e.track.rid() == track.rid()) {
-                    return Err(Error::ErrRTPSenderRIDCollision);
-                }
-
-                self.add_encoding_internal(&mut track_encodings, track)
-                    .await
-            }
-
-            async fn add_encoding_internal(
-                &self,
-                track_encodings: &mut Vec<TrackEncoding>,
-                track: Arc<dyn TrackLocal + Send + Sync>,
-            ) -> Result<()> {
-                let ssrc = rand::random::<u32>();
-                let srtp_stream = Arc::new(SrtpWriterFuture {
-                    closed: AtomicBool::new(false),
-                    ssrc,
-                    rtp_sender: Arc::downgrade(&self.internal),
-                    rtp_transport: Arc::clone(&self.transport),
-                    rtcp_read_stream: Mutex::new(None),
-                    rtp_write_session: Mutex::new(None),
-                    seq_trans: Arc::clone(&self.seq_trans),
-                });
-
-                let srtp_rtcp_reader = Arc::clone(&srtp_stream) as Arc<dyn RTCPReader + Send + Sync>;
-                let rtcp_interceptor = self.interceptor.bind_rtcp_reader(srtp_rtcp_reader).await;
-
-                let create_rtx_stream = self.enable_rtx
-                    && self
-                        .media_engine
-                        .get_codecs_by_kind(track.kind())
-                        .iter()
-                        .any(|codec| {
-                            matches!(codec.capability.mime_type.split_once("/"), Some((_, "rtx")))
-                        });
-
-                let rtx = if create_rtx_stream {
-                    let ssrc = rand::random::<u32>();
-
-                    let srtp_stream = Arc::new(SrtpWriterFuture {
-                        closed: AtomicBool::new(false),
-                        ssrc,
-                        rtp_sender: Arc::downgrade(&self.internal),
-                        rtp_transport: Arc::clone(&self.transport),
-                        rtcp_read_stream: Mutex::new(None),
-                        rtp_write_session: Mutex::new(None),
-                        seq_trans: Arc::clone(&self.rtx_seq_trans),
-                    });
-
-                    let srtp_rtcp_reader = Arc::clone(&srtp_stream) as Arc<dyn RTCPReader + Send + Sync>;
-                    let rtcp_interceptor = self.interceptor.bind_rtcp_reader(srtp_rtcp_reader).await;
-
-                    Some(RtxEncoding {
-                        srtp_stream,
-                        rtcp_interceptor,
-                        stream_info: Mutex::new(StreamInfo::default()),
-                        ssrc,
-                    })
-                } else {
-                    None
-                };
-
-                let write_stream = Arc::new(InterceptorToTrackLocalWriter::new(self.paused.clone()));
-                let context = TrackLocalContext {
-                    id: self.id.clone(),
-                    params: super::RTCRtpParameters::default(),
-                    ssrc: 0,
-                    write_stream,
-                    paused: self.paused.clone(),
-                    mid: None,
-                };
-                let encoding = TrackEncoding {
-                    track,
-                    srtp_stream,
-                    rtcp_interceptor,
-                    stream_info: StreamInfo::default(),
-                    context,
-                    ssrc,
-                    rtx,
-                };
-
-                track_encodings.push(encoding);
-
-                Ok(())
-            }
-    */
-    pub(crate) fn is_negotiated(&self) -> bool {
-        self.negotiated
+    /// track returns the RTCRtpTransceiver track, or nil
+    pub fn track(&self) -> Option<&TrackLocal> {
+        self.track_encodings.first().map(|e| &e.track)
     }
 
-    pub(crate) fn set_negotiated(&mut self) {
-        self.negotiated = true;
+    pub fn get_capabilities(&self, _kind: RTPCodecType) -> RTCRtpCapabilities {
+        //TODO:
+        RTCRtpCapabilities::default()
     }
-    /*
-                pub(crate) fn set_rtp_transceiver(&self, rtp_transceiver: Option<Weak<RTCRtpTransceiver>>) {
-                    if let Some(t) = rtp_transceiver.as_ref().and_then(|t| t.upgrade()) {
-                        self.set_paused(!t.direction().has_send());
-                    }
-                    let mut tr = self.rtp_transceiver.lock();
-                    *tr = rtp_transceiver;
-                }
 
-                pub(crate) fn set_paused(&self, paused: bool) {
-                    self.paused.store(paused, Ordering::SeqCst);
-                }
+    pub fn set_parameters(&mut self, _parameters: RTCRtpSendParameters) {
+        //TODO:
+    }
 
-                /// transport returns the currently-configured DTLSTransport
-                /// if one has not yet been configured
-                pub fn transport(&self) -> Arc<RTCDtlsTransport> {
-                    Arc::clone(&self.transport)
-                }
-    */
     /// get_parameters describes the current configuration for the encoding and
     /// transmission of media on the sender's track.
     pub fn get_parameters(&self) -> RTCRtpSendParameters {
@@ -265,12 +163,8 @@ impl RTCRtpSender {
         RTCRtpSendParameters {
             rtp_parameters: Default::default(),
             encodings: vec![],
+            ..Default::default()
         }
-    }
-
-    /// track returns the RTCRtpTransceiver track, or nil
-    pub fn track(&self) -> Option<&TrackLocal> {
-        self.track_encodings.first().map(|e| &e.track)
     }
 
     /// replace_track replaces the track currently being used as the sender's source with a new TrackLocal.
@@ -347,6 +241,116 @@ impl RTCRtpSender {
             Ok(())
         }
     }
+
+    /// AddEncoding adds an encoding to RTPSender. Used by simulcast senders.
+    pub fn add_encoding(&mut self, track: TrackLocal, media_engine: &MediaEngine) -> Result<()> {
+        if track.rid().is_none() {
+            return Err(Error::ErrRTPSenderRidNil);
+        }
+
+        /*
+        if self.has_stopped {
+            return Err(Error::ErrRTPSenderStopped);
+        }
+
+        if self.has_sent {
+            return Err(Error::ErrRTPSenderSendAlreadyCalled);
+        }*/
+
+        let base_track = self
+            .track_encodings
+            .first()
+            .map(|e| &e.track)
+            .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+        if base_track.rid().is_none() {
+            return Err(Error::ErrRTPSenderNoBaseEncoding);
+        }
+
+        if base_track.id() != track.id()
+            || base_track.stream_id() != track.stream_id()
+            || base_track.kind() != track.kind()
+        {
+            return Err(Error::ErrRTPSenderBaseEncodingMismatch);
+        }
+
+        if self
+            .track_encodings
+            .iter()
+            .any(|e| e.track.rid() == track.rid())
+        {
+            return Err(Error::ErrRTPSenderRIDCollision);
+        }
+
+        RTCRtpSender::add_encoding_internal(
+            &mut self.track_encodings,
+            track,
+            self.enable_rtx,
+            media_engine,
+        );
+
+        Ok(())
+    }
+
+    fn add_encoding_internal(
+        track_encodings: &mut Vec<TrackEncoding>,
+        track: TrackLocal,
+        enable_rtx: bool,
+        media_engine: &MediaEngine,
+    ) {
+        let ssrc = rand::random::<u32>();
+
+        let create_rtx_stream = enable_rtx
+            && media_engine
+                .get_codecs_by_kind(track.kind())
+                .iter()
+                .any(|codec| matches!(codec.rtp_codec.mime_type.split_once("/"), Some((_, "rtx"))));
+
+        let rtx = if create_rtx_stream {
+            let ssrc = rand::random::<u32>();
+            Some(RtxEncoding {
+                stream_info: StreamInfo::default(),
+                ssrc,
+            })
+        } else {
+            None
+        };
+        let encoding = TrackEncoding {
+            track,
+            stream_info: StreamInfo::default(),
+            ssrc,
+            rtx,
+        };
+
+        track_encodings.push(encoding);
+    }
+
+    pub(crate) fn is_negotiated(&self) -> bool {
+        self.negotiated
+    }
+
+    pub(crate) fn set_negotiated(&mut self) {
+        self.negotiated = true;
+    }
+    /*
+                pub(crate) fn set_rtp_transceiver(&self, rtp_transceiver: Option<Weak<RTCRtpTransceiver>>) {
+                    if let Some(t) = rtp_transceiver.as_ref().and_then(|t| t.upgrade()) {
+                        self.set_paused(!t.direction().has_send());
+                    }
+                    let mut tr = self.rtp_transceiver.lock();
+                    *tr = rtp_transceiver;
+                }
+
+                pub(crate) fn set_paused(&self, paused: bool) {
+                    self.paused.store(paused, Ordering::SeqCst);
+                }
+
+                /// transport returns the currently-configured DTLSTransport
+                /// if one has not yet been configured
+                pub fn transport(&self) -> Arc<RTCDtlsTransport> {
+                    Arc::clone(&self.transport)
+                }
+    */
+
     /*
                 /// send Attempts to set the parameters controlling the sending of media.
                 pub async fn send(&self, parameters: &RTCRtpSendParameters) -> Result<()> {

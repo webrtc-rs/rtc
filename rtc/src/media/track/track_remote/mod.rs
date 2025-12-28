@@ -1,10 +1,9 @@
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::media::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::Attributes;
 use std::collections::VecDeque;
-
-use crate::media::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecParameters, RTCRtpParameters, RTPCodecType,
-};
-use crate::media::rtp_transceiver::{PayloadType, SSRC};
 
 /// TrackRemote represents a single inbound source of media
 #[derive(Clone)]

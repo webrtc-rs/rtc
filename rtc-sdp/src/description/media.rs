@@ -7,11 +7,11 @@ use crate::description::common::*;
 use crate::extmap::*;
 
 /// Constants for extmap key
-pub const EXT_MAP_VALUE_TRANSPORT_CC_KEY: isize = 3;
+pub const EXT_MAP_VALUE_TRANSPORT_CC_KEY: u16 = 3;
 pub const EXT_MAP_VALUE_TRANSPORT_CC_URI: &str =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
 
-fn ext_map_uri() -> HashMap<isize, &'static str> {
+fn ext_map_uri() -> HashMap<u16, &'static str> {
     let mut m = HashMap::new();
     m.insert(
         EXT_MAP_VALUE_TRANSPORT_CC_KEY,

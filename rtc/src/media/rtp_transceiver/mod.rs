@@ -1,39 +1,28 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
-use interceptor::stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo};
-use interceptor::Attributes;
+
+use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::*;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
+use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
+use crate::media::track::track_local::TrackLocal;
+use crate::peer_connection::configuration::media_engine::MediaEngine;
+use interceptor::{
+    stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo},
+    Attributes,
+};
 use log::trace;
 use serde::{Deserialize, Serialize};
-use shared::error::Result;
-/*
+use shared::error::{Error, Result};
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
-use interceptor::stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo};
-use interceptor::Attributes;
-use portable_atomic::{AtomicBool, AtomicU8};
-use smol_str::SmolStr;
-use tokio::sync::{Mutex, OnceCell};
-
-use crate::api::media_engine::MediaEngine;
-use crate::rtp_transceiver::rtp_receiver::{RTCRtpReceiver, RTPReceiverInternal};
-use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::track::track_local::TrackLocal;
- */
-use crate::media::rtp_transceiver::rtp_codec::*;
-use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-//use shared::error::{Error, Result};
-
+pub mod direction;
 pub(crate) mod fmtp;
-pub mod rtp_codec;
 pub mod rtp_receiver;
 pub mod rtp_sender;
-pub mod rtp_transceiver_direction;
 
 /// SSRC represents a synchronization source
 /// A synchronization source is a randomly chosen
@@ -49,43 +38,6 @@ pub type SSRC = u32;
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
-/// TYPE_RTCP_FBT_RANSPORT_CC ..
-pub const TYPE_RTCP_FB_TRANSPORT_CC: &str = "transport-cc";
-
-/// TYPE_RTCP_FB_GOOG_REMB ..
-pub const TYPE_RTCP_FB_GOOG_REMB: &str = "goog-remb";
-
-/// TYPE_RTCP_FB_ACK ..
-pub const TYPE_RTCP_FB_ACK: &str = "ack";
-
-/// TYPE_RTCP_FB_CCM ..
-pub const TYPE_RTCP_FB_CCM: &str = "ccm";
-
-/// TYPE_RTCP_FB_NACK ..
-pub const TYPE_RTCP_FB_NACK: &str = "nack";
-
-/// rtcpfeedback signals the connection to use additional RTCP packet types.
-/// <https://draft.ortc.org/#dom-rtcrtcpfeedback>
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct RTCPFeedback {
-    /// Type is the type of feedback.
-    /// see: <https://draft.ortc.org/#dom-rtcrtcpfeedback>
-    /// valid: ack, ccm, nack, goog-remb, transport-cc
-    pub typ: String,
-
-    /// The parameter value depends on the type.
-    /// For example, type="nack" parameter="pli" will send Picture Loss Indicator packets.
-    pub parameter: String,
-}
-
-/// RTPCapabilities represents the capabilities of a transceiver
-/// <https://w3c.github.io/webrtc-pc/#rtcrtpcapabilities>
-#[derive(Default, Debug, Clone)]
-pub struct RTCRtpCapabilities {
-    pub codecs: Vec<RTCRtpCodecCapability>,
-    pub header_extensions: Vec<RTCRtpHeaderExtensionCapability>,
-}
-
 /// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.
 /// <https://draft.ortc.org/#dom-rtcrtprtxparameters>
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -93,85 +45,11 @@ pub struct RTCRtpRtxParameters {
     pub ssrc: SSRC,
 }
 
-/// RTPCodingParameters provides information relating to both encoding and decoding.
-/// This is a subset of the RFC since Pion WebRTC doesn't implement encoding/decoding itself
-/// <http://draft.ortc.org/#dom-rtcrtpcodingparameters>
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct RTCRtpCodingParameters {
-    pub rid: String,
-    pub ssrc: SSRC,
-    pub payload_type: PayloadType,
-    pub rtx: RTCRtpRtxParameters,
-}
-
-/// RTPDecodingParameters provides information relating to both encoding and decoding.
-/// This is a subset of the RFC since Pion WebRTC doesn't implement decoding itself
-/// <http://draft.ortc.org/#dom-rtcrtpdecodingparameters>
-pub type RTCRtpDecodingParameters = RTCRtpCodingParameters;
-
-/// RTPEncodingParameters provides information relating to both encoding and decoding.
-/// This is a subset of the RFC since Pion WebRTC doesn't implement encoding itself
-/// <http://draft.ortc.org/#dom-rtcrtpencodingparameters>
-pub type RTCRtpEncodingParameters = RTCRtpCodingParameters;
-
-/// RTPReceiveParameters contains the RTP stack settings used by receivers
-#[derive(Debug)]
-pub struct RTCRtpReceiveParameters {
-    pub encodings: Vec<RTCRtpDecodingParameters>,
-}
-
-/// RTPSendParameters contains the RTP stack settings used by receivers
-#[derive(Debug)]
-pub struct RTCRtpSendParameters {
-    pub rtp_parameters: RTCRtpParameters,
-    pub encodings: Vec<RTCRtpEncodingParameters>,
-}
-
 /// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.
 pub struct RTCRtpTransceiverInit {
     pub direction: RTCRtpTransceiverDirection,
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
     // Streams       []*Track
-}
-
-pub(crate) fn create_stream_info(
-    id: String,
-    ssrc: SSRC,
-    payload_type: PayloadType,
-    codec: RTCRtpCodecCapability,
-    webrtc_header_extensions: &[RTCRtpHeaderExtensionParameters],
-    associated_stream: Option<AssociatedStreamInfo>,
-) -> StreamInfo {
-    let header_extensions: Vec<RTPHeaderExtension> = webrtc_header_extensions
-        .iter()
-        .map(|h| RTPHeaderExtension {
-            id: h.id,
-            uri: h.uri.clone(),
-        })
-        .collect();
-
-    let feedbacks: Vec<_> = codec
-        .rtcp_feedback
-        .iter()
-        .map(|f| interceptor::stream_info::RTCPFeedback {
-            typ: f.typ.clone(),
-            parameter: f.parameter.clone(),
-        })
-        .collect();
-
-    StreamInfo {
-        id,
-        attributes: Attributes::new(),
-        ssrc,
-        payload_type,
-        rtp_header_extensions: header_extensions,
-        mime_type: codec.mime_type,
-        clock_rate: codec.clock_rate,
-        channels: codec.channels,
-        sdp_fmtp_line: codec.sdp_fmtp_line,
-        rtcp_feedback: feedbacks,
-        associated_stream,
-    }
 }
 
 /// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
@@ -187,7 +65,21 @@ pub struct RTCRtpTransceiver {
 
     pub(crate) stopped: bool,
     pub(crate) kind: RTPCodecType,
-    //TODO: media_engine: Arc<MediaEngine>,
+}
+
+impl fmt::Debug for RTCRtpTransceiver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RTCRtpTransceiver")
+            .field("mid", &self.mid)
+            .field("sender", &self.sender)
+            .field("receiver", &self.receiver)
+            .field("direction", &self.direction)
+            .field("current_direction", &self.current_direction)
+            .field("codecs", &self.codecs)
+            .field("stopped", &self.stopped)
+            .field("kind", &self.kind)
+            .finish()
+    }
 }
 
 impl RTCRtpTransceiver {
@@ -197,12 +89,8 @@ impl RTCRtpTransceiver {
         direction: RTCRtpTransceiverDirection,
         kind: RTPCodecType,
         codecs: Vec<RTCRtpCodecParameters>,
-        //media_engine: Arc<MediaEngine>,
     ) -> Self {
-        //let codecs = Arc::new(Mutex::new(codecs));
-        //receiver.set_transceiver_codecs(Some(Arc::clone(&codecs)));
-
-        RTCRtpTransceiver {
+        Self {
             mid: None,
             sender,
             receiver,
@@ -212,92 +100,87 @@ impl RTCRtpTransceiver {
             codecs,
             stopped: false,
             kind,
-            //media_engine,
         }
-        /*t.sender()
-        .await
-        .set_rtp_transceiver(Some(Arc::downgrade(&t)));*/
     }
-    /*
+
     /// set_codec_preferences sets preferred list of supported codecs
     /// if codecs is empty or nil we reset to default from MediaEngine
-    pub async fn set_codec_preferences(&self, codecs: Vec<RTCRtpCodecParameters>) -> Result<()> {
+    pub fn set_codec_preferences(
+        &mut self,
+        codecs: Vec<RTCRtpCodecParameters>,
+        media_engine: &MediaEngine,
+    ) -> Result<()> {
         for codec in &codecs {
-            let media_engine_codecs = self.media_engine.get_codecs_by_kind(self.kind);
+            let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind);
             let (_, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
             if match_type == CodecMatch::None {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
             }
         }
 
-        {
-            let mut c = self.codecs.lock().await;
-            *c = codecs;
-        }
+        self.codecs = codecs;
+
         Ok(())
     }
 
     /// Codecs returns list of supported codecs
-    pub(crate) async fn get_codecs(&self) -> Vec<RTCRtpCodecParameters> {
-        let mut codecs = self.codecs.lock().await;
-        RTPReceiverInternal::get_codecs(&mut codecs, self.kind, &self.media_engine)
+    pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
+        RTCRtpReceiver::get_codecs(&self.codecs, self.kind, media_engine)
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub async fn sender(&self) -> Arc<RTCRtpSender> {
-        let sender = self.sender.lock().await;
-        sender.clone()
+    pub fn sender(&self) -> &RTCRtpSender {
+        &self.sender
+    }
+    /// sender returns the RTPTransceiver's RTPSender if it has one
+    pub fn sender_mut(&mut self) -> &mut RTCRtpSender {
+        &mut self.sender
     }
 
     /// set_sender_track sets the RTPSender and Track to current transceiver
-    pub async fn set_sender_track(
-        self: &Arc<Self>,
-        sender: Arc<RTCRtpSender>,
-        track: Option<Arc<dyn TrackLocal + Send + Sync>>,
+    pub fn set_sender_track(
+        &mut self,
+        sender: RTCRtpSender,
+        track: Option<TrackLocal>,
     ) -> Result<()> {
-        self.set_sender(sender).await;
-        self.set_sending_track(track).await
+        self.set_sender(sender);
+        self.set_sending_track(track)
     }
 
-    pub async fn set_sender(self: &Arc<Self>, s: Arc<RTCRtpSender>) {
-        s.set_rtp_transceiver(Some(Arc::downgrade(self)));
-
-        let prev_sender = self.sender().await;
-        prev_sender.set_rtp_transceiver(None);
-
-        {
-            let mut sender = self.sender.lock().await;
-            *sender = s;
-        }
+    pub fn set_sender(&mut self, s: RTCRtpSender) {
+        self.sender = s;
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub async fn receiver(&self) -> Arc<RTCRtpReceiver> {
-        let receiver = self.receiver.lock().await;
-        receiver.clone()
+    pub fn receiver(&self) -> &RTCRtpReceiver {
+        &self.receiver
     }
 
-    pub(crate) async fn set_receiver(&self, r: Arc<RTCRtpReceiver>) {
-        r.set_transceiver_codecs(Some(Arc::clone(&self.codecs)));
+    pub fn receiver_mut(&mut self) -> &mut RTCRtpReceiver {
+        &mut self.receiver
+    }
 
-        {
-            let mut receiver = self.receiver.lock().await;
-            (*receiver).set_transceiver_codecs(None);
+    pub(crate) fn set_receiver(&mut self, mut r: RTCRtpReceiver) {
+        r.set_transceiver_codecs(Some(self.codecs.clone()));
 
-            *receiver = r;
-        }
+        self.receiver.set_transceiver_codecs(None);
+
+        self.receiver = r;
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
-    pub(crate) fn set_mid(&self, mid: SmolStr) -> Result<()> {
-        self.mid
-            .set(mid)
-            .map_err(|_| Error::ErrRTPTransceiverCannotChangeMid)
+    pub(crate) fn set_mid(&mut self, mid: String) -> Result<()> {
+        if self.mid.is_some() {
+            return Err(Error::ErrRTPTransceiverCannotChangeMid);
+        }
+
+        self.mid = Some(mid);
+        Ok(())
     }
 
     /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
-    pub fn mid(&self) -> Option<SmolStr> {
-        self.mid.get().cloned()
+    pub fn mid(&self) -> &Option<String> {
+        &self.mid
     }
 
     /// kind returns RTPTransceiver's kind.
@@ -307,45 +190,30 @@ impl RTCRtpTransceiver {
 
     /// direction returns the RTPTransceiver's desired direction.
     pub fn direction(&self) -> RTCRtpTransceiverDirection {
-        self.direction.load(Ordering::SeqCst).into()
+        self.direction
     }
 
     /// Set the direction of this transceiver. This might trigger a renegotiation.
-    pub async fn set_direction(&self, d: RTCRtpTransceiverDirection) {
-        let changed = self.set_direction_internal(d);
+    pub fn set_direction(&mut self, d: RTCRtpTransceiverDirection) {
+        let previous: RTCRtpTransceiverDirection = self.direction;
 
-        if changed {
-            let lock = self.trigger_negotiation_needed.lock().await;
-            if let Some(trigger) = &*lock {
-                (trigger)().await;
-            }
-        }
-    }
+        self.direction = d;
 
-    pub(crate) fn set_direction_internal(&self, d: RTCRtpTransceiverDirection) -> bool {
-        let previous: RTCRtpTransceiverDirection =
-            self.direction.swap(d as u8, Ordering::SeqCst).into();
-
-        let changed = d != previous;
-
-        if changed {
+        if d != previous {
             trace!("Changing direction of transceiver from {previous} to {d}");
         }
-
-        changed
     }
 
     /// current_direction returns the RTPTransceiver's current direction as negotiated.
     ///
     /// If this transceiver has never been negotiated or if it's stopped this returns [`RTCRtpTransceiverDirection::Unspecified`].
     pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
-        if self.stopped.load(Ordering::SeqCst) {
+        if self.stopped {
             return RTCRtpTransceiverDirection::Unspecified;
         }
 
-        self.current_direction.load(Ordering::SeqCst).into()
+        self.current_direction
     }
-    */
     pub(crate) fn set_current_direction(&mut self, d: RTCRtpTransceiverDirection) {
         let previous: RTCRtpTransceiverDirection = self.current_direction;
         self.current_direction = d;
@@ -401,7 +269,7 @@ impl RTCRtpTransceiver {
 
     /*
         /// stop irreversibly stops the RTPTransceiver
-        pub async fn stop(&self) -> Result<()> {
+        pub fn stop(&self) -> Result<()> {
             if self.stopped.load(Ordering::SeqCst) {
                 return Ok(());
             }
@@ -421,44 +289,63 @@ impl RTCRtpTransceiver {
 
             Ok(())
         }
-
-        pub(crate) async fn set_sending_track(
-            &self,
-            track: Option<Arc<dyn TrackLocal + Send + Sync>>,
-        ) -> Result<()> {
-            let track_is_none = track.is_none();
-            {
-                let sender = self.sender.lock().await;
-                sender.replace_track(track).await?;
-            }
-
-            let direction = self.direction();
-            let should_send = !track_is_none;
-            let should_recv = direction.has_recv();
-            self.set_direction_internal(RTCRtpTransceiverDirection::from_send_recv(
-                should_send,
-                should_recv,
-            ));
-
-            Ok(())
-        }
-    }
-
-    impl fmt::Debug for RTCRtpTransceiver {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("RTCRtpTransceiver")
-                .field("mid", &self.mid)
-                .field("sender", &self.sender)
-                .field("receiver", &self.receiver)
-                .field("direction", &self.direction)
-                .field("current_direction", &self.current_direction)
-                .field("codecs", &self.codecs)
-                .field("stopped", &self.stopped)
-                .field("kind", &self.kind)
-                .finish()
-        }
     */
+    pub(crate) fn set_sending_track(&mut self, track: Option<TrackLocal>) -> Result<()> {
+        let track_is_none = track.is_none();
+        self.sender.replace_track(track)?;
+
+        let direction = self.direction();
+        let should_send = !track_is_none;
+        let should_recv = direction.has_recv();
+        self.set_direction(RTCRtpTransceiverDirection::from_send_recv(
+            should_send,
+            should_recv,
+        ));
+
+        Ok(())
+    }
 }
+
+pub(crate) fn create_stream_info(
+    id: String,
+    ssrc: SSRC,
+    payload_type: PayloadType,
+    codec: RTCRtpCodec,
+    webrtc_header_extensions: &[RTCRtpHeaderExtensionParameters],
+    associated_stream: Option<AssociatedStreamInfo>,
+) -> StreamInfo {
+    let header_extensions: Vec<RTPHeaderExtension> = webrtc_header_extensions
+        .iter()
+        .map(|h| RTPHeaderExtension {
+            id: h.id,
+            uri: h.uri.clone(),
+        })
+        .collect();
+
+    let feedbacks: Vec<_> = codec
+        .rtcp_feedback
+        .iter()
+        .map(|f| interceptor::stream_info::RTCPFeedback {
+            typ: f.typ.clone(),
+            parameter: f.parameter.clone(),
+        })
+        .collect();
+
+    StreamInfo {
+        id,
+        attributes: Attributes::new(),
+        ssrc,
+        payload_type,
+        rtp_header_extensions: header_extensions,
+        mime_type: codec.mime_type,
+        clock_rate: codec.clock_rate,
+        channels: codec.channels,
+        sdp_fmtp_line: codec.sdp_fmtp_line,
+        rtcp_feedback: feedbacks,
+        associated_stream,
+    }
+}
+
 pub(crate) fn find_by_mid(mid: &String, local_transceivers: &[RTCRtpTransceiver]) -> Option<usize> {
     local_transceivers
         .iter()

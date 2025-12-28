@@ -4,11 +4,12 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
+use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RTPCodecType};
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::media::rtp_transceiver::{
+    rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType, RTCRtpTransceiver, SSRC,
 };
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback, RTCRtpTransceiver, SSRC};
 use crate::media::track::TrackDetails;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
@@ -1071,7 +1072,7 @@ pub(crate) fn codecs_from_media_description(
         }
 
         out.push(RTCRtpCodecParameters {
-            capability: RTCRtpCodecCapability {
+            rtp_codec: RTCRtpCodec {
                 mime_type: m.media_name.media.clone() + "/" + codec.name.as_str(),
                 clock_rate: codec.clock_rate,
                 channels,
@@ -1088,7 +1089,7 @@ pub(crate) fn codecs_from_media_description(
 
 pub(crate) fn rtp_extensions_from_media_description(
     m: &MediaDescription,
-) -> Result<HashMap<String, isize>> {
+) -> Result<HashMap<String, u16>> {
     let mut out = HashMap::new();
 
     for a in &m.attributes {

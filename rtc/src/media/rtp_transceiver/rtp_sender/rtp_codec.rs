@@ -1,9 +1,9 @@
 use std::fmt;
 
-use super::fmtp;
+use crate::media::rtp_transceiver::fmtp;
+use crate::media::rtp_transceiver::rtp_sender::rtcp_parameters::RTCPFeedback;
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::peer_connection::configuration::media_engine::*;
-//use crate::api::media_engine::*;
-use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use shared::error::{Error, Result};
 
@@ -59,15 +59,15 @@ impl fmt::Display for RTPCodecType {
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpcodeccapability-members
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct RTCRtpCodecCapability {
+pub struct RTCRtpCodec {
     pub mime_type: String,
     pub clock_rate: u32,
     pub channels: u16,
     pub sdp_fmtp_line: String,
-    pub rtcp_feedback: Vec<RTCPFeedback>,
+    pub rtcp_feedback: Vec<RTCPFeedback>, //TODO: to be removed
 }
 
-impl RTCRtpCodecCapability {
+impl RTCRtpCodec {
     /// Turn codec capability into a `packetizer::Payloader`
     pub fn payloader_for_codec(&self) -> Result<Box<dyn rtp::packetizer::Payloader>> {
         let mime_type = self.mime_type.to_lowercase();
@@ -97,40 +97,6 @@ impl RTCRtpCodecCapability {
     }
 }
 
-/// RTPHeaderExtensionCapability is used to define a RFC5285 RTP header extension supported by the codec.
-/// <https://w3c.github.io/webrtc-pc/#dom-rtcrtpcapabilities-headerextensions>
-#[derive(Default, Debug, Clone)]
-pub struct RTCRtpHeaderExtensionCapability {
-    pub uri: String,
-}
-
-/// RTPHeaderExtensionParameter represents a negotiated RFC5285 RTP header extension.
-/// <https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpheaderextensionparameters-members>
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct RTCRtpHeaderExtensionParameters {
-    pub uri: String,
-    pub id: isize,
-}
-
-/// RTPCodecParameters is a sequence containing the media codecs that an RtpSender
-/// will choose from, as well as entries for RTX, RED and FEC mechanisms. This also
-/// includes the PayloadType that has been negotiated
-/// <https://w3c.github.io/webrtc-pc/#rtcrtpcodecparameters>
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct RTCRtpCodecParameters {
-    pub capability: RTCRtpCodecCapability,
-    pub payload_type: PayloadType,
-    pub stats_id: String,
-}
-
-/// RTPParameters is a list of negotiated codecs and header extensions
-/// <https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpparameters-members>
-#[derive(Default, Debug, Clone)]
-pub struct RTCRtpParameters {
-    pub header_extensions: Vec<RTCRtpHeaderExtensionParameters>,
-    pub codecs: Vec<RTCRtpCodecParameters>,
-}
-
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 pub(crate) enum CodecMatch {
     #[default]
@@ -146,16 +112,13 @@ pub(crate) fn codec_parameters_fuzzy_search(
     needle: &RTCRtpCodecParameters,
     haystack: &[RTCRtpCodecParameters],
 ) -> (RTCRtpCodecParameters, CodecMatch) {
-    let needle_fmtp = fmtp::parse(
-        &needle.capability.mime_type,
-        &needle.capability.sdp_fmtp_line,
-    );
+    let needle_fmtp = fmtp::parse(&needle.rtp_codec.mime_type, &needle.rtp_codec.sdp_fmtp_line);
 
     //TODO: add unicode case-folding equal support
 
     // First attempt to match on mime_type + sdpfmtp_line
     for c in haystack {
-        let cfmpt = fmtp::parse(&c.capability.mime_type, &c.capability.sdp_fmtp_line);
+        let cfmpt = fmtp::parse(&c.rtp_codec.mime_type, &c.rtp_codec.sdp_fmtp_line);
         if needle_fmtp.match_fmtp(&*cfmpt) {
             return (c.clone(), CodecMatch::Exact);
         }
@@ -163,7 +126,7 @@ pub(crate) fn codec_parameters_fuzzy_search(
 
     // Fallback to just mime_type
     for c in haystack {
-        if c.capability.mime_type.to_uppercase() == needle.capability.mime_type.to_uppercase() {
+        if c.rtp_codec.mime_type.to_uppercase() == needle.rtp_codec.mime_type.to_uppercase() {
             return (c.clone(), CodecMatch::Partial);
         }
     }
@@ -177,15 +140,15 @@ pub(crate) fn codec_rtx_search(
 ) -> Option<RTCRtpCodecParameters> {
     // find the rtx codec as defined in RFC4588
 
-    let (mime_kind, _) = original_codec.capability.mime_type.split_once("/")?;
+    let (mime_kind, _) = original_codec.rtp_codec.mime_type.split_once("/")?;
     let rtx_mime = format!("{mime_kind}/rtx");
 
     for codec in available_codecs {
-        if codec.capability.mime_type != rtx_mime {
+        if codec.rtp_codec.mime_type != rtx_mime {
             continue;
         }
 
-        let params = fmtp::parse(&codec.capability.mime_type, &codec.capability.sdp_fmtp_line);
+        let params = fmtp::parse(&codec.rtp_codec.mime_type, &codec.rtp_codec.sdp_fmtp_line);
 
         if params
             .parameter("apt")

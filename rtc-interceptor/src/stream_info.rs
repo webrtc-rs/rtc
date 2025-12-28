@@ -4,7 +4,7 @@ use crate::Attributes;
 #[derive(Default, Debug, Clone)]
 pub struct RTPHeaderExtension {
     pub uri: String,
-    pub id: isize,
+    pub id: u16,
 }
 
 /// StreamInfo is the Context passed when a StreamLocal or StreamRemote has been Binded or Unbinded

@@ -7,14 +7,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sdp::description::session::SessionDescription;
 
+use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::media::rtp_transceiver::fmtp;
-use crate::media::rtp_transceiver::rtp_codec::{
-    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodecCapability, RTCRtpCodecParameters,
-    RTCRtpHeaderExtensionCapability, RTCRtpHeaderExtensionParameters, RTCRtpParameters,
-    RTPCodecType,
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec::{
+    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodec, RTPCodecType,
 };
-use crate::media::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::{PayloadType, RTCPFeedback};
+use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
+use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
+use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::media::rtp_transceiver::{rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType};
 use crate::peer_connection::sdp::{
     codecs_from_media_description, rtp_extensions_from_media_description,
 };
@@ -51,7 +53,7 @@ pub const MIME_TYPE_PCMA: &str = "audio/PCMA";
 /// Note: Matching should be case insensitive.
 pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
 
-const VALID_EXT_IDS: Range<isize> = 1..15;
+const VALID_EXT_IDS: Range<u16> = 1..15;
 
 #[derive(Default, Clone)]
 pub(crate) struct MediaEngineHeaderExtension {
@@ -91,8 +93,8 @@ pub struct MediaEngine {
     pub(crate) negotiated_audio_codecs: Vec<RTCRtpCodecParameters>,
 
     header_extensions: Vec<MediaEngineHeaderExtension>,
-    proposed_header_extensions: HashMap<isize, MediaEngineHeaderExtension>,
-    pub(crate) negotiated_header_extensions: HashMap<isize, MediaEngineHeaderExtension>,
+    proposed_header_extensions: HashMap<u16, MediaEngineHeaderExtension>,
+    pub(crate) negotiated_header_extensions: HashMap<u16, MediaEngineHeaderExtension>,
 }
 
 impl MediaEngine {
@@ -102,7 +104,7 @@ impl MediaEngine {
         // Default Audio Codecs
         for codec in [
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_OPUS.to_owned(),
                     clock_rate: 48000,
                     channels: 2,
@@ -113,7 +115,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_G722.to_owned(),
                     clock_rate: 8000,
                     channels: 0,
@@ -124,7 +126,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_PCMU.to_owned(),
                     clock_rate: 8000,
                     channels: 0,
@@ -135,7 +137,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_PCMA.to_owned(),
                     clock_rate: 8000,
                     channels: 0,
@@ -169,7 +171,7 @@ impl MediaEngine {
         ];
         for codec in vec![
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_VP8.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -180,7 +182,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_VP9.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -191,7 +193,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_VP9.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -202,7 +204,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -215,7 +217,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -228,7 +230,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -241,7 +243,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -254,7 +256,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -267,7 +269,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -280,7 +282,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_AV1.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -291,7 +293,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_HEVC.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -302,7 +304,7 @@ impl MediaEngine {
                 ..Default::default()
             },
             RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
+                rtp_codec: RTCRtpCodec {
                     mime_type: "video/ulpfec".to_owned(),
                     clock_rate: 90000,
                     channels: 0,
@@ -322,7 +324,7 @@ impl MediaEngine {
     /// add_codec will append codec if it not exists
     fn add_codec(codecs: &mut Vec<RTCRtpCodecParameters>, codec: RTCRtpCodecParameters) {
         for c in codecs.iter() {
-            if c.capability.mime_type == codec.capability.mime_type
+            if c.rtp_codec.mime_type == codec.rtp_codec.mime_type
                 && c.payload_type == codec.payload_type
             {
                 return;
@@ -414,12 +416,12 @@ impl MediaEngine {
         match typ {
             RTPCodecType::Video => {
                 for v in &mut self.video_codecs {
-                    v.capability.rtcp_feedback.push(feedback.clone());
+                    v.rtp_codec.rtcp_feedback.push(feedback.clone());
                 }
             }
             RTPCodecType::Audio => {
                 for a in &mut self.audio_codecs {
-                    a.capability.rtcp_feedback.push(feedback.clone());
+                    a.rtp_codec.rtcp_feedback.push(feedback.clone());
                 }
             }
             _ => {}
@@ -431,7 +433,7 @@ impl MediaEngine {
     pub fn get_header_extension_id(
         &self,
         extension: RTCRtpHeaderExtensionCapability,
-    ) -> (isize, bool, bool) {
+    ) -> (u16, bool, bool) {
         if self.negotiated_header_extensions.is_empty() {
             return (0, false, false);
         }
@@ -532,8 +534,8 @@ impl MediaEngine {
         };
 
         let remote_fmtp = fmtp::parse(
-            &remote_codec.capability.mime_type,
-            remote_codec.capability.sdp_fmtp_line.as_str(),
+            &remote_codec.rtp_codec.mime_type,
+            remote_codec.rtp_codec.sdp_fmtp_line.as_str(),
         );
         if let Some(apt) = remote_fmtp.parameter("apt") {
             let payload_type = apt.parse::<u8>()?;
@@ -567,8 +569,8 @@ impl MediaEngine {
             if let Some(apt_codec) = apt_codec {
                 let (apt_matched, mt) = codec_parameters_fuzzy_search(apt_codec, codecs);
                 if mt == apt_match {
-                    to_match_codec.capability.sdp_fmtp_line =
-                        to_match_codec.capability.sdp_fmtp_line.replacen(
+                    to_match_codec.rtp_codec.sdp_fmtp_line =
+                        to_match_codec.rtp_codec.sdp_fmtp_line.replacen(
                             &format!("apt={payload_type}"),
                             &format!("apt={}", apt_matched.payload_type),
                             1,
@@ -591,7 +593,7 @@ impl MediaEngine {
     /// Look up a header extension and enable if it exists
     pub(crate) fn update_header_extension(
         &mut self,
-        id: isize,
+        id: u16,
         extension: &str,
         typ: RTPCodecType,
     ) -> Result<()> {
@@ -743,6 +745,7 @@ impl MediaEngine {
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id: *id,
                         uri: e.uri.clone(),
+                        ..Default::default()
                     });
                 }
             }
@@ -773,6 +776,7 @@ impl MediaEngine {
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id: *id,
                         uri: negotiated_extension.uri.clone(),
+                        ..Default::default()
                     });
 
                     continue;
@@ -786,6 +790,7 @@ impl MediaEngine {
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id: *id,
                         uri: negotiated_extension.uri.clone(),
+                        ..Default::default()
                     });
 
                     continue;
@@ -811,6 +816,7 @@ impl MediaEngine {
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id,
                         uri: local_extension.uri.clone(),
+                        ..Default::default()
                     });
                 } else {
                     log::warn!("No available RTP extension ID for {}", local_extension.uri);
@@ -821,6 +827,7 @@ impl MediaEngine {
         RTCRtpParameters {
             header_extensions,
             codecs: self.get_codecs_by_kind(typ),
+            ..Default::default()
         }
     }
 
@@ -837,6 +844,7 @@ impl MediaEngine {
                 header_extensions.push(RTCRtpHeaderExtensionParameters {
                     uri: e.uri.clone(),
                     id: *id,
+                    ..Default::default()
                 });
             }
         }
@@ -844,6 +852,7 @@ impl MediaEngine {
         Ok(RTCRtpParameters {
             header_extensions,
             codecs: vec![codec],
+            ..Default::default()
         })
     }
 }

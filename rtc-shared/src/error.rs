@@ -1438,6 +1438,16 @@ pub enum Error {
     ErrRTPSenderTrackNil,
     #[error("RTPSender must not be nil")]
     ErrRTPSenderNil,
+    #[error("Sender cannot add encoding as rid is empty")]
+    ErrRTPSenderRidNil,
+    #[error("Sender cannot add encoding as there is no base track")]
+    ErrRTPSenderNoBaseEncoding,
+    #[error("Sender cannot add encoding as provided track does not match base track")]
+    ErrRTPSenderBaseEncodingMismatch,
+    #[error("Sender cannot encoding due to RID collision")]
+    ErrRTPSenderRIDCollision,
+    #[error("Sender does not have track for RID")]
+    ErrRTPSenderNoTrackForRID,
     #[error("RTPReceiver must not be nil")]
     ErrRTPReceiverNil,
     #[error("DTLSTransport must not be nil")]

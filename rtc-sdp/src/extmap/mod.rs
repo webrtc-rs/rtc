@@ -29,7 +29,7 @@ pub const VIDEO_ORIENTATION_URI: &str = "urn:3gpp:video-orientation";
 /// ExtMap represents the activation of a single RTP header extension
 #[derive(Debug, Clone, Default)]
 pub struct ExtMap {
-    pub value: isize,
+    pub value: u16,
     pub direction: Direction,
     pub uri: Option<Url>,
     pub ext_attr: Option<String>,
@@ -79,7 +79,7 @@ impl ExtMap {
         }
 
         let valdir: Vec<&str> = fields[0].split('/').collect();
-        let value = valdir[0].parse::<isize>()?;
+        let value = valdir[0].parse::<u16>()?;
         if !(1..=246).contains(&value) {
             return Err(Error::ParseExtMap(format!(
                 "{} -- extmap key must be in the range 1-256",
