@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod data_channel;
-pub mod media;
+pub mod media_stream;
 pub mod peer_connection;
-//TODO: pub(crate) mod statistics;
+pub mod rtp_transceiver;
+pub mod statistics;

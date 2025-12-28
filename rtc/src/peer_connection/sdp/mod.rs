@@ -4,18 +4,18 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RTPCodecType};
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use crate::media::rtp_transceiver::{
-    rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType, RTCRtpTransceiver, SSRC,
-};
-use crate::media::track::TrackDetails;
+use crate::media_stream::TrackDetails;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
+use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RTPCodecType};
+use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::{
+    rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType, RTCRtpTransceiver, SSRC,
+};
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;

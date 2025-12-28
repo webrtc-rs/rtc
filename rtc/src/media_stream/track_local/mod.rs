@@ -7,11 +7,11 @@
 use interceptor::Attributes;
 use shared::marshal::Unmarshal;
 
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::*;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
-use crate::media::rtp_transceiver::*;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
+use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::rtp_transceiver::*;
 use shared::error::Result;
 
 /// TrackLocal is an interface that controls how the user can send media

@@ -1,4 +1,4 @@
-use crate::media::rtp_transceiver::{PayloadType, RTCRtpRtxParameters, SSRC};
+use crate::rtp_transceiver::{PayloadType, RTCRtpRtxParameters, SSRC};
 
 /// RTPCodingParameters provides information relating to both encoding and decoding.
 /// This is a subset of the RFC since Pion WebRTC doesn't implement encoding/decoding itself

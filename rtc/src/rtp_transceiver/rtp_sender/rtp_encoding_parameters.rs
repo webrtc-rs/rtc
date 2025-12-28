@@ -1,5 +1,5 @@
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
-use crate::media::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
+use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
 
 /// RTPEncodingParameters provides information relating to both encoding and decoding.
 /// This is a subset of the RFC since Pion WebRTC doesn't implement encoding itself

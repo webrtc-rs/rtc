@@ -1,15 +1,15 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
-use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::*;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
-use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::media::track::track_local::TrackLocal;
+use crate::media_stream::track_local::TrackLocal;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
+use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
+use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use interceptor::{
     stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo},
     Attributes,

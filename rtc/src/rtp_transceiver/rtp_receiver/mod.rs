@@ -3,20 +3,20 @@
 
 mod rtp_contributing_source;
 
-use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
+use crate::media_stream::track_remote::TrackRemote;
+use crate::media_stream::{TrackDetails, TrackStreams};
+use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
     RTCRtpContributingSource, RTCRtpSynchronizationSource,
 };
-use crate::media::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::{
+use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     codec_parameters_fuzzy_search, CodecMatch, RTPCodecType,
 };
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
-use crate::media::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use crate::media::track::track_remote::TrackRemote;
-use crate::media::track::{TrackDetails, TrackStreams};
-use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use interceptor::stream_info::RTPHeaderExtension;
 use shared::error::{flatten_errs, Error, Result};
 use std::fmt;

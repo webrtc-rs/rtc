@@ -1,4 +1,4 @@
-use crate::media::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
 
 /// RTPReceiveParameters contains the RTP stack settings used by receivers
 #[derive(Debug)]

@@ -11,12 +11,7 @@ pub mod transport;
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::media::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
-use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
-use crate::media::track::track_local::TrackLocal;
+use crate::media_stream::track_local::TrackLocal;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
@@ -49,6 +44,11 @@ use crate::peer_connection::transport::ice::role::RTCIceRole;
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
+use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
+use crate::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};

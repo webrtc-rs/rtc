@@ -1,5 +1,5 @@
 use super::*;
-use crate::media::track::TrackDetails;
+use crate::media_stream::TrackDetails;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, have_data_channel, populate_sdp,
