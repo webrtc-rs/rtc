@@ -16,6 +16,7 @@ use crate::media::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::media::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
 use crate::media::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::media::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
+use crate::media::track::track_local::TrackLocal;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
@@ -938,10 +939,7 @@ impl RTCPeerConnection {
     }
 
     /// add_track adds a Track to the PeerConnection
-    pub fn add_track(
-        &mut self,
-        //track: TrackLocal
-    ) -> Result<RTCRtpSender> {
+    pub fn add_track(&mut self, _track: TrackLocal) -> Result<RTCRtpSender> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }

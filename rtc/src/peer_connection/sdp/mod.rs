@@ -373,7 +373,7 @@ pub(crate) struct AddTransceiverSdpParams {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_transceiver_sdp(
-    d: SessionDescription,
+    mut d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
     media_engine: &mut MediaEngine,
     transceivers: &mut [RTCRtpTransceiver],
@@ -389,25 +389,26 @@ pub(crate) fn add_transceiver_sdp(
         params.ice_gathering_state,
     );
 
-    let t = &transceivers[media_section.transceiver_index];
-    let mut media = MediaDescription::new_jsep_media_description(t.kind.to_string(), vec![])
-        .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
-        .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value.clone())
-        .with_ice_credentials(
-            ice_params.username_fragment.clone(),
-            ice_params.password.clone(),
-        )
-        .with_property_attribute(ATTR_KEY_RTCPMUX.to_owned())
-        .with_property_attribute(ATTR_KEY_RTCPRSIZE.to_owned());
+    let transceiver = &mut transceivers[media_section.transceiver_index];
+    let mut media =
+        MediaDescription::new_jsep_media_description(transceiver.kind.to_string(), vec![])
+            .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
+            .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value.clone())
+            .with_ice_credentials(
+                ice_params.username_fragment.clone(),
+                ice_params.password.clone(),
+            )
+            .with_property_attribute(ATTR_KEY_RTCPMUX.to_owned())
+            .with_property_attribute(ATTR_KEY_RTCPRSIZE.to_owned());
 
     if media_section.extmap_allow_mixed {
         media = media.with_property_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED.to_owned());
     }
-    /*
-    let codecs = t.get_codecs();
+
+    let codecs = transceiver.get_codecs(media_engine);
     for codec in &codecs {
         let name = codec
-            .capability
+            .rtp_codec
             .mime_type
             .trim_start_matches("audio/")
             .trim_start_matches("video/")
@@ -415,12 +416,12 @@ pub(crate) fn add_transceiver_sdp(
         media = media.with_codec(
             codec.payload_type,
             name,
-            codec.capability.clock_rate,
-            codec.capability.channels,
-            codec.capability.sdp_fmtp_line.clone(),
+            codec.rtp_codec.clock_rate,
+            codec.rtp_codec.channels,
+            codec.rtp_codec.sdp_fmtp_line.clone(),
         );
 
-        for feedback in &codec.capability.rtcp_feedback {
+        for feedback in &codec.rtp_codec.rtcp_feedback {
             media = media.with_value_attribute(
                 "rtcp-fb".to_owned(),
                 format!(
@@ -433,14 +434,14 @@ pub(crate) fn add_transceiver_sdp(
 
     if codecs.is_empty() {
         // If we are sender and we have no codecs throw an error early
-        if t.sender.track().is_some() {
+        if transceiver.sender.track().is_some() {
             return Err(Error::ErrSenderWithNoCodecs);
         }
 
         // Explicitly reject track if we don't have the codec
         d = d.with_media(MediaDescription {
             media_name: sdp::description::media::MediaName {
-                media: t.kind.to_string(),
+                media: transceiver.kind.to_string(),
                 port: RangedPort {
                     value: 0,
                     range: None,
@@ -472,9 +473,10 @@ pub(crate) fn add_transceiver_sdp(
             attributes: vec![],
         });
         return Ok((d, false));
-    }*/
+    }
 
-    let parameters = media_engine.get_rtp_parameters_by_kind(t.kind, t.direction);
+    let parameters =
+        media_engine.get_rtp_parameters_by_kind(transceiver.kind, transceiver.direction);
     for rtp_extension in &parameters.header_extensions {
         let ext_url = Url::parse(rtp_extension.uri.as_str())?;
         media = media.with_extmap(sdp::extmap::ExtMap {
@@ -523,92 +525,87 @@ pub(crate) fn add_transceiver_sdp(
         media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
     }
 
-    /*
-    for mt in transceivers {
-        let sender = &mut mt.sender;
-        if let Some(track) = sender.track() {
-            let send_parameters = sender.get_parameters();
-            for encoding in &send_parameters.encodings {
+    let sender = &mut transceiver.sender;
+    if let Some(track) = sender.track() {
+        let send_parameters = sender.get_parameters();
+        for encoding in &send_parameters.encodings {
+            media = media.with_media_source(
+                encoding.rtp_coding_parameters.ssrc,
+                track.stream_id().to_owned(), /* cname */
+                track.stream_id().to_owned(), /* streamLabel */
+                track.id().to_owned(),
+            );
+
+            if encoding.rtp_coding_parameters.rtx.ssrc != 0 {
                 media = media.with_media_source(
-                    encoding.ssrc,
-                    track.stream_id().to_owned(), /* cname */
-                    track.stream_id().to_owned(), /* streamLabel */
+                    encoding.rtp_coding_parameters.rtx.ssrc,
+                    track.stream_id().to_owned(),
+                    track.stream_id().to_owned(),
                     track.id().to_owned(),
                 );
 
-                if encoding.rtx.ssrc != 0 {
-                    media = media.with_media_source(
-                        encoding.rtx.ssrc,
-                        track.stream_id().to_owned(),
-                        track.stream_id().to_owned(),
-                        track.id().to_owned(),
-                    );
-
-                    media = media.with_value_attribute(
-                        ATTR_KEY_SSRCGROUP.to_owned(),
-                        format!(
-                            "{} {} {}",
-                            SEMANTIC_TOKEN_FLOW_IDENTIFICATION, encoding.ssrc, encoding.rtx.ssrc
-                        ),
-                    );
-                }
-            }
-
-            if send_parameters.encodings.len() > 1 {
-                let mut send_rids = Vec::with_capacity(send_parameters.encodings.len());
-
-                for encoding in &send_parameters.encodings {
-                    media = media.with_value_attribute(
-                        SDP_ATTRIBUTE_RID.to_owned(),
-                        format!("{} send", encoding.rid),
-                    );
-                    send_rids.push(encoding.rid.to_string());
-                }
-
                 media = media.with_value_attribute(
-                    SDP_ATTRIBUTE_SIMULCAST.to_owned(),
-                    format!("send {}", send_rids.join(";")),
+                    ATTR_KEY_SSRCGROUP.to_owned(),
+                    format!(
+                        "{} {} {}",
+                        SEMANTIC_TOKEN_FLOW_IDENTIFICATION,
+                        encoding.rtp_coding_parameters.ssrc,
+                        encoding.rtp_coding_parameters.rtx.ssrc
+                    ),
                 );
             }
-
-            // Send msid based on the configured track if we haven't already
-            // sent on this sender. If we have sent we must keep the msid line consistent, this
-            // is handled below.
-            if sender.initial_track_id.is_none() {
-                for stream_id in sender.associated_media_stream_ids.as_ref() {
-                    media =
-                        media.with_property_attribute(format!("msid:{} {}", stream_id, track.id()));
-                }
-
-                sender.set_initial_track_id(track.id().to_string())?;
-                break;
-            }
         }
 
-        if let Some(track_id) = sender.initial_track_id.as_ref() {
-            // After we have include an msid attribute in an offer it must stay the same for
-            // all subsequent offer even if the track or transceiver direction changes.
-            //
-            // [RFC 8829 Section 5.2.2](https://datatracker.ietf.org/doc/html/rfc8829#section-5.2.2)
-            //
-            // For RtpTransceivers that are not stopped, the "a=msid" line or
-            // lines MUST stay the same if they are present in the current
-            // description, regardless of changes to the transceiver's direction
-            // or track.  If no "a=msid" line is present in the current
-            // description, "a=msid" line(s) MUST be generated according to the
-            // same rules as for an initial offer.
-            for stream_id in sender.associated_media_stream_ids.as_ref() {
-                media = media.with_property_attribute(format!("msid:{stream_id} {track_id}"));
+        if send_parameters.encodings.len() > 1 {
+            let mut send_rids = Vec::with_capacity(send_parameters.encodings.len());
+
+            for encoding in &send_parameters.encodings {
+                media = media.with_value_attribute(
+                    SDP_ATTRIBUTE_RID.to_owned(),
+                    format!("{} send", encoding.rtp_coding_parameters.rid),
+                );
+                send_rids.push(encoding.rtp_coding_parameters.rid.to_string());
             }
 
-            break;
+            media = media.with_value_attribute(
+                SDP_ATTRIBUTE_SIMULCAST.to_owned(),
+                format!("send {}", send_rids.join(";")),
+            );
         }
-    }*/
+
+        // Send msid based on the configured track if we haven't already
+        // sent on this sender. If we have sent we must keep the msid line consistent, this
+        // is handled below.
+        if sender.initial_track_id.is_none() {
+            for stream_id in sender.associated_media_stream_ids() {
+                media = media.with_property_attribute(format!("msid:{} {}", stream_id, track.id()));
+            }
+
+            sender.set_initial_track_id(track.id().to_string())?;
+        }
+    }
+
+    if let Some(track_id) = sender.initial_track_id.as_ref() {
+        // After we have include an msid attribute in an offer it must stay the same for
+        // all subsequent offer even if the track or transceiver direction changes.
+        //
+        // [RFC 8829 Section 5.2.2](https://datatracker.ietf.org/doc/html/rfc8829#section-5.2.2)
+        //
+        // For RtpTransceivers that are not stopped, the "a=msid" line or
+        // lines MUST stay the same if they are present in the current
+        // description, regardless of changes to the transceiver's direction
+        // or track.  If no "a=msid" line is present in the current
+        // description, "a=msid" line(s) MUST be generated according to the
+        // same rules as for an initial offer.
+        for stream_id in sender.associated_media_stream_ids() {
+            media = media.with_property_attribute(format!("msid:{stream_id} {track_id}"));
+        }
+    }
 
     let direction = match params.offered_direction {
         Some(offered_direction) => {
             use RTCRtpTransceiverDirection::*;
-            let transceiver_direction = t.direction;
+            let transceiver_direction = transceiver.direction;
 
             match offered_direction {
                 Sendonly | Recvonly => {
@@ -625,7 +622,7 @@ pub(crate) fn add_transceiver_sdp(
                 // media or session level, in which case the stream is sendrecv by
                 // default), the corresponding stream in the answer MAY be marked as
                 // sendonly, recvonly, sendrecv, or inactive
-                Sendrecv | Unspecified => t.direction,
+                Sendrecv | Unspecified => transceiver.direction,
                 // If an offered media
                 // stream is listed as inactive, it MUST be marked as inactive in the
                 // answer.
@@ -640,7 +637,7 @@ pub(crate) fn add_transceiver_sdp(
             //
             //    When creating offers, the transceiver direction is directly reflected
             //    in the output, even for re-offers.
-            t.direction
+            transceiver.direction
         }
     };
     media = media.with_property_attribute(direction.to_string());
