@@ -23,7 +23,7 @@ use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndicat
 use webrtc::rtp::codecs::h264::ANNEXB_NALUSTART_CODE;
 use webrtc::rtp::codecs::h265::{H265NALUHeader, H265Packet, H265Payload, UnitType};
 use webrtc::rtp::packetizer::Depacketizer;
-use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTPCodecType};
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RtpCodecKind};
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::rtp_transceiver::{RTCRtpTransceiver, RTCRtpTransceiverInit};
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
     peer_connection
         .add_transceiver_from_kind(
-            RTPCodecType::Audio,
+            RtpCodecKind::Audio,
             Some(RTCRtpTransceiverInit {
                 direction: RTCRtpTransceiverDirection::Sendrecv,
                 send_encodings: vec![],
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
         .await?;
     peer_connection
         .add_transceiver_from_kind(
-            RTPCodecType::Video,
+            RtpCodecKind::Video,
             Some(RTCRtpTransceiverInit {
                 direction: RTCRtpTransceiverDirection::Sendrecv,
                 send_encodings: vec![],
@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
             let kind = track.kind();
             let notify2 = notify1.clone();
             println!("[Listener] track codec {:?}", track.codec());
-            if kind == RTPCodecType::Video {
+            if kind == RtpCodecKind::Video {
                 tokio::spawn(async move {
                     let mut ticker = tokio::time::interval(Duration::from_secs(2));
                     while let Some(pc3) = pc2.upgrade() {
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
             let pc2 = pc1.clone();
             let video_file1 = video_file.clone();
             match kind {
-                RTPCodecType::Video => {
+                RtpCodecKind::Video => {
                     tokio::spawn(async move {
                         let mut pck = H265Packet::default();
                         let mut fdata = BytesMut::new();
@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
                         notify2.notify_waiters();
                     });
                 }
-                RTPCodecType::Audio => {
+                RtpCodecKind::Audio => {
                     tokio::spawn(async move {
                         loop {
                             let timeout = tokio::time::sleep(Duration::from_secs(4));

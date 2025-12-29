@@ -18,7 +18,7 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
+    RTCRtpCodecCapability, RTCRtpCodecParameters, RtpCodecKind,
 };
 use webrtc::track::track_remote::TrackRemote;
 
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
             payload_type: 102,
             ..Default::default()
         },
-        RTPCodecType::Video,
+        RtpCodecKind::Video,
     )?;
 
     m.register_codec(
@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
             payload_type: 111,
             ..Default::default()
         },
-        RTPCodecType::Audio,
+        RtpCodecKind::Audio,
     )?;
 
     // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
@@ -192,10 +192,10 @@ async fn main() -> Result<()> {
 
     // Allow us to receive 1 audio track, and 1 video track
     peer_connection
-        .add_transceiver_from_kind(RTPCodecType::Audio, None)
+        .add_transceiver_from_kind(RtpCodecKind::Audio, None)
         .await?;
     peer_connection
-        .add_transceiver_from_kind(RTPCodecType::Video, None)
+        .add_transceiver_from_kind(RtpCodecKind::Video, None)
         .await?;
 
     let notify_tx = Arc::new(Notify::new());

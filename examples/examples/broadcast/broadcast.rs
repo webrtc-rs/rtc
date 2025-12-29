@@ -13,7 +13,7 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+use webrtc::rtp_transceiver::rtp_codec::RtpCodecKind;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::Error;
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
 
     // Allow us to receive 1 video track
     peer_connection
-        .add_transceiver_from_kind(RTPCodecType::Video, None)
+        .add_transceiver_from_kind(RtpCodecKind::Video, None)
         .await?;
 
     let (local_track_chan_tx, mut local_track_chan_rx) =

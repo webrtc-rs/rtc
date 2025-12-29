@@ -15,7 +15,7 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
+    RTCRtpCodecCapability, RTCRtpCodecParameters, RtpCodecKind,
 };
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
                 payload_type: 120,
                 ..Default::default()
             },
-            RTPCodecType::Audio,
+            RtpCodecKind::Audio,
         )?;
     }
 
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
                 payload_type: 96,
                 ..Default::default()
             },
-            RTPCodecType::Video,
+            RtpCodecKind::Video,
         )?;
     }
 
@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
         // This is a temporary fix until we implement incoming RTCP events, then we would push a PLI only when a viewer requests it
         let media_ssrc = track.ssrc();
 
-        if track.kind() == RTPCodecType::Video {
+        if track.kind() == RtpCodecKind::Video {
             let pc2 = pc.clone();
             tokio::spawn(async move {
                 let mut result = Result::<usize>::Ok(0);
@@ -226,7 +226,7 @@ async fn main() -> Result<()> {
             });
         }
 
-        let kind = if track.kind() == RTPCodecType::Audio {
+        let kind = if track.kind() == RtpCodecKind::Audio {
             "audio"
         } else {
             "video"
