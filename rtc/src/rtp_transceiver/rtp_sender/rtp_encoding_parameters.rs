@@ -10,6 +10,6 @@ pub struct RTCRtpEncodingParameters {
     pub active: bool,
     pub codec: RTCRtpCodec,
     pub max_bitrate: u32,
-    pub max_framerate: f64,
-    pub scale_resolution_down_by: f64,
+    pub max_framerate: Option<f64>,
+    pub scale_resolution_down_by: Option<f64>,
 }

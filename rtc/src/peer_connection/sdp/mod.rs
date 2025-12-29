@@ -525,6 +525,7 @@ pub(crate) fn add_transceiver_sdp(
         media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
     }
 
+    /*TODO:
     let sender = &mut transceiver.sender;
     if let Some(track) = sender.track() {
         let send_parameters = sender.get_parameters();
@@ -600,7 +601,7 @@ pub(crate) fn add_transceiver_sdp(
         for stream_id in sender.associated_media_stream_ids() {
             media = media.with_property_attribute(format!("msid:{stream_id} {track_id}"));
         }
-    }
+    }*/
 
     let direction = match params.offered_direction {
         Some(offered_direction) => {

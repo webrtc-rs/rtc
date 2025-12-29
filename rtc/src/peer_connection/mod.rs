@@ -493,20 +493,9 @@ impl RTCPeerConnection {
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            let receive_mtu = self.configuration.setting_engine.get_receive_mtu();
-                            let enable_sender_rtx =
-                                self.configuration.setting_engine.enable_sender_rtx;
-
                             let receiver = RTCRtpReceiver::new(kind);
 
-                            let sender = RTCRtpSender::new(
-                                None,
-                                kind,
-                                false,
-                                receive_mtu,
-                                enable_sender_rtx,
-                                &self.configuration.media_engine,
-                            );
+                            let sender = RTCRtpSender::new(None, kind, vec![], vec![]);
 
                             let mut t = RTCRtpTransceiver::new(
                                 receiver,

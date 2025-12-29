@@ -6,6 +6,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpRtxParameters, SSRC};
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCodingParameters {
     pub rid: String,
+
     pub ssrc: SSRC,                //TODO: to be removed
     pub payload_type: PayloadType, //TODO: to be removed
     pub rtx: RTCRtpRtxParameters,  //TODO: to be removed

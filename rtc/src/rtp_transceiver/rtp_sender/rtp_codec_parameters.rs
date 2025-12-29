@@ -9,5 +9,6 @@ use crate::rtp_transceiver::PayloadType;
 pub struct RTCRtpCodecParameters {
     pub rtp_codec: RTCRtpCodec,
     pub payload_type: PayloadType,
-    pub stats_id: String,
+
+    pub stats_id: String, //TODO:
 }

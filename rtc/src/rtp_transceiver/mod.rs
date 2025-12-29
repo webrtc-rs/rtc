@@ -1,7 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
-use crate::media_stream::track_local::TrackLocal;
+use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -142,7 +142,7 @@ impl RTCRtpTransceiver {
     pub fn set_sender_track(
         &mut self,
         sender: RTCRtpSender,
-        track: Option<TrackLocal>,
+        track: Option<MediaStreamTrack>,
     ) -> Result<()> {
         self.set_sender(sender);
         self.set_sending_track(track)
@@ -291,7 +291,7 @@ impl RTCRtpTransceiver {
             Ok(())
         }
     */
-    pub(crate) fn set_sending_track(&mut self, track: Option<TrackLocal>) -> Result<()> {
+    pub(crate) fn set_sending_track(&mut self, track: Option<MediaStreamTrack>) -> Result<()> {
         let track_is_none = track.is_none();
         self.sender.replace_track(track)?;
 

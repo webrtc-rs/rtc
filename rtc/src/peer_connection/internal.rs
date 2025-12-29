@@ -917,7 +917,7 @@ impl RTCPeerConnection {
                             // local description so we can compare all of them. For no we only
                             // consider the first one.
 
-                            let stream_ids = &t.sender.associated_media_stream_ids;
+                            let stream_ids = t.sender.streams();
                             // Different number of lines, 1 vs 0
                             if stream_ids.is_empty() {
                                 return true;

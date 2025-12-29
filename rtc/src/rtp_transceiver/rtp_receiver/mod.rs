@@ -59,26 +59,6 @@ impl RTCRtpReceiver {
         &self.receiver_track
     }
 
-    fn get_codecs(
-        &self,
-        kind: RtpCodecKind,
-        media_engine: &MediaEngine,
-    ) -> Vec<RTCRtpCodecParameters> {
-        let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
-        if self.receive_codecs.is_empty() {
-            return media_engine_codecs;
-        }
-        let mut filtered_codecs = vec![];
-        for codec in &self.receive_codecs {
-            let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
-            if match_type != CodecMatch::None {
-                filtered_codecs.push(c);
-            }
-        }
-
-        filtered_codecs
-    }
-
     pub fn get_capabilities(
         &self,
         kind: RtpCodecKind,
@@ -128,5 +108,25 @@ impl RTCRtpReceiver {
         &self,
     ) -> impl Iterator<Item = &RTCRtpSynchronizationSource> {
         self.synchronization_sources.iter()
+    }
+
+    fn get_codecs(
+        &self,
+        kind: RtpCodecKind,
+        media_engine: &MediaEngine,
+    ) -> Vec<RTCRtpCodecParameters> {
+        let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
+        if self.receive_codecs.is_empty() {
+            return media_engine_codecs;
+        }
+        let mut filtered_codecs = vec![];
+        for codec in &self.receive_codecs {
+            let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
+            if match_type != CodecMatch::None {
+                filtered_codecs.push(c);
+            }
+        }
+
+        filtered_codecs
     }
 }
