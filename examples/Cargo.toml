@@ -86,12 +86,12 @@ bench = false
 #name = "play-from-disk-renegotiation"
 #path = "examples/play-from-disk-renegotiation/play-from-disk-renegotiation.rs"
 #bench = false
-#
-#[[example]]
-#name = "reflect"
-#path = "examples/reflect/reflect.rs"
-#bench = false
-#
+
+[[example]]
+name = "reflect"
+path = "examples/reflect/reflect.rs"
+bench = false
+
 #[[example]]
 #name = "rtp-forwarder"
 #path = "examples/rtp-forwarder/rtp-forwarder.rs"

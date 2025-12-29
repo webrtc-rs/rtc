@@ -6,12 +6,14 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 
+use crate::peer_connection::event::track_event::RTCTrackEvent;
 use srtp::context::Context;
 use std::net::SocketAddr;
 
 pub mod data_channel_event;
 pub mod ice_error_event;
 pub mod ice_event;
+mod track_event;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Default, Clone, Debug)]
@@ -29,7 +31,7 @@ pub enum RTCPeerConnectionEvent {
     OnDataChannel(RTCDataChannelEvent),
 
     // The RTP media API extends the RTCPeerConnection interface as described below.
-    OnTrack,
+    OnTrack(RTCTrackEvent),
 }
 
 #[derive(Debug, Clone)]

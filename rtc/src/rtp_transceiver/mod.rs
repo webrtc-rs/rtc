@@ -1,7 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
-use crate::media_stream::MediaStream;
+use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -32,10 +32,17 @@ pub type SSRC = u32;
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
+pub type RTCRtpSenderId = usize;
+
+pub type RTCRtpReceiverId = usize;
+
+pub type RTCRtpTransceiverId = usize;
+
 /// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.
+#[derive(Default, Clone)]
 pub struct RTCRtpTransceiverInit {
     pub direction: RTCRtpTransceiverDirection,
-    pub streams: Vec<MediaStream>,
+    pub streams: Vec<MediaStreamId>,
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
 }
 

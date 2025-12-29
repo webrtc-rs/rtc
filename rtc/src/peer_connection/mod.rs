@@ -48,12 +48,16 @@ use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
+use crate::rtp_transceiver::{
+    find_by_mid, satisfy_type_and_direction, RTCRtpSenderId, RTCRtpTransceiver,
+    RTCRtpTransceiverId, RTCRtpTransceiverInit,
+};
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{unmarshal_candidate, Candidate};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
+use shared::util::math_rand_alpha;
 use std::collections::HashMap;
 
 /// PeerConnection represents a WebRTC connection that establishes a
@@ -494,7 +498,7 @@ impl RTCPeerConnection {
                                 };
 
                             let receiver = RTCRtpReceiver::new(kind);
-                            let sender = RTCRtpSender::new(None, kind, vec![], vec![]);
+                            let sender = RTCRtpSender::new(kind, None, vec![], vec![]);
                             let mut transceiver =
                                 RTCRtpTransceiver::new(receiver, sender, local_direction);
 
@@ -911,61 +915,49 @@ impl RTCPeerConnection {
     }
 
     /// Returns an iterator over immutable RTP transceivers.
-    pub fn get_transceivers(&self) -> impl Iterator<Item = &RTCRtpTransceiver> {
-        self.rtp_transceivers.iter()
+    pub fn get_transceivers(&self) -> &[RTCRtpTransceiver] {
+        &self.rtp_transceivers
     }
 
     /// Returns an iterator over mutable RTP transceivers.
-    pub fn get_transceivers_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpTransceiver> {
-        self.rtp_transceivers.iter_mut()
+    pub fn get_transceivers_mut(&mut self) -> &mut [RTCRtpTransceiver] {
+        &mut self.rtp_transceivers
     }
 
     /// add_track adds a Track to the PeerConnection
-    pub fn add_track(&mut self, _track: MediaStreamTrack) -> Result<RTCRtpSender> {
+    pub fn add_track(&mut self, track: MediaStreamTrack) -> Result<RTCRtpSenderId> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        //TODO:
-        /*
-        {
-            let rtp_transceivers = self.internal.rtp_transceivers.lock().await;
-            for t in &*rtp_transceivers {
-                if !t.stopped.load(Ordering::SeqCst)
-                    && t.kind == track.kind()
-                    && t.sender()
-                        .await
-                        .initial_track_id()
-                        .is_some_and(|id| id == track.id())
-                {
-                    let sender = t.sender().await;
-                    if sender.track().await.is_none() {
-                        if let Err(err) = sender.replace_track(Some(track)).await {
-                            let _ = sender.stop().await;
-                            return Err(err);
-                        }
-
-                        t.set_direction_internal(RTCRtpTransceiverDirection::from_send_recv(
-                            true,
-                            t.direction().has_recv(),
-                        ));
-
-                        self.trigger_negotiation_needed();
-                        return Ok(sender);
-                    }
+        for (id, transceiver) in self.get_transceivers_mut().iter_mut().enumerate() {
+            if !transceiver.stopped()
+                && transceiver.kind() == track.kind()
+                && transceiver.sender().track().is_none()
+            {
+                if let Err(err) = transceiver.sender_mut().replace_track(Some(track)) {
+                    let _ = transceiver.sender_mut().stop();
+                    return Err(err);
                 }
+
+                transceiver.set_direction(RTCRtpTransceiverDirection::from_send_recv(
+                    true,
+                    transceiver.direction().has_recv(),
+                ));
+
+                self.trigger_negotiation_needed();
+                return Ok(id);
             }
         }
 
-        let transceiver = self
-            .internal
-            .new_transceiver_from_track(RTCRtpTransceiverDirection::Sendrecv, track)
-            .await?;
-        self.internal
-            .add_rtp_transceiver(Arc::clone(&transceiver))
-            .await;
-         */
-        Ok(RTCRtpSender::default())
+        let transceiver = self.new_transceiver_from_track(
+            track,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Sendrecv,
+                ..Default::default()
+            },
+        )?;
+        Ok(self.add_rtp_transceiver(transceiver))
     }
 
     /// remove_track removes a Track from the PeerConnection
@@ -1008,5 +1000,78 @@ impl RTCPeerConnection {
         }
         */
         Ok(())
+    }
+
+    /// add_transceiver_from_track Create a new RtpTransceiver(SendRecv or SendOnly) and add it to the set of transceivers.
+    pub fn add_transceiver_from_track(
+        &mut self,
+        track: MediaStreamTrack,
+        init: Option<RTCRtpTransceiverInit>,
+    ) -> Result<RTCRtpTransceiverId> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        let transceiver = self.new_transceiver_from_track(
+            track,
+            if let Some(init) = init {
+                init
+            } else {
+                RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Sendrecv,
+                    ..Default::default()
+                }
+            },
+        )?;
+
+        Ok(self.add_rtp_transceiver(transceiver))
+    }
+
+    /// add_transceiver_from_kind Create a new RtpTransceiver and adds it to the set of transceivers.
+    pub fn add_transceiver_from_kind(
+        &mut self,
+        kind: RtpCodecKind,
+        init: Option<RTCRtpTransceiverInit>,
+    ) -> Result<RTCRtpTransceiverId> {
+        if self.peer_connection_state == RTCPeerConnectionState::Closed {
+            return Err(Error::ErrConnectionClosed);
+        }
+
+        let (direction, streams, send_encodings) = if let Some(init) = init {
+            (init.direction, init.streams, init.send_encodings)
+        } else {
+            (RTCRtpTransceiverDirection::Sendrecv, vec![], vec![])
+        };
+
+        let transceiver = match direction {
+            RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
+                /*let codec = self
+                .configuration
+                .media_engine
+                .get_codecs_by_kind(kind)
+                .first()
+                .map(|c| c.rtp_codec.clone())
+                .ok_or(Error::ErrNoCodecsAvailable)?;*/
+                let track =
+                    MediaStreamTrack::new(math_rand_alpha(16), kind, math_rand_alpha(16), false);
+                self.new_transceiver_from_track(
+                    track,
+                    RTCRtpTransceiverInit {
+                        direction,
+                        streams,
+                        send_encodings,
+                    },
+                )?
+            }
+            RTCRtpTransceiverDirection::Recvonly => {
+                let receiver = RTCRtpReceiver::new(kind);
+                let sender = RTCRtpSender::new(kind, None, vec![], vec![]);
+
+                RTCRtpTransceiver::new(receiver, sender, direction)
+            }
+            _ => return Err(Error::ErrPeerConnAddTransceiverFromKindSupport),
+        };
+
+        Ok(self.add_rtp_transceiver(transceiver))
     }
 }

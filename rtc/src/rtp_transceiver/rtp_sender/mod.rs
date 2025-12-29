@@ -51,8 +51,8 @@ pub struct RTCRtpSender {
 
 impl RTCRtpSender {
     pub fn new(
-        track: Option<MediaStreamTrack>,
         kind: RtpCodecKind,
+        track: Option<MediaStreamTrack>,
         stream_ids: Vec<MediaStreamId>,
         send_encodings: Vec<RTCRtpEncodingParameters>,
     ) -> Self {
@@ -220,5 +220,10 @@ impl RTCRtpSender {
 
     pub(crate) fn set_negotiated(&mut self) {
         self.negotiated = true;
+    }
+
+    pub(crate) fn stop(&mut self) -> Result<()> {
+        //TODO:
+        Ok(())
     }
 }

@@ -6,6 +6,7 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::rtp_transceiver::RTCRtpTransceiverId;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
@@ -444,9 +445,10 @@ impl RTCPeerConnection {
     /// add_rtp_transceiver appends t into rtp_transceivers
     /// and fires onNegotiationNeeded;
     /// caller of this method should hold `self.mu` lock
-    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) {
+    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) -> RTCRtpTransceiverId {
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
+        self.rtp_transceivers.len() - 1
     }
 
     pub(super) fn start_rtp(
@@ -997,5 +999,20 @@ impl RTCPeerConnection {
         } else {
             true
         }
+    }
+
+    pub(super) fn new_transceiver_from_track(
+        &self,
+        track: MediaStreamTrack,
+        init: RTCRtpTransceiverInit,
+    ) -> Result<RTCRtpTransceiver> {
+        if init.direction == RTCRtpTransceiverDirection::Unspecified {
+            return Err(Error::ErrPeerConnAddTransceiverFromTrackSupport);
+        }
+
+        let receiver = RTCRtpReceiver::new(track.kind());
+        let sender =
+            RTCRtpSender::new(track.kind(), Some(track), init.streams, init.send_encodings);
+        Ok(RTCRtpTransceiver::new(receiver, sender, init.direction))
     }
 }
