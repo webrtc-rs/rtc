@@ -1,10 +1,18 @@
+pub mod track;
+pub mod track_capabilities;
+pub mod track_constraints;
 pub mod track_local;
 pub mod track_remote;
+pub mod track_settings;
+pub mod track_state;
+pub mod track_supported_constraints;
 
+use crate::media_stream::track::{MediaStreamTrack, TrackId};
 use crate::media_stream::track_local::TrackLocal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
 use crate::rtp_transceiver::SSRC;
 use interceptor::stream_info::StreamInfo;
+use std::collections::HashMap;
 use track_remote::*;
 
 pub(crate) const RTP_OUTBOUND_MTU: usize = 1200;
@@ -56,4 +64,84 @@ pub(crate) struct RtxEncoding {
     pub(crate) stream_info: StreamInfo,
 
     pub(crate) ssrc: SSRC,
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// https://www.w3.org/TR/mediacapture-streams/#stream-api
+////////////////////////////////////////////////////////////////////////////////////////////////////
+pub type StreamId = String;
+#[derive(Default, Debug, Clone)]
+pub struct MediaStream {
+    id: StreamId,
+    tracks: HashMap<TrackId, MediaStreamTrack>,
+    active: bool,
+}
+
+impl MediaStream {
+    pub fn new(id: StreamId, tracks: Vec<MediaStreamTrack>) -> Self {
+        Self {
+            id,
+            tracks: tracks
+                .into_iter()
+                .map(|track| (track.id().to_string(), track))
+                .collect(),
+            active: true,
+        }
+    }
+
+    pub fn id(&self) -> &StreamId {
+        &self.id
+    }
+
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
+    pub fn get_audio_tracks(&self) -> impl Iterator<Item = &MediaStreamTrack> {
+        self.tracks
+            .values()
+            .filter(|track| track.kind() == RTPCodecType::Audio)
+    }
+
+    pub fn get_audio_tracks_mut(&mut self) -> impl Iterator<Item = &mut MediaStreamTrack> {
+        self.tracks
+            .values_mut()
+            .filter(|track| track.kind() == RTPCodecType::Audio)
+    }
+
+    pub fn get_video_tracks(&self) -> impl Iterator<Item = &MediaStreamTrack> {
+        self.tracks
+            .values()
+            .filter(|track| track.kind() == RTPCodecType::Video)
+    }
+
+    pub fn get_video_tracks_mut(&mut self) -> impl Iterator<Item = &mut MediaStreamTrack> {
+        self.tracks
+            .values_mut()
+            .filter(|track| track.kind() == RTPCodecType::Video)
+    }
+
+    pub fn get_tracks(&self) -> impl Iterator<Item = &MediaStreamTrack> {
+        self.tracks.values()
+    }
+
+    pub fn get_tracks_mut(&mut self) -> impl Iterator<Item = &mut MediaStreamTrack> {
+        self.tracks.values_mut()
+    }
+
+    pub fn get_track_by_id(&self, track_id: &TrackId) -> Option<&MediaStreamTrack> {
+        self.tracks.get(track_id)
+    }
+
+    pub fn get_track_by_id_mut(&mut self, track_id: &TrackId) -> Option<&mut MediaStreamTrack> {
+        self.tracks.get_mut(track_id)
+    }
+
+    pub fn add_track(&mut self, track: MediaStreamTrack) {
+        self.tracks.insert(track.id().to_string(), track);
+    }
+
+    pub fn remove_track(&mut self, track_id: &TrackId) -> Option<MediaStreamTrack> {
+        self.tracks.remove(track_id)
+    }
 }
