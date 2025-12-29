@@ -11,7 +11,7 @@ pub mod transport;
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
-use crate::media_stream::track_local::TrackLocal;
+use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
@@ -928,7 +928,7 @@ impl RTCPeerConnection {
     }
 
     /// add_track adds a Track to the PeerConnection
-    pub fn add_track(&mut self, _track: TrackLocal) -> Result<RTCRtpSender> {
+    pub fn add_track(&mut self, _track: MediaStreamTrack) -> Result<RTCRtpSender> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }

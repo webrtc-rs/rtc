@@ -4,7 +4,6 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media_stream::TrackDetails;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
@@ -32,6 +31,19 @@ pub(crate) const SDP_ATTRIBUTE_RID: &str = "rid";
 pub(crate) const SDP_ATTRIBUTE_SIMULCAST: &str = "simulcast";
 pub(crate) const GENERATED_CERTIFICATE_ORIGIN: &str = "WebRTC";
 pub(crate) const MEDIA_SECTION_APPLICATION: &str = "application";
+
+/// TrackDetails represents any media source that can be represented in a SDP
+/// This isn't keyed by SSRC because it also needs to support rid based sources
+#[derive(Default, Debug, Clone)]
+pub(crate) struct TrackDetails {
+    pub(crate) mid: String,
+    pub(crate) kind: RtpCodecKind,
+    pub(crate) stream_id: String,
+    pub(crate) id: String,
+    pub(crate) ssrcs: Vec<SSRC>,
+    pub(crate) repair_ssrc: SSRC,
+    pub(crate) rids: Vec<String>,
+}
 
 pub(crate) fn track_details_for_ssrc(
     track_details: &[TrackDetails],

@@ -8,12 +8,7 @@ use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
-use interceptor::{
-    stream_info::{AssociatedStreamInfo, RTPHeaderExtension, StreamInfo},
-    Attributes,
-};
 use log::trace;
 use serde::{Deserialize, Serialize};
 use shared::error::{Error, Result};
@@ -304,46 +299,6 @@ impl RTCRtpTransceiver {
         ));
 
         Ok(())
-    }
-}
-
-pub(crate) fn create_stream_info(
-    id: String,
-    ssrc: SSRC,
-    payload_type: PayloadType,
-    codec: RTCRtpCodec,
-    webrtc_header_extensions: &[RTCRtpHeaderExtensionParameters],
-    associated_stream: Option<AssociatedStreamInfo>,
-) -> StreamInfo {
-    let header_extensions: Vec<RTPHeaderExtension> = webrtc_header_extensions
-        .iter()
-        .map(|h| RTPHeaderExtension {
-            id: h.id,
-            uri: h.uri.clone(),
-        })
-        .collect();
-
-    let feedbacks: Vec<_> = codec
-        .rtcp_feedback
-        .iter()
-        .map(|f| interceptor::stream_info::RTCPFeedback {
-            typ: f.typ.clone(),
-            parameter: f.parameter.clone(),
-        })
-        .collect();
-
-    StreamInfo {
-        id,
-        attributes: Attributes::new(),
-        ssrc,
-        payload_type,
-        rtp_header_extensions: header_extensions,
-        mime_type: codec.mime_type,
-        clock_rate: codec.clock_rate,
-        channels: codec.channels,
-        sdp_fmtp_line: codec.sdp_fmtp_line,
-        rtcp_feedback: feedbacks,
-        associated_stream,
     }
 }
 
