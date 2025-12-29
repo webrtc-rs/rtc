@@ -16,17 +16,17 @@ pub enum RTCRtpTransceiverDirection {
     Unspecified,
 
     /// Sendrecv indicates the RTPSender will offer
-    /// to send RTP and RTPReceiver the will offer to receive RTP.
+    /// to send RTP and RTPReceiver will offer to receive RTP.
     Sendrecv,
 
     /// Sendonly indicates the RTPSender will offer to send RTP.
     Sendonly,
 
-    /// Recvonly indicates the RTPReceiver the will offer to receive RTP.
+    /// Recvonly indicates the RTPReceiver will offer to receive RTP.
     Recvonly,
 
     /// Inactive indicates the RTPSender won't offer
-    /// to send RTP and RTPReceiver the won't offer to receive RTP.
+    /// to send RTP and RTPReceiver won't offer to receive RTP.
     Inactive,
 }
 

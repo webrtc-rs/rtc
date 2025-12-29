@@ -64,7 +64,7 @@ pub struct RTCRtpTransceiver {
     pub(crate) codecs: Vec<RTCRtpCodecParameters>, // User provided codecs via set_codec_preferences
 
     pub(crate) stopped: bool,
-    pub(crate) kind: RTPCodecType,
+    pub(crate) kind: RtpCodecKind,
 }
 
 impl fmt::Debug for RTCRtpTransceiver {
@@ -87,7 +87,7 @@ impl RTCRtpTransceiver {
         receiver: RTCRtpReceiver,
         sender: RTCRtpSender,
         direction: RTCRtpTransceiverDirection,
-        kind: RTPCodecType,
+        kind: RtpCodecKind,
         codecs: Vec<RTCRtpCodecParameters>,
     ) -> Self {
         Self {
@@ -124,8 +124,9 @@ impl RTCRtpTransceiver {
     }
 
     /// Codecs returns list of supported codecs
-    pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        RTCRtpReceiver::get_codecs(&self.codecs, self.kind, media_engine)
+    pub(crate) fn get_codecs(&self, _media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
+        //TODO: RTCRtpReceiver::get_codecs(&self.codecs, self.kind, media_engine)
+        vec![]
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
@@ -160,10 +161,10 @@ impl RTCRtpTransceiver {
         &mut self.receiver
     }
 
-    pub(crate) fn set_receiver(&mut self, mut r: RTCRtpReceiver) {
-        r.set_transceiver_codecs(Some(self.codecs.clone()));
+    pub(crate) fn set_receiver(&mut self, r: RTCRtpReceiver) {
+        /*r.set_transceiver_codecs(Some(self.codecs.clone()));
 
-        self.receiver.set_transceiver_codecs(None);
+        self.receiver.set_transceiver_codecs(None);*/
 
         self.receiver = r;
     }
@@ -184,7 +185,7 @@ impl RTCRtpTransceiver {
     }
 
     /// kind returns RTPTransceiver's kind.
-    pub fn kind(&self) -> RTPCodecType {
+    pub fn kind(&self) -> RtpCodecKind {
         self.kind
     }
 
@@ -357,7 +358,7 @@ pub(crate) fn find_by_mid(mid: &String, local_transceivers: &[RTCRtpTransceiver]
 /// Given a direction+type pluck a transceiver from the passed list
 /// if no entry satisfies the requested type+direction return a inactive Transceiver
 pub(crate) fn satisfy_type_and_direction(
-    remote_kind: RTPCodecType,
+    remote_kind: RtpCodecKind,
     remote_direction: RTCRtpTransceiverDirection,
     local_transceivers: &mut [RTCRtpTransceiver],
 ) -> Option<&mut RTCRtpTransceiver> {

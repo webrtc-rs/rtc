@@ -3,8 +3,8 @@
 
 mod rtp_contributing_source;
 
-use crate::media_stream::track_remote::TrackRemote;
-use crate::media_stream::{TrackDetails, TrackStreams};
+use crate::media_stream::track::MediaStreamTrack;
+use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
@@ -12,16 +12,15 @@ use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
 };
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, CodecMatch, RTPCodecType,
+    codec_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use interceptor::stream_info::RTPHeaderExtension;
-use shared::error::{flatten_errs, Error, Result};
-use std::fmt;
+use shared::util::math_rand_alpha;
 use std::time::Duration;
-
+/*
+use std::fmt;
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum State {
@@ -75,7 +74,7 @@ impl State {
     fn is_started(&self) -> bool {
         matches!(self, Self::Started | Self::Paused)
     }
-}
+}*/
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
 ///
@@ -88,56 +87,103 @@ impl State {
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpreceiver-interface
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpReceiver {
-    tracks: Vec<TrackStreams>,
+    receiver_track: MediaStreamTrack,
+    contributing_sources: Vec<RTCRtpContributingSource>,
+    synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
-    sources: Vec<RTCRtpContributingSource>,
 
-    receive_mtu: usize,
-    kind: RTPCodecType,
-    state: State,
-    transceiver_codecs: Option<Vec<RTCRtpCodecParameters>>,
+    associated_remote_media_stream_ids: Vec<MediaStreamId>,
+    last_stable_state_associated_remote_media_stream_ids: Vec<MediaStreamId>,
+    receive_codecs: Vec<RTCRtpCodecParameters>,
+    last_stable_state_receive_codecs: Vec<RTCRtpCodecParameters>,
 }
 
 impl RTCRtpReceiver {
-    pub fn new(receive_mtu: usize, kind: RTPCodecType) -> Self {
+    pub fn new(kind: RtpCodecKind) -> Self {
         Self {
-            tracks: vec![],
-            jitter_buffer_target: Duration::from_millis(0),
-            sources: vec![],
-            receive_mtu,
-            kind,
-            state: State::Unstarted,
-            transceiver_codecs: None,
+            receiver_track: MediaStreamTrack::new(
+                math_rand_alpha(36),
+                kind,
+                format!("remote {}", kind),
+                true,
+            ),
+            ..Default::default()
         }
     }
 
-    pub fn get_capabilities(&self) -> RTCRtpCapabilities {
-        //TODO:
-        RTCRtpCapabilities::default()
+    pub fn track(&self) -> &MediaStreamTrack {
+        &self.receiver_track
     }
+
+    fn get_codecs(
+        &self,
+        kind: RtpCodecKind,
+        media_engine: &MediaEngine,
+    ) -> Vec<RTCRtpCodecParameters> {
+        let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
+        if self.receive_codecs.is_empty() {
+            return media_engine_codecs;
+        }
+        let mut filtered_codecs = vec![];
+        for codec in &self.receive_codecs {
+            let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
+            if match_type != CodecMatch::None {
+                filtered_codecs.push(c);
+            }
+        }
+
+        filtered_codecs
+    }
+
+    pub fn get_capabilities(
+        &self,
+        kind: RtpCodecKind,
+        media_engine: &mut MediaEngine,
+    ) -> Option<RTCRtpCapabilities> {
+        if kind == RtpCodecKind::Unspecified {
+            return None;
+        }
+
+        let rtp_parameters = media_engine
+            .get_rtp_parameters_by_kind(self.track().kind(), RTCRtpTransceiverDirection::Recvonly);
+
+        Some(RTCRtpCapabilities {
+            codecs: self
+                .receive_codecs
+                .iter()
+                .filter(|codec| {
+                    codec
+                        .rtp_codec
+                        .mime_type
+                        .contains(kind.to_string().as_str())
+                })
+                .map(|codec| codec.rtp_codec.clone())
+                .collect(),
+            header_extensions: rtp_parameters
+                .header_extensions
+                .into_iter()
+                .map(|h| RTCRtpHeaderExtensionCapability { uri: h.uri })
+                .collect(),
+        })
+    }
+
     pub fn get_parameters(&self, media_engine: &mut MediaEngine) -> RTCRtpReceiveParameters {
         let mut rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.kind, RTCRtpTransceiverDirection::Recvonly);
+            .get_rtp_parameters_by_kind(self.track().kind(), RTCRtpTransceiverDirection::Recvonly);
 
-        if let Some(codecs) = self.transceiver_codecs.as_ref() {
-            rtp_parameters.codecs = RTCRtpReceiver::get_codecs(codecs, self.kind, media_engine);
-        }
+        rtp_parameters.codecs = self.get_codecs(self.track().kind(), media_engine);
 
         RTCRtpReceiveParameters { rtp_parameters }
     }
 
     pub fn get_contributing_sources(&self) -> impl Iterator<Item = &RTCRtpContributingSource> {
-        //TODO:
-        self.sources.iter()
+        self.contributing_sources.iter()
     }
 
     pub fn get_synchronization_sources(
         &self,
     ) -> impl Iterator<Item = &RTCRtpSynchronizationSource> {
-        //TODO:
-        self.sources
-            .iter()
-            .map(|source| source as &RTCRtpSynchronizationSource)
+        self.synchronization_sources.iter()
     }
 
     /*
@@ -296,39 +342,15 @@ impl RTCRtpReceiver {
         }
     }*/
 
-    pub(crate) fn get_codecs(
-        codecs: &[RTCRtpCodecParameters],
-        kind: RTPCodecType,
-        media_engine: &MediaEngine,
-    ) -> Vec<RTCRtpCodecParameters> {
-        let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
-        if codecs.is_empty() {
-            return media_engine_codecs;
-        }
-        let mut filtered_codecs = vec![];
-        for codec in codecs {
-            let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
-            if match_type != CodecMatch::None {
-                //TODO: double check whether it is required to change original codec?
-                // if codec.payload_type == 0 {
-                //    codec.payload_type = c.payload_type;
-                //}
-                //filtered_codecs.push(codec.clone());
-                filtered_codecs.push(c);
-            }
-        }
-
-        filtered_codecs
-    }
-
+    /*
     pub fn kind(&self) -> RTPCodecType {
         self.kind
     }
 
     pub(crate) fn set_transceiver_codecs(&mut self, codecs: Option<Vec<RTCRtpCodecParameters>>) {
         self.transceiver_codecs = codecs;
-    }
-
+    }*/
+    /*
     /// SetRTPParameters applies provided RTPParameters the RTPReceiver's tracks.
     /// This method is part of the ORTC API. It is not
     /// meant to be used together with the basic WebRTC API.
@@ -740,5 +762,5 @@ impl RTCRtpReceiver {
         }*/
 
         Ok(())
-    }
+    }*/
 }

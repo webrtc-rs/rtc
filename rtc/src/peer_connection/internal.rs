@@ -129,9 +129,9 @@ impl RTCPeerConnection {
                         continue;
                     }
 
-                    let kind = RTPCodecType::from(media.media_name.media.as_str());
+                    let kind = RtpCodecKind::from(media.media_name.media.as_str());
                     let direction = get_peer_direction(media);
-                    if kind == RTPCodecType::Unspecified
+                    if kind == RtpCodecKind::Unspecified
                         || direction == RTCRtpTransceiverDirection::Unspecified
                     {
                         continue;

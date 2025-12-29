@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use rand::{rng, Rng};
 use std::net::{SocketAddr, ToSocketAddrs};
 
 // match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]
@@ -69,4 +70,31 @@ where
     }
 
     Err(Error::ErrAddressParseFailed)
+}
+
+const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const RUNES_ALPHA_NUMBER: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+/// math_rand_alpha generates a mathematical random alphabet sequence of the requested length.
+pub fn math_rand_alpha(n: usize) -> String {
+    generate_crypto_random_string(n, RUNES_ALPHA)
+}
+
+/// math_rand_alpha generates a mathematical random alphabet and number sequence of the requested length.
+pub fn math_rand_alpha_number(n: usize) -> String {
+    generate_crypto_random_string(n, RUNES_ALPHA_NUMBER)
+}
+
+//TODO: generates a random string for cryptographic usage.
+pub fn generate_crypto_random_string(n: usize, runes: &[u8]) -> String {
+    let mut rng = rng();
+
+    let rand_string: String = (0..n)
+        .map(|_| {
+            let idx = rng.random_range(0..runes.len());
+            runes[idx] as char
+        })
+        .collect();
+
+    rand_string
 }

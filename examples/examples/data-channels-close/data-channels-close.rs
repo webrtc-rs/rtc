@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
-use rtc::peer_connection::certificate::math_rand_alpha;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
@@ -28,6 +27,7 @@ use rtc::{
     peer_connection::transport::ice::server::RTCIceServer,
 };
 use shared::error::Error;
+use shared::util::math_rand_alpha;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 

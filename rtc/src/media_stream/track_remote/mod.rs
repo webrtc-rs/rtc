@@ -1,4 +1,4 @@
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
 use crate::rtp_transceiver::{PayloadType, SSRC};
@@ -15,7 +15,7 @@ pub struct TrackRemote {
 
     receive_mtu: usize,
     payload_type: PayloadType,
-    kind: RTPCodecType,
+    kind: RtpCodecKind,
     ssrc: SSRC,
     codec: RTCRtpCodecParameters,
     pub(crate) params: RTCRtpParameters,
@@ -44,7 +44,7 @@ impl std::fmt::Debug for TrackRemote {
 impl TrackRemote {
     pub(crate) fn new(
         receive_mtu: usize,
-        kind: RTPCodecType,
+        kind: RtpCodecKind,
         ssrc: SSRC,
         rid: String,
         //receiver: Weak<RTPReceiverInternal>,
@@ -105,11 +105,11 @@ impl TrackRemote {
     }
 
     /// kind gets the Kind of the track
-    pub fn kind(&self) -> RTPCodecType {
+    pub fn kind(&self) -> RtpCodecKind {
         self.kind
     }
 
-    pub fn set_kind(&mut self, kind: RTPCodecType) {
+    pub fn set_kind(&mut self, kind: RtpCodecKind) {
         self.kind = kind;
     }
 

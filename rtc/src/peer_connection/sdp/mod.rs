@@ -11,7 +11,7 @@ use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RTPCodecType};
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{
     rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType, RTCRtpTransceiver, SSRC,
@@ -77,8 +77,8 @@ pub(crate) fn track_details_from_sdp(
             None => continue,
         };
 
-        let codec_type = RTPCodecType::from(media.media_name.media.as_str());
-        if codec_type == RTPCodecType::Unspecified {
+        let codec_type = RtpCodecKind::from(media.media_name.media.as_str());
+        if codec_type == RtpCodecKind::Unspecified {
             continue;
         }
 

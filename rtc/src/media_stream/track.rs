@@ -2,16 +2,16 @@ use crate::media_stream::track_capabilities::MediaTrackCapabilities;
 use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 
-pub type TrackId = String;
+pub type MediaStreamTrackId = String;
 
 /// TrackStreams maintains a mapping of RTP/RTCP streams to a specific track
 /// a RTPReceiver may contain multiple streams if we are dealing with Simulcast
 #[derive(Default, Debug, Clone)]
 pub struct MediaStreamTrack {
-    id: TrackId,
-    kind: RTPCodecType,
+    id: MediaStreamTrackId,
+    kind: RtpCodecKind,
     label: String,
     muted: bool,
     enabled: bool,
@@ -24,7 +24,7 @@ pub struct MediaStreamTrack {
 }
 
 impl MediaStreamTrack {
-    pub fn new(id: TrackId, kind: RTPCodecType, label: String, muted: bool) -> Self {
+    pub fn new(id: MediaStreamTrackId, kind: RtpCodecKind, label: String, muted: bool) -> Self {
         Self {
             id,
             kind,
@@ -38,11 +38,11 @@ impl MediaStreamTrack {
         }
     }
 
-    pub fn kind(&self) -> RTPCodecType {
+    pub fn kind(&self) -> RtpCodecKind {
         self.kind
     }
 
-    pub fn id(&self) -> &TrackId {
+    pub fn id(&self) -> &MediaStreamTrackId {
         &self.id
     }
 

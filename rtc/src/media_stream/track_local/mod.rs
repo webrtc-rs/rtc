@@ -73,13 +73,13 @@ impl TrackLocal {
         self.stream_id.as_str()
     }
 
-    pub fn kind(&self) -> RTPCodecType {
+    pub fn kind(&self) -> RtpCodecKind {
         if self.codec.mime_type.starts_with("audio/") {
-            RTPCodecType::Audio
+            RtpCodecKind::Audio
         } else if self.codec.mime_type.starts_with("video/") {
-            RTPCodecType::Video
+            RtpCodecKind::Video
         } else {
-            RTPCodecType::Unspecified
+            RtpCodecKind::Unspecified
         }
     }
 

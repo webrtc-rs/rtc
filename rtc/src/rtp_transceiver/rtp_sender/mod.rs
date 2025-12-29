@@ -18,12 +18,12 @@ use crate::media_stream::track_local::TrackLocal;
 use crate::media_stream::{RtxEncoding, TrackEncoding};
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
 use crate::rtp_transceiver::PayloadType;
-use ice::rand::generate_crypto_random_string;
 use interceptor::stream_info::StreamInfo;
 use shared::error::{Error, Result};
+use shared::util::math_rand_alpha;
 
 /// RTPSender allows an application to control how a given Track is encoded and transmitted to a remote peer
 ///
@@ -38,7 +38,7 @@ use shared::error::{Error, Result};
 pub struct RTCRtpSender {
     pub(crate) track_encodings: Vec<TrackEncoding>,
 
-    pub(crate) kind: RTPCodecType,
+    pub(crate) kind: RtpCodecKind,
     pub(crate) payload_type: PayloadType,
     receive_mtu: usize,
     enable_rtx: bool,
@@ -61,16 +61,13 @@ pub struct RTCRtpSender {
 impl RTCRtpSender {
     pub fn new(
         track: Option<TrackLocal>,
-        kind: RTPCodecType,
+        kind: RtpCodecKind,
         start_paused: bool,
         receive_mtu: usize,
         enable_rtx: bool,
         media_engine: &MediaEngine,
     ) -> Self {
-        let id = generate_crypto_random_string(
-            32,
-            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        );
+        let id = math_rand_alpha(32);
 
         let associated_media_stream_ids = track
             .as_ref()
@@ -110,7 +107,7 @@ impl RTCRtpSender {
         self.track_encodings.first().map(|e| &e.track)
     }
 
-    pub fn get_capabilities(&self, _kind: RTPCodecType) -> RTCRtpCapabilities {
+    pub fn get_capabilities(&self, _kind: RtpCodecKind) -> RTCRtpCapabilities {
         //TODO:
         RTCRtpCapabilities::default()
     }

@@ -13,7 +13,6 @@ use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
-use rtc::peer_connection::certificate::math_rand_alpha;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
@@ -22,6 +21,7 @@ use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
+use shared::util::math_rand_alpha;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 

@@ -1,7 +1,7 @@
+use shared::util::generate_crypto_random_string;
+
 #[cfg(test)]
 mod rand_test;
-
-use rand::{thread_rng, Rng};
 
 const RUNES_ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const RUNES_CANDIDATE_ID_FOUNDATION: &[u8] =
@@ -9,20 +9,6 @@ const RUNES_CANDIDATE_ID_FOUNDATION: &[u8] =
 
 const LEN_UFRAG: usize = 16;
 const LEN_PWD: usize = 32;
-
-//TODO: generates a random string for cryptographic usage.
-pub fn generate_crypto_random_string(n: usize, runes: &[u8]) -> String {
-    let mut rng = thread_rng();
-
-    let rand_string: String = (0..n)
-        .map(|_| {
-            let idx = rng.gen_range(0..runes.len());
-            runes[idx] as char
-        })
-        .collect();
-
-    rand_string
-}
 
 /// https://tools.ietf.org/html/rfc5245#section-15.1
 /// candidate-id = "candidate" ":" foundation

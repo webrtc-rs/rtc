@@ -13,7 +13,7 @@ use crate::peer_connection::sdp::{
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::fmtp;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodec, RTPCodecType,
+    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodec, RtpCodecKind,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
@@ -148,7 +148,7 @@ impl MediaEngine {
                 ..Default::default()
             },
         ] {
-            self.register_codec(codec, RTPCodecType::Audio)?;
+            self.register_codec(codec, RtpCodecKind::Audio)?;
         }
 
         let video_rtcp_feedback = vec![
@@ -315,7 +315,7 @@ impl MediaEngine {
                 ..Default::default()
             },
         ] {
-            self.register_codec(codec, RTPCodecType::Video)?;
+            self.register_codec(codec, RtpCodecKind::Video)?;
         }
 
         Ok(())
@@ -339,7 +339,7 @@ impl MediaEngine {
     pub fn register_codec(
         &mut self,
         mut codec: RTCRtpCodecParameters,
-        typ: RTPCodecType,
+        typ: RtpCodecKind,
     ) -> Result<()> {
         codec.stats_id = format!(
             "RTPCodec-{}",
@@ -349,11 +349,11 @@ impl MediaEngine {
                 .as_nanos()
         );
         match typ {
-            RTPCodecType::Audio => {
+            RtpCodecKind::Audio => {
                 MediaEngine::add_codec(&mut self.audio_codecs, codec);
                 Ok(())
             }
-            RTPCodecType::Video => {
+            RtpCodecKind::Video => {
                 MediaEngine::add_codec(&mut self.video_codecs, codec);
                 Ok(())
             }
@@ -370,7 +370,7 @@ impl MediaEngine {
     pub fn register_header_extension(
         &mut self,
         extension: RTCRtpHeaderExtensionCapability,
-        typ: RTPCodecType,
+        typ: RtpCodecKind,
         allowed_direction: Option<RTCRtpTransceiverDirection>,
     ) -> Result<()> {
         let ext = {
@@ -396,9 +396,9 @@ impl MediaEngine {
             }
         };
 
-        if typ == RTPCodecType::Audio {
+        if typ == RtpCodecKind::Audio {
             ext.is_audio = true;
-        } else if typ == RTPCodecType::Video {
+        } else if typ == RtpCodecKind::Video {
             ext.is_video = true;
         }
 
@@ -412,14 +412,14 @@ impl MediaEngine {
     }
 
     /// register_feedback adds feedback mechanism to already registered codecs.
-    pub fn register_feedback(&mut self, feedback: RTCPFeedback, typ: RTPCodecType) {
+    pub fn register_feedback(&mut self, feedback: RTCPFeedback, typ: RtpCodecKind) {
         match typ {
-            RTPCodecType::Video => {
+            RtpCodecKind::Video => {
                 for v in &mut self.video_codecs {
                     v.rtp_codec.rtcp_feedback.push(feedback.clone());
                 }
             }
-            RTPCodecType::Audio => {
+            RtpCodecKind::Audio => {
                 for a in &mut self.audio_codecs {
                     a.rtp_codec.rtcp_feedback.push(feedback.clone());
                 }
@@ -471,32 +471,32 @@ impl MediaEngine {
     pub(crate) fn get_codec_by_payload(
         &self,
         payload_type: PayloadType,
-    ) -> Result<(RTCRtpCodecParameters, RTPCodecType)> {
+    ) -> Result<(RTCRtpCodecParameters, RtpCodecKind)> {
         if self.negotiated_video {
             for codec in &self.negotiated_video_codecs {
                 if codec.payload_type == payload_type {
-                    return Ok((codec.clone(), RTPCodecType::Video));
+                    return Ok((codec.clone(), RtpCodecKind::Video));
                 }
             }
         }
         if self.negotiated_audio {
             for codec in &self.negotiated_audio_codecs {
                 if codec.payload_type == payload_type {
-                    return Ok((codec.clone(), RTPCodecType::Audio));
+                    return Ok((codec.clone(), RtpCodecKind::Audio));
                 }
             }
         }
         if !self.negotiated_video {
             for codec in &self.video_codecs {
                 if codec.payload_type == payload_type {
-                    return Ok((codec.clone(), RTPCodecType::Video));
+                    return Ok((codec.clone(), RtpCodecKind::Video));
                 }
             }
         }
         if !self.negotiated_audio {
             for codec in &self.audio_codecs {
                 if codec.payload_type == payload_type {
-                    return Ok((codec.clone(), RTPCodecType::Audio));
+                    return Ok((codec.clone(), RtpCodecKind::Audio));
                 }
             }
         }
@@ -523,11 +523,11 @@ impl MediaEngine {
     pub(crate) fn match_remote_codec(
         &self,
         remote_codec: &RTCRtpCodecParameters,
-        typ: RTPCodecType,
+        typ: RtpCodecKind,
         exact_matches: &[RTCRtpCodecParameters],
         partial_matches: &[RTCRtpCodecParameters],
     ) -> Result<CodecMatch> {
-        let codecs = if typ == RTPCodecType::Audio {
+        let codecs = if typ == RtpCodecKind::Audio {
             &self.audio_codecs
         } else {
             &self.video_codecs
@@ -595,7 +595,7 @@ impl MediaEngine {
         &mut self,
         id: u16,
         extension: &str,
-        typ: RTPCodecType,
+        typ: RtpCodecKind,
     ) -> Result<()> {
         let (negotiated_header_extensions, proposed_header_extensions) = (
             &mut self.negotiated_header_extensions,
@@ -613,8 +613,8 @@ impl MediaEngine {
 
             if let Some(n_ext) = negotiated_ext {
                 if *n_ext.0 == id {
-                    n_ext.1.is_video |= typ == RTPCodecType::Video;
-                    n_ext.1.is_audio |= typ == RTPCodecType::Audio;
+                    n_ext.1.is_video |= typ == RtpCodecKind::Video;
+                    n_ext.1.is_audio |= typ == RtpCodecKind::Audio;
                 } else {
                     let nid = n_ext.0;
                     log::warn!("Invalid ext id mapping in update_header_extension. {extension} was negotiated as {nid}, but was {id} in call");
@@ -629,8 +629,8 @@ impl MediaEngine {
                 } else {
                     let h = MediaEngineHeaderExtension {
                         uri: extension.to_owned(),
-                        is_audio: local_extension.is_audio && typ == RTPCodecType::Audio,
-                        is_video: local_extension.is_video && typ == RTPCodecType::Video,
+                        is_audio: local_extension.is_audio && typ == RtpCodecKind::Audio,
+                        is_video: local_extension.is_video && typ == RtpCodecKind::Video,
                         allowed_direction: local_extension.allowed_direction,
                     };
                     negotiated_header_extensions.insert(id, h);
@@ -643,11 +643,11 @@ impl MediaEngine {
         Ok(())
     }
 
-    pub(crate) fn push_codecs(&mut self, codecs: Vec<RTCRtpCodecParameters>, typ: RTPCodecType) {
+    pub(crate) fn push_codecs(&mut self, codecs: Vec<RTCRtpCodecParameters>, typ: RtpCodecKind) {
         for codec in codecs {
-            if typ == RTPCodecType::Audio {
+            if typ == RtpCodecKind::Audio {
                 MediaEngine::add_codec(&mut self.negotiated_audio_codecs, codec);
-            } else if typ == RTPCodecType::Video {
+            } else if typ == RtpCodecKind::Video {
                 MediaEngine::add_codec(&mut self.negotiated_video_codecs, codec);
             }
         }
@@ -663,12 +663,12 @@ impl MediaEngine {
                 && media.media_name.media.to_lowercase() == "audio"
             {
                 self.negotiated_audio = true;
-                RTPCodecType::Audio
+                RtpCodecKind::Audio
             } else if (!self.negotiated_video || self.negotiate_multi_codecs)
                 && media.media_name.media.to_lowercase() == "video"
             {
                 self.negotiated_video = true;
-                RTPCodecType::Video
+                RtpCodecKind::Video
             } else {
                 continue;
             };
@@ -709,14 +709,14 @@ impl MediaEngine {
         Ok(())
     }
 
-    pub(crate) fn get_codecs_by_kind(&self, typ: RTPCodecType) -> Vec<RTCRtpCodecParameters> {
-        if typ == RTPCodecType::Video {
+    pub(crate) fn get_codecs_by_kind(&self, typ: RtpCodecKind) -> Vec<RTCRtpCodecParameters> {
+        if typ == RtpCodecKind::Video {
             if self.negotiated_video {
                 self.negotiated_video_codecs.clone()
             } else {
                 self.video_codecs.clone()
             }
-        } else if typ == RTPCodecType::Audio {
+        } else if typ == RtpCodecKind::Audio {
             if self.negotiated_audio {
                 self.negotiated_audio_codecs.clone()
             } else {
@@ -729,18 +729,18 @@ impl MediaEngine {
 
     pub(crate) fn get_rtp_parameters_by_kind(
         &mut self,
-        typ: RTPCodecType,
+        typ: RtpCodecKind,
         direction: RTCRtpTransceiverDirection,
     ) -> RTCRtpParameters {
         let mut header_extensions = vec![];
 
-        if self.negotiated_video && typ == RTPCodecType::Video
-            || self.negotiated_audio && typ == RTPCodecType::Audio
+        if self.negotiated_video && typ == RtpCodecKind::Video
+            || self.negotiated_audio && typ == RtpCodecKind::Audio
         {
             for (id, e) in &self.negotiated_header_extensions {
                 if e.is_matching_direction(direction)
-                    && (e.is_audio && typ == RTPCodecType::Audio
-                        || e.is_video && typ == RTPCodecType::Video)
+                    && (e.is_audio && typ == RtpCodecKind::Audio
+                        || e.is_video && typ == RtpCodecKind::Video)
                 {
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id: *id,
@@ -757,8 +757,8 @@ impl MediaEngine {
 
             for local_extension in &self.header_extensions {
                 let relevant = local_extension.is_matching_direction(direction)
-                    && (local_extension.is_audio && typ == RTPCodecType::Audio
-                        || local_extension.is_video && typ == RTPCodecType::Video);
+                    && (local_extension.is_audio && typ == RtpCodecKind::Audio
+                        || local_extension.is_video && typ == RtpCodecKind::Video);
 
                 if !relevant {
                     continue;
@@ -770,8 +770,8 @@ impl MediaEngine {
                 {
                     // We have previously negotiated this extension, make sure to record it as
                     // active for the current type
-                    negotiated_extension.is_audio |= typ == RTPCodecType::Audio;
-                    negotiated_extension.is_video |= typ == RTPCodecType::Video;
+                    negotiated_extension.is_audio |= typ == RtpCodecKind::Audio;
+                    negotiated_extension.is_video |= typ == RtpCodecKind::Video;
 
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id: *id,
@@ -839,7 +839,7 @@ impl MediaEngine {
 
         let mut header_extensions = vec![];
         for (id, e) in &self.negotiated_header_extensions {
-            if e.is_audio && typ == RTPCodecType::Audio || e.is_video && typ == RTPCodecType::Video
+            if e.is_audio && typ == RtpCodecKind::Audio || e.is_video && typ == RtpCodecKind::Video
             {
                 header_extensions.push(RTCRtpHeaderExtensionParameters {
                     uri: e.uri.clone(),

@@ -46,7 +46,7 @@ use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabili
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTPCodecType;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::{find_by_mid, satisfy_type_and_direction, RTCRtpTransceiver};
 use ::sdp::description::session::Origin;
@@ -352,9 +352,9 @@ impl RTCPeerConnection {
                         continue;
                     }
 
-                    let kind = RTPCodecType::from(media.media_name.media.as_str());
+                    let kind = RtpCodecKind::from(media.media_name.media.as_str());
                     let direction = get_peer_direction(media);
-                    if kind == RTPCodecType::Unspecified
+                    if kind == RtpCodecKind::Unspecified
                         || direction == RTCRtpTransceiverDirection::Unspecified
                     {
                         continue;
@@ -467,9 +467,9 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        let kind = RTPCodecType::from(media.media_name.media.as_str());
+                        let kind = RtpCodecKind::from(media.media_name.media.as_str());
                         let direction = get_peer_direction(media);
-                        if kind == RTPCodecType::Unspecified
+                        if kind == RtpCodecKind::Unspecified
                             || direction == RTCRtpTransceiverDirection::Unspecified
                         {
                             continue;
@@ -497,7 +497,7 @@ impl RTCPeerConnection {
                             let enable_sender_rtx =
                                 self.configuration.setting_engine.enable_sender_rtx;
 
-                            let receiver = RTCRtpReceiver::new(receive_mtu, kind);
+                            let receiver = RTCRtpReceiver::new(kind);
 
                             let sender = RTCRtpSender::new(
                                 None,
@@ -543,9 +543,9 @@ impl RTCPeerConnection {
                         if media.media_name.media == MEDIA_SECTION_APPLICATION {
                             continue;
                         }
-                        let kind = RTPCodecType::from(media.media_name.media.as_str());
+                        let kind = RtpCodecKind::from(media.media_name.media.as_str());
                         let direction = get_peer_direction(media);
-                        if kind == RTPCodecType::Unspecified
+                        if kind == RtpCodecKind::Unspecified
                             || direction == RTCRtpTransceiverDirection::Unspecified
                         {
                             continue;

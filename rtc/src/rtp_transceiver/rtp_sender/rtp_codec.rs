@@ -9,43 +9,43 @@ use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RTPCodecType {
+pub enum RtpCodecKind {
     #[default]
     Unspecified = 0,
 
-    /// RTPCodecTypeAudio indicates this is an audio codec
+    /// Audio indicates this is an audio codec
     Audio = 1,
 
-    /// RTPCodecTypeVideo indicates this is a video codec
+    /// Video indicates this is a video codec
     Video = 2,
 }
 
-impl From<&str> for RTPCodecType {
+impl From<&str> for RtpCodecKind {
     fn from(raw: &str) -> Self {
         match raw {
-            "audio" => RTPCodecType::Audio,
-            "video" => RTPCodecType::Video,
-            _ => RTPCodecType::Unspecified,
+            "audio" => RtpCodecKind::Audio,
+            "video" => RtpCodecKind::Video,
+            _ => RtpCodecKind::Unspecified,
         }
     }
 }
 
-impl From<u8> for RTPCodecType {
+impl From<u8> for RtpCodecKind {
     fn from(v: u8) -> Self {
         match v {
-            1 => RTPCodecType::Audio,
-            2 => RTPCodecType::Video,
-            _ => RTPCodecType::Unspecified,
+            1 => RtpCodecKind::Audio,
+            2 => RtpCodecKind::Video,
+            _ => RtpCodecKind::Unspecified,
         }
     }
 }
 
-impl fmt::Display for RTPCodecType {
+impl fmt::Display for RtpCodecKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
-            RTPCodecType::Audio => "audio",
-            RTPCodecType::Video => "video",
-            RTPCodecType::Unspecified => UNSPECIFIED_STR,
+            RtpCodecKind::Audio => "audio",
+            RtpCodecKind::Video => "video",
+            RtpCodecKind::Unspecified => UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }
