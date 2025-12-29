@@ -219,11 +219,11 @@ impl RTCPeerConnection {
             }
 
             for t in &mut self.rtp_transceivers {
-                if t.mid.is_some() {
+                if t.mid().is_some() {
                     continue;
                 }
 
-                t.mid = Some(format!("{}", self.greater_mid));
+                t.set_mid(format!("{}", self.greater_mid))?;
                 self.greater_mid += 1;
             }
 
@@ -369,7 +369,7 @@ impl RTCPeerConnection {
                         Some(i) => i,
                         None => continue,
                     };
-                    let previous_direction = self.rtp_transceivers[i].current_direction;
+                    let previous_direction = self.rtp_transceivers[i].current_direction();
                     // 4.9.1.7.3 applying a local answer or pranswer
                     // Set transceiver.[[CurrentDirection]] and transceiver.[[FiredDirection]] to direction.
                     self.rtp_transceivers[i].set_current_direction(direction);
@@ -482,8 +482,8 @@ impl RTCPeerConnection {
                         };
 
                         if let Some(t) = t {
-                            if t.mid.is_none() {
-                                t.mid = Some(mid_value.to_string());
+                            if t.mid().is_none() {
+                                t.set_mid(mid_value.to_string())?;
                             }
                         } else {
                             let local_direction =
@@ -494,22 +494,15 @@ impl RTCPeerConnection {
                                 };
 
                             let receiver = RTCRtpReceiver::new(kind);
-
                             let sender = RTCRtpSender::new(None, kind, vec![], vec![]);
+                            let mut transceiver =
+                                RTCRtpTransceiver::new(receiver, sender, local_direction);
 
-                            let mut t = RTCRtpTransceiver::new(
-                                receiver,
-                                sender,
-                                local_direction,
-                                kind,
-                                vec![],
-                            );
-
-                            if t.mid.is_none() {
-                                t.mid = Some(mid_value.to_string());
+                            if transceiver.mid().is_none() {
+                                transceiver.set_mid(mid_value.to_string())?;
                             }
 
-                            self.add_rtp_transceiver(t);
+                            self.add_rtp_transceiver(transceiver);
                         }
                     }
                 } else {
@@ -541,7 +534,7 @@ impl RTCPeerConnection {
                         }
 
                         if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
-                            let previous_direction = self.rtp_transceivers[i].current_direction;
+                            let previous_direction = self.rtp_transceivers[i].current_direction();
 
                             // 4.5.9.2.9
                             // Let direction be an RTCRtpTransceiverDirection value representing the direction
@@ -899,22 +892,22 @@ impl RTCPeerConnection {
 
     /// Returns an iterator over immutable RTP senders.
     pub fn get_senders(&self) -> impl Iterator<Item = &RTCRtpSender> {
-        self.rtp_transceivers.iter().map(|t| &t.sender)
+        self.rtp_transceivers.iter().map(|t| t.sender())
     }
 
     /// Returns an iterator over mutable RTP senders.
     pub fn get_senders_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpSender> {
-        self.rtp_transceivers.iter_mut().map(|t| &mut t.sender)
+        self.rtp_transceivers.iter_mut().map(|t| t.sender_mut())
     }
 
     /// Returns an iterator over immutable RTP receivers.
     pub fn get_receivers(&self) -> impl Iterator<Item = &RTCRtpReceiver> {
-        self.rtp_transceivers.iter().map(|t| &t.receiver)
+        self.rtp_transceivers.iter().map(|t| t.receiver())
     }
 
     /// Returns an iterator over mutable RTP receivers.
     pub fn get_receivers_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpReceiver> {
-        self.rtp_transceivers.iter_mut().map(|t| &mut t.receiver)
+        self.rtp_transceivers.iter_mut().map(|t| t.receiver_mut())
     }
 
     /// Returns an iterator over immutable RTP transceivers.

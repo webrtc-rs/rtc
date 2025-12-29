@@ -403,7 +403,7 @@ pub(crate) fn add_transceiver_sdp(
 
     let transceiver = &mut transceivers[media_section.transceiver_index];
     let mut media =
-        MediaDescription::new_jsep_media_description(transceiver.kind.to_string(), vec![])
+        MediaDescription::new_jsep_media_description(transceiver.kind().to_string(), vec![])
             .with_value_attribute(ATTR_KEY_CONNECTION_SETUP.to_owned(), dtls_role.to_string())
             .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value.clone())
             .with_ice_credentials(
@@ -446,14 +446,14 @@ pub(crate) fn add_transceiver_sdp(
 
     if codecs.is_empty() {
         // If we are sender and we have no codecs throw an error early
-        if transceiver.sender.track().is_some() {
+        if transceiver.sender().track().is_some() {
             return Err(Error::ErrSenderWithNoCodecs);
         }
 
         // Explicitly reject track if we don't have the codec
         d = d.with_media(MediaDescription {
             media_name: sdp::description::media::MediaName {
-                media: transceiver.kind.to_string(),
+                media: transceiver.kind().to_string(),
                 port: RangedPort {
                     value: 0,
                     range: None,
@@ -488,7 +488,7 @@ pub(crate) fn add_transceiver_sdp(
     }
 
     let parameters =
-        media_engine.get_rtp_parameters_by_kind(transceiver.kind, transceiver.direction);
+        media_engine.get_rtp_parameters_by_kind(transceiver.kind(), transceiver.direction());
     for rtp_extension in &parameters.header_extensions {
         let ext_url = Url::parse(rtp_extension.uri.as_str())?;
         media = media.with_extmap(sdp::extmap::ExtMap {
@@ -537,23 +537,22 @@ pub(crate) fn add_transceiver_sdp(
         media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
     }
 
-    /*TODO:
-    let sender = &mut transceiver.sender;
+    let sender = transceiver.sender_mut();
+    let send_parameters = sender.get_parameters(media_engine);
     if let Some(track) = sender.track() {
-        let send_parameters = sender.get_parameters();
         for encoding in &send_parameters.encodings {
             media = media.with_media_source(
                 encoding.rtp_coding_parameters.ssrc,
-                track.stream_id().to_owned(), /* cname */
-                track.stream_id().to_owned(), /* streamLabel */
+                send_parameters.rtp_parameters.rtcp.cname.clone(), /* cname */
+                track.label().to_owned(),                          /* streamLabel */
                 track.id().to_owned(),
             );
 
             if encoding.rtp_coding_parameters.rtx.ssrc != 0 {
                 media = media.with_media_source(
                     encoding.rtp_coding_parameters.rtx.ssrc,
-                    track.stream_id().to_owned(),
-                    track.stream_id().to_owned(),
+                    send_parameters.rtp_parameters.rtcp.cname.clone(),
+                    track.label().to_owned(),
                     track.id().to_owned(),
                 );
 
@@ -589,36 +588,15 @@ pub(crate) fn add_transceiver_sdp(
         // Send msid based on the configured track if we haven't already
         // sent on this sender. If we have sent we must keep the msid line consistent, this
         // is handled below.
-        if sender.initial_track_id.is_none() {
-            for stream_id in sender.associated_media_stream_ids() {
-                media = media.with_property_attribute(format!("msid:{} {}", stream_id, track.id()));
-            }
-
-            sender.set_initial_track_id(track.id().to_string())?;
+        for stream_id in sender.streams() {
+            media = media.with_property_attribute(format!("msid:{} {}", stream_id, track.id()));
         }
     }
-
-    if let Some(track_id) = sender.initial_track_id.as_ref() {
-        // After we have include an msid attribute in an offer it must stay the same for
-        // all subsequent offer even if the track or transceiver direction changes.
-        //
-        // [RFC 8829 Section 5.2.2](https://datatracker.ietf.org/doc/html/rfc8829#section-5.2.2)
-        //
-        // For RtpTransceivers that are not stopped, the "a=msid" line or
-        // lines MUST stay the same if they are present in the current
-        // description, regardless of changes to the transceiver's direction
-        // or track.  If no "a=msid" line is present in the current
-        // description, "a=msid" line(s) MUST be generated according to the
-        // same rules as for an initial offer.
-        for stream_id in sender.associated_media_stream_ids() {
-            media = media.with_property_attribute(format!("msid:{stream_id} {track_id}"));
-        }
-    }*/
 
     let direction = match params.offered_direction {
         Some(offered_direction) => {
             use RTCRtpTransceiverDirection::*;
-            let transceiver_direction = transceiver.direction;
+            let transceiver_direction = transceiver.direction();
 
             match offered_direction {
                 Sendonly | Recvonly => {
@@ -635,7 +613,7 @@ pub(crate) fn add_transceiver_sdp(
                 // media or session level, in which case the stream is sendrecv by
                 // default), the corresponding stream in the answer MAY be marked as
                 // sendonly, recvonly, sendrecv, or inactive
-                Sendrecv | Unspecified => transceiver.direction,
+                Sendrecv | Unspecified => transceiver.direction(),
                 // If an offered media
                 // stream is listed as inactive, it MUST be marked as inactive in the
                 // answer.
@@ -650,7 +628,7 @@ pub(crate) fn add_transceiver_sdp(
             //
             //    When creating offers, the transceiver direction is directly reflected
             //    in the output, even for re-offers.
-            transceiver.direction
+            transceiver.direction()
         }
     };
     media = media.with_property_attribute(direction.to_string());
@@ -727,7 +705,7 @@ fn bundle_match(bundle: Option<&String>, id: &str) -> bool {
 
 #[derive(Default)]
 pub(crate) struct MediaSection {
-    pub(crate) id: String,
+    pub(crate) mid: String,
     pub(crate) transceiver_index: usize,
     pub(crate) data: bool,
     pub(crate) rid_map: Vec<SimulcastRid>,
@@ -781,7 +759,7 @@ pub(crate) fn populate_sdp(
         let should_add_id = if m.data {
             let params = AddDataMediaSectionParams {
                 should_add_candidates,
-                mid_value: m.id.clone(),
+                mid_value: m.mid.clone(),
                 ice_params: ice_params.clone(),
                 dtls_role: params.connection_role,
                 ice_gathering_state: params.ice_gathering_state,
@@ -791,7 +769,7 @@ pub(crate) fn populate_sdp(
         } else {
             let params = AddTransceiverSdpParams {
                 should_add_candidates,
-                mid_value: m.id.clone(),
+                mid_value: m.mid.clone(),
                 dtls_role: params.connection_role,
                 ice_gathering_state: params.ice_gathering_state,
                 offered_direction: m.offered_direction,
@@ -811,8 +789,8 @@ pub(crate) fn populate_sdp(
         };
 
         if should_add_id {
-            if bundle_match(params.match_bundle_group.as_ref(), &m.id) {
-                append_bundle(&m.id, &mut bundle_value, &mut bundle_count);
+            if bundle_match(params.match_bundle_group.as_ref(), &m.mid) {
+                append_bundle(&m.mid, &mut bundle_value, &mut bundle_count);
             } else if let Some(desc) = d.media_descriptions.last_mut() {
                 desc.media_name.port = RangedPort {
                     value: 0,

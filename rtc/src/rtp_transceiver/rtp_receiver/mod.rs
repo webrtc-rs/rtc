@@ -95,7 +95,8 @@ impl RTCRtpReceiver {
         let mut rtp_parameters = media_engine
             .get_rtp_parameters_by_kind(self.track().kind(), RTCRtpTransceiverDirection::Recvonly);
 
-        rtp_parameters.codecs = self.get_codecs(self.track().kind(), media_engine);
+        rtp_parameters.codecs =
+            RTCRtpReceiver::get_codecs(&self.receive_codecs, self.kind(), media_engine);
 
         RTCRtpReceiveParameters { rtp_parameters }
     }
@@ -110,17 +111,21 @@ impl RTCRtpReceiver {
         self.synchronization_sources.iter()
     }
 
-    fn get_codecs(
-        &self,
+    pub(super) fn kind(&self) -> RtpCodecKind {
+        self.receiver_track.kind()
+    }
+
+    pub(super) fn get_codecs(
+        codecs: &[RTCRtpCodecParameters],
         kind: RtpCodecKind,
         media_engine: &MediaEngine,
     ) -> Vec<RTCRtpCodecParameters> {
         let media_engine_codecs = media_engine.get_codecs_by_kind(kind);
-        if self.receive_codecs.is_empty() {
+        if codecs.is_empty() {
             return media_engine_codecs;
         }
         let mut filtered_codecs = vec![];
-        for codec in &self.receive_codecs {
+        for codec in codecs {
             let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
             if match_type != CodecMatch::None {
                 filtered_codecs.push(c);

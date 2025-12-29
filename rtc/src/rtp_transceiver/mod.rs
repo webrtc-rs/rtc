@@ -1,7 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
-use crate::media_stream::track::MediaStreamTrack;
+use crate::media_stream::MediaStream;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -10,7 +10,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParamet
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use log::trace;
-use serde::{Deserialize, Serialize};
 use shared::error::{Error, Result};
 use std::fmt;
 
@@ -33,33 +32,23 @@ pub type SSRC = u32;
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
-/// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.
-/// <https://draft.ortc.org/#dom-rtcrtprtxparameters>
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct RTCRtpRtxParameters {
-    pub ssrc: SSRC,
-}
-
 /// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.
 pub struct RTCRtpTransceiverInit {
     pub direction: RTCRtpTransceiverDirection,
+    pub streams: Vec<MediaStream>,
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
-    // Streams       []*Track
 }
 
 /// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
 #[derive(Default, Clone)]
 pub struct RTCRtpTransceiver {
-    pub(crate) mid: Option<String>,
-    pub(crate) sender: RTCRtpSender,
-    pub(crate) receiver: RTCRtpReceiver,
-    pub(crate) direction: RTCRtpTransceiverDirection,
-    pub(crate) current_direction: RTCRtpTransceiverDirection,
-
-    pub(crate) codecs: Vec<RTCRtpCodecParameters>, // User provided codecs via set_codec_preferences
-
-    pub(crate) stopped: bool,
-    pub(crate) kind: RtpCodecKind,
+    mid: Option<String>,
+    sender: RTCRtpSender,
+    receiver: RTCRtpReceiver,
+    direction: RTCRtpTransceiverDirection,
+    current_direction: RTCRtpTransceiverDirection,
+    preferred_codecs: Vec<RTCRtpCodecParameters>,
+    stopped: bool,
 }
 
 impl fmt::Debug for RTCRtpTransceiver {
@@ -70,9 +59,8 @@ impl fmt::Debug for RTCRtpTransceiver {
             .field("receiver", &self.receiver)
             .field("direction", &self.direction)
             .field("current_direction", &self.current_direction)
-            .field("codecs", &self.codecs)
+            .field("preferred_codecs", &self.preferred_codecs)
             .field("stopped", &self.stopped)
-            .field("kind", &self.kind)
             .finish()
     }
 }
@@ -82,8 +70,6 @@ impl RTCRtpTransceiver {
         receiver: RTCRtpReceiver,
         sender: RTCRtpSender,
         direction: RTCRtpTransceiverDirection,
-        kind: RtpCodecKind,
-        codecs: Vec<RTCRtpCodecParameters>,
     ) -> Self {
         Self {
             mid: None,
@@ -91,37 +77,14 @@ impl RTCRtpTransceiver {
             receiver,
             direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
-
-            codecs,
+            preferred_codecs: vec![],
             stopped: false,
-            kind,
         }
     }
 
-    /// set_codec_preferences sets preferred list of supported codecs
-    /// if codecs is empty or nil we reset to default from MediaEngine
-    pub fn set_codec_preferences(
-        &mut self,
-        codecs: Vec<RTCRtpCodecParameters>,
-        media_engine: &MediaEngine,
-    ) -> Result<()> {
-        for codec in &codecs {
-            let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind);
-            let (_, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
-            if match_type == CodecMatch::None {
-                return Err(Error::ErrRTPTransceiverCodecUnsupported);
-            }
-        }
-
-        self.codecs = codecs;
-
-        Ok(())
-    }
-
-    /// Codecs returns list of supported codecs
-    pub(crate) fn get_codecs(&self, _media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        //TODO: RTCRtpReceiver::get_codecs(&self.codecs, self.kind, media_engine)
-        vec![]
+    /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
+    pub fn mid(&self) -> &Option<String> {
+        &self.mid
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
@@ -133,20 +96,6 @@ impl RTCRtpTransceiver {
         &mut self.sender
     }
 
-    /// set_sender_track sets the RTPSender and Track to current transceiver
-    pub fn set_sender_track(
-        &mut self,
-        sender: RTCRtpSender,
-        track: Option<MediaStreamTrack>,
-    ) -> Result<()> {
-        self.set_sender(sender);
-        self.set_sending_track(track)
-    }
-
-    pub fn set_sender(&mut self, s: RTCRtpSender) {
-        self.sender = s;
-    }
-
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
     pub fn receiver(&self) -> &RTCRtpReceiver {
         &self.receiver
@@ -156,12 +105,65 @@ impl RTCRtpTransceiver {
         &mut self.receiver
     }
 
-    pub(crate) fn set_receiver(&mut self, r: RTCRtpReceiver) {
-        /*r.set_transceiver_codecs(Some(self.codecs.clone()));
+    /// direction returns the RTPTransceiver's desired direction.
+    pub fn direction(&self) -> RTCRtpTransceiverDirection {
+        self.direction
+    }
 
-        self.receiver.set_transceiver_codecs(None);*/
+    /// Set the direction of this transceiver. This might trigger a renegotiation.
+    pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
+        let previous_direction: RTCRtpTransceiverDirection = self.direction;
 
-        self.receiver = r;
+        self.direction = direction;
+
+        if direction != previous_direction {
+            trace!("Changing direction of transceiver from {previous_direction} to {direction}");
+
+            //TODO: https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
+            // Update the negotiation-needed flag for connection.
+        }
+    }
+
+    /// current_direction returns the RTPTransceiver's current direction as negotiated.
+    ///
+    /// If this transceiver has never been negotiated or if it's stopped this returns [`RTCRtpTransceiverDirection::Unspecified`].
+    pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
+        self.current_direction
+    }
+
+    /// stop irreversibly stops the RTPTransceiver
+    pub fn stop(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+        self.direction = RTCRtpTransceiverDirection::Inactive;
+        self.current_direction = RTCRtpTransceiverDirection::Inactive;
+    }
+
+    /// set_codec_preferences sets preferred list of supported codecs
+    /// if codecs is empty or nil we reset to default from MediaEngine
+    pub fn set_codec_preferences(
+        &mut self,
+        codecs: Vec<RTCRtpCodecParameters>,
+        media_engine: &MediaEngine,
+    ) -> Result<()> {
+        for codec in &codecs {
+            let media_engine_codecs = media_engine.get_codecs_by_kind(self.receiver.kind());
+            let (_, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
+            if match_type == CodecMatch::None {
+                return Err(Error::ErrRTPTransceiverCodecUnsupported);
+            }
+        }
+
+        self.preferred_codecs = codecs;
+
+        Ok(())
+    }
+
+    /// Codecs returns list of supported codecs
+    pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
+        RTCRtpReceiver::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
@@ -174,42 +176,14 @@ impl RTCRtpTransceiver {
         Ok(())
     }
 
-    /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
-    pub fn mid(&self) -> &Option<String> {
-        &self.mid
+    pub(crate) fn kind(&self) -> RtpCodecKind {
+        self.receiver.kind()
     }
 
-    /// kind returns RTPTransceiver's kind.
-    pub fn kind(&self) -> RtpCodecKind {
-        self.kind
+    pub(crate) fn stopped(&self) -> bool {
+        self.stopped
     }
 
-    /// direction returns the RTPTransceiver's desired direction.
-    pub fn direction(&self) -> RTCRtpTransceiverDirection {
-        self.direction
-    }
-
-    /// Set the direction of this transceiver. This might trigger a renegotiation.
-    pub fn set_direction(&mut self, d: RTCRtpTransceiverDirection) {
-        let previous: RTCRtpTransceiverDirection = self.direction;
-
-        self.direction = d;
-
-        if d != previous {
-            trace!("Changing direction of transceiver from {previous} to {d}");
-        }
-    }
-
-    /// current_direction returns the RTPTransceiver's current direction as negotiated.
-    ///
-    /// If this transceiver has never been negotiated or if it's stopped this returns [`RTCRtpTransceiverDirection::Unspecified`].
-    pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
-        if self.stopped {
-            return RTCRtpTransceiverDirection::Unspecified;
-        }
-
-        self.current_direction
-    }
     pub(crate) fn set_current_direction(&mut self, d: RTCRtpTransceiverDirection) {
         let previous: RTCRtpTransceiverDirection = self.current_direction;
         self.current_direction = d;
@@ -237,66 +211,7 @@ impl RTCRtpTransceiver {
             trace!(
                     "Processing transceiver({mid:?}) direction change from {previous_direction} to {current_direction}"
                 );
-        } else {
-            // no change.
-            return Ok(());
         }
-
-        /*TODO:
-        {
-            let receiver = self.receiver.lock().await;
-            let pause_receiver = !current_direction.has_recv();
-
-            if pause_receiver {
-                receiver.pause().await?;
-            } else {
-                receiver.resume().await?;
-            }
-        }
-
-        let pause_sender = !current_direction.has_send();
-        {
-            let sender = &*self.sender.lock().await;
-            sender.set_paused(pause_sender);
-        }*/
-
-        Ok(())
-    }
-
-    /*
-        /// stop irreversibly stops the RTPTransceiver
-        pub fn stop(&self) -> Result<()> {
-            if self.stopped.load(Ordering::SeqCst) {
-                return Ok(());
-            }
-
-            self.stopped.store(true, Ordering::SeqCst);
-
-            {
-                let sender = self.sender.lock().await;
-                sender.stop().await?;
-            }
-            {
-                let r = self.receiver.lock().await;
-                r.stop().await?;
-            }
-
-            self.set_direction_internal(RTCRtpTransceiverDirection::Inactive);
-
-            Ok(())
-        }
-    */
-    pub(crate) fn set_sending_track(&mut self, track: Option<MediaStreamTrack>) -> Result<()> {
-        let track_is_none = track.is_none();
-        self.sender.replace_track(track)?;
-
-        let direction = self.direction();
-        let should_send = !track_is_none;
-        let should_recv = direction.has_recv();
-        self.set_direction(RTCRtpTransceiverDirection::from_send_recv(
-            should_send,
-            should_recv,
-        ));
 
         Ok(())
     }
@@ -336,7 +251,7 @@ pub(crate) fn satisfy_type_and_direction(
     for possible_direction in get_preferred_directions() {
         // Find the index first to avoid multiple mutable borrows
         if let Some(index) = local_transceivers.iter().position(|t| {
-            t.mid.is_none() && t.kind == remote_kind && possible_direction == t.direction
+            t.mid.is_none() && t.kind() == remote_kind && possible_direction == t.direction
         }) {
             return Some(&mut local_transceivers[index]);
         }

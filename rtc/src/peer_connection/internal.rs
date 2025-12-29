@@ -23,17 +23,17 @@ impl RTCPeerConnection {
         let mut media_sections = vec![];
 
         for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
-            if t.stopped || t.mid.is_none() {
+            if t.stopped() || t.mid().is_none() {
                 // An "m=" section is generated for each
                 // RtpTransceiver that has been added to the PeerConnection, excluding
                 // any stopped RtpTransceivers;
                 continue;
             }
 
-            if let Some(mid) = t.mid.as_ref() {
-                t.sender.set_negotiated();
+            if let Some(mid) = t.mid().clone() {
+                t.sender_mut().set_negotiated();
                 media_sections.push(MediaSection {
-                    id: mid.to_string(),
+                    mid,
                     transceiver_index: i,
                     ..Default::default()
                 });
@@ -42,7 +42,7 @@ impl RTCPeerConnection {
 
         if !self.data_channels.is_empty() {
             media_sections.push(MediaSection {
-                id: format!("{}", media_sections.len()),
+                mid: format!("{}", media_sections.len()),
                 transceiver_index: usize::MAX,
                 data: true,
                 ..Default::default()
@@ -119,7 +119,7 @@ impl RTCPeerConnection {
 
                     if media.media_name.media == MEDIA_SECTION_APPLICATION {
                         media_sections.push(MediaSection {
-                            id: mid_value.to_owned(),
+                            mid: mid_value.to_owned(),
                             transceiver_index: usize::MAX,
                             data: true,
                             ..Default::default()
@@ -139,14 +139,14 @@ impl RTCPeerConnection {
                     let extmap_allow_mixed = media.has_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED);
 
                     if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
-                        self.rtp_transceivers[i].sender.set_negotiated();
+                        self.rtp_transceivers[i].sender_mut().set_negotiated();
 
                         // NB: The below could use `then_some`, but with our current MSRV
                         // it's not possible to actually do this. The clippy version that
                         // ships with 1.64.0 complains about this so we disable it for now.
                         #[allow(clippy::unnecessary_lazy_evaluations)]
                         media_sections.push(MediaSection {
-                            id: mid_value.to_owned(),
+                            mid: mid_value.to_owned(),
                             transceiver_index: i,
                             rid_map: get_rids(media),
                             offered_direction: (!include_unmatched).then(|| direction),
@@ -163,10 +163,10 @@ impl RTCPeerConnection {
         // If we are offering also include unmatched local transceivers
         let match_bundle_group = if include_unmatched {
             for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
-                if let Some(mid) = t.mid.as_ref() {
-                    t.sender.set_negotiated();
+                if let Some(mid) = t.mid().clone() {
+                    t.sender_mut().set_negotiated();
                     media_sections.push(MediaSection {
-                        id: mid.to_string(),
+                        mid,
                         transceiver_index: i,
                         ..Default::default()
                     });
@@ -175,7 +175,7 @@ impl RTCPeerConnection {
 
             if !self.data_channels.is_empty() && !already_have_application_media_section {
                 media_sections.push(MediaSection {
-                    id: format!("{}", media_sections.len()),
+                    mid: format!("{}", media_sections.len()),
                     transceiver_index: usize::MAX,
                     data: true,
                     ..Default::default()
@@ -223,7 +223,7 @@ impl RTCPeerConnection {
     pub(super) fn has_local_description_changed(&self, desc: &RTCSessionDescription) -> bool {
         for t in &self.rtp_transceivers {
             let m = match t
-                .mid
+                .mid()
                 .as_ref()
                 .and_then(|mid| get_by_mid(mid.as_str(), desc))
             {
@@ -231,7 +231,7 @@ impl RTCPeerConnection {
                 None => return true,
             };
 
-            if get_peer_direction(m) != t.direction {
+            if get_peer_direction(m) != t.direction() {
                 return true;
             }
         }
@@ -530,7 +530,7 @@ impl RTCPeerConnection {
     /// start_rtp_senders starts all outbound RTP streams
     fn start_rtp_senders(&mut self) -> Result<()> {
         for transceiver in &mut self.rtp_transceivers {
-            let _sender = &mut transceiver.sender;
+            let _sender = transceiver.sender_mut();
             /*TODO:
                if ! sender.track_encodings.lock().await.is_empty()
                 && sender.is_negotiated()
@@ -891,18 +891,18 @@ impl RTCPeerConnection {
                 // 	return true
                 // }
                 let m = t
-                    .mid
+                    .mid()
                     .as_ref()
                     .and_then(|mid| get_by_mid(mid.as_str(), local_desc));
                 // Step 5.2
-                if !t.stopped {
+                if !t.stopped() {
                     if m.is_none() {
                         return true;
                     }
 
                     if let Some(m) = m {
                         // Step 5.3.1
-                        if t.direction.has_send() {
+                        if t.direction().has_send() {
                             let dmsid = match m.attribute(ATTR_KEY_MSID).and_then(|o| o) {
                                 Some(m) => m,
                                 None => return true, // doesn't contain a single a=msid line
@@ -916,7 +916,7 @@ impl RTCPeerConnection {
                             // local description so we can compare all of them. For no we only
                             // consider the first one.
 
-                            let stream_ids = t.sender.streams();
+                            let stream_ids = t.sender().streams();
                             // Different number of lines, 1 vs 0
                             if stream_ids.is_empty() {
                                 return true;
@@ -932,12 +932,12 @@ impl RTCPeerConnection {
                                 // Step 5.3.2
                                 if let Some(remote_desc) = &self.current_remote_description {
                                     if let Some(rm) = t
-                                        .mid
+                                        .mid()
                                         .as_ref()
                                         .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
                                     {
-                                        if get_peer_direction(m) != t.direction
-                                            && get_peer_direction(rm) != t.direction.reverse()
+                                        if get_peer_direction(m) != t.direction()
+                                            && get_peer_direction(rm) != t.direction().reverse()
                                         {
                                             return true;
                                         }
@@ -952,7 +952,7 @@ impl RTCPeerConnection {
                                     None => return true,
                                 };
                                 let offered_direction = match t
-                                    .mid
+                                    .mid()
                                     .as_ref()
                                     .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
                                 {
@@ -970,7 +970,7 @@ impl RTCPeerConnection {
                                 let current_direction = get_peer_direction(m);
                                 // Step 5.3.3
                                 if current_direction
-                                    != t.direction.intersect(offered_direction.reverse())
+                                    != t.direction().intersect(offered_direction.reverse())
                                 {
                                     return true;
                                 }
@@ -980,8 +980,8 @@ impl RTCPeerConnection {
                     }
                 }
                 // Step 5.4
-                if t.stopped {
-                    let search_mid = match t.mid.as_ref() {
+                if t.stopped() {
+                    let search_mid = match t.mid().as_ref() {
                         Some(mid) => mid,
                         None => return false,
                     };
