@@ -2,6 +2,7 @@ use crate::media_stream::track_capabilities::MediaTrackCapabilities;
 use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
+use crate::media_stream::MediaStreamId;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 
 pub type MediaStreamTrackId = String;
@@ -10,7 +11,9 @@ pub type MediaStreamTrackId = String;
 /// a RTPReceiver may contain multiple streams if we are dealing with Simulcast
 #[derive(Default, Debug, Clone)]
 pub struct MediaStreamTrack {
-    id: MediaStreamTrackId,
+    stream_id: MediaStreamId,
+    track_id: MediaStreamTrackId,
+    rid: Option<String>,
     kind: RtpCodecKind,
     label: String,
     muted: bool,
@@ -24,9 +27,18 @@ pub struct MediaStreamTrack {
 }
 
 impl MediaStreamTrack {
-    pub fn new(id: MediaStreamTrackId, kind: RtpCodecKind, label: String, muted: bool) -> Self {
+    pub fn new(
+        stream_id: MediaStreamId,
+        track_id: MediaStreamTrackId,
+        rid: Option<String>,
+        kind: RtpCodecKind,
+        label: String,
+        muted: bool,
+    ) -> Self {
         Self {
-            id,
+            stream_id,
+            track_id,
+            rid,
             kind,
             label,
             muted,
@@ -38,12 +50,20 @@ impl MediaStreamTrack {
         }
     }
 
-    pub fn kind(&self) -> RtpCodecKind {
-        self.kind
+    pub fn stream_id(&self) -> &MediaStreamId {
+        &self.stream_id
     }
 
-    pub fn id(&self) -> &MediaStreamTrackId {
-        &self.id
+    pub fn track_id(&self) -> &MediaStreamTrackId {
+        &self.track_id
+    }
+
+    pub fn rid(&self) -> Option<&str> {
+        self.rid.as_deref()
+    }
+
+    pub fn kind(&self) -> RtpCodecKind {
+        self.kind
     }
 
     pub fn label(&self) -> &String {

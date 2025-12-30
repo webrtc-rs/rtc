@@ -4,7 +4,6 @@
 mod rtp_contributing_source;
 
 use crate::media_stream::track::MediaStreamTrack;
-use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
@@ -36,17 +35,16 @@ pub struct RTCRtpReceiver {
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
 
-    associated_remote_media_stream_ids: Vec<MediaStreamId>,
-    last_stable_state_associated_remote_media_stream_ids: Vec<MediaStreamId>,
     receive_codecs: Vec<RTCRtpCodecParameters>,
-    last_stable_state_receive_codecs: Vec<RTCRtpCodecParameters>,
 }
 
 impl RTCRtpReceiver {
-    pub fn new(kind: RtpCodecKind) -> Self {
+    pub(crate) fn new(kind: RtpCodecKind) -> Self {
         Self {
             receiver_track: MediaStreamTrack::new(
-                math_rand_alpha(36),
+                math_rand_alpha(16),
+                math_rand_alpha(16),
+                None,
                 kind,
                 format!("remote {}", kind),
                 true,

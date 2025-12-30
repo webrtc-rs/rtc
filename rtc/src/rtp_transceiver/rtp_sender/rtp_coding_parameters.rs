@@ -7,9 +7,9 @@ use crate::rtp_transceiver::{PayloadType, SSRC};
 pub struct RTCRtpCodingParameters {
     pub rid: String,
 
-    pub ssrc: SSRC,                //TODO: to be removed
-    pub payload_type: PayloadType, //TODO: to be removed
-    pub rtx: RTCRtpRtxParameters,  //TODO: to be removed
+    pub ssrc: SSRC,                       //TODO: to be removed
+    pub payload_type: PayloadType,        //TODO: to be removed
+    pub rtx: Option<RTCRtpRtxParameters>, //TODO: to be removed
 }
 
 /// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.

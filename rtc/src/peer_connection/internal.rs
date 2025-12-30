@@ -6,6 +6,10 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
+    RTCRtpCodingParameters, RTCRtpRtxParameters,
+};
+use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
@@ -1004,15 +1008,39 @@ impl RTCPeerConnection {
     pub(super) fn new_transceiver_from_track(
         &self,
         track: MediaStreamTrack,
-        init: RTCRtpTransceiverInit,
+        mut init: RTCRtpTransceiverInit,
     ) -> Result<RTCRtpTransceiver> {
         if init.direction == RTCRtpTransceiverDirection::Unspecified {
-            return Err(Error::ErrPeerConnAddTransceiverFromTrackSupport);
-        }
+            Err(Error::ErrPeerConnAddTransceiverFromTrackSupport)
+        } else {
+            if init.send_encodings.is_empty() {
+                let rtx_enabled = self.configuration.setting_engine.enable_sender_rtx
+                    && self
+                        .configuration
+                        .media_engine
+                        .get_codecs_by_kind(track.kind())
+                        .iter()
+                        .any(|codec| {
+                            matches!(codec.rtp_codec.mime_type.split_once("/"), Some((_, "rtx")))
+                        });
 
-        let receiver = RTCRtpReceiver::new(track.kind());
-        let sender =
-            RTCRtpSender::new(track.kind(), Some(track), init.streams, init.send_encodings);
-        Ok(RTCRtpTransceiver::new(receiver, sender, init.direction))
+                init.send_encodings = vec![RTCRtpEncodingParameters {
+                    rtp_coding_parameters: RTCRtpCodingParameters {
+                        rid: track.rid().unwrap_or_default().into(),
+                        ssrc: rand::random::<u32>(),
+                        rtx: if rtx_enabled {
+                            Some(RTCRtpRtxParameters {
+                                ssrc: rand::random::<u32>(),
+                            })
+                        } else {
+                            None
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }];
+            }
+            Ok(RTCRtpTransceiver::new(track.kind(), Some(track), init))
+        }
     }
 }

@@ -200,7 +200,9 @@ async fn run(
     };
     for s in media {
         let output_track = MediaStreamTrack::new(
-            "webrtc-rs".to_owned(),
+            "webrtc-rs-stream-id".to_owned(),
+            "webrtc-rs-track-id".to_owned(),
+            None,
             if s == "video" {
                 RtpCodecKind::Video
             } else {

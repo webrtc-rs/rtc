@@ -1,6 +1,7 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
+use crate::media_stream::track::MediaStreamTrack;
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
@@ -73,16 +74,16 @@ impl fmt::Debug for RTCRtpTransceiver {
 }
 
 impl RTCRtpTransceiver {
-    pub fn new(
-        receiver: RTCRtpReceiver,
-        sender: RTCRtpSender,
-        direction: RTCRtpTransceiverDirection,
+    pub(crate) fn new(
+        kind: RtpCodecKind,
+        track: Option<MediaStreamTrack>,
+        init: RTCRtpTransceiverInit,
     ) -> Self {
         Self {
             mid: None,
-            sender,
-            receiver,
-            direction,
+            sender: RTCRtpSender::new(kind, track, init.streams, init.send_encodings),
+            receiver: RTCRtpReceiver::new(kind),
+            direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,

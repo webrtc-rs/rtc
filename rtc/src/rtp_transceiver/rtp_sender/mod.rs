@@ -50,16 +50,26 @@ pub struct RTCRtpSender {
 }
 
 impl RTCRtpSender {
-    pub fn new(
+    pub(crate) fn new(
         kind: RtpCodecKind,
         track: Option<MediaStreamTrack>,
-        stream_ids: Vec<MediaStreamId>,
+        streams: Vec<MediaStreamId>,
         send_encodings: Vec<RTCRtpEncodingParameters>,
     ) -> Self {
+        let associated_media_stream_ids = if streams.is_empty() {
+            if let Some(track) = track.as_ref() {
+                vec![track.stream_id().to_string()]
+            } else {
+                vec![]
+            }
+        } else {
+            streams
+        };
+
         Self {
             sender_track: track,
             kind,
-            associated_media_stream_ids: stream_ids,
+            associated_media_stream_ids,
             send_encodings,
             send_codecs: Vec::new(),
 
@@ -199,6 +209,12 @@ impl RTCRtpSender {
             //}
         }
 
+        if let Some(track) = track.as_ref() {
+            self.associated_media_stream_ids = vec![track.stream_id().to_string()];
+        } else {
+            self.associated_media_stream_ids.clear();
+        }
+
         self.sender_track = track;
 
         Ok(())
@@ -208,8 +224,18 @@ impl RTCRtpSender {
         &self.associated_media_stream_ids
     }
 
-    pub fn set_streams(&mut self, stream_ids: Vec<MediaStreamId>) {
-        self.associated_media_stream_ids = stream_ids;
+    pub fn set_streams(&mut self, streams: Vec<MediaStreamId>) {
+        let associated_media_stream_ids = if streams.is_empty() {
+            if let Some(track) = self.sender_track.as_ref() {
+                vec![track.stream_id().to_string()]
+            } else {
+                vec![]
+            }
+        } else {
+            streams
+        };
+        self.associated_media_stream_ids = associated_media_stream_ids;
+
         //TODO: https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-setstreams
         // Update the negotiation-needed flag for connection.
     }

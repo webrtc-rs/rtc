@@ -15,25 +15,25 @@ use std::collections::HashMap;
 pub type MediaStreamId = String;
 #[derive(Default, Debug, Clone)]
 pub struct MediaStream {
-    id: MediaStreamId,
+    stream_id: MediaStreamId,
     tracks: HashMap<MediaStreamTrackId, MediaStreamTrack>,
     active: bool,
 }
 
 impl MediaStream {
-    pub fn new(id: MediaStreamId, tracks: Vec<MediaStreamTrack>) -> Self {
+    pub fn new(stream_id: MediaStreamId, tracks: Vec<MediaStreamTrack>) -> Self {
         Self {
-            id,
+            stream_id,
             tracks: tracks
                 .into_iter()
-                .map(|track| (track.id().to_string(), track))
+                .map(|track| (track.stream_id().to_string(), track))
                 .collect(),
             active: true,
         }
     }
 
-    pub fn id(&self) -> &MediaStreamId {
-        &self.id
+    pub fn stream_id(&self) -> &MediaStreamId {
+        &self.stream_id
     }
 
     pub fn active(&self) -> bool {
@@ -84,7 +84,7 @@ impl MediaStream {
     }
 
     pub fn add_track(&mut self, track: MediaStreamTrack) {
-        self.tracks.insert(track.id().to_string(), track);
+        self.tracks.insert(track.track_id().to_string(), track);
     }
 
     pub fn remove_track(&mut self, track_id: &MediaStreamTrackId) -> Option<MediaStreamTrack> {

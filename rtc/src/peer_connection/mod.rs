@@ -497,10 +497,15 @@ impl RTCPeerConnection {
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            let receiver = RTCRtpReceiver::new(kind);
-                            let sender = RTCRtpSender::new(kind, None, vec![], vec![]);
-                            let mut transceiver =
-                                RTCRtpTransceiver::new(receiver, sender, local_direction);
+                            let mut transceiver = RTCRtpTransceiver::new(
+                                kind,
+                                None,
+                                RTCRtpTransceiverInit {
+                                    direction: local_direction,
+                                    streams: vec![],
+                                    send_encodings: vec![],
+                                },
+                            );
 
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
@@ -954,51 +959,46 @@ impl RTCPeerConnection {
             track,
             RTCRtpTransceiverInit {
                 direction: RTCRtpTransceiverDirection::Sendrecv,
-                ..Default::default()
+                streams: vec![],
+                send_encodings: vec![],
             },
         )?;
         Ok(self.add_rtp_transceiver(transceiver))
     }
 
     /// remove_track removes a Track from the PeerConnection
-    pub fn remove_track(&mut self, _sender: &RTCRtpSender) -> Result<()> {
+    pub fn remove_track(&mut self, sender_id: RTCRtpSenderId) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
 
-        /*
-        let mut transceiver = None;
+        if let Some((_, transceiver)) = self
+            .get_transceivers_mut()
+            .iter_mut()
+            .enumerate()
+            .find(|(id, _)| *id == sender_id)
         {
-            let rtp_transceivers = self.internal.rtp_transceivers.lock().await;
-            for t in &*rtp_transceivers {
-                if t.sender().await.id == sender.id {
-                    if sender.track().await.is_none() {
-                        return Ok(());
-                    }
-                    transceiver = Some(t.clone());
-                    break;
-                }
+            if transceiver.sender().track().is_none() {
+                return Ok(());
+            }
+
+            // This also happens in `set_sending_track` but we need to make sure we do this
+            // before we call sender.stop to avoid a race condition when removing tracks and
+            // generating offers.
+            transceiver.set_direction(RTCRtpTransceiverDirection::from_send_recv(
+                false,
+                transceiver.direction().has_recv(),
+            ));
+            // Stop the sender
+            let sender_result = transceiver.sender_mut().stop();
+            // This also updates direction
+            let sending_track_result = transceiver.sender_mut().replace_track(None);
+
+            if sender_result.is_ok() && sending_track_result.is_ok() {
+                self.trigger_negotiation_needed();
             }
         }
 
-        let t = transceiver.ok_or(Error::ErrSenderNotCreatedByConnection)?;
-
-        // This also happens in `set_sending_track` but we need to make sure we do this
-        // before we call sender.stop to avoid a race condition when removing tracks and
-        // generating offers.
-        t.set_direction_internal(RTCRtpTransceiverDirection::from_send_recv(
-            false,
-            t.direction().has_recv(),
-        ));
-        // Stop the sender
-        let sender_result = sender.stop().await;
-        // This also updates direction
-        let sending_track_result = t.set_sending_track(None).await;
-
-        if sender_result.is_ok() && sending_track_result.is_ok() {
-            self.trigger_negotiation_needed();
-        }
-        */
         Ok(())
     }
 
@@ -1019,7 +1019,8 @@ impl RTCPeerConnection {
             } else {
                 RTCRtpTransceiverInit {
                     direction: RTCRtpTransceiverDirection::Sendrecv,
-                    ..Default::default()
+                    streams: vec![],
+                    send_encodings: vec![],
                 }
             },
         )?;
@@ -1045,15 +1046,14 @@ impl RTCPeerConnection {
 
         let transceiver = match direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
-                /*let codec = self
-                .configuration
-                .media_engine
-                .get_codecs_by_kind(kind)
-                .first()
-                .map(|c| c.rtp_codec.clone())
-                .ok_or(Error::ErrNoCodecsAvailable)?;*/
-                let track =
-                    MediaStreamTrack::new(math_rand_alpha(16), kind, math_rand_alpha(16), false);
+                let track = MediaStreamTrack::new(
+                    math_rand_alpha(16),
+                    math_rand_alpha(16),
+                    None,
+                    kind,
+                    math_rand_alpha(16),
+                    false,
+                );
                 self.new_transceiver_from_track(
                     track,
                     RTCRtpTransceiverInit {
@@ -1063,12 +1063,15 @@ impl RTCPeerConnection {
                     },
                 )?
             }
-            RTCRtpTransceiverDirection::Recvonly => {
-                let receiver = RTCRtpReceiver::new(kind);
-                let sender = RTCRtpSender::new(kind, None, vec![], vec![]);
-
-                RTCRtpTransceiver::new(receiver, sender, direction)
-            }
+            RTCRtpTransceiverDirection::Recvonly => RTCRtpTransceiver::new(
+                kind,
+                None,
+                RTCRtpTransceiverInit {
+                    direction,
+                    streams: vec![],
+                    send_encodings: vec![],
+                },
+            ),
             _ => return Err(Error::ErrPeerConnAddTransceiverFromKindSupport),
         };
 
