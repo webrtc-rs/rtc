@@ -8,6 +8,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
+use log::error;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use tokio::net::UdpSocket;
@@ -240,7 +241,7 @@ async fn main() -> Result<()> {
         // Poll writes
         while let Some(msg) = peer_connection.poll_write() {
             if let Err(e) = socket.send_to(&msg.message, msg.transport.peer_addr).await {
-                eprintln!("Socket write error: {}", e);
+                error!("Socket write error: {}", e);
             }
         }
 

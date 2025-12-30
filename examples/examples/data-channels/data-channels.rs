@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
-use log::trace;
+use log::{error, trace};
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
@@ -211,7 +211,7 @@ async fn run(
                     );
                 }
                 Err(err) => {
-                    eprintln!(
+                    error!(
                         "socket write to {} with error {}",
                         msg.transport.peer_addr, err
                     );

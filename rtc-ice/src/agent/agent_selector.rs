@@ -318,8 +318,10 @@ impl ControllingSelector for Agent {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
                 trace!(
-                    "Found valid candidate pair: {}, p.state: {}, isUseCandidate: {}, {}",
+                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {}), p.state: {}, isUseCandidate: {}, {}",
                     *p,
+                    self.local_candidates[p.local_index].addr(),
+                    self.remote_candidates[p.remote_index].addr(),
                     p.state,
                     pending_request.is_use_candidate,
                     selected_pair_is_none
@@ -463,7 +465,12 @@ impl ControlledSelector for Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
-                trace!("Found valid candidate pair: {}", *p);
+                trace!(
+                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {})",
+                    *p,
+                    self.local_candidates[p.local_index].addr(),
+                    self.remote_candidates[p.remote_index].addr(),
+                );
             } else {
                 // This shouldn't happen
                 error!("Success response from invalid candidate pair");

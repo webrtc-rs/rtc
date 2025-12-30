@@ -2,17 +2,19 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
-use log::trace;
+use log::{error, trace};
 use rtc::media_stream::track::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
     MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8,
 };
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::dtls::role::DTLSRole;
 use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
@@ -40,6 +42,8 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day 
 )]
 struct Cli {
     #[arg(short, long)]
+    client: bool,
+    #[arg(short, long)]
     debug: bool,
     #[arg(short, long, default_value_t = format!("INFO"))]
     log_level: String,
@@ -62,6 +66,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let host = cli.host;
     let port = cli.port;
+    let is_client = cli.client;
     let input_sdp_file = cli.input_sdp_file;
     let output_log_file = cli.output_log_file;
     let log_level = log::LevelFilter::from_str(&cli.log_level)?;
@@ -117,6 +122,7 @@ async fn main() -> Result<()> {
         host,
         port,
         input_sdp_file,
+        is_client,
         audio,
         video,
     )
@@ -135,12 +141,20 @@ async fn run(
     host: String,
     port: u16,
     input_sdp_file: String,
+    is_client: bool,
     audio: bool,
     video: bool,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let local_addr = socket.local_addr()?;
+
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_answering_dtls_role(if is_client {
+        DTLSRole::Client
+    } else {
+        DTLSRole::Server
+    })?;
 
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();
@@ -184,6 +198,7 @@ async fn run(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
+        .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .build();
 
@@ -200,8 +215,8 @@ async fn run(
     };
     for s in media {
         let output_track = MediaStreamTrack::new(
-            "webrtc-rs-stream-id".to_owned(),
-            "webrtc-rs-track-id".to_owned(),
+            format!("webrtc-rs-stream-id-{}", s),
+            format!("webrtc-rs-track-id-{}", s),
             None,
             if s == "video" {
                 RtpCodecKind::Video
@@ -291,7 +306,7 @@ async fn run(
                     );
                 }
                 Err(err) => {
-                    eprintln!(
+                    error!(
                         "socket write to {} with error {}",
                         msg.transport.peer_addr, err
                     );

@@ -2,6 +2,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
+use log::error;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
@@ -178,14 +179,14 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
         // Poll requester writes
         while let Some(msg) = requester.poll_write() {
             if let Err(err) = req_socket.send_to(&msg.message, resp_local_addr).await {
-                eprintln!("requester socket write error: {}", err);
+                error!("requester socket write error: {}", err);
             }
         }
 
         // Poll responder writes
         while let Some(msg) = responder.poll_write() {
             if let Err(err) = resp_socket.send_to(&msg.message, req_local_addr).await {
-                eprintln!("responder socket write error: {}", err);
+                error!("responder socket write error: {}", err);
             }
         }
 
