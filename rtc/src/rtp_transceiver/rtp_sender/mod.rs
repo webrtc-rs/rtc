@@ -252,4 +252,8 @@ impl RTCRtpSender {
         //TODO:
         Ok(())
     }
+
+    pub(crate) fn encoding(&self) -> &[RTCRtpEncodingParameters] {
+        &self.send_encodings
+    }
 }

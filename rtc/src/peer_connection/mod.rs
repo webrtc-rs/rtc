@@ -951,7 +951,7 @@ impl RTCPeerConnection {
                 ));
 
                 self.trigger_negotiation_needed();
-                return Ok(id);
+                return Ok(RTCRtpSenderId(id));
             }
         }
 
@@ -963,7 +963,7 @@ impl RTCPeerConnection {
                 send_encodings: vec![],
             },
         )?;
-        Ok(self.add_rtp_transceiver(transceiver))
+        Ok(RTCRtpSenderId(self.add_rtp_transceiver(transceiver)))
     }
 
     /// remove_track removes a Track from the PeerConnection
@@ -976,7 +976,7 @@ impl RTCPeerConnection {
             .get_transceivers_mut()
             .iter_mut()
             .enumerate()
-            .find(|(id, _)| *id == sender_id)
+            .find(|(id, _)| *id == sender_id.0)
         {
             if transceiver.sender().track().is_none() {
                 return Ok(());

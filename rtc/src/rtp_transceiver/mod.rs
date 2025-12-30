@@ -33,11 +33,13 @@ pub type SSRC = u32;
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
-pub type RTCRtpSenderId = usize;
+pub(crate) type RTCRtpTransceiverId = usize;
 
-pub type RTCRtpReceiverId = usize;
+#[derive(Default, Debug, Clone)]
+pub struct RTCRtpSenderId(pub(crate) RTCRtpTransceiverId);
 
-pub type RTCRtpTransceiverId = usize;
+#[derive(Default, Debug, Clone)]
+pub struct RTCRtpReceiverId(pub(crate) RTCRtpTransceiverId);
 
 /// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.
 #[derive(Default, Clone)]

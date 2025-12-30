@@ -541,30 +541,30 @@ pub(crate) fn add_transceiver_sdp(
     let send_parameters = sender.get_parameters(media_engine);
     if let Some(track) = sender.track() {
         for encoding in &send_parameters.encodings {
-            media = media.with_media_source(
-                encoding.rtp_coding_parameters.ssrc,
-                track.stream_id().clone(), /* cname */
-                track.label().to_owned(),  /* streamLabel */
-                track.track_id().to_owned(),
-            );
-
-            if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
+            if let Some(&ssrc) = encoding.rtp_coding_parameters.ssrc.as_ref() {
                 media = media.with_media_source(
-                    rtx.ssrc,
+                    ssrc,
                     track.stream_id().clone(), /* cname */
                     track.label().to_owned(),  /* streamLabel */
                     track.track_id().to_owned(),
                 );
 
-                media = media.with_value_attribute(
-                    ATTR_KEY_SSRCGROUP.to_owned(),
-                    format!(
-                        "{} {} {}",
-                        SEMANTIC_TOKEN_FLOW_IDENTIFICATION,
-                        encoding.rtp_coding_parameters.ssrc,
-                        rtx.ssrc
-                    ),
-                );
+                if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
+                    media = media.with_media_source(
+                        rtx.ssrc,
+                        track.stream_id().clone(), /* cname */
+                        track.label().to_owned(),  /* streamLabel */
+                        track.track_id().to_owned(),
+                    );
+
+                    media = media.with_value_attribute(
+                        ATTR_KEY_SSRCGROUP.to_owned(),
+                        format!(
+                            "{} {} {}",
+                            SEMANTIC_TOKEN_FLOW_IDENTIFICATION, ssrc, rtx.ssrc
+                        ),
+                    );
+                }
             }
         }
 

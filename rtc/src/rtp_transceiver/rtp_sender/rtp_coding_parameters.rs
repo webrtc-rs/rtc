@@ -1,4 +1,4 @@
-use crate::rtp_transceiver::{PayloadType, SSRC};
+use crate::rtp_transceiver::SSRC;
 
 /// RTPCodingParameters provides information relating to both encoding and decoding.
 /// This is a subset of the RFC since Pion WebRTC doesn't implement encoding/decoding itself
@@ -7,9 +7,8 @@ use crate::rtp_transceiver::{PayloadType, SSRC};
 pub struct RTCRtpCodingParameters {
     pub rid: String,
 
-    pub ssrc: SSRC,                       //TODO: to be removed
-    pub payload_type: PayloadType,        //TODO: to be removed
-    pub rtx: Option<RTCRtpRtxParameters>, //TODO: to be removed
+    pub ssrc: Option<SSRC>,
+    pub rtx: Option<RTCRtpRtxParameters>,
 }
 
 /// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.
