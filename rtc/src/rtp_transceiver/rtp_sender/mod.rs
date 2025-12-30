@@ -39,8 +39,8 @@ use shared::util::math_rand_alpha;
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpSender {
-    sender_track: Option<MediaStreamTrack>,
     kind: RtpCodecKind,
+    sender_track: Option<MediaStreamTrack>,
     associated_media_stream_ids: Vec<MediaStreamId>,
     send_encodings: Vec<RTCRtpEncodingParameters>,
     send_codecs: Vec<RTCRtpCodecParameters>,
@@ -67,8 +67,8 @@ impl RTCRtpSender {
         };
 
         Self {
-            sender_track: track,
             kind,
+            sender_track: track,
             associated_media_stream_ids,
             send_encodings,
             send_codecs: Vec::new(),
@@ -253,7 +253,7 @@ impl RTCRtpSender {
         Ok(())
     }
 
-    pub(crate) fn encoding(&self) -> &[RTCRtpEncodingParameters] {
+    pub(crate) fn get_encoding_parameters(&self) -> &[RTCRtpEncodingParameters] {
         &self.send_encodings
     }
 }

@@ -328,8 +328,6 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        let is_renegotiation = self.current_local_description.is_some();
-
         // JSEP 5.4
         if local_description.sdp.is_empty() {
             match local_description.sdp_type {
@@ -403,9 +401,9 @@ impl RTCPeerConnection {
                                 )?;
                             }
                         }
-                    }
 
-                    self.start_rtp(is_renegotiation, remote_description)?;
+                        self.start_rtp(remote_description)?;
+                    }
                 }
             }
         }
@@ -684,9 +682,9 @@ impl RTCPeerConnection {
                             )?;
                         }
                     }
-                }
 
-                self.start_rtp(is_renegotiation, remote_description)?;
+                    self.start_rtp(remote_description)?;
+                }
             }
         }
 

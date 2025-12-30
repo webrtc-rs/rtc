@@ -4,6 +4,8 @@
 pub mod sdp_type;
 pub mod session_description;
 
+use crate::media_stream::track::MediaStreamTrackId;
+use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
@@ -38,10 +40,10 @@ pub(crate) const MEDIA_SECTION_APPLICATION: &str = "application";
 pub(crate) struct TrackDetails {
     pub(crate) mid: String,
     pub(crate) kind: RtpCodecKind,
-    pub(crate) stream_id: String,
-    pub(crate) id: String,
-    pub(crate) ssrcs: Vec<SSRC>,
-    pub(crate) repair_ssrc: SSRC,
+    pub(crate) stream_id: MediaStreamId,
+    pub(crate) track_id: MediaStreamTrackId,
+    pub(crate) ssrc: Option<SSRC>,
+    pub(crate) rtx_ssrc: Option<SSRC>,
     pub(crate) rids: Vec<String>,
 }
 
@@ -49,7 +51,7 @@ pub(crate) fn track_details_for_ssrc(
     track_details: &[TrackDetails],
     ssrc: SSRC,
 ) -> Option<&TrackDetails> {
-    track_details.iter().find(|x| x.ssrcs.contains(&ssrc))
+    track_details.iter().find(|x| x.ssrc == Some(ssrc))
 }
 
 pub(crate) fn track_details_for_rid<'a>(
@@ -60,7 +62,7 @@ pub(crate) fn track_details_for_rid<'a>(
 }
 
 pub(crate) fn filter_track_with_ssrc(incoming_tracks: &mut Vec<TrackDetails>, ssrc: SSRC) {
-    incoming_tracks.retain(|x| !x.ssrcs.contains(&ssrc));
+    incoming_tracks.retain(|x| x.ssrc != Some(ssrc));
 }
 
 /// extract all TrackDetails from an SDP.
@@ -169,9 +171,9 @@ pub(crate) fn track_details_from_sdp(
                         let mut track_idx = tracks_in_media_section.len();
 
                         for (i, t) in tracks_in_media_section.iter().enumerate() {
-                            if t.ssrcs.contains(&ssrc) {
+                            if t.ssrc == Some(ssrc) {
                                 track_idx = i;
-                                //TODO: no break?
+                                break;
                             }
                         }
 
@@ -179,15 +181,15 @@ pub(crate) fn track_details_from_sdp(
                             tracks_in_media_section[track_idx].mid = mid_value.to_string();
                             tracks_in_media_section[track_idx].kind = codec_type;
                             stream_id.clone_into(&mut tracks_in_media_section[track_idx].stream_id);
-                            track_id.clone_into(&mut tracks_in_media_section[track_idx].id);
-                            tracks_in_media_section[track_idx].ssrcs = vec![ssrc];
+                            track_id.clone_into(&mut tracks_in_media_section[track_idx].track_id);
+                            tracks_in_media_section[track_idx].ssrc = Some(ssrc);
                         } else {
                             let track_details = TrackDetails {
                                 mid: mid_value.to_string(),
                                 kind: codec_type,
                                 stream_id: stream_id.to_owned(),
-                                id: track_id.to_owned(),
-                                ssrcs: vec![ssrc],
+                                track_id: track_id.to_owned(),
+                                ssrc: Some(ssrc),
                                 ..Default::default()
                             };
                             tracks_in_media_section.push(track_details);
@@ -199,8 +201,8 @@ pub(crate) fn track_details_from_sdp(
         }
         for (repair, base) in &rtx_repair_flows {
             for track in &mut tracks_in_media_section {
-                if track.ssrcs.contains(base) {
-                    track.repair_ssrc = *repair;
+                if track.ssrc == Some(*base) {
+                    track.rtx_ssrc = Some(*repair);
                 }
             }
         }
@@ -215,7 +217,7 @@ pub(crate) fn track_details_from_sdp(
                 mid: mid_value.to_string(),
                 kind: codec_type,
                 stream_id: stream_id.to_owned(),
-                id: track_id.to_owned(),
+                track_id: track_id.to_owned(),
                 rids: rids.iter().map(|r| r.id.clone()).collect(),
                 ..Default::default()
             }];

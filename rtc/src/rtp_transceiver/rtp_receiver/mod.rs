@@ -14,9 +14,11 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     codec_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use shared::util::math_rand_alpha;
+use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
+use shared::error::Result;
 use std::time::Duration;
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
@@ -30,31 +32,35 @@ use std::time::Duration;
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpreceiver-interface
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpReceiver {
-    receiver_track: MediaStreamTrack,
+    kind: RtpCodecKind,
+    receiver_track: Option<MediaStreamTrack>,
     contributing_sources: Vec<RTCRtpContributingSource>,
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
 
+    receive_codings: Vec<RTCRtpCodingParameters>,
     receive_codecs: Vec<RTCRtpCodecParameters>,
 }
 
 impl RTCRtpReceiver {
-    pub(crate) fn new(kind: RtpCodecKind) -> Self {
+    pub(crate) fn new(kind: RtpCodecKind, track: Option<MediaStreamTrack>) -> Self {
         Self {
-            receiver_track: MediaStreamTrack::new(
-                math_rand_alpha(16),
-                math_rand_alpha(16),
-                None,
-                kind,
-                format!("remote {}", kind),
-                true,
-            ),
+            kind,
+            receiver_track: track,
             ..Default::default()
         }
     }
 
-    pub fn track(&self) -> &MediaStreamTrack {
+    pub(crate) fn kind(&self) -> RtpCodecKind {
+        self.kind
+    }
+
+    pub fn track(&self) -> &Option<MediaStreamTrack> {
         &self.receiver_track
+    }
+
+    pub fn track_mut(&mut self) -> &mut Option<MediaStreamTrack> {
+        &mut self.receiver_track
     }
 
     pub fn get_capabilities(
@@ -67,7 +73,7 @@ impl RTCRtpReceiver {
         }
 
         let rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.track().kind(), RTCRtpTransceiverDirection::Recvonly);
+            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
 
         Some(RTCRtpCapabilities {
             codecs: self
@@ -91,12 +97,15 @@ impl RTCRtpReceiver {
 
     pub fn get_parameters(&self, media_engine: &mut MediaEngine) -> RTCRtpReceiveParameters {
         let mut rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.track().kind(), RTCRtpTransceiverDirection::Recvonly);
+            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
 
         rtp_parameters.codecs =
             RTCRtpReceiver::get_codecs(&self.receive_codecs, self.kind(), media_engine);
 
-        RTCRtpReceiveParameters { rtp_parameters }
+        RTCRtpReceiveParameters {
+            rtp_parameters,
+            codings: self.receive_codings.clone(),
+        }
     }
 
     pub fn get_contributing_sources(&self) -> impl Iterator<Item = &RTCRtpContributingSource> {
@@ -109,8 +118,12 @@ impl RTCRtpReceiver {
         self.synchronization_sources.iter()
     }
 
-    pub(super) fn kind(&self) -> RtpCodecKind {
-        self.receiver_track.kind()
+    pub(crate) fn set_parameters(
+        &mut self,
+        parameters: RTCRtpReceiveParameters,
+        _set_parameter_options: Option<RTCSetParameterOptions>,
+    ) {
+        self.receive_codings = parameters.codings;
     }
 
     pub(super) fn get_codecs(
@@ -131,5 +144,14 @@ impl RTCRtpReceiver {
         }
 
         filtered_codecs
+    }
+
+    pub(crate) fn get_coding_parameters(&self) -> &[RTCRtpCodingParameters] {
+        &self.receive_codings
+    }
+
+    pub(crate) fn stop(&mut self) -> Result<()> {
+        //TODO:
+        Ok(())
     }
 }

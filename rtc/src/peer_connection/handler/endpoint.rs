@@ -6,6 +6,7 @@ use crate::peer_connection::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, TaggedRTCMessage,
 };
 
+use crate::rtp_transceiver::RTCRtpTransceiver;
 use log::{debug, warn};
 use shared::error::{Error, Result};
 use shared::TransportContext;
@@ -23,11 +24,18 @@ pub(crate) struct EndpointHandlerContext {
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
 pub(crate) struct EndpointHandler<'a> {
     ctx: &'a mut EndpointHandlerContext,
+    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
 }
 
 impl<'a> EndpointHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut EndpointHandlerContext) -> Self {
-        EndpointHandler { ctx }
+    pub(crate) fn new(
+        ctx: &'a mut EndpointHandlerContext,
+        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
+    ) -> Self {
+        EndpointHandler {
+            ctx,
+            rtp_transceivers,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {

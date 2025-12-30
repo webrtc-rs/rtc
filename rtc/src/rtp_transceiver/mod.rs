@@ -12,6 +12,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingP
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use log::trace;
 use shared::error::{Error, Result};
+use shared::util::math_rand_alpha;
 use std::fmt;
 
 pub mod direction;
@@ -84,7 +85,21 @@ impl RTCRtpTransceiver {
         Self {
             mid: None,
             sender: RTCRtpSender::new(kind, track, init.streams, init.send_encodings),
-            receiver: RTCRtpReceiver::new(kind),
+            receiver: RTCRtpReceiver::new(
+                kind,
+                if init.direction.has_recv() {
+                    Some(MediaStreamTrack::new(
+                        math_rand_alpha(16),
+                        math_rand_alpha(16),
+                        None,
+                        kind,
+                        format!("remote {}", kind),
+                        true,
+                    ))
+                } else {
+                    None
+                },
+            ),
             direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],

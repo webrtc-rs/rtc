@@ -2,7 +2,7 @@ use super::*;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     get_by_mid, get_peer_direction, get_rids, have_data_channel, populate_sdp,
-    track_details_from_sdp, MediaSection, PopulateSdpParams, TrackDetails,
+    track_details_from_sdp, MediaSection, PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -10,6 +10,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
@@ -455,287 +456,41 @@ impl RTCPeerConnection {
         self.rtp_transceivers.len() - 1
     }
 
-    pub(super) fn start_rtp(
-        &mut self,
-        is_renegotiation: bool,
-        remote_desc: RTCSessionDescription,
-    ) -> Result<()> {
-        self.start_rtp_senders()?;
-
-        let mut track_details = if let Some(parsed) = &remote_desc.parsed {
+    pub(super) fn start_rtp(&mut self, remote_desc: RTCSessionDescription) -> Result<()> {
+        let incoming_tracks = if let Some(parsed) = &remote_desc.parsed {
             track_details_from_sdp(parsed, false)
         } else {
             vec![]
         };
 
-        if !is_renegotiation {
-            self.undeclared_media_processor();
-        } else {
-            for _t in &self.rtp_transceivers {
-                /*TODO:
-                let tracks = t.receiver.tracks();
-                if tracks.is_empty() {
-                    continue;
-                }
-
-                let mut receiver_needs_stopped = false;
-
-                for t in tracks {
-                    if !t.rid().is_empty() {
-                        if let Some(details) =
-                            track_details_for_rid(&track_details, SmolStr::from(t.rid()))
-                        {
-                            t.set_id(details.id.clone());
-                            t.set_stream_id(details.stream_id.clone());
-                            continue;
-                        }
-                    } else if t.ssrc() != 0 {
-                        if let Some(details) = track_details_for_ssrc(&track_details, t.ssrc()) {
-                            t.set_id(details.id.clone());
-                            t.set_stream_id(details.stream_id.clone());
-                            continue;
-                        }
-                    }
-
-                    receiver_needs_stopped = true;
-                }
-
-                if !receiver_needs_stopped {
-                    continue;
-                }
-
-                log::info!("Stopping receiver {receiver:?}");
-                if let Err(err) = t.receiver.stop() {
-                    log::warn!("Failed to stop RtpReceiver: {err}");
-                    continue;
-                }
-
-                let interceptor = self
-                    .interceptor
-                    .upgrade()
-                    .ok_or(Error::ErrInterceptorNotBind)?;
-
-                let receiver = Arc::new(RTCRtpReceiver::new(
-                    self.setting_engine.get_receive_mtu(),
-                    receiver.kind(),
-                    Arc::clone(&self.dtls_transport),
-                    Arc::clone(&self.media_engine),
-                    interceptor,
-                ));
-                t.set_receiver(receiver).await;
-
-                 */
-            }
-        }
-
-        self.start_rtp_receivers(&mut track_details, is_renegotiation)?;
-
-        Ok(())
-    }
-
-    /// start_rtp_senders starts all outbound RTP streams
-    fn start_rtp_senders(&mut self) -> Result<()> {
-        for transceiver in &mut self.rtp_transceivers {
-            let _sender = transceiver.sender_mut();
-            /*TODO:
-               if ! sender.track_encodings.lock().await.is_empty()
-                && sender.is_negotiated()
-                && !sender.has_sent()
-            {
-                sender.send(&sender.get_parameters().await).await?;
-            }*/
-        }
-
-        Ok(())
-    }
-
-    /// start_rtp_receivers opens knows inbound SRTP streams from the remote_description
-    fn start_rtp_receivers(
-        &mut self,
-        _incoming_tracks: &mut Vec<TrackDetails>,
-        //local_transceivers: &[RTCRtpTransceiver],
-        _is_renegotiation: bool,
-    ) -> Result<()> {
-        /*
-        // Ensure we haven't already started a transceiver for this ssrc.
-        // Skip filtering during renegotiation since receiver reuse logic handles it.
-        let mut filtered_tracks = incoming_tracks.clone();
-
-        if !is_renegotiation {
-            for incoming_track in incoming_tracks {
-                // If we already have a TrackRemote for a given SSRC don't handle it again
-                for t in local_transceivers {
-                    let receiver = t.receiver().await;
-                    let existing_tracks = receiver.tracks().await;
-                    for track in existing_tracks {
-                        for ssrc in &incoming_track.ssrcs {
-                            if *ssrc == track.ssrc() {
-                                filter_track_with_ssrc(&mut filtered_tracks, track.ssrc());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut unhandled_tracks = vec![]; // filtered_tracks[:0]
-        for incoming_track in filtered_tracks.iter() {
-            let mut track_handled = false;
-            for t in local_transceivers {
-                if t.mid().as_ref() != Some(&incoming_track.mid) {
-                    continue;
-                }
-
-                if (incoming_track.kind != t.kind())
-                    || (t.direction() != RTCRtpTransceiverDirection::Recvonly
-                        && t.direction() != RTCRtpTransceiverDirection::Sendrecv)
-                {
-                    continue;
-                }
-
-                // Fix(issue-749): Handle receiver reuse during renegotiation in mesh topology.
-                //
-                // During SDP renegotiation, the same tracks (SSRCs) legitimately appear in
-                // subsequent negotiation rounds per RFC 8829 Section 3.7. Receivers that are
-                // already active should be recognized as handling their existing tracks rather
-                // than being skipped and marked as "NOT HANDLED".
-                //
-                // Root cause: The original code didn't distinguish between initial negotiation
-                // (where skipping active receivers prevents duplicates) and renegotiation
-                // (where active receivers represent existing media flows to preserve).
-                let receiver = t.receiver().await;
-                let already_receiving = receiver.have_received().await;
-
-                if already_receiving {
-                    if !is_renegotiation {
-                        // Initial negotiation: skip if already receiving (safety check)
-                        continue;
-                    } else {
-                        // Renegotiation: receiver already active, mark as handled
-                        track_handled = true;
-                        break;
-                    }
-                }
-
-                // Start receiver for new tracks only
-                PeerConnectionInternal::start_receiver(
-                    self.setting_engine.get_receive_mtu(),
-                    incoming_track,
-                    receiver,
-                    Arc::clone(t),
-                    Arc::clone(&self.on_track_handler),
-                )
-                .await;
-                track_handled = true;
-            }
-
-            if !track_handled {
-                unhandled_tracks.push(incoming_track);
-            }
-        }*/
-
-        Ok(())
-    }
-
-    /// undeclared_media_processor handles RTP/RTCP packets that don't match any a:ssrc lines
-    fn undeclared_media_processor(&mut self) {
-        /*TODO:
-        let dtls_transport = Arc::clone(&self.dtls_transport);
-        let is_closed = Arc::clone(&self.is_closed);
-        let pci = Arc::clone(self);
-
-        // SRTP acceptor
-        tokio::spawn(async move {
-            let simulcast_routine_count = Arc::new(AtomicU64::new(0));
-            loop {
-                let srtp_session = match dtls_transport.get_srtp_session().await {
-                    Some(s) => s,
-                    None => {
-                        log::warn!("undeclared_media_processor failed to open SrtpSession");
-                        return;
-                    }
-                };
-
-                let (stream, header) = match srtp_session.accept().await {
-                    Ok((stream, Some(header))) => (stream, header),
-                    Ok((_, None)) => {
-                        log::error!("Accepting RTP session, without RTP header?");
-                        return;
-                    }
-                    Err(err) => {
-                        log::warn!("Failed to accept RTP {err}");
-                        return;
-                    }
-                };
-
-                if is_closed.load(Ordering::SeqCst) {
-                    if let Err(err) = stream.close().await {
-                        log::warn!("Failed to close RTP stream {err}");
-                    }
-                    continue;
-                }
-
-                if simulcast_routine_count.fetch_add(1, Ordering::SeqCst) + 1
-                    >= SIMULCAST_MAX_PROBE_ROUTINES
-                {
-                    simulcast_routine_count.fetch_sub(1, Ordering::SeqCst);
-                    log::warn!("{:?}", Error::ErrSimulcastProbeOverflow);
-                    continue;
-                }
-
-                {
-                    let dtls_transport = Arc::clone(&dtls_transport);
-                    let simulcast_routine_count = Arc::clone(&simulcast_routine_count);
-                    let pci = Arc::clone(&pci);
-                    tokio::spawn(async move {
-                        let ssrc = stream.get_ssrc();
-                        dtls_transport
-                            .store_simulcast_stream(ssrc, Arc::clone(&stream))
-                            .await;
-
-                        if let Err(err) = pci
-                            .handle_incoming_rtp_stream(stream, header.payload_type)
-                            .await
-                        {
-                            log::warn!(
-                                "Incoming unhandled RTP ssrc({ssrc}), on_track will not be fired. {err}"
-                            );
-                        }
-
-                        simulcast_routine_count.fetch_sub(1, Ordering::SeqCst);
+        for incoming_track in incoming_tracks.into_iter() {
+            if let Some(transceiver) = self.get_transceivers_mut().iter_mut().find(|transceiver| {
+                transceiver.mid().as_ref() == Some(&incoming_track.mid)
+                    && incoming_track.kind == transceiver.kind()
+                    && transceiver.direction().has_recv()
+            }) {
+                let mut codings = vec![];
+                for rid in incoming_track.rids {
+                    codings.push(RTCRtpCodingParameters {
+                        rid,
+                        ssrc: incoming_track.ssrc,
+                        rtx: incoming_track
+                            .rtx_ssrc
+                            .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
                     });
                 }
+
+                transceiver.receiver_mut().set_parameters(
+                    RTCRtpReceiveParameters {
+                        codings,
+                        ..Default::default()
+                    },
+                    None,
+                );
             }
-        });
+        }
 
-        // SRTCP acceptor
-        {
-            let dtls_transport = Arc::clone(&self.dtls_transport);
-            tokio::spawn(async move {
-                loop {
-                    let srtcp_session = match dtls_transport.get_srtcp_session().await {
-                        Some(s) => s,
-                        None => {
-                            log::warn!("undeclared_media_processor failed to open SrtcpSession");
-                            return;
-                        }
-                    };
-
-                    match srtcp_session.accept().await {
-                        Ok((stream, _)) => {
-                            let ssrc = stream.get_ssrc();
-                            log::warn!(
-                                "Incoming unhandled RTCP ssrc({ssrc}), on_track will not be fired"
-                            );
-                        }
-                        Err(err) => {
-                            log::warn!("Failed to accept RTCP {err}");
-                            return;
-                        }
-                    };
-                }
-            });
-        }*/
+        Ok(())
     }
 
     /// Update the PeerConnectionState given the state of relevant transports

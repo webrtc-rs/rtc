@@ -8,4 +8,17 @@ pub struct RTCTrackEvent {
     pub receiver_id: RTCRtpReceiverId,
     pub track_id: MediaStreamTrackId,
     pub stream_ids: Vec<MediaStreamId>,
+    pub packet: RTCRtpRtcpPacket,
+}
+
+#[derive(Debug, Clone)]
+pub enum RTCRtpRtcpPacket {
+    Rtp(rtp::packet::Packet),
+    Rtcp(Vec<Box<dyn rtcp::packet::Packet>>),
+}
+
+impl Default for RTCRtpRtcpPacket {
+    fn default() -> Self {
+        Self::Rtcp(vec![])
+    }
 }
