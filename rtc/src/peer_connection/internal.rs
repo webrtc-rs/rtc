@@ -470,14 +470,26 @@ impl RTCPeerConnection {
                     && transceiver.direction().has_recv()
             }) {
                 let mut codings = vec![];
-                for rid in incoming_track.rids {
+                if !incoming_track.rids.is_empty() {
+                    for rid in incoming_track.rids {
+                        codings.push(RTCRtpCodingParameters {
+                            rid,
+                            ssrc: incoming_track.ssrc,
+                            rtx: incoming_track
+                                .rtx_ssrc
+                                .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
+                        });
+                    }
+                } else if incoming_track.ssrc.is_some() {
                     codings.push(RTCRtpCodingParameters {
-                        rid,
+                        rid: "".to_string(),
                         ssrc: incoming_track.ssrc,
                         rtx: incoming_track
                             .rtx_ssrc
                             .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
                     });
+                } else {
+                    return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                 }
 
                 transceiver.receiver_mut().set_parameters(

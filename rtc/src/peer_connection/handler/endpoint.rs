@@ -178,6 +178,8 @@ impl<'a> EndpointHandler<'a> {
                         packet: RTCRtpRtcpPacket::Rtp(rtp_packet),
                     }),
                 ));
+        } else {
+            debug!("drop rtp packet ssrc = {}", rtp_packet.header.ssrc);
         }
 
         Ok(())
@@ -234,7 +236,11 @@ impl<'a> EndpointHandler<'a> {
                             packet: RTCRtpRtcpPacket::Rtcp(rtcp_packets),
                         }),
                     ));
+            } else {
+                debug!("drop rtcp packet ssrc = {}", rtcp_ssrc);
             }
+        } else {
+            debug!("drop rtcp packet due to empty ssrc");
         }
 
         Ok(())
