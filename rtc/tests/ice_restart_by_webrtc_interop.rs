@@ -28,12 +28,12 @@ use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 use webrtc::ice_transport::ice_server::RTCIceServer as WebrtcIceServer;
+use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
 use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
-use webrtc_interceptor::registry::Registry;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const TEST_MESSAGE_1: &str = "Hello before restart!";

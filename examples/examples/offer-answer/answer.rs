@@ -9,8 +9,8 @@ use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
 use log::error;
-use sansio::Protocol;
-use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use rtc::sansio::Protocol;
+use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -22,7 +22,7 @@ use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
-use shared::util::math_rand_alpha;
+use rtc::shared::util::math_rand_alpha;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 

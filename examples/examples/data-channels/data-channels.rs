@@ -3,8 +3,8 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
-use sansio::Protocol;
-use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use rtc::sansio::Protocol;
+use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
 use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
@@ -22,11 +22,11 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::RTCPeerConnection;
+use rtc::shared::error::Error;
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
     peer_connection::transport::ice::server::RTCIceServer,
 };
-use shared::error::Error;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 

@@ -34,11 +34,11 @@ use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_server::RTCIceServer as WebrtcIceServer;
+use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
-use webrtc_interceptor::registry::Registry;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 

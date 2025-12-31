@@ -10,8 +10,5 @@ homepage = "https://ortc.rs"
 repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-interceptor"
 
 [dependencies]
-shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 
 [dev-dependencies]
-env_logger = "0.11.3"
-chrono = "0.4.28"
