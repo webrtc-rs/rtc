@@ -885,31 +885,19 @@ impl RTCPeerConnection {
         })
     }
 
-    /// data_channel provides the access to RTCDataChannel object with the given id
-    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
-        if self.data_channels.contains_key(&id) {
-            Some(RTCDataChannel {
-                id,
-                peer_connection: self,
-            })
-        } else {
-            None
-        }
-    }
-
     /// Returns an iterator over the RTP senders.
-    pub fn get_senders(&mut self) -> impl Iterator<Item = &mut RTCRtpSender> {
-        self.rtp_transceivers.iter_mut().map(|t| t.sender_mut())
+    pub fn get_senders(&mut self) -> impl Iterator<Item = RTCRtpSenderId> {
+        (0..self.rtp_transceivers.len()).map(RTCRtpSenderId)
     }
 
     /// Returns an iterator over the RTP receivers.
-    pub fn get_receivers(&mut self) -> impl Iterator<Item = &mut RTCRtpReceiver> {
-        self.rtp_transceivers.iter_mut().map(|t| t.receiver_mut())
+    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> {
+        (0..self.rtp_transceivers.len()).map(RTCRtpReceiverId)
     }
 
     /// Returns an iterator over the RTP transceivers.
-    pub fn get_transceivers(&mut self) -> &mut [RTCRtpTransceiver] {
-        &mut self.rtp_transceivers
+    pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> {
+        0..self.rtp_transceivers.len()
     }
 
     /// add_track adds a Track to the PeerConnection
@@ -918,7 +906,7 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        for (id, transceiver) in self.get_transceivers().iter_mut().enumerate() {
+        for (id, transceiver) in self.rtp_transceivers.iter_mut().enumerate() {
             if !transceiver.stopped()
                 && transceiver.kind() == track.kind()
                 && transceiver.sender().track().is_none()
@@ -956,7 +944,7 @@ impl RTCPeerConnection {
         }
 
         if let Some((_, transceiver)) = self
-            .get_transceivers()
+            .rtp_transceivers
             .iter_mut()
             .enumerate()
             .find(|(id, _)| *id == sender_id.0)
@@ -1061,17 +1049,37 @@ impl RTCPeerConnection {
         Ok(self.add_rtp_transceiver(transceiver))
     }
 
-    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<&mut RTCRtpSender> {
-        if id.0 < self.rtp_transceivers.len() {
-            Some(self.rtp_transceivers[id.0].sender_mut())
+    /// data_channel provides the access to RTCDataChannel object with the given id
+    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
+        if self.data_channels.contains_key(&id) {
+            Some(RTCDataChannel {
+                id,
+                peer_connection: self,
+            })
         } else {
             None
         }
     }
 
-    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<&mut RTCRtpReceiver> {
+    /// rtp_sender provides the access to RTCRtpSender object with the given id
+    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_>> {
         if id.0 < self.rtp_transceivers.len() {
-            Some(self.rtp_transceivers[id.0].receiver_mut())
+            Some(RTCRtpSender {
+                id,
+                peer_connection: self,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// rtp_receiver provides the access to RTCRtpReceiver object with the given id
+    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_>> {
+        if id.0 < self.rtp_transceivers.len() {
+            Some(RTCRtpReceiver {
+                id,
+                peer_connection: self,
+            })
         } else {
             None
         }

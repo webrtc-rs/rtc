@@ -138,7 +138,7 @@ impl<'a> EndpointHandler<'a> {
     ) -> Result<()> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
 
-        if let Some((transceiver_id, transceiver)) =
+        if let Some((id, transceiver)) =
             self.rtp_transceivers
                 .iter()
                 .enumerate()
@@ -172,10 +172,9 @@ impl<'a> EndpointHandler<'a> {
                 .event_outs
                 .push_back(RTCEventInternal::RTCPeerConnectionEvent(
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent {
-                        receiver_id: RTCRtpReceiverId(transceiver_id),
+                        receiver_id: RTCRtpReceiverId(id),
                         track_id,
                         stream_ids,
-                        transceiver_id,
                         packet: RTCRtpRtcpPacket::Rtp(rtp_packet),
                     }),
                 ));
@@ -201,21 +200,21 @@ impl<'a> EndpointHandler<'a> {
         };
 
         if let Some(rtcp_ssrc) = rtcp_ssrc {
-            if let Some((transceiver_id, transceiver)) = self
-                .rtp_transceivers
-                .iter()
-                .enumerate()
-                .find(|(_, transceiver)| {
-                    if transceiver.direction().has_recv() {
-                        transceiver
-                            .receiver()
-                            .get_coding_parameters()
-                            .iter()
-                            .any(|coding| coding.ssrc.is_some_and(|ssrc| ssrc == rtcp_ssrc))
-                    } else {
-                        false
-                    }
-                })
+            if let Some((id, transceiver)) =
+                self.rtp_transceivers
+                    .iter()
+                    .enumerate()
+                    .find(|(_, transceiver)| {
+                        if transceiver.direction().has_recv() {
+                            transceiver
+                                .receiver()
+                                .get_coding_parameters()
+                                .iter()
+                                .any(|coding| coding.ssrc.is_some_and(|ssrc| ssrc == rtcp_ssrc))
+                        } else {
+                            false
+                        }
+                    })
             {
                 let (track_id, stream_ids) =
                     if let Some(track) = transceiver.receiver().track().as_ref() {
@@ -231,10 +230,9 @@ impl<'a> EndpointHandler<'a> {
                     .event_outs
                     .push_back(RTCEventInternal::RTCPeerConnectionEvent(
                         RTCPeerConnectionEvent::OnTrack(RTCTrackEvent {
-                            receiver_id: RTCRtpReceiverId(transceiver_id),
+                            receiver_id: RTCRtpReceiverId(id),
                             track_id,
                             stream_ids,
-                            transceiver_id,
                             packet: RTCRtpRtcpPacket::Rtcp(rtcp_packets),
                         }),
                     ));

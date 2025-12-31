@@ -339,7 +339,7 @@ async fn run(
                     RTCRtpRtcpPacket::Rtp(_packet) => {
                         let rtp_receiver = peer_connection
                             .rtp_receiver(track_event.receiver_id)
-                            .ok_or(Error::ErrRTPReceiverNotExist)?;
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
                         let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
 
                         let rtp_sender_id = rtp_sender_ids
@@ -348,7 +348,7 @@ async fn run(
 
                         let _rtp_sender = peer_connection
                             .rtp_sender(*rtp_sender_id)
-                            .ok_or(Error::ErrRTPReceiverNotExist)?;
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         //TODO: rtp_sender.write_rtp(packet)?;
                     }

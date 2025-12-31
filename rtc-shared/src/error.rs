@@ -1462,7 +1462,7 @@ pub enum Error {
     #[error("Sender does not have track for RID")]
     ErrRTPSenderNoTrackForRID,
     #[error("RTPReceiver not existed")]
-    ErrRTPReceiverNotExist,
+    ErrRTPReceiverNotExisted,
     #[error("DTLSTransport must not be nil")]
     ErrRTPSenderDTLSTransportNil,
     #[error("Send has already been called")]

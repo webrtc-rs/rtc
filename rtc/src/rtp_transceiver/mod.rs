@@ -5,11 +5,11 @@ use crate::media_stream::track::MediaStreamTrack;
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
+use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use log::trace;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
@@ -34,7 +34,7 @@ pub type SSRC = u32;
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
-pub(crate) type RTCRtpTransceiverId = usize;
+pub type RTCRtpTransceiverId = usize;
 
 #[derive(Default, Debug, Copy, Clone)]
 pub struct RTCRtpSenderId(pub(crate) RTCRtpTransceiverId);
@@ -52,10 +52,10 @@ pub struct RTCRtpTransceiverInit {
 
 /// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
 #[derive(Default, Clone)]
-pub struct RTCRtpTransceiver {
+pub(crate) struct RTCRtpTransceiver {
     mid: Option<String>,
-    sender: RTCRtpSender,
-    receiver: RTCRtpReceiver,
+    sender: RTCRtpSenderInternal,
+    receiver: RTCRtpReceiverInternal,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
@@ -84,8 +84,8 @@ impl RTCRtpTransceiver {
     ) -> Self {
         Self {
             mid: None,
-            sender: RTCRtpSender::new(kind, track, init.streams, init.send_encodings),
-            receiver: RTCRtpReceiver::new(
+            sender: RTCRtpSenderInternal::new(kind, track, init.streams, init.send_encodings),
+            receiver: RTCRtpReceiverInternal::new(
                 kind,
                 if init.direction.has_recv() {
                     Some(MediaStreamTrack::new(
@@ -113,20 +113,20 @@ impl RTCRtpTransceiver {
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub fn sender(&self) -> &RTCRtpSender {
+    pub(crate) fn sender(&self) -> &RTCRtpSenderInternal {
         &self.sender
     }
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub fn sender_mut(&mut self) -> &mut RTCRtpSender {
+    pub(crate) fn sender_mut(&mut self) -> &mut RTCRtpSenderInternal {
         &mut self.sender
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub fn receiver(&self) -> &RTCRtpReceiver {
+    pub(crate) fn receiver(&self) -> &RTCRtpReceiverInternal {
         &self.receiver
     }
 
-    pub fn receiver_mut(&mut self) -> &mut RTCRtpReceiver {
+    pub(crate) fn receiver_mut(&mut self) -> &mut RTCRtpReceiverInternal {
         &mut self.receiver
     }
 
@@ -188,7 +188,7 @@ impl RTCRtpTransceiver {
 
     /// Codecs returns list of supported codecs
     pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        RTCRtpReceiver::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
+        RTCRtpReceiverInternal::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
