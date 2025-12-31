@@ -50,7 +50,7 @@ pub struct Sample {
     /// ```rust
     /// # use bytes::Bytes;
     /// # use std::time::{SystemTime, Duration};
-    /// # use webrtc_media::Sample;
+    /// # use rtc_media::Sample;
     /// # let sample = Sample {
     /// #   data: Bytes::new(),
     /// #   timestamp: SystemTime::now(),

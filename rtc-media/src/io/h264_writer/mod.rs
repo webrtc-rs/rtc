@@ -3,7 +3,7 @@ mod h264_writer_test;
 
 use std::io::Write;
 
-use rtp::codecs::h264::H264Packet;
+use rtp::codec::h264::H264Packet;
 use rtp::packetizer::Depacketizer;
 
 use crate::io::Writer;

@@ -1,5 +1,5 @@
-use crate::codecs::av1::leb128::read_leb128;
-use crate::codecs::av1::obu::{
+use crate::codec::av1::leb128::read_leb128;
+use crate::codec::av1::obu::{
     OBU_HAS_EXTENSION_BIT, OBU_TYPE_FRAME, OBU_TYPE_FRAME_HEADER, OBU_TYPE_METADATA,
     OBU_TYPE_SEQUENCE_HEADER, OBU_TYPE_TEMPORAL_DELIMITER, OBU_TYPE_TILE_GROUP, OBU_TYPE_TILE_LIST,
 };

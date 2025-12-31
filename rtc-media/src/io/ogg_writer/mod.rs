@@ -173,7 +173,7 @@ impl<W: Write> Writer for OggWriter<W> {
             return Ok(());
         }
 
-        let mut opus_packet = rtp::codecs::opus::OpusPacket;
+        let mut opus_packet = rtp::codec::opus::OpusPacket;
         let payload = opus_packet.depacketize(&packet.payload)?;
 
         // Should be equivalent to sample_rate * duration

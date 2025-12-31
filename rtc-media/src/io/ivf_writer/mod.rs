@@ -62,9 +62,9 @@ impl<W: Write + Seek> Writer for IVFWriter<W> {
         }
 
         let mut depacketizer: Box<dyn Depacketizer> = if self.is_vp9 {
-            Box::<rtp::codecs::vp9::Vp9Packet>::default()
+            Box::<rtp::codec::vp9::Vp9Packet>::default()
         } else {
-            Box::<rtp::codecs::vp8::Vp8Packet>::default()
+            Box::<rtp::codec::vp8::Vp8Packet>::default()
         };
 
         let payload = depacketizer.depacketize(&packet.payload)?;

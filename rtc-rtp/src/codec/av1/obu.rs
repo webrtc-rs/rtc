@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 
-use crate::codecs::av1::leb128::read_leb128;
+use crate::codec::av1::leb128::read_leb128;
 use shared::error::{Error, Result};
 
 pub const OBU_HAS_EXTENSION_BIT: u8 = 0b0000_0100;

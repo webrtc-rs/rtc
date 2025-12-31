@@ -72,25 +72,25 @@ impl RTCRtpCodec {
     pub fn payloader_for_codec(&self) -> Result<Box<dyn rtp::packetizer::Payloader>> {
         let mime_type = self.mime_type.to_lowercase();
         if mime_type == MIME_TYPE_H264.to_lowercase() {
-            Ok(Box::<rtp::codecs::h264::H264Payloader>::default())
+            Ok(Box::<rtp::codec::h264::H264Payloader>::default())
         } else if mime_type == MIME_TYPE_HEVC.to_lowercase() {
-            Ok(Box::<rtp::codecs::h265::HevcPayloader>::default())
+            Ok(Box::<rtp::codec::h265::HevcPayloader>::default())
         } else if mime_type == MIME_TYPE_VP8.to_lowercase() {
-            let mut vp8_payloader = rtp::codecs::vp8::Vp8Payloader::default();
+            let mut vp8_payloader = rtp::codec::vp8::Vp8Payloader::default();
             vp8_payloader.enable_picture_id = true;
             Ok(Box::new(vp8_payloader))
         } else if mime_type == MIME_TYPE_VP9.to_lowercase() {
-            Ok(Box::<rtp::codecs::vp9::Vp9Payloader>::default())
+            Ok(Box::<rtp::codec::vp9::Vp9Payloader>::default())
         } else if mime_type == MIME_TYPE_OPUS.to_lowercase() {
-            Ok(Box::<rtp::codecs::opus::OpusPayloader>::default())
+            Ok(Box::<rtp::codec::opus::OpusPayloader>::default())
         } else if mime_type == MIME_TYPE_G722.to_lowercase()
             || mime_type == MIME_TYPE_PCMU.to_lowercase()
             || mime_type == MIME_TYPE_PCMA.to_lowercase()
             || mime_type == MIME_TYPE_TELEPHONE_EVENT.to_lowercase()
         {
-            Ok(Box::<rtp::codecs::g7xx::G7xxPayloader>::default())
+            Ok(Box::<rtp::codec::g7xx::G7xxPayloader>::default())
         } else if mime_type == MIME_TYPE_AV1.to_lowercase() {
-            Ok(Box::<rtp::codecs::av1::Av1Payloader>::default())
+            Ok(Box::<rtp::codec::av1::Av1Payloader>::default())
         } else {
             Err(Error::ErrNoPayloaderForCodec)
         }

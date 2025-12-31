@@ -1,5 +1,5 @@
 use super::*;
-use crate::codecs::*;
+use crate::codec::*;
 use shared::error::Result;
 
 use chrono::prelude::*;

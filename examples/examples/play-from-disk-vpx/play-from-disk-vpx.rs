@@ -26,6 +26,7 @@ use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{
     fs,
@@ -34,7 +35,7 @@ use std::{
     str::FromStr,
 };
 use tokio::net::UdpSocket;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
@@ -273,6 +274,9 @@ async fn run(
 
     let (message_tx, mut message_rx) = broadcast::channel::<RTCMessage>(8);
     let (_event_tx, mut event_rx) = broadcast::channel::<RTCEvent>(8);
+    let notify_tx = Arc::new(Notify::new());
+    let video_notify_rx = notify_tx.clone();
+    let audio_notify_rx = notify_tx.clone();
 
     // Spawn video streaming task
     let (video_done_tx, mut video_done_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -285,6 +289,7 @@ async fn run(
             if let Err(err) = stream_video(
                 video_file_name,
                 video_sender_id,
+                video_notify_rx,
                 video_done_tx,
                 video_message_tx,
                 is_vp9,
@@ -309,6 +314,7 @@ async fn run(
             if let Err(err) = stream_audio(
                 audio_file_name,
                 audio_sender_id,
+                audio_notify_rx,
                 audio_done_tx,
                 audio_message_tx,
             )
@@ -453,6 +459,7 @@ async fn run(
 async fn stream_video(
     video_file_name: String,
     _video_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
+    video_notify_rx: Arc<Notify>,
     video_done_tx: tokio::sync::mpsc::Sender<()>,
     _video_message_tx: broadcast::Sender<RTCMessage>,
     _is_vp9: bool,
@@ -462,9 +469,16 @@ async fn stream_video(
     let reader = BufReader::new(file);
     let (mut ivf, header) = IVFReader::new(reader)?;
 
+    // Wait for connection established
+    video_notify_rx.notified().await;
+
     println!("play video from disk file {video_file_name}");
 
+    // It is important to use a time.Ticker instead of time.Sleep because
+    // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
+    // * works around latency issues with Sleep
     // Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
+    // This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
     let sleep_time = Duration::from_millis(
         ((1000 * header.timebase_numerator) / header.timebase_denominator) as u64,
     );
@@ -478,9 +492,13 @@ async fn stream_video(
             }
         };
 
-        // TODO: Write RTP packet via sender
-        // Note: In sansio mode, we would need to pass this through the peer_connection
-        // For now, this is a placeholder showing the streaming logic
+        /*TODO: video_track
+        .write_sample(&Sample {
+            data: frame.freeze(),
+            duration: Duration::from_secs(1),
+            ..Default::default()
+        })
+        .await?;*/
 
         let _ = ticker.tick().await;
     }
@@ -493,6 +511,7 @@ async fn stream_video(
 async fn stream_audio(
     audio_file_name: String,
     _audio_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
+    audio_notify_rx: Arc<Notify>,
     audio_done_tx: tokio::sync::mpsc::Sender<()>,
     _audio_message_tx: tokio::sync::broadcast::Sender<RTCMessage>,
 ) -> Result<()> {
@@ -507,6 +526,9 @@ async fn stream_audio(
         }
     };
 
+    // Wait for connection established
+    audio_notify_rx.notified().await;
+
     println!("play audio from disk file {audio_file_name}");
 
     let mut ticker = tokio::time::interval(OGG_PAGE_DURATION);
@@ -515,11 +537,17 @@ async fn stream_audio(
     let mut last_granule: u64 = 0;
     while let Ok((_page_data, page_header)) = ogg.parse_next_page() {
         // The amount of samples is the difference between the last and current timestamp
-        let _sample_count = page_header.granule_position - last_granule;
+        let sample_count = page_header.granule_position - last_granule;
         last_granule = page_header.granule_position;
+        let _sample_duration = Duration::from_millis(sample_count * 1000 / 48000);
 
-        // TODO: Write RTP packet via sender
-        // Note: In sansio mode, we would need to pass this through the peer_connection
+        /*TODO: audio_track
+        .write_sample(&Sample {
+            data: page_data.freeze(),
+            duration: sample_duration,
+            ..Default::default()
+        })
+        .await?;*/
 
         let _ = ticker.tick().await;
     }
