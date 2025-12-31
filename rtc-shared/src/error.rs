@@ -1125,6 +1125,41 @@ pub enum Error {
     #[error("Unknow Protocol")]
     UnknownProtocol,
 
+    //Media
+    #[error("stream is nil")]
+    ErrNilStream,
+    #[error("incomplete frame header")]
+    ErrIncompleteFrameHeader,
+    #[error("incomplete frame data")]
+    ErrIncompleteFrameData,
+    #[error("incomplete file header")]
+    ErrIncompleteFileHeader,
+    #[error("IVF signature mismatch")]
+    ErrSignatureMismatch,
+    #[error("IVF version unknown, parser may not parse correctly")]
+    ErrUnknownIVFVersion,
+
+    #[error("file not opened")]
+    ErrFileNotOpened,
+    #[error("invalid nil packet")]
+    ErrInvalidNilPacket,
+
+    #[error("bad header signature")]
+    ErrBadIDPageSignature,
+    #[error("wrong header, expected beginning of stream")]
+    ErrBadIDPageType,
+    #[error("payload for id page must be 19 bytes")]
+    ErrBadIDPageLength,
+    #[error("bad payload signature")]
+    ErrBadIDPagePayloadSignature,
+    #[error("not enough data for payload header")]
+    ErrShortPageHeader,
+
+    #[error("data is not a H264 bitstream")]
+    ErrDataIsNotH264Stream,
+    #[error("Io EOF")]
+    ErrIoEOF,
+
     //RTC
     /// ErrConnectionClosed indicates an operation executed after connection
     /// has already been closed.

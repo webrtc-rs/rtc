@@ -29,8 +29,8 @@ datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-d
 dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }
 ice = { version = "0.2.0", path = "../rtc-ice", package = "rtc-ice" }
 #interceptor = { version = "0.0.0", path = "../rtc-interceptor", package = "rtc-interceptor" }
-#TODO: mdns = { version = "0.0.0", path = "../mdns", package = "rtc-mdns" }
-#TODO: media = { version = "0.0.0", path = "../media", package = "rtc-media" }
+#mdns = { version = "0.0.0", path = "../rtc-mdns", package = "rtc-mdns" }
+media = { version = "0.0.0", path = "../rtc-media", package = "rtc-media" }
 rtcp = { version = "0.2.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
 rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
 sctp = { version = "0.2.0", path = "../rtc-sctp", package = "rtc-sctp" }

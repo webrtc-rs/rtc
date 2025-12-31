@@ -1,0 +1,27 @@
+[package]
+name = "rtc-media"
+version = "0.0.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
+edition = "2021"
+description = "RTC Media in Rust"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/rtc-media"
+homepage = "https://ortc.rs"
+repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-media"
+
+[dependencies]
+rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
+shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+
+byteorder = "1"
+bytes = "1"
+thiserror = "1"
+rand = "0.9"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+nearly_eq = "0.2"
+
+[[bench]]
+name = "audio_buffer"
+harness = false
