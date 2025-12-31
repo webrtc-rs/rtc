@@ -18,12 +18,14 @@ pub mod set_parameter_options;
 use crate::media_stream::track::MediaStreamTrack;
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::message::{RTCMessage, RTPMessage};
 use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
 use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
 use crate::rtp_transceiver::RTCRtpSenderId;
+use sansio::Protocol;
 use shared::error::{Error, Result};
 
 pub struct RTCRtpSender<'a> {
@@ -105,6 +107,24 @@ impl RTCRtpSender<'_> {
                 .sender
                 .set_streams(streams);
             Ok(())
+        } else {
+            Err(Error::ErrRTPSenderNotExisted)
+        }
+    }
+
+    pub fn write_rtp(&mut self, packet: rtp::packet::Packet) -> Result<()> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+            self.peer_connection
+                .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
+        } else {
+            Err(Error::ErrRTPSenderNotExisted)
+        }
+    }
+
+    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::packet::Packet>>) -> Result<()> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+            self.peer_connection
+                .handle_write(RTCMessage::Rtp(RTPMessage::Rtcp(packets)))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }

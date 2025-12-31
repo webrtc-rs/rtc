@@ -336,7 +336,7 @@ async fn run(
                     println!("Peer Connection got onDataChannel event");
                 }
                 RTCPeerConnectionEvent::OnTrack(track_event) => match track_event.packet {
-                    RTCRtpRtcpPacket::Rtp(_packet) => {
+                    RTCRtpRtcpPacket::Rtp(packet) => {
                         let rtp_receiver = peer_connection
                             .rtp_receiver(track_event.receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
@@ -346,11 +346,11 @@ async fn run(
                             .get(&track.kind().to_string())
                             .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                        let _rtp_sender = peer_connection
+                        let mut rtp_sender = peer_connection
                             .rtp_sender(*rtp_sender_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
-                        //TODO: rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(packet)?;
                     }
                     RTCRtpRtcpPacket::Rtcp(_) => {}
                 },
