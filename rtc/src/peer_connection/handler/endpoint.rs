@@ -143,30 +143,25 @@ impl<'a> EndpointHandler<'a> {
                 .iter()
                 .enumerate()
                 .find(|(_, transceiver)| {
-                    if transceiver.direction().has_recv() {
-                        transceiver
-                            .receiver()
-                            .get_coding_parameters()
-                            .iter()
-                            .any(|coding| {
-                                coding
-                                    .ssrc
-                                    .is_some_and(|ssrc| ssrc == rtp_packet.header.ssrc)
-                            })
+                    if let Some(receiver) = transceiver.receiver() {
+                        receiver.get_coding_parameters().iter().any(|coding| {
+                            coding
+                                .ssrc
+                                .is_some_and(|ssrc| ssrc == rtp_packet.header.ssrc)
+                        })
                     } else {
                         false
                     }
                 })
         {
-            let (track_id, stream_ids) =
-                if let Some(track) = transceiver.receiver().track().as_ref() {
-                    (
-                        track.track_id().to_owned(),
-                        vec![track.stream_id().to_owned()],
-                    )
-                } else {
-                    ("".to_owned(), vec![])
-                };
+            let (track_id, stream_ids) = if let Some(receiver) = transceiver.receiver() {
+                (
+                    receiver.track().track_id().to_owned(),
+                    vec![receiver.track().stream_id().to_owned()],
+                )
+            } else {
+                ("".to_owned(), vec![])
+            };
 
             self.ctx
                 .event_outs
@@ -205,9 +200,8 @@ impl<'a> EndpointHandler<'a> {
                     .iter()
                     .enumerate()
                     .find(|(_, transceiver)| {
-                        if transceiver.direction().has_recv() {
-                            transceiver
-                                .receiver()
+                        if let Some(receiver) = transceiver.receiver() {
+                            receiver
                                 .get_coding_parameters()
                                 .iter()
                                 .any(|coding| coding.ssrc.is_some_and(|ssrc| ssrc == rtcp_ssrc))
@@ -216,15 +210,14 @@ impl<'a> EndpointHandler<'a> {
                         }
                     })
             {
-                let (track_id, stream_ids) =
-                    if let Some(track) = transceiver.receiver().track().as_ref() {
-                        (
-                            track.track_id().to_owned(),
-                            vec![track.stream_id().to_owned()],
-                        )
-                    } else {
-                        ("".to_owned(), vec![])
-                    };
+                let (track_id, stream_ids) = if let Some(receiver) = transceiver.receiver() {
+                    (
+                        receiver.track().track_id().to_owned(),
+                        vec![receiver.track().stream_id().to_owned()],
+                    )
+                } else {
+                    ("".to_owned(), vec![])
+                };
 
                 self.ctx
                     .event_outs

@@ -329,7 +329,7 @@ async fn run(
                         let rtp_receiver = peer_connection
                             .rtp_receiver(track_event.receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                        let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
+                        let track = rtp_receiver.track()?;
                         let media_ssrc = track.ssrc();
                         rtp_receiver_id2ssrcs.insert(track_event.receiver_id, media_ssrc);
 

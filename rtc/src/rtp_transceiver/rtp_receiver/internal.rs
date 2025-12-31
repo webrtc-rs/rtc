@@ -12,7 +12,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParamet
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
 use shared::error::Result;
 use std::time::Duration;
 
@@ -28,20 +27,25 @@ use std::time::Duration;
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpReceiverInternal {
     kind: RtpCodecKind,
-    receiver_track: Option<MediaStreamTrack>,
+    receiver_track: MediaStreamTrack,
     contributing_sources: Vec<RTCRtpContributingSource>,
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
 
-    receive_codings: Vec<RTCRtpCodingParameters>,
+    pub(crate) receive_codings: Vec<RTCRtpCodingParameters>,
     receive_codecs: Vec<RTCRtpCodecParameters>,
 }
 
 impl RTCRtpReceiverInternal {
-    pub(crate) fn new(kind: RtpCodecKind, track: Option<MediaStreamTrack>) -> Self {
+    pub(crate) fn new(
+        kind: RtpCodecKind,
+        track: MediaStreamTrack,
+        receive_codings: Vec<RTCRtpCodingParameters>,
+    ) -> Self {
         Self {
             kind,
             receiver_track: track,
+            receive_codings,
             ..Default::default()
         }
     }
@@ -50,8 +54,8 @@ impl RTCRtpReceiverInternal {
         self.kind
     }
 
-    pub(crate) fn track(&self) -> Option<&MediaStreamTrack> {
-        self.receiver_track.as_ref()
+    pub(crate) fn track(&self) -> &MediaStreamTrack {
+        &self.receiver_track
     }
 
     pub(crate) fn get_capabilities(
@@ -93,10 +97,7 @@ impl RTCRtpReceiverInternal {
         rtp_parameters.codecs =
             RTCRtpReceiverInternal::get_codecs(&self.receive_codecs, self.kind(), media_engine);
 
-        RTCRtpReceiveParameters {
-            rtp_parameters,
-            codings: self.receive_codings.clone(),
-        }
+        RTCRtpReceiveParameters { rtp_parameters }
     }
 
     pub(crate) fn get_contributing_sources(
@@ -109,14 +110,6 @@ impl RTCRtpReceiverInternal {
         &self,
     ) -> impl Iterator<Item = &RTCRtpSynchronizationSource> {
         self.synchronization_sources.iter()
-    }
-
-    pub(crate) fn set_parameters(
-        &mut self,
-        parameters: RTCRtpReceiveParameters,
-        _set_parameter_options: Option<RTCSetParameterOptions>,
-    ) {
-        self.receive_codings = parameters.codings;
     }
 
     pub(crate) fn get_codecs(

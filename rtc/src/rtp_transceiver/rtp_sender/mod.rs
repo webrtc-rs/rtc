@@ -35,13 +35,18 @@ pub struct RTCRtpSender<'a> {
 
 impl RTCRtpSender<'_> {
     /// track returns the RTCRtpTransceiver track, or nil
-    pub fn track(&self) -> Option<&MediaStreamTrack> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+    pub fn track(&self) -> Result<&MediaStreamTrack> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .track()
+                .ok_or(Error::ErrRTPSenderNotExisted)
         } else {
-            None
+            Err(Error::ErrRTPSenderNotExisted)
         }
     }
 
@@ -49,13 +54,18 @@ impl RTCRtpSender<'_> {
         &self,
         kind: RtpCodecKind,
         media_engine: &mut MediaEngine,
-    ) -> Option<RTCRtpCapabilities> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+    ) -> Result<RTCRtpCapabilities> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .get_capabilities(kind, media_engine)
+                .ok_or(Error::ErrRTPSenderNotExisted)
         } else {
-            None
+            Err(Error::ErrRTPSenderNotExisted)
         }
     }
     pub fn set_parameters(
@@ -63,7 +73,11 @@ impl RTCRtpSender<'_> {
         parameters: RTCRtpSendParameters,
         set_parameter_options: Option<RTCSetParameterOptions>,
     ) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .set_parameters(parameters, set_parameter_options)
@@ -78,7 +92,11 @@ impl RTCRtpSender<'_> {
         &mut self,
         media_engine: &mut MediaEngine,
     ) -> Result<RTCRtpSendParameters> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             Ok(self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .get_parameters(media_engine))
@@ -92,7 +110,11 @@ impl RTCRtpSender<'_> {
     /// require negotiation.
     /// https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack
     pub fn replace_track(&mut self, track: Option<MediaStreamTrack>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .replace_track(track)
@@ -102,7 +124,11 @@ impl RTCRtpSender<'_> {
     }
 
     pub fn set_streams(&mut self, streams: Vec<MediaStreamId>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .set_streams(streams);
@@ -113,10 +139,29 @@ impl RTCRtpSender<'_> {
     }
 
     pub fn write_rtp(&mut self, packet: rtp::packet::Packet) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
             //TODO: handle rtp sender ssrc, header extension, etc.
             self.peer_connection
                 .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
+        } else {
+            Err(Error::ErrRTPSenderNotExisted)
+        }
+    }
+
+    /// Write Sender-related RTCP report
+    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::packet::Packet>>) -> Result<()> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len()
+            && self.peer_connection.rtp_transceivers[self.id.0]
+                .direction()
+                .has_send()
+        {
+            //TODO: handle rtcp sender ssrc, header extension, etc.
+            self.peer_connection
+                .handle_write(RTCMessage::Rtp(RTPMessage::Rtcp(packets)))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }

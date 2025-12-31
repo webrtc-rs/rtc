@@ -54,8 +54,9 @@ pub struct RTCRtpTransceiverInit {
 #[derive(Default, Clone)]
 pub(crate) struct RTCRtpTransceiver {
     mid: Option<String>,
+    kind: RtpCodecKind,
     sender: RTCRtpSenderInternal,
-    receiver: RTCRtpReceiverInternal,
+    receiver: Option<RTCRtpReceiverInternal>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
@@ -66,6 +67,7 @@ impl fmt::Debug for RTCRtpTransceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RTCRtpTransceiver")
             .field("mid", &self.mid)
+            .field("kind", &self.kind)
             .field("sender", &self.sender)
             .field("receiver", &self.receiver)
             .field("direction", &self.direction)
@@ -84,11 +86,12 @@ impl RTCRtpTransceiver {
     ) -> Self {
         Self {
             mid: None,
+            kind,
             sender: RTCRtpSenderInternal::new(kind, track, init.streams, init.send_encodings),
-            receiver: RTCRtpReceiverInternal::new(
-                kind,
-                if init.direction.has_recv() {
-                    Some(MediaStreamTrack::new(
+            receiver: if init.direction.has_recv() {
+                Some(RTCRtpReceiverInternal::new(
+                    kind,
+                    MediaStreamTrack::new(
                         math_rand_alpha(16),   // MediaStreamId
                         math_rand_alpha(16),   // MediaStreamTrackId
                         None,                  // rid
@@ -96,11 +99,12 @@ impl RTCRtpTransceiver {
                         kind,
                         format!("remote {}", kind),
                         true,
-                    ))
-                } else {
-                    None
-                },
-            ),
+                    ),
+                    vec![],
+                ))
+            } else {
+                None
+            },
             direction: init.direction,
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
@@ -113,6 +117,10 @@ impl RTCRtpTransceiver {
         &self.mid
     }
 
+    pub fn kind(&self) -> RtpCodecKind {
+        self.kind
+    }
+
     /// sender returns the RTPTransceiver's RTPSender if it has one
     pub(crate) fn sender(&self) -> &RTCRtpSenderInternal {
         &self.sender
@@ -123,11 +131,11 @@ impl RTCRtpTransceiver {
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub(crate) fn receiver(&self) -> &RTCRtpReceiverInternal {
+    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal> {
         &self.receiver
     }
 
-    pub(crate) fn receiver_mut(&mut self) -> &mut RTCRtpReceiverInternal {
+    pub(crate) fn receiver_mut(&mut self) -> &mut Option<RTCRtpReceiverInternal> {
         &mut self.receiver
     }
 
@@ -175,7 +183,7 @@ impl RTCRtpTransceiver {
         media_engine: &MediaEngine,
     ) -> Result<()> {
         for codec in &codecs {
-            let media_engine_codecs = media_engine.get_codecs_by_kind(self.receiver.kind());
+            let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind());
             let (_, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
             if match_type == CodecMatch::None {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
@@ -200,10 +208,6 @@ impl RTCRtpTransceiver {
 
         self.mid = Some(mid);
         Ok(())
-    }
-
-    pub(crate) fn kind(&self) -> RtpCodecKind {
-        self.receiver.kind()
     }
 
     pub(crate) fn stopped(&self) -> bool {
