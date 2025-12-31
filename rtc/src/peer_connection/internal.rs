@@ -492,7 +492,7 @@ impl RTCPeerConnection {
                         return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                     }
 
-                    receiver.receive_codings = receive_codings;
+                    receiver.set_coding_parameters(receive_codings);
                 }
             }
         }

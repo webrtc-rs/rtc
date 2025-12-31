@@ -32,7 +32,7 @@ pub(crate) struct RTCRtpReceiverInternal {
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
 
-    pub(crate) receive_codings: Vec<RTCRtpCodingParameters>,
+    receive_codings: Vec<RTCRtpCodingParameters>,
     receive_codecs: Vec<RTCRtpCodecParameters>,
 }
 
@@ -134,6 +134,10 @@ impl RTCRtpReceiverInternal {
 
     pub(crate) fn get_coding_parameters(&self) -> &[RTCRtpCodingParameters] {
         &self.receive_codings
+    }
+
+    pub(crate) fn set_coding_parameters(&mut self, receive_codings: Vec<RTCRtpCodingParameters>) {
+        self.receive_codings = receive_codings;
     }
 
     pub(crate) fn stop(&mut self) -> Result<()> {

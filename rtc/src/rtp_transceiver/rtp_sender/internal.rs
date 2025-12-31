@@ -240,8 +240,4 @@ impl RTCRtpSenderInternal {
         //TODO:
         Ok(())
     }
-
-    pub(crate) fn get_encoding_parameters(&self) -> &[RTCRtpEncodingParameters] {
-        &self.send_encodings
-    }
 }
