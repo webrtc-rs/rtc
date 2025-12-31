@@ -794,7 +794,7 @@ impl RTCPeerConnection {
                 init.send_encodings = vec![RTCRtpEncodingParameters {
                     rtp_coding_parameters: RTCRtpCodingParameters {
                         rid: track.rid().unwrap_or_default().into(),
-                        ssrc: Some(rand::random::<u32>()),
+                        ssrc: Some(track.ssrc()),
                         rtx: if rtx_enabled {
                             Some(RTCRtpRtxParameters {
                                 ssrc: rand::random::<u32>(),

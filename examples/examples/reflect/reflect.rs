@@ -209,42 +209,27 @@ async fn run(
 
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
-    let mut media = vec![];
+    let mut kinds = vec![];
     if audio {
-        media.push("audio");
+        kinds.push(RtpCodecKind::Audio);
     }
     if video {
-        media.push("video");
+        kinds.push(RtpCodecKind::Video);
     };
-    for s in media {
+    for kind in kinds {
         let output_track = MediaStreamTrack::new(
-            format!("webrtc-rs-stream-id-{}", s),
-            format!("webrtc-rs-track-id-{}", s),
-            None,
-            if s == "video" {
-                RtpCodecKind::Video
-            } else {
-                RtpCodecKind::Audio
-            },
-            format!("track-{s}"),
+            format!("webrtc-rs-stream-id-{}", kind),
+            format!("webrtc-rs-track-id-{}", kind),
+            None,                  // rid
+            rand::random::<u32>(), // ssrc
+            kind,
+            format!("track-{}", kind),
             false,
         );
 
         // Add this newly created track to the PeerConnection
         let rtp_sender_id = peer_connection.add_track(output_track)?;
-        rtp_sender_ids.insert(s.to_string(), rtp_sender_id);
-
-        /*
-        // Read incoming RTCP packets
-        // Before these packets are returned they are processed by interceptors. For things
-        // like NACK this needs to be called.
-        let m = s.to_owned();
-        tokio::spawn(async move {
-            let mut rtcp_buf = vec![0u8; 1500];
-            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-            println!("{m} rtp_sender.read loop exit");
-            Result::<()>::Ok(())
-        });*/
+        rtp_sender_ids.insert(kind, rtp_sender_id);
     }
 
     // Wait for the offer to be pasted
@@ -343,7 +328,7 @@ async fn run(
                         let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
 
                         let rtp_sender_id = rtp_sender_ids
-                            .get(&track.kind().to_string())
+                            .get(&track.kind())
                             .ok_or(Error::ErrRTPSenderNotExisted)?;
 
                         let mut rtp_sender = peer_connection
@@ -352,7 +337,11 @@ async fn run(
 
                         rtp_sender.write_rtp(packet)?;
                     }
-                    RTCRtpRtcpPacket::Rtcp(_) => {}
+                    RTCRtpRtcpPacket::Rtcp(_) => {
+                        // Read incoming RTCP packets
+                        // Before these packets are returned they are processed by interceptors. For things
+                        // like NACK this needs to be called.
+                    }
                 },
                 _ => {}
             }

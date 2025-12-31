@@ -8,7 +8,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParamet
 use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum RtpCodecKind {
     #[default]
     Unspecified = 0,

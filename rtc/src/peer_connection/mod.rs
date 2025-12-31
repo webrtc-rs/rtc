@@ -1018,9 +1018,10 @@ impl RTCPeerConnection {
         let transceiver = match direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
                 let track = MediaStreamTrack::new(
-                    math_rand_alpha(16),
-                    math_rand_alpha(16),
-                    None,
+                    math_rand_alpha(16),   // MediaStreamId
+                    math_rand_alpha(16),   // MediaStreamTrackId
+                    None,                  // rid
+                    rand::random::<u32>(), // ssrc
                     kind,
                     math_rand_alpha(16),
                     false,

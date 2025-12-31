@@ -89,9 +89,10 @@ impl RTCRtpTransceiver {
                 kind,
                 if init.direction.has_recv() {
                     Some(MediaStreamTrack::new(
-                        math_rand_alpha(16),
-                        math_rand_alpha(16),
-                        None,
+                        math_rand_alpha(16),   // MediaStreamId
+                        math_rand_alpha(16),   // MediaStreamTrackId
+                        None,                  // rid
+                        rand::random::<u32>(), // ssrc
                         kind,
                         format!("remote {}", kind),
                         true,

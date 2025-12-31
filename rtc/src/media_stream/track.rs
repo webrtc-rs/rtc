@@ -4,6 +4,7 @@ use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
 use crate::media_stream::MediaStreamId;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::SSRC;
 
 pub type MediaStreamTrackId = String;
 
@@ -14,6 +15,7 @@ pub struct MediaStreamTrack {
     stream_id: MediaStreamId,
     track_id: MediaStreamTrackId,
     rid: Option<String>,
+    ssrc: SSRC,
     kind: RtpCodecKind,
     label: String,
     muted: bool,
@@ -31,6 +33,7 @@ impl MediaStreamTrack {
         stream_id: MediaStreamId,
         track_id: MediaStreamTrackId,
         rid: Option<String>,
+        ssrc: SSRC,
         kind: RtpCodecKind,
         label: String,
         muted: bool,
@@ -39,6 +42,7 @@ impl MediaStreamTrack {
             stream_id,
             track_id,
             rid,
+            ssrc,
             kind,
             label,
             muted,
@@ -60,6 +64,10 @@ impl MediaStreamTrack {
 
     pub fn rid(&self) -> Option<&str> {
         self.rid.as_deref()
+    }
+
+    pub fn ssrc(&self) -> SSRC {
+        self.ssrc
     }
 
     pub fn kind(&self) -> RtpCodecKind {
