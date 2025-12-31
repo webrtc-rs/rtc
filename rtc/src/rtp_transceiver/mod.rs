@@ -36,10 +36,10 @@ pub type PayloadType = u8;
 
 pub(crate) type RTCRtpTransceiverId = usize;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct RTCRtpSenderId(pub(crate) RTCRtpTransceiverId);
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct RTCRtpReceiverId(pub(crate) RTCRtpTransceiverId);
 
 /// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.

@@ -55,12 +55,8 @@ impl RTCRtpReceiver {
         self.kind
     }
 
-    pub fn track(&self) -> &Option<MediaStreamTrack> {
-        &self.receiver_track
-    }
-
-    pub fn track_mut(&mut self) -> &mut Option<MediaStreamTrack> {
-        &mut self.receiver_track
+    pub fn track(&self) -> Option<&MediaStreamTrack> {
+        self.receiver_track.as_ref()
     }
 
     pub fn get_capabilities(

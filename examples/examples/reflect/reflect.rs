@@ -9,6 +9,7 @@ use rtc::peer_connection::configuration::media_engine::{
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -25,6 +26,7 @@ use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameter
 use sansio::Protocol;
 use shared::error::Error;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
@@ -206,6 +208,7 @@ async fn run(
     let mut peer_connection = RTCPeerConnection::new(config)?;
 
     // For now, this example only demonstrates the peer connection setup
+    let mut rtp_sender_ids = HashMap::new();
     let mut media = vec![];
     if audio {
         media.push("audio");
@@ -228,7 +231,8 @@ async fn run(
         );
 
         // Add this newly created track to the PeerConnection
-        let _rtp_sender_id = peer_connection.add_track(output_track)?;
+        let rtp_sender_id = peer_connection.add_track(output_track)?;
+        rtp_sender_ids.insert(s.to_string(), rtp_sender_id);
 
         /*
         // Read incoming RTCP packets
@@ -240,9 +244,7 @@ async fn run(
             while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
             println!("{m} rtp_sender.read loop exit");
             Result::<()>::Ok(())
-        });
-
-        output_tracks.insert(s.to_owned(), output_track);*/
+        });*/
     }
 
     // Wait for the offer to be pasted
@@ -333,13 +335,25 @@ async fn run(
                 RTCPeerConnectionEvent::OnDataChannel(_) => {
                     println!("Peer Connection got onDataChannel event");
                 }
-                RTCPeerConnectionEvent::OnTrack(track_event) => {
-                    // TODO: Handle track when TrackLocal sansio API is available
-                    println!(
-                        "Track {:?} received (handling not yet implemented in sansio)",
-                        track_event
-                    );
-                }
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event.packet {
+                    RTCRtpRtcpPacket::Rtp(_packet) => {
+                        let rtp_receiver = peer_connection
+                            .rtp_receiver(track_event.receiver_id)
+                            .ok_or(Error::ErrRTPReceiverNotExist)?;
+                        let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
+
+                        let rtp_sender_id = rtp_sender_ids
+                            .get(&track.kind().to_string())
+                            .ok_or(Error::ErrRTPSenderNotExisted)?;
+
+                        let _rtp_sender = peer_connection
+                            .rtp_sender(*rtp_sender_id)
+                            .ok_or(Error::ErrRTPReceiverNotExist)?;
+
+                        //TODO: rtp_sender.write_rtp(packet)?;
+                    }
+                    RTCRtpRtcpPacket::Rtcp(_) => {}
+                },
                 _ => {}
             }
         }

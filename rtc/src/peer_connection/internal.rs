@@ -464,7 +464,7 @@ impl RTCPeerConnection {
         };
 
         for incoming_track in incoming_tracks.into_iter() {
-            if let Some(transceiver) = self.get_transceivers_mut().iter_mut().find(|transceiver| {
+            if let Some(transceiver) = self.get_transceivers().iter_mut().find(|transceiver| {
                 transceiver.mid().as_ref() == Some(&incoming_track.mid)
                     && incoming_track.kind == transceiver.kind()
                     && transceiver.direction().has_recv()

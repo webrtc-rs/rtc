@@ -49,7 +49,7 @@ use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::{
-    find_by_mid, satisfy_type_and_direction, RTCRtpSenderId, RTCRtpTransceiver,
+    find_by_mid, satisfy_type_and_direction, RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver,
     RTCRtpTransceiverId, RTCRtpTransceiverInit,
 };
 use ::sdp::description::session::Origin;
@@ -897,33 +897,18 @@ impl RTCPeerConnection {
         }
     }
 
-    /// Returns an iterator over immutable RTP senders.
-    pub fn get_senders(&self) -> impl Iterator<Item = &RTCRtpSender> {
-        self.rtp_transceivers.iter().map(|t| t.sender())
-    }
-
-    /// Returns an iterator over mutable RTP senders.
-    pub fn get_senders_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpSender> {
+    /// Returns an iterator over the RTP senders.
+    pub fn get_senders(&mut self) -> impl Iterator<Item = &mut RTCRtpSender> {
         self.rtp_transceivers.iter_mut().map(|t| t.sender_mut())
     }
 
-    /// Returns an iterator over immutable RTP receivers.
-    pub fn get_receivers(&self) -> impl Iterator<Item = &RTCRtpReceiver> {
-        self.rtp_transceivers.iter().map(|t| t.receiver())
-    }
-
-    /// Returns an iterator over mutable RTP receivers.
-    pub fn get_receivers_mut(&mut self) -> impl Iterator<Item = &mut RTCRtpReceiver> {
+    /// Returns an iterator over the RTP receivers.
+    pub fn get_receivers(&mut self) -> impl Iterator<Item = &mut RTCRtpReceiver> {
         self.rtp_transceivers.iter_mut().map(|t| t.receiver_mut())
     }
 
-    /// Returns an iterator over immutable RTP transceivers.
-    pub fn get_transceivers(&self) -> &[RTCRtpTransceiver] {
-        &self.rtp_transceivers
-    }
-
-    /// Returns an iterator over mutable RTP transceivers.
-    pub fn get_transceivers_mut(&mut self) -> &mut [RTCRtpTransceiver] {
+    /// Returns an iterator over the RTP transceivers.
+    pub fn get_transceivers(&mut self) -> &mut [RTCRtpTransceiver] {
         &mut self.rtp_transceivers
     }
 
@@ -933,7 +918,7 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        for (id, transceiver) in self.get_transceivers_mut().iter_mut().enumerate() {
+        for (id, transceiver) in self.get_transceivers().iter_mut().enumerate() {
             if !transceiver.stopped()
                 && transceiver.kind() == track.kind()
                 && transceiver.sender().track().is_none()
@@ -971,7 +956,7 @@ impl RTCPeerConnection {
         }
 
         if let Some((_, transceiver)) = self
-            .get_transceivers_mut()
+            .get_transceivers()
             .iter_mut()
             .enumerate()
             .find(|(id, _)| *id == sender_id.0)
@@ -1074,5 +1059,21 @@ impl RTCPeerConnection {
         };
 
         Ok(self.add_rtp_transceiver(transceiver))
+    }
+
+    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<&mut RTCRtpSender> {
+        if id.0 < self.rtp_transceivers.len() {
+            Some(self.rtp_transceivers[id.0].sender_mut())
+        } else {
+            None
+        }
+    }
+
+    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<&mut RTCRtpReceiver> {
+        if id.0 < self.rtp_transceivers.len() {
+            Some(self.rtp_transceivers[id.0].receiver_mut())
+        } else {
+            None
+        }
     }
 }

@@ -1159,6 +1159,10 @@ pub enum Error {
     #[error("track already exists")]
     ErrExistingTrack,
 
+    /// ErrExistingTrack indicates that a track already exists.
+    #[error("track not existed")]
+    ErrTrackNotExisted,
+
     /// ErrPrivateKeyType indicates that a particular private key encryption
     /// chosen to generate a certificate is not supported.
     #[error("private key type not supported")]
@@ -1445,8 +1449,8 @@ pub enum Error {
     ErrRTPReceiverStateChangeInvalid,
     #[error("Track must not be nil")]
     ErrRTPSenderTrackNil,
-    #[error("RTPSender must not be nil")]
-    ErrRTPSenderNil,
+    #[error("RTPSender not existed")]
+    ErrRTPSenderNotExisted,
     #[error("Sender cannot add encoding as rid is empty")]
     ErrRTPSenderRidNil,
     #[error("Sender cannot add encoding as there is no base track")]
@@ -1457,8 +1461,8 @@ pub enum Error {
     ErrRTPSenderRIDCollision,
     #[error("Sender does not have track for RID")]
     ErrRTPSenderNoTrackForRID,
-    #[error("RTPReceiver must not be nil")]
-    ErrRTPReceiverNil,
+    #[error("RTPReceiver not existed")]
+    ErrRTPReceiverNotExist,
     #[error("DTLSTransport must not be nil")]
     ErrRTPSenderDTLSTransportNil,
     #[error("Send has already been called")]
