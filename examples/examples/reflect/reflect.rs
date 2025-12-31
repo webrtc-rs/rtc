@@ -28,9 +28,8 @@ use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::time::{Duration, Instant};
-use std::{fs, io::Write, str::FromStr};
+use std::{fs, fs::OpenOptions, io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
 
