@@ -138,13 +138,18 @@ impl RTCRtpSender<'_> {
         }
     }
 
-    pub fn write_rtp(&mut self, packet: rtp::packet::Packet) -> Result<()> {
+    pub fn write_rtp(&mut self, mut packet: rtp::packet::Packet) -> Result<()> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
                 .has_send()
         {
             //TODO: handle rtp sender ssrc, header extension, etc.
+            let track = self.peer_connection.rtp_transceivers[self.id.0]
+                .sender
+                .track()
+                .ok_or(Error::ErrRTPSenderNotExisted)?;
+            packet.header.ssrc = track.ssrc();
             self.peer_connection
                 .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
         } else {
