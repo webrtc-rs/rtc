@@ -95,8 +95,8 @@ fn test_rtp_invalid_auth() -> Result<()> {
     )?;
 
     for test_case in &*RTP_TEST_CASES {
-        let pkt = rtp::packet::Packet {
-            header: rtp::header::Header {
+        let pkt = rtp::Packet {
+            header: rtp::Header {
                 sequence_number: test_case.sequence_number,
                 ..Default::default()
             },
@@ -124,8 +124,8 @@ fn test_rtp_lifecyle() -> Result<()> {
     let auth_tag_len = ProtectionProfile::Aes128CmHmacSha1_80.rtp_auth_tag_len();
 
     for test_case in RTP_TEST_CASES.iter() {
-        let decrypted_pkt = rtp::packet::Packet {
-            header: rtp::header::Header {
+        let decrypted_pkt = rtp::Packet {
+            header: rtp::Header {
                 sequence_number: test_case.sequence_number,
                 ..Default::default()
             },
@@ -134,8 +134,8 @@ fn test_rtp_lifecyle() -> Result<()> {
 
         let decrypted_raw = decrypted_pkt.marshal()?;
 
-        let encrypted_pkt = rtp::packet::Packet {
-            header: rtp::header::Header {
+        let encrypted_pkt = rtp::Packet {
+            header: rtp::Header {
                 sequence_number: test_case.sequence_number,
                 ..Default::default()
             },

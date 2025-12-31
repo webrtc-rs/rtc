@@ -53,12 +53,7 @@ where
         self.profile.aead_auth_tag_len()
     }
 
-    fn encrypt_rtp(
-        &mut self,
-        payload: &[u8],
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Result<BytesMut> {
+    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
         // Grow the given buffer to fit the output.
         let header_len = header.marshal_size();
         let mut writer = BytesMut::with_capacity(payload.len() + self.aead_auth_tag_len());
@@ -83,7 +78,7 @@ where
     fn decrypt_rtp(
         &mut self,
         ciphertext: &[u8],
-        header: &rtp::header::Header,
+        header: &rtp::Header,
         roc: u32,
     ) -> Result<BytesMut> {
         if ciphertext.len() < self.aead_auth_tag_len() {
@@ -247,11 +242,7 @@ where
     /// value is then XORed to the 12-octet salt to form the 12-octet IV.
     ///
     /// https://tools.ietf.org/html/rfc7714#section-8.1
-    pub(crate) fn rtp_initialization_vector(
-        &self,
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Vec<u8> {
+    pub(crate) fn rtp_initialization_vector(&self, header: &rtp::Header, roc: u32) -> Vec<u8> {
         let mut iv = vec![0u8; 12];
         BigEndian::write_u32(&mut iv[2..], header.ssrc);
         BigEndian::write_u32(&mut iv[6..], roc);
@@ -320,7 +311,7 @@ mod tests {
         let mut cipher =
             CipherAeadAesGcm::<Aes128>::new(profile, &master_key, &master_salt).unwrap();
 
-        let header = rtp::header::Header {
+        let header = rtp::Header {
             ssrc: 0x12345678,
             ..Default::default()
         };
@@ -341,7 +332,7 @@ mod tests {
         let mut cipher =
             CipherAeadAesGcm::<Aes256>::new(profile, &master_key, &master_salt).unwrap();
 
-        let header = rtp::header::Header {
+        let header = rtp::Header {
             ssrc: 0x12345678,
             ..Default::default()
         };

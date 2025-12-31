@@ -272,7 +272,7 @@ async fn run(
     println!("listening {}...", socket.local_addr()?);
 
     let (message_tx, mut message_rx) = broadcast::channel::<RTCMessage>(8);
-    let (event_tx, mut event_rx) = broadcast::channel::<RTCEvent>(8);
+    let (_event_tx, mut event_rx) = broadcast::channel::<RTCEvent>(8);
 
     // Spawn video streaming task
     let (video_done_tx, mut video_done_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -280,8 +280,17 @@ async fn run(
         let video_sender_id = *rtp_sender_ids
             .get(&RtpCodecKind::Video)
             .ok_or(Error::ErrRTPSenderNotExisted)?;
+        let video_message_tx = message_tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = stream_video(video_file_name, video_sender_id, video_done_tx).await {
+            if let Err(err) = stream_video(
+                video_file_name,
+                video_sender_id,
+                video_done_tx,
+                video_message_tx,
+                is_vp9,
+            )
+            .await
+            {
                 eprintln!("video streaming error: {}", err);
             }
         });
@@ -295,8 +304,16 @@ async fn run(
         let audio_sender_id = *rtp_sender_ids
             .get(&RtpCodecKind::Audio)
             .ok_or(Error::ErrRTPSenderNotExisted)?;
+        let audio_message_tx = message_tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = stream_audio(audio_file_name, audio_sender_id, audio_done_tx).await {
+            if let Err(err) = stream_audio(
+                audio_file_name,
+                audio_sender_id,
+                audio_done_tx,
+                audio_message_tx,
+            )
+            .await
+            {
                 eprintln!("audio streaming error: {}", err);
             }
         });
@@ -437,6 +454,8 @@ async fn stream_video(
     video_file_name: String,
     _video_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
     video_done_tx: tokio::sync::mpsc::Sender<()>,
+    _video_message_tx: broadcast::Sender<RTCMessage>,
+    _is_vp9: bool,
 ) -> Result<()> {
     // Open a IVF file and start reading using our IVFReader
     let file = File::open(&video_file_name)?;
@@ -475,6 +494,7 @@ async fn stream_audio(
     audio_file_name: String,
     _audio_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
     audio_done_tx: tokio::sync::mpsc::Sender<()>,
+    _audio_message_tx: tokio::sync::broadcast::Sender<RTCMessage>,
 ) -> Result<()> {
     // Open a OGG file and start reading using our OGGReader
     let file = File::open(&audio_file_name)?;

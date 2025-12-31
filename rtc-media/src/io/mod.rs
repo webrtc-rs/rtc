@@ -14,7 +14,7 @@ pub type ResetFn<R> = Box<dyn FnMut(usize) -> R>;
 // the creation of media files
 pub trait Writer {
     // Add the content of an RTP packet to the media
-    fn write_rtp(&mut self, pkt: &rtp::packet::Packet) -> Result<()>;
+    fn write_rtp(&mut self, pkt: &rtp::Packet) -> Result<()>;
     // close the media
     // Note: close implementation must be idempotent
     fn close(&mut self) -> Result<()>;

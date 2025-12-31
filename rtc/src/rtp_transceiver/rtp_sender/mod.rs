@@ -138,7 +138,7 @@ impl RTCRtpSender<'_> {
         }
     }
 
-    pub fn write_rtp(&mut self, mut packet: rtp::packet::Packet) -> Result<()> {
+    pub fn write_rtp(&mut self, mut packet: rtp::Packet) -> Result<()> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -158,7 +158,7 @@ impl RTCRtpSender<'_> {
     }
 
     /// Write Sender-related RTCP report
-    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::packet::Packet>>) -> Result<()> {
+    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()

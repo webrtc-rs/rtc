@@ -18,8 +18,8 @@ pub use unknown::UnknownReportBlock;
 pub use vm::VoIPMetricsReportBlock;
 
 use crate::header::{Header, PacketType, HEADER_LENGTH, SSRC_LENGTH};
-use crate::packet::Packet;
 use crate::util::{get_padding_size, put_padding};
+use crate::Packet;
 use bytes::{Buf, BufMut, Bytes};
 use shared::{
     error::{Error, Result},

@@ -46,20 +46,10 @@ pub(crate) trait Cipher {
     fn get_rtcp_index(&self, input: &[u8]) -> usize;
 
     /// Encrypt RTP payload.
-    fn encrypt_rtp(
-        &mut self,
-        payload: &[u8],
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Result<BytesMut>;
+    fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
 
     /// Decrypt RTP payload.
-    fn decrypt_rtp(
-        &mut self,
-        payload: &[u8],
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Result<BytesMut>;
+    fn decrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut>;
 
     /// Encrypt RTCP payload.
     fn encrypt_rtcp(&mut self, payload: &[u8], srtcp_index: usize, ssrc: u32) -> Result<BytesMut>;

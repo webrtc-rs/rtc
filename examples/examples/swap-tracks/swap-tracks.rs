@@ -135,8 +135,7 @@ async fn main() -> Result<()> {
     // The total number of tracks
     let track_count = Arc::new(AtomicUsize::new(0));
     // The channel of packets with a bit of buffer
-    let (packets_tx, mut packets_rx) =
-        tokio::sync::mpsc::channel::<webrtc::rtp::packet::Packet>(60);
+    let (packets_tx, mut packets_rx) = tokio::sync::mpsc::channel::<webrtc::rtp::Packet>(60);
     let packets_tx = Arc::new(packets_tx);
 
     // Set a handler for when a new remote track starts, this handler copies inbound RTP packets,

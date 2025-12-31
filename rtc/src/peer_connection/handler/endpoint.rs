@@ -134,7 +134,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        rtp_packet: rtp::packet::Packet,
+        rtp_packet: rtp::Packet,
     ) -> Result<()> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
 
@@ -184,7 +184,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        rtcp_packets: Vec<Box<dyn rtcp::packet::Packet>>,
+        rtcp_packets: Vec<Box<dyn rtcp::Packet>>,
     ) -> Result<()> {
         debug!("handle_rtcp_message {}", transport_context.peer_addr);
 

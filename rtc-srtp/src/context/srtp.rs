@@ -10,7 +10,7 @@ impl Context {
     pub fn decrypt_rtp_with_header(
         &mut self,
         encrypted: &[u8],
-        header: &rtp::header::Header,
+        header: &rtp::Header,
     ) -> Result<BytesMut> {
         let auth_tag_len = self.cipher.rtp_auth_tag_len();
         if encrypted.len() < header.marshal_size() + auth_tag_len {
@@ -43,14 +43,14 @@ impl Context {
     /// DecryptRTP decrypts a RTP packet with an encrypted payload
     pub fn decrypt_rtp(&mut self, encrypted: &[u8]) -> Result<BytesMut> {
         let mut buf = encrypted;
-        let header = rtp::header::Header::unmarshal(&mut buf)?;
+        let header = rtp::Header::unmarshal(&mut buf)?;
         self.decrypt_rtp_with_header(encrypted, &header)
     }
 
     pub fn encrypt_rtp_with_header(
         &mut self,
         plaintext: &[u8],
-        header: &rtp::header::Header,
+        header: &rtp::Header,
     ) -> Result<BytesMut> {
         let (roc, diff, ovf) = self
             .get_srtp_ssrc_state(header.ssrc)
@@ -75,7 +75,7 @@ impl Context {
     /// If the dst buffer does not have the capacity to hold `len(plaintext) + 10` bytes, a new one will be allocated and returned.
     pub fn encrypt_rtp(&mut self, plaintext: &[u8]) -> Result<BytesMut> {
         let mut buf = plaintext;
-        let header = rtp::header::Header::unmarshal(&mut buf)?;
+        let header = rtp::Header::unmarshal(&mut buf)?;
         self.encrypt_rtp_with_header(plaintext, &header)
     }
 }

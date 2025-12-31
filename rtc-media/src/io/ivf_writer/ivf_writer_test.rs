@@ -10,8 +10,8 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
         0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x98, 0x36, 0xbe, 0x89, 0x9e,
     ]);
 
-    let mut valid_packet = rtp::packet::Packet {
-        header: rtp::header::Header {
+    let mut valid_packet = rtp::Packet {
+        header: rtp::Header {
             marker: true,
             extension: true,
             extension_profile: 1,
@@ -38,8 +38,8 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
         0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x88, 0x36, 0xbe, 0x89, 0x9e,
     ]);
 
-    let mut mid_part_packet = rtp::packet::Packet {
-        header: rtp::header::Header {
+    let mut mid_part_packet = rtp::Packet {
+        header: rtp::Header {
             marker: true,
             extension: true,
             extension_profile: 1,
@@ -66,8 +66,8 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
         0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x98, 0x36, 0xbe, 0x88, 0x9e,
     ]);
 
-    let mut keyframe_packet = rtp::packet::Packet {
-        header: rtp::header::Header {
+    let mut keyframe_packet = rtp::Packet {
+        header: rtp::Header {
             marker: true,
             extension: true,
             extension_profile: 1,
@@ -118,7 +118,7 @@ fn test_ivf_writer_add_packet_and_close() -> Result<()> {
         (
             "IVFWriter should be able to skip something an empty packet",
             "IVFWriter should be able to close the file",
-            rtp::packet::Packet::default(),
+            rtp::Packet::default(),
             false,
             1,
         ),

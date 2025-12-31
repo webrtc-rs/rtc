@@ -83,7 +83,7 @@ impl Cipher for CipherAesCmHmacSha1 {
     fn encrypt_rtp(
         &mut self,
         plaintext: &[u8],
-        header: &rtp::header::Header,
+        header: &rtp::Header,
         roc: u32,
     ) -> Result<BytesMut> {
         let mut writer = BytesMut::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
@@ -121,7 +121,7 @@ impl Cipher for CipherAesCmHmacSha1 {
     fn decrypt_rtp(
         &mut self,
         encrypted: &[u8],
-        header: &rtp::header::Header,
+        header: &rtp::Header,
         roc: u32,
     ) -> Result<BytesMut> {
         let encrypted_len = encrypted.len();

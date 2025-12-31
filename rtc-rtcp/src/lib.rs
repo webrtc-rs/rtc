@@ -54,3 +54,6 @@ pub mod sender_report;
 pub mod source_description;
 pub mod transport_feedbacks;
 mod util;
+
+pub use header::Header;
+pub use packet::Packet;

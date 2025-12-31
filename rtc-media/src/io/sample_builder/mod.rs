@@ -8,8 +8,8 @@ pub mod sample_sequence_location;
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
-use rtp::packet::Packet;
 use rtp::packetizer::Depacketizer;
+use rtp::Packet;
 
 use self::sample_sequence_location::{Comparison, SampleSequenceLocation};
 use crate::Sample;

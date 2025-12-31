@@ -8,4 +8,5 @@ pub mod packet;
 pub mod packetizer;
 pub mod sequence;
 
+pub use header::Header;
 pub use packet::Packet;

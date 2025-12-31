@@ -19,7 +19,7 @@ use std::fmt;
 
 /// Packet represents an RTCP packet, a protocol used for out-of-band statistics and
 /// control information for an RTP session
-pub trait Packet: Marshal + Unmarshal + fmt::Display + fmt::Debug {
+pub trait Packet: Send + Sync + Marshal + Unmarshal + fmt::Display + fmt::Debug {
     fn header(&self) -> Header;
     fn destination_ssrc(&self) -> Vec<u32>;
     fn raw_size(&self) -> usize;

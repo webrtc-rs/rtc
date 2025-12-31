@@ -98,12 +98,7 @@ impl Cipher for CipherAesCmHmacSha1 {
         self.inner.get_rtcp_index(input)
     }
 
-    fn encrypt_rtp(
-        &mut self,
-        plaintext: &[u8],
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Result<Bytes> {
+    fn encrypt_rtp(&mut self, plaintext: &[u8], header: &rtp::Header, roc: u32) -> Result<Bytes> {
         let header_len = header.marshal_size();
         let mut writer = Vec::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
 
@@ -134,12 +129,7 @@ impl Cipher for CipherAesCmHmacSha1 {
         Ok(Bytes::from(writer))
     }
 
-    fn decrypt_rtp(
-        &mut self,
-        encrypted: &[u8],
-        header: &rtp::header::Header,
-        roc: u32,
-    ) -> Result<Bytes> {
+    fn decrypt_rtp(&mut self, encrypted: &[u8], header: &rtp::Header, roc: u32) -> Result<Bytes> {
         let encrypted_len = encrypted.len();
         if encrypted_len < self.rtp_auth_tag_len() {
             return Err(Error::SrtpTooSmall(encrypted_len, self.rtp_auth_tag_len()));

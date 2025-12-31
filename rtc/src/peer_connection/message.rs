@@ -33,8 +33,8 @@ pub enum DTLSMessage {
 #[derive(Debug, Clone)]
 pub enum RTPMessage {
     Raw(BytesMut),
-    Rtp(rtp::packet::Packet),
-    Rtcp(Vec<Box<dyn rtcp::packet::Packet>>),
+    Rtp(rtp::Packet),
+    Rtcp(Vec<Box<dyn rtcp::Packet>>),
 }
 
 #[derive(Debug, Clone)]

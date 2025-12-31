@@ -79,7 +79,7 @@ fn test_write_rtp() -> Result<()> {
             let mut h264writer = H264Writer::new(w);
             h264writer.has_key_frame = has_key_frame;
 
-            let packet = rtp::packet::Packet {
+            let packet = rtp::Packet {
                 payload: Bytes::from(payload),
                 ..Default::default()
             };
@@ -112,7 +112,7 @@ fn test_write_rtp_fu() -> Result<()> {
         h264writer.has_key_frame = true;
 
         for payload in tests {
-            let packet = rtp::packet::Packet {
+            let packet = rtp::Packet {
                 payload: Bytes::from(payload),
                 ..Default::default()
             };

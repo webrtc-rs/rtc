@@ -7,7 +7,7 @@ impl Context {
     /// DecryptRTCP decrypts a RTCP packet with an encrypted payload
     pub fn decrypt_rtcp(&mut self, encrypted: &[u8]) -> Result<BytesMut> {
         let mut buf = encrypted;
-        rtcp::header::Header::unmarshal(&mut buf)?;
+        rtcp::Header::unmarshal(&mut buf)?;
 
         let index = self.cipher.get_rtcp_index(encrypted);
         let ssrc = u32::from_be_bytes([encrypted[4], encrypted[5], encrypted[6], encrypted[7]]);
@@ -35,7 +35,7 @@ impl Context {
         }
 
         let mut buf = decrypted;
-        rtcp::header::Header::unmarshal(&mut buf)?;
+        rtcp::Header::unmarshal(&mut buf)?;
 
         let ssrc = u32::from_be_bytes([decrypted[4], decrypted[5], decrypted[6], decrypted[7]]);
 

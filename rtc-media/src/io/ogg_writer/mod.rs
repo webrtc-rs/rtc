@@ -168,7 +168,7 @@ impl<W: Write> OggWriter<W> {
 
 impl<W: Write> Writer for OggWriter<W> {
     /// write_rtp adds a new packet and writes the appropriate headers for it
-    fn write_rtp(&mut self, packet: &rtp::packet::Packet) -> Result<()> {
+    fn write_rtp(&mut self, packet: &rtp::Packet) -> Result<()> {
         if packet.payload.is_empty() {
             return Ok(());
         }

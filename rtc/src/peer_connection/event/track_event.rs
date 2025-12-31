@@ -13,8 +13,8 @@ pub struct RTCTrackEvent {
 
 #[derive(Debug, Clone)]
 pub enum RTCRtpRtcpPacket {
-    Rtp(rtp::packet::Packet),
-    Rtcp(Vec<Box<dyn rtcp::packet::Packet>>),
+    Rtp(rtp::Packet),
+    Rtcp(Vec<Box<dyn rtcp::Packet>>),
 }
 
 impl Default for RTCRtpRtcpPacket {
