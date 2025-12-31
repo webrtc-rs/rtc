@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
-use log::{error, trace};
+use log::{debug, error, trace};
 use rtc::media_stream::track::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
     MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8,
@@ -23,6 +23,7 @@ use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use sansio::Protocol;
 use shared::error::Error;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -209,6 +210,7 @@ async fn run(
 
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
+    let mut media_ssrcs = HashMap::new();
     let mut kinds = vec![];
     if audio {
         kinds.push(RtpCodecKind::Audio);
@@ -281,6 +283,8 @@ async fn run(
 
     println!("listening {}...", socket.local_addr()?);
 
+    let mut pli_last_sent = Instant::now();
+
     let mut buf = vec![0; 2000];
     'EventLoop: loop {
         while let Some(msg) = peer_connection.poll_write() {
@@ -326,6 +330,7 @@ async fn run(
                             .rtp_receiver(track_event.receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
                         let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
+                        media_ssrcs.insert(track.kind(), track.ssrc());
 
                         let rtp_sender_id = rtp_sender_ids
                             .get(&track.kind())
@@ -393,7 +398,31 @@ async fn run(
                 }
             }
             _ = timer.as_mut() => {
-                peer_connection.handle_timeout(Instant::now())?;
+                let now = Instant::now();
+                peer_connection.handle_timeout(now)?;
+
+                if now > pli_last_sent + Duration::from_secs(2) {
+                    // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
+                    // This is a temporary fix until we implement incoming RTCP events,
+                    // then we would push a PLI only when a viewer requests it
+                    for (kind, &media_ssrc) in &media_ssrcs {
+                        let rtp_sender_id = rtp_sender_ids
+                            .get(&kind)
+                            .ok_or(Error::ErrRTPSenderNotExisted)?;
+
+                        let mut rtp_sender = peer_connection
+                            .rtp_sender(*rtp_sender_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
+
+                        debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
+                        rtp_sender.write_rtcp(vec![Box::new(PictureLossIndication{
+                                        sender_ssrc: 0,
+                                        media_ssrc,
+                                })])?;
+                    }
+
+                    pli_last_sent = now;
+                }
             }
             res = socket.recv_from(&mut buf) => {
                 match res {
