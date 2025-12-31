@@ -121,14 +121,4 @@ impl RTCRtpSender<'_> {
             Err(Error::ErrRTPSenderNotExisted)
         }
     }
-
-    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::packet::Packet>>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
-            //TODO: handle rtcp sender ssrc, header extension, etc.
-            self.peer_connection
-                .handle_write(RTCMessage::Rtp(RTPMessage::Rtcp(packets)))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
-    }
 }

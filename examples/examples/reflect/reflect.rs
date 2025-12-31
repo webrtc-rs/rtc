@@ -210,7 +210,7 @@ async fn run(
 
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
-    let mut media_ssrcs = HashMap::new();
+    let mut rtp_receiver_id2ssrcs = HashMap::new();
     let mut kinds = vec![];
     if audio {
         kinds.push(RtpCodecKind::Audio);
@@ -330,7 +330,8 @@ async fn run(
                             .rtp_receiver(track_event.receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
                         let track = rtp_receiver.track().ok_or(Error::ErrTrackNotExisted)?;
-                        media_ssrcs.insert(track.kind(), track.ssrc());
+                        let media_ssrc = track.ssrc();
+                        rtp_receiver_id2ssrcs.insert(track_event.receiver_id, media_ssrc);
 
                         let rtp_sender_id = rtp_sender_ids
                             .get(&track.kind())
@@ -340,6 +341,7 @@ async fn run(
                             .rtp_sender(*rtp_sender_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
+                        debug!("sending rtp packet with media_ssrc={}", media_ssrc);
                         rtp_sender.write_rtp(packet)?;
                     }
                     RTCRtpRtcpPacket::Rtcp(_) => {
@@ -405,17 +407,14 @@ async fn run(
                     // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
                     // This is a temporary fix until we implement incoming RTCP events,
                     // then we would push a PLI only when a viewer requests it
-                    for (kind, &media_ssrc) in &media_ssrcs {
-                        let rtp_sender_id = rtp_sender_ids
-                            .get(&kind)
-                            .ok_or(Error::ErrRTPSenderNotExisted)?;
+                    for (&receiver_id, &media_ssrc) in &rtp_receiver_id2ssrcs {
 
-                        let mut rtp_sender = peer_connection
-                            .rtp_sender(*rtp_sender_id)
+                        let mut rtp_receiver = peer_connection
+                            .rtp_receiver(receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
-                        rtp_sender.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
                                         sender_ssrc: 0,
                                         media_ssrc,
                                 })])?;

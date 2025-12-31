@@ -11,7 +11,9 @@ use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use crate::rtp_transceiver::RTCRtpReceiverId;
+use sansio::Protocol;
 
+use crate::peer_connection::message::{RTCMessage, RTPMessage};
 use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
     RTCRtpContributingSource, RTCRtpSynchronizationSource,
 };
@@ -81,6 +83,16 @@ impl RTCRtpReceiver<'_> {
                 .get_synchronization_sources())
         } else {
             Err(Error::ErrRTPReceiverNotExisted)
+        }
+    }
+
+    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::packet::Packet>>) -> Result<()> {
+        if self.id.0 < self.peer_connection.rtp_transceivers.len() {
+            //TODO: handle rtcp media ssrc, header extension, etc.
+            self.peer_connection
+                .handle_write(RTCMessage::Rtp(RTPMessage::Rtcp(packets)))
+        } else {
+            Err(Error::ErrRTPSenderNotExisted)
         }
     }
 }
