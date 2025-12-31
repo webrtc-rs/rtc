@@ -886,13 +886,21 @@ impl RTCPeerConnection {
     }
 
     /// Returns an iterator over the RTP senders.
-    pub fn get_senders(&mut self) -> impl Iterator<Item = RTCRtpSenderId> {
-        (0..self.rtp_transceivers.len()).map(RTCRtpSenderId)
+    pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_> {
+        self.rtp_transceivers
+            .iter()
+            .enumerate()
+            .filter(|(_, transceiver)| transceiver.direction().has_send())
+            .map(|(id, _)| RTCRtpSenderId(id))
     }
 
     /// Returns an iterator over the RTP receivers.
-    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> {
-        (0..self.rtp_transceivers.len()).map(RTCRtpReceiverId)
+    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_> {
+        self.rtp_transceivers
+            .iter()
+            .enumerate()
+            .filter(|(_, transceiver)| transceiver.direction().has_recv())
+            .map(|(id, _)| RTCRtpReceiverId(id))
     }
 
     /// Returns an iterator over the RTP transceivers.
