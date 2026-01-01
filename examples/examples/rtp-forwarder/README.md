@@ -33,7 +33,8 @@ Copy the text that `rtp-forwarder` just emitted and copy into second text area
 
 ### Hit 'Start Session' in jsfiddle and enjoy your RTP forwarded stream!
 
-You can run any of these commands at anytime. The media is live/stateless, you can switch commands without restarting Pion.
+You can run any of these commands at anytime. The media is live/stateless, you can switch commands without restarting
+WebRTC-rs.
 
 #### VLC
 
@@ -49,4 +50,5 @@ You can add `-fflags nobuffer` to lower the latency. You will have worse playbac
 
 #### Twitch/RTMP
 
-`ffmpeg -protocol_whitelist file,udp,rtp -i rtp-forwarder.sdp -c:v libx264 -preset veryfast -b:v 3000k -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 160k -ac 2 -ar 44100 -f flv rtmp://live.twitch.tv/app/$STREAM_KEY` Make sure to replace `$STREAM_KEY` at the end of the URL first.
+`ffmpeg -protocol_whitelist file,udp,rtp -i rtp-forwarder.sdp -c:v libx264 -preset veryfast -b:v 3000k -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 160k -ac 2 -ar 44100 -f flv rtmp://live.twitch.tv/app/$STREAM_KEY`
+Make sure to replace `$STREAM_KEY` at the end of the URL first.

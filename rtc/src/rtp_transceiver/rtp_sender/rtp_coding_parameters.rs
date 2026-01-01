@@ -1,7 +1,7 @@
 use crate::rtp_transceiver::SSRC;
 
 /// RTPCodingParameters provides information relating to both encoding and decoding.
-/// This is a subset of the RFC since Pion WebRTC doesn't implement encoding/decoding itself
+/// This is a subset of the RFC since WebRTC-rs doesn't implement encoding/decoding itself
 /// <http://draft.ortc.org/#dom-rtcrtpcodingparameters>
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCodingParameters {

@@ -206,11 +206,11 @@ impl SettingEngine {
 
     /// set_nat_1to1_ips sets a list of external IP addresses of 1:1 (D)NAT
     /// and a candidate type for which the external IP address is used.
-    /// This is useful when you are host a server using Pion on an AWS EC2 instance
+    /// This is useful when you are host a server using WebRTC-rs on an AWS EC2 instance
     /// which has a private address, behind a 1:1 DNAT with a public IP (e.g.
     /// Elastic IP). In this case, you can give the public IP address so that
-    /// Pion will use the public IP address in its candidate instead of the private
-    /// IP address. The second argument, candidate_type, is used to tell Pion which
+    /// WebRTC-rs will use the public IP address in its candidate instead of the private
+    /// IP address. The second argument, candidate_type, is used to tell WebRTC-rs which
     /// type of candidate should use the given public IP address.
     /// Two types of candidates are supported:
     ///
@@ -331,7 +331,7 @@ impl SettingEngine {
 
     /// disable_media_engine_multiple_codecs disables the MediaEngine negotiating different codecs.
     /// With the default value multiple media sections in the SDP can each negotiate different
-    /// codecs. This is the new default behvior, because it makes Pion more spec compliant.
+    /// codecs. This is the new default behavior, because it makes WebRTC-rs more spec compliant.
     /// The value of this setting will get copied to every copy of the MediaEngine generated
     /// for new PeerConnections (assuming DisableMediaEngineCopy is set to false).
     /// Note: this setting is targeted to be removed in release 4.2.0 (or later).

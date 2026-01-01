@@ -199,7 +199,7 @@ pub(crate) fn nearest_padded_value_length(l: usize) -> usize {
 
 /// This method converts uint16 vlue to AttrType. If it finds an old attribute
 /// type value, it also translates it to the new value to enable backward
-/// compatibility. (See: https://github.com/pion/stun/issues/21)
+/// compatibility.
 pub(crate) fn compat_attr_type(val: u16) -> AttrType {
     if val == 0x8020 {
         // draft-ietf-behave-rfc3489bis-02, MS-TURN

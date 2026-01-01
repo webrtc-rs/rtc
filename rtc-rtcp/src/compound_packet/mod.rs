@@ -131,7 +131,7 @@ impl CompoundPacket {
         }
 
         for pkt in &self.0[1..] {
-            // If the number of RecetpionReports exceeds 31 additional ReceiverReports
+            // If the number of RRs exceeds 31 additional ReceiverReports
             // can be included here.
             if pkt.as_any().downcast_ref::<ReceiverReport>().is_some() {
                 continue;

@@ -1201,7 +1201,6 @@ impl Association {
                 }
             } else {
                 // silently discard the data. (sender will retry on T3-rtx timeout)
-                // see pion/sctp#30
                 debug!("[{}] discard {}", self.side, d.stream_sequence_number);
                 return Ok(vec![]);
             }
@@ -1437,11 +1436,10 @@ impl Association {
             }
         }
 
-        // TSN may be forewared for unordered chunks. ForwardTSN chunk does not
+        // TSN may be forwarded for unordered chunks. ForwardTSN chunk does not
         // report which stream identifier it skipped for unordered chunks.
         // Therefore, we need to broadcast this event to all existing streams for
         // unordered chunks.
-        // See https://github.com/pion/sctp/issues/106
         for s in self.streams.values_mut() {
             s.handle_forward_tsn_for_unordered(c.new_cumulative_tsn);
             if s.reassembly_queue.is_readable() {

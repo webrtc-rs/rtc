@@ -619,7 +619,10 @@ fn test_message_full_size() -> Result<()> {
     m.build(&[
         Box::new(BINDING_REQUEST),
         Box::new(TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 0])),
-        Box::new(TextAttribute::new(ATTR_SOFTWARE, "pion/stun".to_owned())),
+        Box::new(TextAttribute::new(
+            ATTR_SOFTWARE,
+            "webrtc-rs/stun".to_owned(),
+        )),
         Box::new(MessageIntegrity::new_long_term_integrity(
             "username".to_owned(),
             "realm".to_owned(),
@@ -645,7 +648,10 @@ fn test_message_clone_to() -> Result<()> {
     m.build(&[
         Box::new(BINDING_REQUEST),
         Box::new(TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 0])),
-        Box::new(TextAttribute::new(ATTR_SOFTWARE, "pion/stun".to_owned())),
+        Box::new(TextAttribute::new(
+            ATTR_SOFTWARE,
+            "webrtc-rs/stun".to_owned(),
+        )),
         Box::new(MessageIntegrity::new_long_term_integrity(
             "username".to_owned(),
             "realm".to_owned(),

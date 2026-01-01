@@ -98,7 +98,7 @@ pub struct MediaEngine {
 }
 
 impl MediaEngine {
-    /// register_default_codecs registers the default codecs supported by Pion WebRTC.
+    /// register_default_codecs registers the default codecs supported by WebRTC-rs.
     /// register_default_codecs is not safe for concurrent use.
     pub fn register_default_codecs(&mut self) -> Result<()> {
         // Default Audio Codecs

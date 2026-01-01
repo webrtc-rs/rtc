@@ -1414,7 +1414,7 @@ fn test_binding_request_timeout() -> Result<()> {
 }
 
 // test_agent_credentials checks if local username fragments and passwords (if set) meet RFC standard
-// and ensure it's backwards compatible with previous versions of the pion/ice
+// and ensure it's backwards compatible with previous versions of the rtc/ice
 #[test]
 fn test_agent_credentials() -> Result<()> {
     // Agent should not require any of the usernames and password to be set
