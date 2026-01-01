@@ -207,7 +207,7 @@ async fn run(
             sdp_fmtp_line: "".to_owned(),
             rtcp_feedback: vec![],
         },
-        payload_type: 96,
+        payload_type: if is_vp9 { 98 } else { 96 },
         ..Default::default()
     };
 
