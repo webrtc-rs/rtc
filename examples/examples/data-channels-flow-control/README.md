@@ -2,10 +2,12 @@
 
 This example demonstrates how to use the following property / methods.
 
-* pub fn buffered_amount(&self) -> usize
 * pub fn set_buffered_amount_low_threshold(&self, th: usize)
 * pub fn buffered_amount_low_threshold(&self) -> usize
 * pub fn on_buffered_amount_low(&self, f: OnBufferedAmountLowFn)
+* pub fn set_buffered_amount_high_threshold(&self, th: usize)
+* pub fn buffered_amount_high_threshold(&self) -> usize
+* pub fn on_buffered_amount_high(&self, f: OnBufferedAmountHighFn)
 
 These methods are equivalent to that of JavaScript WebRTC API.
 See <https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel> for more details.

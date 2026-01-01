@@ -6,6 +6,7 @@ use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage}
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
+use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use datachannel::message::Message;
 use log::{debug, error, warn};
 use sctp::{
@@ -176,6 +177,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         ),
                                     );
                                 }
+                                Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
+                                    debug!(
+                                        "association_handle {} stream id {} is buffered amount high",
+                                        ch.0, id
+                                    );
+                                    self.ctx.event_outs.push_back(
+                                        RTCEventInternal::RTCPeerConnectionEvent(
+                                            RTCPeerConnectionEvent::OnDataChannel(
+                                                RTCDataChannelEvent::OnBufferedAmountHigh(id),
+                                            ),
+                                        ),
+                                    );
+                                }
                                 _ => {}
                             }
                         }
@@ -304,16 +318,25 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                         message.stream_id,
                                     ));
                             }
-                            Message::DataChannelLowThreshold(data_channel_low_threshold) => {
+                            Message::DataChannelThreshold(data_channel_threshold) => {
                                 is_dcep_internal_control_message = true;
                                 debug!(
-                                    "sctp data channel set low threshold {} for stream id {}",
-                                    data_channel_low_threshold.0, message.stream_id
+                                    "sctp data channel set threshold {:?} for stream id {}",
+                                    data_channel_threshold, message.stream_id
                                 );
                                 let mut stream = conn.stream(message.stream_id)?;
-                                stream.set_buffered_amount_low_threshold(
-                                    data_channel_low_threshold.0 as usize,
-                                )?;
+                                match data_channel_threshold {
+                                    DataChannelThreshold::Low(threshold) => {
+                                        stream.set_buffered_amount_low_threshold(
+                                            threshold as usize,
+                                        )?;
+                                    }
+                                    DataChannelThreshold::High(threshold) => {
+                                        stream.set_buffered_amount_high_threshold(
+                                            threshold as usize,
+                                        )?;
+                                    }
+                                }
                             }
                             _ => {}
                         }

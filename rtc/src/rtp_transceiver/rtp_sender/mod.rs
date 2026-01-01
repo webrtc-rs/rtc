@@ -144,7 +144,9 @@ impl RTCRtpSender<'_> {
                 .direction()
                 .has_send()
         {
-            //TODO: handle rtp sender ssrc, header extension, etc.
+            //TODO: https://github.com/webrtc-rs/rtc/issues/5:
+            // RTCRtpSender should use negotiated payload type to fill rtp packet's payload type in write_rtp
+            // handle rtp sender ssrc, header extension, etc.
             let track = self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
                 .track()

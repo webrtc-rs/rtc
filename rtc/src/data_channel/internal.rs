@@ -6,7 +6,7 @@ use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
 use shared::error::Result;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct RTCDataChannelInternal {
     pub(crate) id: RTCDataChannelId,
     pub(crate) label: String,
@@ -16,9 +16,28 @@ pub(crate) struct RTCDataChannelInternal {
     pub(crate) protocol: String,
     pub(crate) negotiated: bool,
     pub(crate) ready_state: RTCDataChannelState,
+    pub(crate) buffered_amount_high_threshold: u32,
     pub(crate) buffered_amount_low_threshold: u32,
 
     pub(crate) data_channel: Option<::datachannel::data_channel::DataChannel>,
+}
+
+impl Default for RTCDataChannelInternal {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            label: "".to_string(),
+            ordered: false,
+            max_packet_life_time: None,
+            max_retransmits: None,
+            protocol: "".to_string(),
+            negotiated: false,
+            ready_state: RTCDataChannelState::default(),
+            buffered_amount_high_threshold: u32::MAX,
+            buffered_amount_low_threshold: 0,
+            data_channel: None,
+        }
+    }
 }
 
 impl RTCDataChannelInternal {
@@ -33,6 +52,7 @@ impl RTCDataChannelInternal {
             max_packet_life_time: params.max_packet_life_time,
             max_retransmits: params.max_retransmits,
             ready_state: RTCDataChannelState::Connecting,
+            buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
             data_channel: None,
         }
@@ -58,6 +78,7 @@ impl RTCDataChannelInternal {
         let mut data_channel =
             ::datachannel::data_channel::DataChannel::dial(config, association_handle, self.id)?;
         data_channel.set_buffered_amount_low_threshold(self.buffered_amount_low_threshold)?;
+        data_channel.set_buffered_amount_high_threshold(self.buffered_amount_high_threshold)?;
 
         self.data_channel = Some(data_channel);
         self.ready_state = RTCDataChannelState::Open;

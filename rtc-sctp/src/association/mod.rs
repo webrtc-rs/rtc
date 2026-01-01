@@ -1283,6 +1283,7 @@ impl Association {
         for (si, n_bytes_acked) in &bytes_acked_per_stream {
             if let Some(s) = self.streams.get_mut(si) {
                 if s.on_buffer_released(*n_bytes_acked) {
+                    trace!("StreamEvent::BufferedAmountLow");
                     self.events
                         .push_back(Event::Stream(StreamEvent::BufferedAmountLow { id: *si }))
                 }

@@ -8,6 +8,7 @@ pub enum RTCDataChannelEvent {
     Unspecified,
     OnOpen(RTCDataChannelId),
     OnBufferedAmountLow(RTCDataChannelId),
+    OnBufferedAmountHigh(RTCDataChannelId),
     OnError(RTCDataChannelId),
     OnClosing(RTCDataChannelId),
     OnClose(RTCDataChannelId),

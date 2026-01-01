@@ -2,8 +2,8 @@
 mod data_channel_test;
 
 use crate::message::{
-    message_channel_ack::*, message_channel_close::*, message_channel_low_threshold::*,
-    message_channel_open::*, *,
+    message_channel_ack::*, message_channel_close::*, message_channel_open::*,
+    message_channel_threshold::*, *,
 };
 use bytes::{Buf, BytesMut};
 use log::debug;
@@ -204,9 +204,9 @@ impl DataChannel {
         Ok(())
     }
 
-    fn write_data_channel_low_threshold(&mut self, threshold: u32) -> Result<()> {
+    fn write_data_channel_high_threshold(&mut self, threshold: u32) -> Result<()> {
         let low_threshold =
-            Message::DataChannelLowThreshold(DataChannelLowThreshold(threshold)).marshal()?;
+            Message::DataChannelThreshold(DataChannelThreshold::High(threshold)).marshal()?;
         self.write_outs.push_back(DataChannelMessage {
             association_handle: self.association_handle,
             stream_id: self.stream_id,
@@ -216,11 +216,22 @@ impl DataChannel {
         Ok(())
     }
 
-    /// BufferedAmount returns the number of bytes of data currently queued to be
-    /// sent over this stream.
-    pub fn buffered_amount(&self) -> u32 {
-        //TODO: self.stream.buffered_amount()
-        0
+    fn write_data_channel_low_threshold(&mut self, threshold: u32) -> Result<()> {
+        let low_threshold =
+            Message::DataChannelThreshold(DataChannelThreshold::Low(threshold)).marshal()?;
+        self.write_outs.push_back(DataChannelMessage {
+            association_handle: self.association_handle,
+            stream_id: self.stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: low_threshold,
+        });
+        Ok(())
+    }
+
+    /// SetBufferedAmountHighThreshold is used to update the threshold.
+    /// See BufferedAmountHighThreshold().
+    pub fn set_buffered_amount_high_threshold(&mut self, threshold: u32) -> Result<()> {
+        self.write_data_channel_high_threshold(threshold)
     }
 
     /// SetBufferedAmountLowThreshold is used to update the threshold.

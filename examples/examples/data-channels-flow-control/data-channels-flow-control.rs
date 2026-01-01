@@ -22,7 +22,7 @@ use rtc::peer_connection::RTCPeerConnection;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const BUFFERED_AMOUNT_LOW_THRESHOLD: u32 = 512 * 1024; // 512 KB
-const MAX_BUFFERED_AMOUNT: u32 = 1024 * 1024; // 1 MB
+const BUFFERED_AMOUNT_HIGH_THRESHOLD: u32 = 1024 * 1024; // 1 MB
 
 #[derive(Parser)]
 #[command(name = "data-channels-flow-control")]
@@ -103,6 +103,7 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     });
     let mut dc = requester.create_data_channel("data", options)?;
     dc.set_buffered_amount_low_threshold(BUFFERED_AMOUNT_LOW_THRESHOLD)?;
+    dc.set_buffered_amount_high_threshold(BUFFERED_AMOUNT_HIGH_THRESHOLD)?;
 
     // Create responder (receiver) peer connection
     let mut responder = RTCPeerConnection::new(config)?;
@@ -209,6 +210,10 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
                             println!("Requester: OnBufferedAmountLow");
                             req_can_send_more = true;
                         }
+                        RTCDataChannelEvent::OnBufferedAmountHigh(_channel_id) => {
+                            println!("Requester: OnBufferedAmountHigh");
+                            req_can_send_more = false;
+                        }
                         _ => {}
                     }
                 }
@@ -247,15 +252,7 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
         if req_data_channel_opened.is_some() && req_can_send_more {
             let channel_id = req_data_channel_opened.unwrap();
             if let Some(mut dc) = requester.data_channel(channel_id) {
-                if let Ok(_) = dc.send(BytesMut::from(&send_buf[..])) {
-                    if let Ok(buffered_amount) = dc.buffered_amount() {
-                        if buffered_amount + send_buf.len() as u32 > MAX_BUFFERED_AMOUNT {
-                            println!("Requester: buffered_amount {} + on the fly {} > MAX_BUFFERED_AMOUNT {} ",
-                                     buffered_amount, send_buf.len(), MAX_BUFFERED_AMOUNT);
-                            req_can_send_more = false;
-                        }
-                    }
-                }
+                let _ = dc.send(BytesMut::from(&send_buf[..]));
             }
         }
 

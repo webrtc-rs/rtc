@@ -2,7 +2,7 @@ use crate::association::state::AssociationState;
 use crate::association::Association;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
-use crate::{ErrorCauseCode, Side};
+use crate::{ErrorCauseCode, Event, Side};
 use shared::error::{Error, Result};
 
 use crate::util::{ByteSlice, BytesArray, BytesSource};
@@ -46,6 +46,11 @@ pub enum StreamEvent {
     Available,
     /// The number of bytes of outgoing data buffered is lower than the threshold.
     BufferedAmountLow {
+        /// Which stream is now readable
+        id: StreamId,
+    },
+    /// The number of bytes of outgoing data buffered is higher than the threshold.
+    BufferedAmountHigh {
         /// Which stream is now readable
         id: StreamId,
     },
@@ -180,7 +185,17 @@ impl Stream<'_> {
         let (p, _) = source.pop_chunk(self.association.max_message_size() as usize);
 
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
-            let chunks = s.packetize(&p, ppi);
+            let (is_buffered_amount_high, chunks) = s.packetize(&p, ppi);
+
+            if is_buffered_amount_high {
+                trace!("StreamEvent::BufferedAmountHigh");
+                self.association
+                    .events
+                    .push_back(Event::Stream(StreamEvent::BufferedAmountHigh {
+                        id: self.stream_identifier,
+                    }))
+            }
+
             self.association.send_payload_data(chunks)?;
 
             Ok(p.len())
@@ -304,7 +319,7 @@ impl Stream<'_> {
     }
 
     /// buffered_amount_low_threshold returns the number of bytes of buffered outgoing data that is
-    /// considered "low." Defaults to 0.
+    /// considered "low" Defaults to 0.
     pub fn buffered_amount_low_threshold(&self) -> Result<usize> {
         if let Some(s) = self.association.streams.get(&self.stream_identifier) {
             Ok(s.buffered_amount_low)
@@ -318,6 +333,27 @@ impl Stream<'_> {
     pub fn set_buffered_amount_low_threshold(&mut self, th: usize) -> Result<()> {
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
             s.buffered_amount_low = th;
+            Ok(())
+        } else {
+            Err(Error::ErrStreamClosed)
+        }
+    }
+
+    /// buffered_amount_high_threshold returns the number of bytes of buffered outgoing data that is
+    /// considered "high" Defaults to u32::MAX.
+    pub fn buffered_amount_high_threshold(&self) -> Result<usize> {
+        if let Some(s) = self.association.streams.get(&self.stream_identifier) {
+            Ok(s.buffered_amount_high)
+        } else {
+            Err(Error::ErrStreamClosed)
+        }
+    }
+
+    /// set_buffered_amount_high_threshold is used to update the threshold.
+    /// See buffered_amount_high_threshold().
+    pub fn set_buffered_amount_high_threshold(&mut self, th: usize) -> Result<()> {
+        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
+            s.buffered_amount_high = th;
             Ok(())
         } else {
             Err(Error::ErrStreamClosed)
@@ -360,6 +396,7 @@ pub struct StreamState {
     pub(crate) reliability_value: u32,
     pub(crate) buffered_amount: usize,
     pub(crate) buffered_amount_low: usize,
+    pub(crate) buffered_amount_high: usize,
 }
 impl StreamState {
     pub(crate) fn new(
@@ -381,6 +418,7 @@ impl StreamState {
             reliability_value: 0,
             buffered_amount: 0,
             buffered_amount_low: 0,
+            buffered_amount_high: u32::MAX as usize,
         }
     }
 
@@ -409,7 +447,11 @@ impl StreamState {
             .forward_tsn_for_unordered(new_cumulative_tsn);
     }
 
-    fn packetize(&mut self, raw: &Bytes, ppi: PayloadProtocolIdentifier) -> Vec<ChunkPayloadData> {
+    fn packetize(
+        &mut self,
+        raw: &Bytes,
+        ppi: PayloadProtocolIdentifier,
+    ) -> (bool, Vec<ChunkPayloadData>) {
         let mut i = 0;
         let mut remaining = raw.len();
 
@@ -457,11 +499,24 @@ impl StreamState {
             self.sequence_number = self.sequence_number.wrapping_add(1);
         }
 
-        //let old_value = self.buffered_amount;
+        let old_amount = self.buffered_amount;
+        let n_bytes_added = raw.len();
         self.buffered_amount += raw.len();
-        //trace!("[{}] bufferedAmount = {}", self.side, old_value + raw.len());
+        let new_amount = self.buffered_amount;
 
-        chunks
+        trace!(
+            "[{}] new_amount = {}, old_amount = {}, buffered_amount_high = {}, n_bytes_added = {}",
+            self.side,
+            new_amount,
+            old_amount,
+            self.buffered_amount_high,
+            n_bytes_added,
+        );
+
+        let is_buffered_amount_high =
+            old_amount < self.buffered_amount_high && new_amount >= self.buffered_amount_high;
+
+        (is_buffered_amount_high, chunks)
     }
 
     /// This method is called by association to notify this stream
@@ -485,18 +540,16 @@ impl StreamState {
             old_amount - n_bytes_released as usize
         };
 
-        let buffered_amount_low = self.buffered_amount_low;
-
         trace!(
             "[{}] new_amount = {}, old_amount = {}, buffered_amount_low = {}, n_bytes_released = {}",
             self.side,
             new_amount,
             old_amount,
-            buffered_amount_low,
+            self.buffered_amount_low,
             n_bytes_released,
         );
 
-        old_amount > buffered_amount_low && new_amount <= buffered_amount_low
+        old_amount > self.buffered_amount_low && new_amount <= self.buffered_amount_low
     }
 
     pub(crate) fn get_num_bytes_in_reassembly_queue(&self) -> usize {

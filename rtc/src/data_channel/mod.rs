@@ -122,22 +122,29 @@ impl RTCDataChannel<'_> {
         }
     }
 
-    /// buffered_amount represents the number of bytes of application data
-    /// (UTF-8 text and binary data) that have been queued using send(). Even
-    /// though the data transmission can occur in parallel, the returned value
-    /// MUST NOT be decreased before the current task yielded back to the event
-    /// loop to prevent race conditions. The value does not include framing
-    /// overhead incurred by the protocol, or buffering done by the operating
-    /// system or network hardware. The value of buffered_amount slot will only
-    /// increase with each call to the send() method as long as the ready_state is
-    /// open; however, buffered_amount does not reset to zero once the channel
-    /// closes.
-    pub fn buffered_amount(&self) -> Result<u32> {
+    /// buffered_amount_high_threshold represents the threshold at which the
+    /// bufferedAmount is considered to be high. When the bufferedAmount increases
+    /// from below this threshold to equal or above it, the BufferedAmountHigh
+    /// event fires. buffered_amount_high_threshold is initially u32::MAX on each new
+    /// DataChannel, but the application may change its value at any time.
+    /// The threshold is set to u32::MAX by default.
+    pub fn buffered_amount_high_threshold(&self) -> Result<u32> {
         if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            if let Some(data_channel) = &dc.data_channel {
-                Ok(data_channel.buffered_amount())
+            Ok(dc.buffered_amount_high_threshold)
+        } else {
+            Err(Error::ErrDataChannelClosed)
+        }
+    }
+
+    /// set_buffered_amount_high_threshold sets the threshold at which the
+    /// bufferedAmount is considered to be high.
+    pub fn set_buffered_amount_high_threshold(&mut self, threshold: u32) -> Result<()> {
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+            dc.buffered_amount_high_threshold = threshold;
+            if let Some(data_channel) = dc.data_channel.as_mut() {
+                data_channel.set_buffered_amount_high_threshold(threshold)
             } else {
-                Err(Error::ErrDataChannelClosed)
+                Ok(())
             }
         } else {
             Err(Error::ErrDataChannelClosed)
@@ -146,7 +153,7 @@ impl RTCDataChannel<'_> {
 
     /// buffered_amount_low_threshold represents the threshold at which the
     /// bufferedAmount is considered to be low. When the bufferedAmount decreases
-    /// from above this threshold to equal or below it, the bufferedamountlow
+    /// from above this threshold to equal or below it, the BufferedAmountLow
     /// event fires. buffered_amount_low_threshold is initially zero on each new
     /// DataChannel, but the application may change its value at any time.
     /// The threshold is set to 0 by default.
