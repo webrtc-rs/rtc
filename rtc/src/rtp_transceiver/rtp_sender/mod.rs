@@ -91,7 +91,7 @@ impl RTCRtpSender<'_> {
     pub fn get_parameters(
         &mut self,
         media_engine: &mut MediaEngine,
-    ) -> Result<RTCRtpSendParameters> {
+    ) -> Result<&RTCRtpSendParameters> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -144,14 +144,38 @@ impl RTCRtpSender<'_> {
                 .direction()
                 .has_send()
         {
-            //TODO: https://github.com/webrtc-rs/rtc/issues/5:
-            // RTCRtpSender should use negotiated payload type to fill rtp packet's payload type in write_rtp
-            // handle rtp sender ssrc, header extension, etc.
-            let track = self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .track()
-                .ok_or(Error::ErrRTPSenderNotExisted)?;
-            packet.header.ssrc = track.ssrc();
+            //TODO: handle rtp header extension, etc.
+            let (sender, media_engine) = (
+                &mut self.peer_connection.rtp_transceivers[self.id.0].sender,
+                &mut self.peer_connection.configuration.media_engine,
+            );
+
+            let (ssrc, _parameters) = (
+                sender.track().ok_or(Error::ErrRTPSenderNotExisted)?.ssrc(),
+                sender.get_parameters(media_engine),
+            );
+
+            /*TODO: RTCRtpSender should use negotiated payload type to fill rtp packet's payload type in write_rtp #5
+
+            let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
+            //From SSRC, find the encoding
+            let encoding = encodings
+                .iter()
+                .find(|encoding| {
+                    encoding
+                        .rtp_coding_parameters
+                        .ssrc
+                        .is_some_and(|s| s == ssrc)
+                })
+                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+            // From the encoding, find the codec which contains payload_type
+            let codec = codecs
+                .iter()
+                .find(|codec| codec.rtp_codec == encoding.codec)
+                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+
+            packet.header.payload_type = codec.payload_type;*/
+            packet.header.ssrc = ssrc;
             self.peer_connection
                 .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
         } else {

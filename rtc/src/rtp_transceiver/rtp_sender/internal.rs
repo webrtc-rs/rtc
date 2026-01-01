@@ -112,9 +112,9 @@ impl RTCRtpSenderInternal {
         //  return Err(Error::InvalidStateError);
         //}
 
-        if self.last_returned_parameters.is_none() {
-            return Err(Error::InvalidStateError);
-        }
+        //if self.last_returned_parameters.is_none() {
+        //    return Err(Error::InvalidStateError);
+        //}
 
         // Validate parameters by running the following setParameters validation steps:
         {
@@ -150,8 +150,8 @@ impl RTCRtpSenderInternal {
             }
         }
 
-        self.last_returned_parameters = None;
         self.send_encodings = parameters.encodings;
+        self.last_returned_parameters = None;
 
         Ok(())
     }
@@ -161,25 +161,21 @@ impl RTCRtpSenderInternal {
     pub(crate) fn get_parameters(
         &mut self,
         media_engine: &mut MediaEngine,
-    ) -> RTCRtpSendParameters {
-        if let Some(parameters) = self.last_returned_parameters.clone() {
-            return parameters;
+    ) -> &RTCRtpSendParameters {
+        if self.last_returned_parameters.is_none() {
+            let mut rtp_parameters = media_engine
+                .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Sendonly);
+
+            rtp_parameters.codecs = self.send_codecs.clone();
+
+            self.last_returned_parameters = Some(RTCRtpSendParameters {
+                rtp_parameters,
+                transaction_id: math_rand_alpha(16),
+                encodings: self.send_encodings.clone(),
+            });
         }
 
-        let mut rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Sendonly);
-
-        rtp_parameters.codecs = self.send_codecs.clone();
-
-        let parameters = RTCRtpSendParameters {
-            rtp_parameters,
-            transaction_id: math_rand_alpha(16),
-            encodings: self.send_encodings.clone(),
-        };
-
-        self.last_returned_parameters = Some(parameters.clone());
-
-        parameters
+        self.last_returned_parameters.as_ref().unwrap()
     }
 
     /// replace_track replaces the track currently being used as the sender's source with a new TrackLocal.

@@ -540,9 +540,9 @@ pub(crate) fn add_transceiver_sdp(
     }
 
     let sender = transceiver.sender_mut();
-    let send_parameters = sender.get_parameters(media_engine);
+    let encodings = sender.get_parameters(media_engine).encodings.clone();
     if let Some(track) = sender.track() {
-        for encoding in &send_parameters.encodings {
+        for encoding in &encodings {
             if let Some(&ssrc) = encoding.rtp_coding_parameters.ssrc.as_ref() {
                 media = media.with_media_source(
                     ssrc,
@@ -570,10 +570,10 @@ pub(crate) fn add_transceiver_sdp(
             }
         }
 
-        if send_parameters.encodings.len() > 1 {
-            let mut send_rids = Vec::with_capacity(send_parameters.encodings.len());
+        if encodings.len() > 1 {
+            let mut send_rids = Vec::with_capacity(encodings.len());
 
-            for encoding in &send_parameters.encodings {
+            for encoding in &encodings {
                 media = media.with_value_attribute(
                     SDP_ATTRIBUTE_RID.to_owned(),
                     format!("{} send", encoding.rtp_coding_parameters.rid),

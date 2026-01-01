@@ -63,9 +63,9 @@ impl RTCRtpReceiver<'_> {
     }
 
     pub fn get_parameters(
-        &self,
+        &mut self,
         media_engine: &mut MediaEngine,
-    ) -> Result<RTCRtpReceiveParameters> {
+    ) -> Result<&RTCRtpReceiveParameters> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -73,7 +73,7 @@ impl RTCRtpReceiver<'_> {
         {
             Ok(self.peer_connection.rtp_transceivers[self.id.0]
                 .receiver
-                .as_ref()
+                .as_mut()
                 .ok_or(Error::ErrRTPReceiverNotExisted)?
                 .get_parameters(media_engine))
         } else {

@@ -34,6 +34,8 @@ pub(crate) struct RTCRtpReceiverInternal {
 
     receive_codings: Vec<RTCRtpCodingParameters>,
     receive_codecs: Vec<RTCRtpCodecParameters>,
+
+    last_returned_parameters: Option<RTCRtpReceiveParameters>,
 }
 
 impl RTCRtpReceiverInternal {
@@ -90,14 +92,21 @@ impl RTCRtpReceiverInternal {
         })
     }
 
-    pub(crate) fn get_parameters(&self, media_engine: &mut MediaEngine) -> RTCRtpReceiveParameters {
-        let mut rtp_parameters = media_engine
-            .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
+    pub(crate) fn get_parameters(
+        &mut self,
+        media_engine: &mut MediaEngine,
+    ) -> &RTCRtpReceiveParameters {
+        if self.last_returned_parameters.is_none() {
+            let mut rtp_parameters = media_engine
+                .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
 
-        rtp_parameters.codecs =
-            RTCRtpReceiverInternal::get_codecs(&self.receive_codecs, self.kind(), media_engine);
+            rtp_parameters.codecs =
+                RTCRtpReceiverInternal::get_codecs(&self.receive_codecs, self.kind(), media_engine);
 
-        RTCRtpReceiveParameters { rtp_parameters }
+            self.last_returned_parameters = Some(RTCRtpReceiveParameters { rtp_parameters });
+        }
+
+        self.last_returned_parameters.as_ref().unwrap()
     }
 
     pub(crate) fn get_contributing_sources(

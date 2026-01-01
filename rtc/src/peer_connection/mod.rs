@@ -68,7 +68,7 @@ pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
     //////////////////////////////////////////////////
-    configuration: RTCConfiguration,
+    pub(crate) configuration: RTCConfiguration,
 
     local_description: Option<RTCSessionDescription>,
     current_local_description: Option<RTCSessionDescription>,
