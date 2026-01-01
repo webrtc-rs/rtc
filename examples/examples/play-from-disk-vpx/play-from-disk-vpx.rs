@@ -2,15 +2,16 @@ use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
-use log::{error, trace};
+use log::{debug, error, trace};
 use rtc::media::io::ivf_reader::IVFReader;
 use rtc::media::io::ogg_reader::OggReader;
 use rtc::media_stream::track::MediaStreamTrack;
-use rtc::peer_connection::configuration::media_engine::MediaEngine;
+use rtc::peer_connection::configuration::media_engine::{
+    MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9,
+};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
@@ -20,7 +21,11 @@ use rtc::peer_connection::transport::ice::candidate::{
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use rtc::rtp;
+use rtc::rtp::packetizer::Packetizer;
+use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -35,10 +40,14 @@ use std::{
     str::FromStr,
 };
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Notify,
+};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
+const RTP_OUTBOUND_MTU: usize = 1200;
 
 #[derive(Parser)]
 #[command(name = "play-from-disk-vpx")]
@@ -119,14 +128,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    let (stop_tx, stop_rx) = broadcast::channel::<()>(1);
+    let (stop_tx, stop_rx) = channel::<()>(1);
 
     println!("Press Ctrl-C to stop");
     std::thread::spawn(move || {
         let mut stop_tx = Some(stop_tx);
         ctrlc::set_handler(move || {
             if let Some(stop_tx) = stop_tx.take() {
-                let _ = stop_tx.send(());
+                let _ = stop_tx.try_send(());
             }
         })
         .expect("Error setting Ctrl-C handler");
@@ -151,7 +160,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run(
-    mut stop_rx: broadcast::Receiver<()>,
+    mut stop_rx: Receiver<()>,
     host: String,
     port: u16,
     input_sdp_file: String,
@@ -173,7 +182,44 @@ async fn run(
 
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();
-    media_engine.register_default_codecs()?;
+
+    let audio_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 120,
+        ..Default::default()
+    };
+
+    let video_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: if is_vp9 {
+                MIME_TYPE_VP9.to_owned()
+            } else {
+                MIME_TYPE_VP8.to_owned()
+            },
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 96,
+        ..Default::default()
+    };
+
+    // Setup the codecs you want to use.
+    if audio_file.is_some() {
+        media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
+    }
+
+    // We'll use a VP8 and Opus but you can also define your own
+    if video_file.is_some() {
+        media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
+    }
 
     /*TODO:
     // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
@@ -200,19 +246,19 @@ async fn run(
     let mut peer_connection = RTCPeerConnection::new(config)?;
 
     let mut rtp_sender_ids = HashMap::new();
-    let mut kinds = vec![];
+    let mut kind_codecs = HashMap::new();
     if audio_file.is_some() {
-        kinds.push(RtpCodecKind::Audio);
+        kind_codecs.insert(RtpCodecKind::Audio, (rand::random::<u32>(), audio_codec));
     }
     if video_file.is_some() {
-        kinds.push(RtpCodecKind::Video);
+        kind_codecs.insert(RtpCodecKind::Video, (rand::random::<u32>(), video_codec));
     };
-    for kind in kinds {
+    for (&kind, (ssrc, _)) in &kind_codecs {
         let output_track = MediaStreamTrack::new(
             format!("webrtc-rs-stream-id-{}", kind),
             format!("webrtc-rs-track-id-{}", kind),
-            None,                  // rid
-            rand::random::<u32>(), // ssrc
+            None, // rid
+            *ssrc,
             kind,
             format!("track-{}", kind),
             false,
@@ -272,27 +318,28 @@ async fn run(
 
     println!("listening {}...", socket.local_addr()?);
 
-    let (message_tx, mut message_rx) = broadcast::channel::<RTCMessage>(8);
-    let (_event_tx, mut event_rx) = broadcast::channel::<RTCEvent>(8);
+    let (message_tx, mut message_rx) = channel::<(RTCRtpSenderId, rtp::Packet)>(8);
+    let (_event_tx, mut event_rx) = channel::<RTCEvent>(8);
     let notify_tx = Arc::new(Notify::new());
     let video_notify_rx = notify_tx.clone();
     let audio_notify_rx = notify_tx.clone();
 
     // Spawn video streaming task
-    let (video_done_tx, mut video_done_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (video_done_tx, mut video_done_rx) = channel::<()>(1);
     if let Some(video_file_name) = video_file {
         let video_sender_id = *rtp_sender_ids
             .get(&RtpCodecKind::Video)
             .ok_or(Error::ErrRTPSenderNotExisted)?;
         let video_message_tx = message_tx.clone();
+        let (ssrc, codec) = kind_codecs.get(&RtpCodecKind::Video).cloned().unwrap();
         tokio::spawn(async move {
             if let Err(err) = stream_video(
+                (ssrc, codec),
                 video_file_name,
                 video_sender_id,
                 video_notify_rx,
                 video_done_tx,
                 video_message_tx,
-                is_vp9,
             )
             .await
             {
@@ -304,14 +351,16 @@ async fn run(
     }
 
     // Spawn audio streaming task
-    let (audio_done_tx, mut audio_done_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (audio_done_tx, mut audio_done_rx) = channel::<()>(1);
     if let Some(audio_file_name) = audio_file {
         let audio_sender_id = *rtp_sender_ids
             .get(&RtpCodecKind::Audio)
             .ok_or(Error::ErrRTPSenderNotExisted)?;
         let audio_message_tx = message_tx.clone();
+        let (ssrc, codec) = kind_codecs.get(&RtpCodecKind::Audio).cloned().unwrap();
         tokio::spawn(async move {
             if let Err(err) = stream_audio(
+                (ssrc, codec),
                 audio_file_name,
                 audio_sender_id,
                 audio_notify_rx,
@@ -354,6 +403,7 @@ async fn run(
                     println!("ICE Connection State has changed: {ice_connection_state}");
                     if ice_connection_state == RTCIceConnectionState::Connected {
                         connection_established = true;
+                        notify_tx.notify_waiters();
                     } else if ice_connection_state == RTCIceConnectionState::Failed {
                         eprintln!("ICE Connection State has gone to failed! Exiting...");
                         break 'EventLoop;
@@ -404,22 +454,27 @@ async fn run(
             }
             res = message_rx.recv() => {
                 match res {
-                    Ok(message) => {
-                        peer_connection.handle_write(message)?;
+                    Some((rtp_sender_id, packet)) => {
+                        let mut rtp_sender = peer_connection
+                            .rtp_sender(rtp_sender_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
+
+                        debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
+                        rtp_sender.write_rtp(packet)?;
                     }
-                    Err(err) => {
-                        eprintln!("write_rx error: {}", err);
+                    None => {
+                        eprintln!("message_rx.recv() is closed");
                         break 'EventLoop;
                     }
                 }
             }
             res = event_rx.recv() => {
                 match res {
-                    Ok(event) => {
+                    Some(event) => {
                         peer_connection.handle_event(event)?;
                     }
-                    Err(err) => {
-                        eprintln!("event_rx error: {}", err);
+                    None => {
+                        eprintln!("event_rx.recv() is closed");
                         break 'EventLoop;
                     }
                 }
@@ -457,12 +512,12 @@ async fn run(
 }
 
 async fn stream_video(
+    (ssrc, codec): (SSRC, RTCRtpCodecParameters),
     video_file_name: String,
-    _video_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
+    video_sender_id: RTCRtpSenderId,
     video_notify_rx: Arc<Notify>,
-    video_done_tx: tokio::sync::mpsc::Sender<()>,
-    _video_message_tx: broadcast::Sender<RTCMessage>,
-    _is_vp9: bool,
+    video_done_tx: Sender<()>,
+    video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
 ) -> Result<()> {
     // Open a IVF file and start reading using our IVFReader
     let file = File::open(&video_file_name)?;
@@ -474,6 +529,17 @@ async fn stream_video(
 
     println!("play video from disk file {video_file_name}");
 
+    let mut packetizer = rtp::packetizer::new_packetizer(
+        RTP_OUTBOUND_MTU,
+        codec.payload_type,
+        ssrc,
+        codec.rtp_codec.payloader()?,
+        Box::new(rtp::sequence::new_random_sequencer()),
+        codec.rtp_codec.clock_rate,
+    );
+
+    //TODO: packetizer.enable_abs_send_time(ext_id);
+
     // It is important to use a time.Ticker instead of time.Sleep because
     // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
     // * works around latency issues with Sleep
@@ -484,7 +550,7 @@ async fn stream_video(
     );
     let mut ticker = tokio::time::interval(sleep_time);
     loop {
-        let _frame = match ivf.parse_next_frame() {
+        let frame = match ivf.parse_next_frame() {
             Ok((frame, _)) => frame,
             Err(err) => {
                 println!("All video frames parsed and sent: {err}");
@@ -492,13 +558,12 @@ async fn stream_video(
             }
         };
 
-        /*TODO: video_track
-        .write_sample(&Sample {
-            data: frame.freeze(),
-            duration: Duration::from_secs(1),
-            ..Default::default()
-        })
-        .await?;*/
+        let sample_duration = Duration::from_millis(40);
+        let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
+        let packets = packetizer.packetize(&frame.freeze(), samples)?;
+        for packet in packets {
+            video_message_tx.send((video_sender_id, packet)).await?;
+        }
 
         let _ = ticker.tick().await;
     }
@@ -509,11 +574,12 @@ async fn stream_video(
 }
 
 async fn stream_audio(
+    (ssrc, codec): (SSRC, RTCRtpCodecParameters),
     audio_file_name: String,
-    _audio_sender_id: rtc::rtp_transceiver::RTCRtpSenderId,
+    audio_sender_id: RTCRtpSenderId,
     audio_notify_rx: Arc<Notify>,
-    audio_done_tx: tokio::sync::mpsc::Sender<()>,
-    _audio_message_tx: tokio::sync::broadcast::Sender<RTCMessage>,
+    audio_done_tx: Sender<()>,
+    audio_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
 ) -> Result<()> {
     // Open a OGG file and start reading using our OGGReader
     let file = File::open(&audio_file_name)?;
@@ -531,23 +597,32 @@ async fn stream_audio(
 
     println!("play audio from disk file {audio_file_name}");
 
+    let mut packetizer = rtp::packetizer::new_packetizer(
+        RTP_OUTBOUND_MTU,
+        codec.payload_type,
+        ssrc,
+        codec.rtp_codec.payloader()?,
+        Box::new(rtp::sequence::new_random_sequencer()),
+        codec.rtp_codec.clock_rate,
+    );
+
+    //TODO: packetizer.enable_abs_send_time(ext_id);
+
     let mut ticker = tokio::time::interval(OGG_PAGE_DURATION);
 
     // Keep track of last granule, the difference is the amount of samples in the buffer
     let mut last_granule: u64 = 0;
-    while let Ok((_page_data, page_header)) = ogg.parse_next_page() {
+    while let Ok((page_data, page_header)) = ogg.parse_next_page() {
         // The amount of samples is the difference between the last and current timestamp
         let sample_count = page_header.granule_position - last_granule;
         last_granule = page_header.granule_position;
-        let _sample_duration = Duration::from_millis(sample_count * 1000 / 48000);
+        let sample_duration = Duration::from_millis(sample_count * 1000 / 48000);
 
-        /*TODO: audio_track
-        .write_sample(&Sample {
-            data: page_data.freeze(),
-            duration: sample_duration,
-            ..Default::default()
-        })
-        .await?;*/
+        let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
+        let packets = packetizer.packetize(&page_data.freeze(), samples)?;
+        for packet in packets {
+            audio_message_tx.send((audio_sender_id, packet)).await?;
+        }
 
         let _ = ticker.tick().await;
     }

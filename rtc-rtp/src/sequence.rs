@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Sequencer generates sequential sequence numbers for building RTP packets
-pub trait Sequencer: fmt::Debug {
+pub trait Sequencer: Send + Sync + fmt::Debug {
     fn next_sequence_number(&self) -> u16;
     fn roll_over_count(&self) -> u64;
     fn clone_to(&self) -> Box<dyn Sequencer>;

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Payloader payloads a byte array for use as rtp.Packet payloads
-pub trait Payloader: fmt::Debug {
+pub trait Payloader: Send + Sync + fmt::Debug {
     fn payload(&mut self, mtu: usize, b: &Bytes) -> Result<Vec<Bytes>>;
     fn clone_to(&self) -> Box<dyn Payloader>;
 }
@@ -55,7 +55,7 @@ pub trait Depacketizer {
 //TODO: SystemTime vs Instant?
 // non-monotonic clock vs monotonically non-decreasing clock
 /// FnTimeGen provides current SystemTime
-pub type FnTimeGen = Arc<dyn Fn() -> SystemTime>;
+pub type FnTimeGen = Arc<dyn (Fn() -> SystemTime) + Send + Sync>;
 
 #[derive(Clone)]
 pub(crate) struct PacketizerImpl {
@@ -66,7 +66,7 @@ pub(crate) struct PacketizerImpl {
     pub(crate) sequencer: Box<dyn Sequencer>,
     pub(crate) timestamp: u32,
     pub(crate) clock_rate: u32,
-    pub(crate) abs_send_time: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+    pub(crate) abs_send_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     pub(crate) time_gen: Option<FnTimeGen>,
 }
 
@@ -78,7 +78,7 @@ impl fmt::Debug for PacketizerImpl {
             .field("ssrc", &self.ssrc)
             .field("timestamp", &self.timestamp)
             .field("clock_rate", &self.clock_rate)
-            .field("abs_send_time", &self.abs_send_time)
+            .field("abs_send_time_ext_id", &self.abs_send_time_ext_id)
             .finish()
     }
 }
@@ -99,14 +99,14 @@ pub fn new_packetizer(
         sequencer,
         timestamp: rand::random::<u32>(),
         clock_rate,
-        abs_send_time: 0,
+        abs_send_time_ext_id: 0,
         time_gen: None,
     }
 }
 
 impl Packetizer for PacketizerImpl {
-    fn enable_abs_send_time(&mut self, value: u8) {
-        self.abs_send_time = value
+    fn enable_abs_send_time(&mut self, id: u8) {
+        self.abs_send_time_ext_id = id
     }
 
     fn packetize(&mut self, payload: &Bytes, samples: u32) -> Result<Vec<Packet>> {
@@ -132,7 +132,7 @@ impl Packetizer for PacketizerImpl {
 
         self.timestamp = self.timestamp.wrapping_add(samples);
 
-        if payloads_len != 0 && self.abs_send_time != 0 {
+        if payloads_len != 0 && self.abs_send_time_ext_id != 0 {
             let st = if let Some(fn_time_gen) = &self.time_gen {
                 fn_time_gen()
             } else {
@@ -145,7 +145,7 @@ impl Packetizer for PacketizerImpl {
             let _ = send_time.marshal_to(&mut raw)?;
             packets[payloads_len - 1]
                 .header
-                .set_extension(self.abs_send_time, raw.freeze())?;
+                .set_extension(self.abs_send_time_ext_id, raw.freeze())?;
         }
 
         Ok(packets)

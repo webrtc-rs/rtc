@@ -53,7 +53,7 @@ fn test_packetizer_abs_send_time() -> Result<()> {
         sequencer,
         timestamp: 45678,
         clock_rate: 90000,
-        abs_send_time: 0,
+        abs_send_time_ext_id: 0,
         time_gen,
     };
     pktizer.enable_abs_send_time(1);
