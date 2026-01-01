@@ -1,8 +1,9 @@
 use super::*;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
-    get_by_mid, get_peer_direction, get_rids, have_data_channel, populate_sdp,
-    track_details_from_sdp, MediaSection, PopulateSdpParams,
+    get_by_mid, get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
+    populate_sdp, rtp_extensions_from_media_description, track_details_from_sdp, MediaSection,
+    PopulateSdpParams,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -13,6 +14,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingP
 use crate::rtp_transceiver::RTCRtpTransceiverId;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use ::sdp::MediaDescription;
 use std::collections::HashSet;
 
 impl RTCPeerConnection {
@@ -22,21 +24,16 @@ impl RTCPeerConnection {
         let d = SessionDescription::new_jsep_session_description(false);
 
         let ice_params = self.ice_transport().get_local_parameters()?;
-
         let candidates = self.ice_transport().get_local_candidates()?;
 
         let mut media_sections = vec![];
 
         for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
-            if t.stopped() || t.mid().is_none() {
-                // An "m=" section is generated for each
-                // RtpTransceiver that has been added to the PeerConnection, excluding
-                // any stopped RtpTransceivers;
-                continue;
+            if let Some(sender) = t.sender_mut() {
+                sender.set_negotiated();
             }
 
             if let Some(mid) = t.mid().clone() {
-                t.sender_mut().set_negotiated();
                 media_sections.push(MediaSection {
                     mid,
                     transceiver_index: i,
@@ -66,10 +63,16 @@ impl RTCPeerConnection {
                 .setting_engine
                 .sdp_media_level_fingerprints,
             is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
-            extmap_allow_mixed: true,
+            is_extmap_allow_mixed: true,
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group: None,
+            sctp_max_message_size: self
+                .configuration
+                .setting_engine
+                .sctp_max_message_size
+                .as_usize(),
+            ignore_rid_pause_for_recv: false,
         };
         populate_sdp(
             d,
@@ -89,33 +92,26 @@ impl RTCPeerConnection {
         &mut self,
         include_unmatched: bool,
         connection_role: ConnectionRole,
+        ignore_rid_pause_for_recv: bool,
     ) -> Result<SessionDescription> {
-        let d = SessionDescription::new_jsep_session_description(false);
+        let mut d = SessionDescription::new_jsep_session_description(false);
+        d = d.with_value_attribute(ATTR_KEY_MSID_SEMANTIC.to_owned(), "WMS *".to_owned());
 
         let ice_params = self.ice_transport().get_local_parameters()?;
         let candidates = self.ice_transport().get_local_candidates()?;
 
         let mut media_sections = vec![];
         let mut already_have_application_media_section = false;
-        let mut extmap_allow_mixed = false;
+        let is_extmap_allow_mixed = is_ext_map_allow_mixed_set(self.remote_description.as_ref());
 
         // Extract media descriptions to avoid borrowing conflicts
-        let media_descriptions_and_extmap_allow_mixed = self
+        let media_descriptions = self
             .remote_description()
             .as_ref()
             .and_then(|r| r.parsed.as_ref())
-            .map(|parsed| {
-                (
-                    parsed.media_descriptions.clone(),
-                    parsed.has_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED),
-                )
-            });
+            .map(|parsed| parsed.media_descriptions.clone());
 
-        if let Some((media_descriptions, parsed_extmap_allow_mixed)) =
-            media_descriptions_and_extmap_allow_mixed
-        {
-            extmap_allow_mixed = parsed_extmap_allow_mixed;
-
+        if let Some(media_descriptions) = media_descriptions {
             for media in &media_descriptions {
                 if let Some(mid_value) = get_mid_value(media) {
                     if mid_value.is_empty() {
@@ -141,21 +137,17 @@ impl RTCPeerConnection {
                         continue;
                     }
 
-                    let extmap_allow_mixed = media.has_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED);
-
                     if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
-                        self.rtp_transceivers[i].sender_mut().set_negotiated();
+                        if let Some(sender) = self.rtp_transceivers[i].sender_mut() {
+                            sender.set_negotiated();
+                        }
 
-                        // NB: The below could use `then_some`, but with our current MSRV
-                        // it's not possible to actually do this. The clippy version that
-                        // ships with 1.64.0 complains about this so we disable it for now.
-                        #[allow(clippy::unnecessary_lazy_evaluations)]
+                        let extensions = rtp_extensions_from_media_description(media)?;
                         media_sections.push(MediaSection {
                             mid: mid_value.to_owned(),
                             transceiver_index: i,
+                            match_extensions: extensions,
                             rid_map: get_rids(media),
-                            offered_direction: (!include_unmatched).then(|| direction),
-                            extmap_allow_mixed,
                             ..Default::default()
                         });
                     } else {
@@ -168,8 +160,11 @@ impl RTCPeerConnection {
         // If we are offering also include unmatched local transceivers
         let match_bundle_group = if include_unmatched {
             for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
+                if let Some(sender) = t.sender_mut() {
+                    sender.set_negotiated();
+                }
+
                 if let Some(mid) = t.mid().clone() {
-                    t.sender_mut().set_negotiated();
                     media_sections.push(MediaSection {
                         mid,
                         transceiver_index: i,
@@ -208,10 +203,16 @@ impl RTCPeerConnection {
                 .setting_engine
                 .sdp_media_level_fingerprints,
             is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
-            extmap_allow_mixed,
+            is_extmap_allow_mixed,
             connection_role,
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group,
+            sctp_max_message_size: self
+                .configuration
+                .setting_engine
+                .sctp_max_message_size
+                .as_usize(),
+            ignore_rid_pause_for_recv,
         };
         populate_sdp(
             d,
@@ -223,24 +224,6 @@ impl RTCPeerConnection {
             &media_sections,
             params,
         )
-    }
-
-    pub(super) fn has_local_description_changed(&self, desc: &RTCSessionDescription) -> bool {
-        for t in &self.rtp_transceivers {
-            let m = match t
-                .mid()
-                .as_ref()
-                .and_then(|mid| get_by_mid(mid.as_str(), desc))
-            {
-                Some(m) => m,
-                None => return true,
-            };
-
-            if get_peer_direction(m) != t.direction() {
-                return true;
-            }
-        }
-        false
     }
 
     // 4.4.1.6 Set the SessionDescription
@@ -478,6 +461,7 @@ impl RTCPeerConnection {
                                 rtx: incoming_track
                                     .rtx_ssrc
                                     .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
+                                ..Default::default()
                             });
                         }
                     } else if incoming_track.ssrc.is_some() {
@@ -487,6 +471,7 @@ impl RTCPeerConnection {
                             rtx: incoming_track
                                 .rtx_ssrc
                                 .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
+                            ..Default::default()
                         });
                     } else {
                         return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
@@ -652,113 +637,72 @@ impl RTCPeerConnection {
                 return true;
             }
 
-            for t in &self.rtp_transceivers {
+            for transceiver in &self.rtp_transceivers {
                 // https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
                 // Step 5.1
                 // if t.stopping && !t.stopped {
                 // 	return true
                 // }
-                let m = t
+                let m = transceiver
                     .mid()
                     .as_ref()
                     .and_then(|mid| get_by_mid(mid.as_str(), local_desc));
                 // Step 5.2
-                if !t.stopped() {
-                    if m.is_none() {
-                        return true;
-                    }
+                if m.is_none() {
+                    return true;
+                }
 
-                    if let Some(m) = m {
-                        // Step 5.3.1
-                        if t.direction().has_send() {
+                if let Some(m) = m {
+                    // Step 5.3.1
+                    if transceiver.direction().has_send() {
+                        if let Some(sender) = transceiver.sender() {
                             let dmsid = match m.attribute(ATTR_KEY_MSID).and_then(|o| o) {
-                                Some(m) => m,
+                                Some(msid) => msid,
                                 None => return true, // doesn't contain a single a=msid line
                             };
 
-                            // (...)or the number of MSIDs from the a=msid lines in this m= section,
-                            // or the MSID values themselves, differ from what is in
-                            // transceiver.sender.[[AssociatedMediaStreamIds]], return true.
-
-                            // TODO: This check should be robuster by storing all streams in the
-                            // local description so we can compare all of them. For no we only
-                            // consider the first one.
-
-                            let stream_ids = t.sender().streams();
-                            // Different number of lines, 1 vs 0
-                            if stream_ids.is_empty() {
+                            let track = sender.track();
+                            if dmsid.split_whitespace().next()
+                                != Some(&format!("{} {}", track.stream_id(), track.track_id()))
+                            {
                                 return true;
                             }
-
-                            // different stream id
-                            if dmsid.split_whitespace().next() != Some(&stream_ids[0]) {
-                                return true;
-                            }
+                        } else {
+                            return true;
                         }
-                        match local_desc.sdp_type {
-                            RTCSdpType::Offer => {
-                                // Step 5.3.2
-                                if let Some(remote_desc) = &self.current_remote_description {
-                                    if let Some(rm) = t
-                                        .mid()
-                                        .as_ref()
-                                        .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
-                                    {
-                                        if get_peer_direction(m) != t.direction()
-                                            && get_peer_direction(rm) != t.direction().reverse()
-                                        {
-                                            return true;
-                                        }
-                                    } else {
-                                        return true;
-                                    }
-                                }
-                            }
-                            RTCSdpType::Answer => {
-                                let remote_desc = match &self.current_remote_description {
-                                    Some(d) => d,
-                                    None => return true,
-                                };
-                                let offered_direction = match t
+                    }
+                    match local_desc.sdp_type {
+                        RTCSdpType::Offer => {
+                            // Step 5.3.2
+                            if let Some(remote_desc) = &self.current_remote_description {
+                                if let Some(rm) = transceiver
                                     .mid()
                                     .as_ref()
                                     .and_then(|mid| get_by_mid(mid.as_str(), remote_desc))
                                 {
-                                    Some(d) => {
-                                        let dir = get_peer_direction(d);
-                                        if dir == RTCRtpTransceiverDirection::Unspecified {
-                                            RTCRtpTransceiverDirection::Inactive
-                                        } else {
-                                            dir
-                                        }
+                                    if get_peer_direction(m) != transceiver.direction()
+                                        && get_peer_direction(rm)
+                                            != transceiver.direction().reverse()
+                                    {
+                                        return true;
                                     }
-                                    None => RTCRtpTransceiverDirection::Inactive,
-                                };
-
-                                let current_direction = get_peer_direction(m);
-                                // Step 5.3.3
-                                if current_direction
-                                    != t.direction().intersect(offered_direction.reverse())
-                                {
+                                } else {
                                     return true;
                                 }
                             }
-                            _ => {}
-                        };
-                    }
-                }
-                // Step 5.4
-                if t.stopped() {
-                    let search_mid = match t.mid().as_ref() {
-                        Some(mid) => mid,
-                        None => return false,
+                        }
+                        RTCSdpType::Answer => {
+                            if m.attribute(transceiver.direction().to_string().as_str())
+                                .is_none()
+                            {
+                                return true;
+                            }
+                        }
+                        _ => {}
                     };
-
-                    if let Some(remote_desc) = &self.current_remote_description {
-                        return get_by_mid(search_mid.as_str(), local_desc).is_some()
-                            || get_by_mid(search_mid.as_str(), remote_desc).is_some();
-                    }
                 }
+
+                // Step 5.4
             }
             // Step 6
             false
@@ -776,32 +720,91 @@ impl RTCPeerConnection {
             Err(Error::ErrPeerConnAddTransceiverFromTrackSupport)
         } else {
             if init.send_encodings.is_empty() {
-                let rtx_enabled = self.configuration.setting_engine.enable_sender_rtx
-                    && self
-                        .configuration
-                        .media_engine
-                        .get_codecs_by_kind(track.kind())
-                        .iter()
-                        .any(|codec| {
-                            matches!(codec.rtp_codec.mime_type.split_once("/"), Some((_, "rtx")))
-                        });
-
-                init.send_encodings = vec![RTCRtpEncodingParameters {
-                    rtp_coding_parameters: RTCRtpCodingParameters {
-                        rid: track.rid().unwrap_or_default().into(),
-                        ssrc: Some(track.ssrc()),
-                        rtx: if rtx_enabled {
-                            Some(RTCRtpRtxParameters {
-                                ssrc: rand::random::<u32>(),
-                            })
-                        } else {
-                            None
-                        },
-                    },
-                    ..Default::default()
-                }];
+                init.send_encodings = self.send_encodings_from_track(&track);
             }
-            Ok(RTCRtpTransceiver::new(track.kind(), Some(track), init))
+            RTCRtpTransceiver::new(track.kind(), Some(track), init)
         }
+    }
+
+    pub(super) fn send_encodings_from_track(
+        &self,
+        track: &MediaStreamTrack,
+    ) -> Vec<RTCRtpEncodingParameters> {
+        let rtx_enabled = self.configuration.setting_engine.enable_sender_rtx
+            && self
+                .configuration
+                .media_engine
+                .get_codecs_by_kind(track.kind())
+                .iter()
+                .any(|codec| matches!(codec.rtp_codec.mime_type.split_once("/"), Some((_, "rtx"))));
+
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                rid: track.rid().unwrap_or_default().into(),
+                ssrc: Some(track.ssrc()),
+                rtx: if rtx_enabled {
+                    Some(RTCRtpRtxParameters {
+                        ssrc: rand::random::<u32>(),
+                    })
+                } else {
+                    None
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }]
+    }
+
+    pub(super) fn set_rtp_transceiver_current_direction(
+        &mut self,
+        media_descriptions: &[MediaDescription],
+        we_offer: bool,
+    ) -> Result<()> {
+        for media in media_descriptions {
+            let mid_value = match get_mid_value(media) {
+                Some(mid) if !mid.is_empty() => mid,
+                _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
+            };
+
+            if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                continue;
+            }
+
+            let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
+                Some(i) => i,
+                None => return Err(Error::ErrPeerConnTransceiverMidNil),
+            };
+
+            let kind = RtpCodecKind::from(media.media_name.media.as_str());
+            let mut direction = get_peer_direction(media);
+            if kind == RtpCodecKind::Unspecified
+                || direction == RTCRtpTransceiverDirection::Unspecified
+            {
+                continue;
+            }
+
+            // reverse direction if it was a remote answer
+            if we_offer {
+                if direction == RTCRtpTransceiverDirection::Sendonly {
+                    direction = RTCRtpTransceiverDirection::Recvonly;
+                } else if direction == RTCRtpTransceiverDirection::Recvonly {
+                    direction = RTCRtpTransceiverDirection::Sendonly;
+                }
+            }
+
+            // If a transceiver is created by applying a remote description that has recvonly transceiver,
+            // it will have no sender. In this case, the transceiver's current direction is set to inactive so
+            // that the transceiver can be reused by next AddTrack.
+            if !we_offer
+                && direction == RTCRtpTransceiverDirection::Sendonly
+                && self.rtp_transceivers[i].sender().is_none()
+            {
+                direction = RTCRtpTransceiverDirection::Inactive;
+            }
+
+            self.rtp_transceivers[i].set_current_direction(direction);
+        }
+
+        Ok(())
     }
 }

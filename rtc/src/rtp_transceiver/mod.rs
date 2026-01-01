@@ -55,7 +55,7 @@ pub struct RTCRtpTransceiverInit {
 pub(crate) struct RTCRtpTransceiver {
     mid: Option<String>,
     kind: RtpCodecKind,
-    sender: RTCRtpSenderInternal,
+    sender: Option<RTCRtpSenderInternal>,
     receiver: Option<RTCRtpReceiverInternal>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
@@ -83,11 +83,24 @@ impl RTCRtpTransceiver {
         kind: RtpCodecKind,
         track: Option<MediaStreamTrack>,
         init: RTCRtpTransceiverInit,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        if init.direction.has_send() && track.is_none() {
+            return Err(Error::ErrTrackNotExisted);
+        }
+
+        Ok(Self {
             mid: None,
             kind,
-            sender: RTCRtpSenderInternal::new(kind, track, init.streams, init.send_encodings),
+            sender: if let Some(track) = track {
+                Some(RTCRtpSenderInternal::new(
+                    kind,
+                    track,
+                    init.streams,
+                    init.send_encodings,
+                ))
+            } else {
+                None
+            },
             receiver: if init.direction.has_recv() {
                 Some(RTCRtpReceiverInternal::new(
                     kind,
@@ -109,7 +122,7 @@ impl RTCRtpTransceiver {
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
-        }
+        })
     }
 
     /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
@@ -122,11 +135,11 @@ impl RTCRtpTransceiver {
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender(&self) -> &RTCRtpSenderInternal {
+    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal> {
         &self.sender
     }
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender_mut(&mut self) -> &mut RTCRtpSenderInternal {
+    pub(crate) fn sender_mut(&mut self) -> &mut Option<RTCRtpSenderInternal> {
         &mut self.sender
     }
 

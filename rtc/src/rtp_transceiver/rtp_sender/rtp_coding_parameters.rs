@@ -9,11 +9,19 @@ pub struct RTCRtpCodingParameters {
 
     pub ssrc: Option<SSRC>,
     pub rtx: Option<RTCRtpRtxParameters>,
+    pub fec: Option<RTCRtpFecParameters>,
 }
 
 /// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.
 /// <https://draft.ortc.org/#dom-rtcrtprtxparameters>
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpRtxParameters {
+    pub ssrc: SSRC,
+}
+
+/// RTPFecParameters dictionary contains information relating to forward error correction (FEC) settings.
+/// https://draft.ortc.org/#dom-rtcrtpfecparameters
+#[derive(Default, Debug, Clone)]
+pub struct RTCRtpFecParameters {
     pub ssrc: SSRC,
 }

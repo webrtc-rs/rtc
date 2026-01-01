@@ -25,7 +25,7 @@ use shared::util::math_rand_alpha;
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpSenderInternal {
     kind: RtpCodecKind,
-    sender_track: Option<MediaStreamTrack>,
+    sender_track: MediaStreamTrack,
     associated_media_stream_ids: Vec<MediaStreamId>,
     send_encodings: Vec<RTCRtpEncodingParameters>,
     send_codecs: Vec<RTCRtpCodecParameters>,
@@ -37,16 +37,12 @@ pub(crate) struct RTCRtpSenderInternal {
 impl RTCRtpSenderInternal {
     pub(crate) fn new(
         kind: RtpCodecKind,
-        track: Option<MediaStreamTrack>,
+        track: MediaStreamTrack,
         streams: Vec<MediaStreamId>,
         send_encodings: Vec<RTCRtpEncodingParameters>,
     ) -> Self {
         let associated_media_stream_ids = if streams.is_empty() {
-            if let Some(track) = track.as_ref() {
-                vec![track.stream_id().to_string()]
-            } else {
-                vec![]
-            }
+            vec![track.stream_id().to_string()]
         } else {
             streams
         };
@@ -64,8 +60,8 @@ impl RTCRtpSenderInternal {
     }
 
     /// track returns the RTCRtpTransceiver track, or nil
-    pub(crate) fn track(&self) -> Option<&MediaStreamTrack> {
-        self.sender_track.as_ref()
+    pub(crate) fn track(&self) -> &MediaStreamTrack {
+        &self.sender_track
     }
 
     pub(crate) fn kind(&self) -> RtpCodecKind {
@@ -182,22 +178,16 @@ impl RTCRtpSenderInternal {
     /// The new track must be of the same media kind (audio, video, etc) and switching the track should not
     /// require negotiation.
     /// https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack
-    pub(crate) fn replace_track(&mut self, track: Option<MediaStreamTrack>) -> Result<()> {
-        if let Some(t) = track.as_ref() {
-            if self.kind() != t.kind() {
-                return Err(Error::ErrRTPSenderNewTrackHasIncorrectKind);
-            }
-
-            //if transceiver.stopping  {
-            //  return Err(Error::InvalidStateError);
-            //}
+    pub(crate) fn replace_track(&mut self, track: MediaStreamTrack) -> Result<()> {
+        if self.kind() != track.kind() {
+            return Err(Error::ErrRTPSenderNewTrackHasIncorrectKind);
         }
 
-        if let Some(track) = track.as_ref() {
-            self.associated_media_stream_ids = vec![track.stream_id().to_string()];
-        } else {
-            self.associated_media_stream_ids.clear();
-        }
+        //if transceiver.stopping  {
+        //  return Err(Error::InvalidStateError);
+        //}
+
+        self.associated_media_stream_ids = vec![track.stream_id().to_string()];
 
         self.sender_track = track;
 
@@ -210,11 +200,7 @@ impl RTCRtpSenderInternal {
 
     pub(crate) fn set_streams(&mut self, streams: Vec<MediaStreamId>) {
         let associated_media_stream_ids = if streams.is_empty() {
-            if let Some(track) = self.sender_track.as_ref() {
-                vec![track.stream_id().to_string()]
-            } else {
-                vec![]
-            }
+            vec![self.sender_track.stream_id().to_string()]
         } else {
             streams
         };

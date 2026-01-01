@@ -109,6 +109,7 @@ pub struct SettingEngine {
     pub(crate) enable_sender_rtx: bool,
     /// Determines the max size of any message that may be sent through an SCTP transport.
     pub(crate) sctp_max_message_size: SctpMaxMessageSize,
+    pub(crate) ignore_rid_pause_for_recv: bool,
 }
 
 impl SettingEngine {
@@ -367,6 +368,10 @@ impl SettingEngine {
     }
 
     pub fn set_sctp_max_message_size(&mut self, max_message_size: SctpMaxMessageSize) {
-        self.sctp_max_message_size = max_message_size
+        self.sctp_max_message_size = max_message_size;
+    }
+
+    pub fn set_ignore_rid_pause_for_recv(&mut self, ignore_rid_pause_for_recv: bool) {
+        self.ignore_rid_pause_for_recv = ignore_rid_pause_for_recv;
     }
 }

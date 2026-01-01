@@ -41,10 +41,11 @@ impl RTCRtpSender<'_> {
                 .direction()
                 .has_send()
         {
-            self.peer_connection.rtp_transceivers[self.id.0]
+            Ok(self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
-                .track()
-                .ok_or(Error::ErrRTPSenderNotExisted)
+                .as_ref()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
+                .track())
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }
@@ -54,16 +55,17 @@ impl RTCRtpSender<'_> {
         &self,
         kind: RtpCodecKind,
         media_engine: &mut MediaEngine,
-    ) -> Result<RTCRtpCapabilities> {
+    ) -> Result<Option<RTCRtpCapabilities>> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
                 .has_send()
         {
-            self.peer_connection.rtp_transceivers[self.id.0]
+            Ok(self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
-                .get_capabilities(kind, media_engine)
-                .ok_or(Error::ErrRTPSenderNotExisted)
+                .as_ref()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
+                .get_capabilities(kind, media_engine))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }
@@ -80,6 +82,8 @@ impl RTCRtpSender<'_> {
         {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
+                .as_mut()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
                 .set_parameters(parameters, set_parameter_options)
         } else {
             Err(Error::ErrRTPSenderNotExisted)
@@ -99,6 +103,8 @@ impl RTCRtpSender<'_> {
         {
             Ok(self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
+                .as_mut()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
                 .get_parameters(media_engine))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
@@ -109,7 +115,7 @@ impl RTCRtpSender<'_> {
     /// The new track must be of the same media kind (audio, video, etc) and switching the track should not
     /// require negotiation.
     /// https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack
-    pub fn replace_track(&mut self, track: Option<MediaStreamTrack>) -> Result<()> {
+    pub fn replace_track(&mut self, track: MediaStreamTrack) -> Result<()> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -117,6 +123,8 @@ impl RTCRtpSender<'_> {
         {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
+                .as_mut()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
                 .replace_track(track)
         } else {
             Err(Error::ErrRTPSenderNotExisted)
@@ -131,6 +139,8 @@ impl RTCRtpSender<'_> {
         {
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender
+                .as_mut()
+                .ok_or(Error::ErrRTPSenderNotExisted)?
                 .set_streams(streams);
             Ok(())
         } else {
@@ -146,14 +156,14 @@ impl RTCRtpSender<'_> {
         {
             //TODO: handle rtp header extension, etc.
             let (sender, media_engine) = (
-                &mut self.peer_connection.rtp_transceivers[self.id.0].sender,
+                &mut self.peer_connection.rtp_transceivers[self.id.0]
+                    .sender
+                    .as_mut()
+                    .ok_or(Error::ErrRTPSenderNotExisted)?,
                 &mut self.peer_connection.configuration.media_engine,
             );
 
-            let (ssrc, _parameters) = (
-                sender.track().ok_or(Error::ErrRTPSenderNotExisted)?.ssrc(),
-                sender.get_parameters(media_engine),
-            );
+            let (ssrc, _parameters) = (sender.track().ssrc(), sender.get_parameters(media_engine));
 
             /*TODO: RTCRtpSender should use negotiated payload type to fill rtp packet's payload type in write_rtp #5
 
