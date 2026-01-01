@@ -88,7 +88,7 @@ pub struct RTCPeerConnection {
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
 
-    greater_mid: usize,
+    greater_mid: isize,
     sdp_origin: Origin,
     last_offer: String,
     last_answer: String,
@@ -148,6 +148,7 @@ impl RTCPeerConnection {
         Ok(Self {
             configuration,
             pipeline_context,
+            greater_mid: -1,
             ..Default::default()
         })
     }
@@ -190,76 +191,61 @@ impl RTCPeerConnection {
                 .restart(local_ufrag, local_pwd, keep_local_candidates)?;
         }
 
-        // This may be necessary to recompute if, for example, createOffer was called when only an
-        // audio RTCRtpTransceiver was added to connection, but while performing the in-parallel
-        // steps to create an offer, a video RTCRtpTransceiver was added, requiring additional
-        // inspection of video system resources.
-        let mut count = 0;
-        let mut offer;
-
-        loop {
-            // include unmatched local transceivers
-            // update the greater mid if the remote description provides a greater one
-            if let Some(d) = self.current_remote_description.as_ref() {
-                if let Some(parsed) = &d.parsed {
-                    for media in &parsed.media_descriptions {
-                        if let Some(mid) = get_mid_value(media) {
-                            if mid.is_empty() {
-                                continue;
-                            }
-                            let numeric_mid = match mid.parse::<usize>() {
-                                Ok(n) => n,
-                                Err(_) => continue,
-                            };
-                            if numeric_mid > self.greater_mid {
-                                self.greater_mid = numeric_mid + 1;
-                            }
+        // include unmatched local transceivers
+        // update the greater mid if the remote description provides a greater one
+        if let Some(d) = self.current_remote_description.as_ref() {
+            if let Some(parsed) = &d.parsed {
+                for media in &parsed.media_descriptions {
+                    if let Some(mid) = get_mid_value(media) {
+                        if mid.is_empty() {
+                            continue;
+                        }
+                        let numeric_mid = match mid.parse::<isize>() {
+                            Ok(n) => n,
+                            Err(_) => continue,
+                        };
+                        if numeric_mid > self.greater_mid {
+                            self.greater_mid = numeric_mid;
                         }
                     }
-                    if parsed.media_descriptions.len() > self.greater_mid {
-                        self.greater_mid = parsed.media_descriptions.len() + 1;
+                }
+                for transceiver in &mut self.rtp_transceivers {
+                    if let Some(mid) = transceiver.mid() {
+                        if !mid.is_empty() {
+                            if let Ok(numeric_mid) = mid.parse::<isize>() {
+                                if numeric_mid > self.greater_mid {
+                                    self.greater_mid = numeric_mid;
+                                }
+                            }
+
+                            continue;
+                        }
                     }
+
+                    self.greater_mid += 1;
+                    transceiver.set_mid(format!("{}", self.greater_mid))?;
                 }
-            }
-
-            for t in &mut self.rtp_transceivers {
-                if t.mid().is_some() {
-                    continue;
-                }
-
-                t.set_mid(format!("{}", self.greater_mid))?;
-                self.greater_mid += 1;
-            }
-
-            let mut d = if self.current_remote_description.is_none() {
-                self.generate_unmatched_sdp()?
-            } else {
-                self.generate_matched_sdp(
-                    true, /*includeUnmatched */
-                    DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
-                )?
-            };
-
-            update_sdp_origin(&mut self.sdp_origin, &mut d);
-
-            let sdp = d.marshal();
-
-            offer = RTCSessionDescription {
-                sdp_type: RTCSdpType::Offer,
-                sdp,
-                parsed: Some(d),
-            };
-
-            // Verify local media hasn't changed during offer
-            // generation. Recompute if necessary
-            if !self.has_local_description_changed(&offer) {
-                break;
-            }
-            count += 1;
-            if count >= 128 {
-                return Err(Error::ErrExcessiveRetries);
             }
         }
+
+        let mut d = if self.current_remote_description.is_none() {
+            self.generate_unmatched_sdp()?
+        } else {
+            self.generate_matched_sdp(
+                true, /*includeUnmatched */
+                DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
+            )?
+        };
+
+        update_sdp_origin(&mut self.sdp_origin, &mut d);
+
+        let sdp = d.marshal();
+
+        let offer = RTCSessionDescription {
+            sdp_type: RTCSdpType::Offer,
+            sdp,
+            parsed: Some(d),
+        };
 
         self.last_offer.clone_from(&offer.sdp);
 
