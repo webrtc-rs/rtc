@@ -28,15 +28,18 @@ is your browser, copy that and:
 
 #### Linux/macOS
 
-Run
-`echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h264 -a examples/test-data/output.ogg`
-`echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h265 -a examples/test-data/output.ogg --hevc`
+1. Run
+   `echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h264 -a examples/test-data/output.ogg`
+
+2. Run
+   `echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h265 -a examples/test-data/output.ogg --hevc`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
 2. Run
    `./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h264 -a examples/test-data/output.ogg < my_file`
+3. Run
    `./target/debug/examples/play-from-disk-h26x -v examples/test-data/output.h265 -a examples/test-data/output.ogg --hevc < my_file`
 
 ### Input play-from-disk-h26x's SessionDescription into your browser
