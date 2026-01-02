@@ -978,6 +978,9 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
+        //TODO: https://github.com/webrtc-rs/rtc/issues/6
+        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addtransceiver
+        // Validate sendEncodings by running the following addTransceiver sendEncodings validation steps,
         let (direction, streams, send_encodings) = if let Some(init) = init {
             (init.direction, init.streams, init.send_encodings)
         } else {
