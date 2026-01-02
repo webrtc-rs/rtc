@@ -16,7 +16,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   playing with the life cycle of data channels.
 - ✅ [Data Channels Flow Control](data-channels-flow-control): Example data-channels-flow-control shows how to use flow
   control.
-- ✅ [Offer Answer](offer-answer): Example offer-answer is an example of two webrtc-rs or pion instances communicating
+- ✅ [Data Channels Offer Answer](data-channels-offer-answer): Example offer-answer is an example of two webrtc-rs
+  instances communicating
   directly!
 
 ### Media API

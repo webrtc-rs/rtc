@@ -27,16 +27,16 @@ use rtc::shared::util::math_rand_alpha;
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
 #[derive(Parser)]
-#[command(name = "answer")]
+#[command(name = "data-channels-offer")]
 #[command(author = "Rusty Rain <y@liu.mx>")]
 #[command(version = "0.0.0")]
-#[command(about = "An example of WebRTC-rs Answer", long_about = None)]
+#[command(about = "An example of WebRTC-rs data-channels-Offer", long_about = None)]
 struct Cli {
     #[arg(short, long)]
     debug: bool,
-    #[arg(long, default_value_t = format!("localhost:50000"))]
+    #[arg(long, default_value_t = format!("0.0.0.0:50000"))]
     offer_address: String,
-    #[arg(long, default_value_t = format!("0.0.0.0:60000"))]
+    #[arg(long, default_value_t = format!("localhost:60000"))]
     answer_address: String,
 }
 
@@ -110,6 +110,7 @@ async fn remote_handler(
                 }
             };
 
+            println!("Received answer from remote peer");
             let _ = cmd_tx.send(Command::SetRemoteDescription(sdp)).await;
 
             let mut response = Response::new(Body::empty());
@@ -145,8 +146,8 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    let offer_addr = cli.offer_address.clone();
-    let answer_addr = cli.answer_address;
+    let offer_addr = cli.offer_address;
+    let answer_addr = cli.answer_address.clone();
 
     // Prepare the configuration
     let config = RTCConfigurationBuilder::new()
@@ -158,6 +159,13 @@ async fn main() -> Result<()> {
 
     // Create a new RTCPeerConnection
     let mut peer_connection = RTCPeerConnection::new(config)?;
+
+    // Create a datachannel with label 'data'
+    let _ = peer_connection.create_data_channel("data", None)?;
+
+    // Create an offer to send to the other process
+    let offer = peer_connection.create_offer(None)?;
+    peer_connection.set_local_description(offer.clone())?;
 
     // Get local candidates
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -179,14 +187,15 @@ async fn main() -> Result<()> {
     .new_candidate_host()?;
 
     let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
+    peer_connection.add_local_candidate(local_candidate_init.clone())?;
 
     // Create channel for HTTP server to send commands to event loop
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(100);
 
-    // Start HTTP server
-    println!("Listening on http://{answer_addr}");
+    // Start HTTP server BEFORE sending offer so we can receive the answer back
+    println!("Listening on http://{offer_addr}");
     let http_server = tokio::spawn(async move {
-        let addr = SocketAddr::from_str(&answer_addr).unwrap();
+        let addr = SocketAddr::from_str(&offer_addr).unwrap();
         let make_svc = make_service_fn(move |_| {
             let cmd_tx = cmd_tx.clone();
             async move {
@@ -202,16 +211,31 @@ async fn main() -> Result<()> {
     // Give the HTTP server a moment to start
     tokio::time::sleep(Duration::from_millis(100)).await;
 
+    // Now send offer to answer server
+    println!("Sending offer to answer server at http://{answer_addr}/sdp");
+    let payload = serde_json::to_string(&offer)?;
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("http://{answer_addr}/sdp"))
+        .header("content-type", "application/json; charset=utf-8")
+        .body(Body::from(payload))?;
+
+    Client::new().request(req).await?;
+    println!("Offer sent successfully");
+
+    // Send local candidate
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    signal_candidate(&answer_addr, &local_candidate_init).await?;
+
     // Run event loop
     let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
 
     let mut buf = vec![0; 2000];
     let mut data_channel_opened = None;
     let mut last_send = Instant::now();
-    let mut pending_candidates = vec![local_candidate_init.clone()];
+    let mut pending_candidates = vec![local_candidate_init];
 
     println!("Press ctrl-c to stop");
-    println!("Waiting for offer from http://{offer_addr}...");
 
     'EventLoop: loop {
         // Poll writes
@@ -295,57 +319,11 @@ async fn main() -> Result<()> {
                         if let Err(e) = peer_connection.set_remote_description(sdp) {
                             eprintln!("Failed to set remote description: {}", e);
                         } else {
-                            println!("Remote description (offer) set successfully");
-
-                            // Add local candidate
-                            if let Err(e) = peer_connection.add_local_candidate(local_candidate_init.clone()) {
-                                eprintln!("Failed to add local candidate: {}", e);
-                            }
-
-                            // Create answer
-                            match peer_connection.create_answer(None) {
-                                Ok(answer) => {
-                                    if let Err(e) = peer_connection.set_local_description(answer.clone()) {
-                                        eprintln!("Failed to set local description: {}", e);
-                                    } else {
-                                        println!("Created and set answer, sending to offer");
-                                        // Send answer back to offer
-                                        let payload = match serde_json::to_string(&answer) {
-                                            Ok(p) => p,
-                                            Err(e) => {
-                                                eprintln!("Failed to serialize answer: {}", e);
-                                                continue;
-                                            }
-                                        };
-
-                                        let req = match Request::builder()
-                                            .method(Method::POST)
-                                            .uri(format!("http://{}/sdp", offer_addr))
-                                            .header("content-type", "application/json; charset=utf-8")
-                                            .body(Body::from(payload)) {
-                                            Ok(r) => r,
-                                            Err(e) => {
-                                                eprintln!("Failed to build request: {}", e);
-                                                continue;
-                                            }
-                                        };
-
-                                        if let Err(e) = Client::new().request(req).await {
-                                            eprintln!("Failed to send answer: {}", e);
-                                        } else {
-                                            println!("Answer sent successfully");
-                                        }
-
-                                        // Send any pending candidates
-                                        for candidate in pending_candidates.drain(..) {
-                                            if let Err(e) = signal_candidate(&offer_addr, &candidate).await {
-                                                eprintln!("Failed to signal candidate: {}", e);
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to create answer: {}", e);
+                            println!("Remote description set successfully");
+                            // Send any pending candidates now that remote description is set
+                            for candidate in pending_candidates.drain(..) {
+                                if let Err(e) = signal_candidate(&answer_addr, &candidate).await {
+                                    eprintln!("Failed to signal candidate: {}", e);
                                 }
                             }
                         }
