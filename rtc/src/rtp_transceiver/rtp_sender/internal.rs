@@ -223,6 +223,10 @@ impl RTCRtpSenderInternal {
         Ok(())
     }
 
+    pub(crate) fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) {
+        self.send_codecs = codecs;
+    }
+
     pub(crate) fn configure_rtx_and_fec(&mut self, is_rtx_enabled: bool, is_fec_enabled: bool) {
         for encoding in self.send_encodings.iter_mut() {
             if !is_rtx_enabled {

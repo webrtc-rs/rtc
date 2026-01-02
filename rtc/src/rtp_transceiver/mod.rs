@@ -207,6 +207,10 @@ impl RTCRtpTransceiver {
             }
         }
 
+        if let Some(sender) = self.sender_mut() {
+            sender.set_codec_preferences(codecs.clone());
+        }
+
         self.preferred_codecs = codecs;
 
         Ok(())
