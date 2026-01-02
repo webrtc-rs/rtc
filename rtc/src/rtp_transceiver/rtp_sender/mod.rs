@@ -163,9 +163,7 @@ impl RTCRtpSender<'_> {
                 &mut self.peer_connection.configuration.media_engine,
             );
 
-            let (ssrc, _parameters) = (sender.track().ssrc(), sender.get_parameters(media_engine));
-
-            /*TODO: RTCRtpSender should use negotiated payload type to fill rtp packet's payload type in write_rtp #5
+            let (ssrc, parameters) = (sender.track().ssrc(), sender.get_parameters(media_engine));
 
             let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
             //From SSRC, find the encoding
@@ -184,7 +182,7 @@ impl RTCRtpSender<'_> {
                 .find(|codec| codec.rtp_codec == encoding.codec)
                 .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
 
-            packet.header.payload_type = codec.payload_type;*/
+            packet.header.payload_type = codec.payload_type;
             packet.header.ssrc = ssrc;
             self.peer_connection
                 .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
