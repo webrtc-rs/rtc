@@ -113,9 +113,9 @@ impl RTCRtpTransceiver {
                         math_rand_alpha(16),        // MediaStreamTrackId
                         format!("remote {}", kind), // Label
                         kind,
-                        None,                  // rid
-                        rand::random::<u32>(), // ssrc
-                        RTCRtpCodec::default(),
+                        None,                   // rid
+                        rand::random::<u32>(),  // ssrc
+                        RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/6
                     ),
                     vec![],
                 ))

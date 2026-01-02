@@ -993,7 +993,7 @@ impl RTCPeerConnection {
                     kind,
                     None,                   // rid
                     rand::random::<u32>(),  // ssrc
-                    RTCRtpCodec::default(), //TODO:
+                    RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/6
                 );
                 self.new_transceiver_from_track(
                     track,
