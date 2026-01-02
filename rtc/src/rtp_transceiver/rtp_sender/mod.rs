@@ -21,7 +21,10 @@ use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::message::{RTCMessage, RTPMessage};
 use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    codec_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
+};
+use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
 use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
 use crate::rtp_transceiver::RTCRtpSenderId;
@@ -176,11 +179,17 @@ impl RTCRtpSender<'_> {
                         .is_some_and(|s| s == ssrc)
                 })
                 .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
-            // From the encoding, find the codec which contains payload_type
-            let codec = codecs
-                .iter()
-                .find(|codec| codec.rtp_codec == encoding.codec)
-                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+            // From the encoding, fuzzy_search the codec which contains payload_type
+            let (codec, match_type) = codec_parameters_fuzzy_search(
+                &RTCRtpCodecParameters {
+                    rtp_codec: encoding.codec.clone(),
+                    ..Default::default()
+                },
+                &codecs,
+            );
+            if match_type == CodecMatch::None {
+                return Err(Error::ErrRTPTransceiverCodecUnsupported);
+            }
 
             packet.header.payload_type = codec.payload_type;
             packet.header.ssrc = ssrc;
