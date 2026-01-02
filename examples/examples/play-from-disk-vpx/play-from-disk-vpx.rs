@@ -515,11 +515,6 @@ async fn stream_video(
     video_done_tx: Sender<()>,
     video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
 ) -> Result<()> {
-    // Open a IVF file and start reading using our IVFReader
-    let file = File::open(&video_file_name)?;
-    let reader = BufReader::new(file);
-    let (mut ivf, header) = IVFReader::new(reader)?;
-
     // Wait for connection established
     video_notify_rx.notified().await;
 
@@ -536,6 +531,11 @@ async fn stream_video(
 
     //TODO: packetizer.enable_abs_send_time(ext_id);
 
+    // Open a IVF file and start reading using our IVFReader
+    let file = File::open(&video_file_name)?;
+    let reader = BufReader::new(file);
+    let (mut ivf, header) = IVFReader::new(reader)?;
+
     // It is important to use a time.Ticker instead of time.Sleep because
     // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
     // * works around latency issues with Sleep
@@ -545,6 +545,7 @@ async fn stream_video(
         ((1000 * header.timebase_numerator) / header.timebase_denominator) as u64,
     );
     let mut ticker = tokio::time::interval(sleep_time);
+
     loop {
         let frame = match ivf.parse_next_frame() {
             Ok((frame, _)) => frame,

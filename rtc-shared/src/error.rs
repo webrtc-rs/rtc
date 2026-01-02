@@ -1157,6 +1157,8 @@ pub enum Error {
 
     #[error("data is not a H264 bitstream")]
     ErrDataIsNotH264Stream,
+    #[error("data is not a H265 bitstream")]
+    ErrDataIsNotH265Stream,
     #[error("Io EOF")]
     ErrIoEOF,
 

@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
-use rtc::media::io::h264_reader::{H264Reader, NalUnitType};
+use rtc::media::io::h26x_reader::{H264NalUnitType, H265NalUnitType, H26xNAL, H26xReader};
 use rtc::media::io::ogg_reader::OggReader;
 use rtc::media_stream::track::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
@@ -21,7 +21,6 @@ use rtc::peer_connection::transport::ice::candidate::{
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtp;
-use rtc::rtp::codec::h265::{H265NALUHeader, UnitType};
 use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
@@ -30,7 +29,6 @@ use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,7 +48,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day 
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
 const RTP_OUTBOUND_MTU: usize = 1200;
 const H26X_FRAME_DURATION: Duration = Duration::from_millis(33); // ~30 fps
-const ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
 #[derive(Parser)]
 #[command(name = "play-from-disk-h26x")]
@@ -340,32 +337,18 @@ async fn run(
         let video_message_tx = message_tx.clone();
         let (ssrc, codec) = kind_codecs.get(&RtpCodecKind::Video).cloned().unwrap();
         tokio::spawn(async move {
-            if is_hevc {
-                if let Err(err) = stream_h265(
-                    (ssrc, codec),
-                    video_file_name,
-                    video_sender_id,
-                    video_notify_rx,
-                    video_done_tx,
-                    video_message_tx,
-                )
-                .await
-                {
-                    eprintln!("video streaming error: {}", err);
-                }
-            } else {
-                if let Err(err) = stream_h264(
-                    (ssrc, codec),
-                    video_file_name,
-                    video_sender_id,
-                    video_notify_rx,
-                    video_done_tx,
-                    video_message_tx,
-                )
-                .await
-                {
-                    eprintln!("video streaming error: {}", err);
-                }
+            if let Err(err) = stream_video(
+                (ssrc, codec),
+                video_file_name,
+                video_sender_id,
+                video_notify_rx,
+                video_done_tx,
+                video_message_tx,
+                is_hevc,
+            )
+            .await
+            {
+                eprintln!("video streaming error: {}", err);
             }
         });
     } else {
@@ -530,19 +513,40 @@ async fn run(
     Ok(())
 }
 
-async fn stream_h264(
+fn should_skip_timing(nal: &H26xNAL) -> bool {
+    match nal {
+        H26xNAL::H264(nal) => {
+            matches!(
+                nal.unit_type,
+                H264NalUnitType::SPS
+                    | H264NalUnitType::PPS
+                    | H264NalUnitType::SEI
+                    | H264NalUnitType::AUD
+            )
+        }
+        H26xNAL::H265(nal) => {
+            matches!(
+                nal.unit_type,
+                H265NalUnitType::VPS
+                    | H265NalUnitType::SPS
+                    | H265NalUnitType::PPS
+                    | H265NalUnitType::PrefixSEI
+                    | H265NalUnitType::SuffixSEI
+                    | H265NalUnitType::AUD
+            )
+        }
+    }
+}
+
+async fn stream_video(
     (ssrc, codec): (SSRC, RTCRtpCodecParameters),
     video_file_name: String,
     video_sender_id: RTCRtpSenderId,
     video_notify_rx: Arc<Notify>,
     video_done_tx: Sender<()>,
     video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
+    is_hevc: bool,
 ) -> Result<()> {
-    // Open a H264 file and start reading using our H264Reader
-    let file = File::open(&video_file_name)?;
-    let reader = BufReader::new(file);
-    let mut h264 = H264Reader::new(reader, 1_048_576);
-
     // Wait for connection established
     video_notify_rx.notified().await;
 
@@ -559,12 +563,18 @@ async fn stream_h264(
 
     //TODO: packetizer.enable_abs_send_time(ext_id);
 
+    // Open video file
+    let file = File::open(&video_file_name)?;
+    let reader = BufReader::new(file);
+    let mut video_reader = H26xReader::new(reader, 1_048_576, is_hevc);
+
     // It is important to use a time.Ticker instead of time.Sleep because
     // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
     // * works around latency issues with Sleep
     let mut ticker = tokio::time::interval(H26X_FRAME_DURATION);
+
     loop {
-        let nal = match h264.next_nal() {
+        let nal = match video_reader.next_nal() {
             Ok(nal) => nal,
             Err(err) => {
                 println!("All video frames parsed and sent: {err}");
@@ -572,94 +582,18 @@ async fn stream_h264(
             }
         };
 
-        let nalu_type = nal.unit_type;
         let sample_duration = H26X_FRAME_DURATION;
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&nal.data.freeze(), samples)?;
-        for packet in packets {
-            video_message_tx.send((video_sender_id, packet)).await?;
-        }
-        if nalu_type != NalUnitType::SPS
-            && nalu_type != NalUnitType::PPS
-            && nalu_type != NalUnitType::SEI
-            && nalu_type != NalUnitType::AUD
-        {
-            let _ = ticker.tick().await;
-        }
-    }
-
-    let _ = video_done_tx.try_send(());
-
-    Ok(())
-}
-
-async fn stream_h265(
-    (ssrc, codec): (SSRC, RTCRtpCodecParameters),
-    video_file_name: String,
-    video_sender_id: RTCRtpSenderId,
-    video_notify_rx: Arc<Notify>,
-    video_done_tx: Sender<()>,
-    video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
-) -> Result<()> {
-    // Read the entire HEVC file
-    let mut file = File::open(&video_file_name)?;
-    let mut buf = vec![];
-    file.read_to_end(&mut buf)?;
-    let mut data = BytesMut::from_iter(buf);
-
-    // Parse NAL units using Annex B start codes
-    let list = memchr::memmem::find_iter(&data, ANNEXB_NALUSTART_CODE);
-    let mut data_list = vec![];
-    let mut idxs = list.into_iter().collect::<Vec<usize>>();
-    idxs.reverse();
-    for i in idxs {
-        let nal_data = data.split_off(i);
-        // let payload_header = H265NALUHeader::new(nal_data[4], nal_data[5]);
-        // let payload_nalu_type = payload_header.nalu_type();
-        // let nalu_type = UnitType::for_id(payload_nalu_type).unwrap_or(UnitType::IGNORE);
-        data_list.insert(0, nal_data);
-    }
-
-    // Wait for connection established
-    video_notify_rx.notified().await;
-
-    println!("play video from disk file {video_file_name}");
-
-    let mut packetizer = rtp::packetizer::new_packetizer(
-        RTP_OUTBOUND_MTU,
-        codec.payload_type,
-        ssrc,
-        codec.rtp_codec.payloader()?,
-        Box::new(rtp::sequence::new_random_sequencer()),
-        codec.rtp_codec.clock_rate,
-    );
-
-    //TODO: packetizer.enable_abs_send_time(ext_id);
-
-    let mut ticker = tokio::time::interval(H26X_FRAME_DURATION);
-
-    for nal_data in data_list {
-        let payload_header = H265NALUHeader::new(nal_data[4], nal_data[5]);
-        let payload_nalu_type = payload_header.nalu_type();
-        let nalu_type = UnitType::for_id(payload_nalu_type).unwrap_or(UnitType::IGNORE);
-
-        let sample_duration = H26X_FRAME_DURATION;
-        let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&nal_data.freeze(), samples)?;
+        let packets = packetizer.packetize(&nal.data().clone().freeze(), samples)?;
         for packet in packets {
             video_message_tx.send((video_sender_id, packet)).await?;
         }
 
-        if nalu_type != UnitType::VPS
-            && nalu_type != UnitType::SPS
-            && nalu_type != UnitType::PPS
-            && nalu_type != UnitType::SEI
-        {
+        if !should_skip_timing(&nal) {
             let _ = ticker.tick().await;
         }
     }
 
-    println!("All video frames parsed and sent");
     let _ = video_done_tx.try_send(());
 
     Ok(())

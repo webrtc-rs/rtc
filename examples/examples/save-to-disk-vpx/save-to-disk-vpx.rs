@@ -293,7 +293,7 @@ async fn run(
 
     println!("listening {}...", socket.local_addr()?);
 
-    let mut ivf_writer: Option<IVFWriter<File>> = if let Some(ref video_file_name) = video_file {
+    let mut video_writer: Option<IVFWriter<File>> = if let Some(ref video_file_name) = video_file {
         Some(IVFWriter::new(
             File::create(video_file_name)?,
             &IVFFileHeader {
@@ -313,7 +313,7 @@ async fn run(
         None
     };
 
-    let mut ogg_writer: Option<OggWriter<File>> = if let Some(ref audio_file_name) = audio_file {
+    let mut audio_writer: Option<OggWriter<File>> = if let Some(ref audio_file_name) = audio_file {
         Some(OggWriter::new(File::create(audio_file_name)?, 48000, 2)?)
     } else {
         None
@@ -391,12 +391,12 @@ async fn run(
                         // Write packet to appropriate file
                         match receiver_id_to_kind.get(&track_event.receiver_id) {
                             Some(RtpCodecKind::Audio) => {
-                                if let Some(ref mut writer) = ogg_writer {
+                                if let Some(ref mut writer) = audio_writer {
                                     writer.write_rtp(&packet)?;
                                 }
                             }
                             Some(RtpCodecKind::Video) => {
-                                if let Some(ref mut writer) = ivf_writer {
+                                if let Some(ref mut writer) = video_writer {
                                     writer.write_rtp(&packet)?;
                                 }
                             }
@@ -462,13 +462,13 @@ async fn run(
     }
 
     // Close writers
-    if let Some(mut writer) = ivf_writer {
+    if let Some(mut writer) = video_writer {
         println!("Closing video file");
         if let Err(err) = writer.close() {
             println!("Error closing video file: {err}");
         }
     }
-    if let Some(mut writer) = ogg_writer {
+    if let Some(mut writer) = audio_writer {
         println!("Closing audio file");
         if let Err(err) = writer.close() {
             println!("Error closing audio file: {err}");

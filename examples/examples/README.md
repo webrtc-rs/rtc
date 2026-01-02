@@ -28,9 +28,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   your browser from a file saved to disk.
 - ✅ [Play from Disk H26x](play-from-disk-h264): The play-from-disk-h26x example demonstrates how to send H264/H265 video
   to your browser from a file saved to disk.
-- [ ] [Save to Disk VPx](save-to-disk-vpx): The save-to-disk example shows how to record your webcam and save the
+- ✅ [Save to Disk VPx](save-to-disk-vpx): The save-to-disk example shows how to record your webcam and save the
   footage (VP8/VP9 for video, Opus for audio) to disk on the server side.
-- [ ] [Save to Disk H26x](save-to-disk-h26x): The save-to-disk example shows how to record your webcam and save the
+- ✅ [Save to Disk H26x](save-to-disk-h26x): The save-to-disk example shows how to record your webcam and save the
   footage (H264/H265 for video, Opus for audio) to disk on the server side.
 - [ ] [Play from Disk Renegotiation](play-from-disk-renegotiation): The play-from-disk-renegotiation example is an
   extension of the play-from-disk example, but demonstrates how you can add/remove video tracks from an already
