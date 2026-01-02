@@ -132,7 +132,8 @@ impl RTCRtpReceiverInternal {
         }
         let mut filtered_codecs = vec![];
         for codec in codecs {
-            let (c, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
+            let (c, match_type) =
+                codec_parameters_fuzzy_search(&codec.rtp_codec, &media_engine_codecs);
             if match_type != CodecMatch::None {
                 filtered_codecs.push(c);
             }

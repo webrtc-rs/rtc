@@ -201,7 +201,8 @@ impl RTCRtpTransceiver {
     ) -> Result<()> {
         for codec in &codecs {
             let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind());
-            let (_, match_type) = codec_parameters_fuzzy_search(codec, &media_engine_codecs);
+            let (_, match_type) =
+                codec_parameters_fuzzy_search(&codec.rtp_codec, &media_engine_codecs);
             if match_type == CodecMatch::None {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
             }
@@ -276,7 +277,7 @@ impl RTCRtpTransceiver {
                 }
 
                 let (match_codec, match_type) =
-                    codec_parameters_fuzzy_search(remote_codec, &left_codecs);
+                    codec_parameters_fuzzy_search(&remote_codec.rtp_codec, &left_codecs);
                 if match_type == match_filter {
                     payload_mapping.insert(remote_codec.payload_type, match_codec.payload_type);
 

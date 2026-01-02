@@ -109,10 +109,10 @@ pub(crate) enum CodecMatch {
 /// Used for lookup up a codec in an existing list to find a match
 /// Returns codecMatchExact, codecMatchPartial, or codecMatchNone
 pub(crate) fn codec_parameters_fuzzy_search(
-    needle: &RTCRtpCodecParameters,
+    needle_rtp_codec: &RTCRtpCodec,
     haystack: &[RTCRtpCodecParameters],
 ) -> (RTCRtpCodecParameters, CodecMatch) {
-    let needle_fmtp = fmtp::parse(&needle.rtp_codec.mime_type, &needle.rtp_codec.sdp_fmtp_line);
+    let needle_fmtp = fmtp::parse(&needle_rtp_codec.mime_type, &needle_rtp_codec.sdp_fmtp_line);
 
     //TODO: add unicode case-folding equal support
 
@@ -126,7 +126,7 @@ pub(crate) fn codec_parameters_fuzzy_search(
 
     // Fallback to just mime_type
     for c in haystack {
-        if c.rtp_codec.mime_type.to_uppercase() == needle.rtp_codec.mime_type.to_uppercase() {
+        if c.rtp_codec.mime_type.to_uppercase() == needle_rtp_codec.mime_type.to_uppercase() {
             return (c.clone(), CodecMatch::Partial);
         }
     }
