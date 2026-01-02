@@ -3,11 +3,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
-use rtc::media::io::ivf_reader::IVFReader;
+use rtc::media::io::h264_reader::{H264Reader, NalUnitType};
 use rtc::media::io::ogg_reader::OggReader;
 use rtc::media_stream::track::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{
-    MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9,
+    MediaEngine, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS,
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
@@ -21,6 +21,7 @@ use rtc::peer_connection::transport::ice::candidate::{
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtp;
+use rtc::rtp::codec::h265::{H265NALUHeader, UnitType};
 use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
@@ -29,6 +30,7 @@ use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,12 +49,14 @@ use tokio::sync::{
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
 const RTP_OUTBOUND_MTU: usize = 1200;
+const H26X_FRAME_DURATION: Duration = Duration::from_millis(33); // ~30 fps
+const ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
 #[derive(Parser)]
-#[command(name = "play-from-disk-vpx")]
+#[command(name = "play-from-disk-h26x")]
 #[command(author = "Rain Liu <yliu@webrtc.rs>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of play-from-disk-vpx.")]
+#[command(about = "An example of play-from-disk-h26x.")]
 struct Cli {
     #[arg(short, long)]
     client: bool,
@@ -73,7 +77,7 @@ struct Cli {
     #[arg(short, long)]
     audio: Option<String>,
     #[arg(long)]
-    vp9: bool,
+    hevc: bool,
 }
 
 #[tokio::main]
@@ -85,7 +89,7 @@ async fn main() -> Result<()> {
     let input_sdp_file = cli.input_sdp_file;
     let output_log_file = cli.output_log_file;
     let log_level = log::LevelFilter::from_str(&cli.log_level)?;
-    let is_vp9 = cli.vp9;
+    let is_hevc = cli.hevc;
     let video_file = cli.video;
     let audio_file = cli.audio;
     if cli.debug {
@@ -148,7 +152,7 @@ async fn main() -> Result<()> {
         is_client,
         video_file,
         audio_file,
-        is_vp9,
+        is_hevc,
     )
     .await
     {
@@ -166,7 +170,7 @@ async fn run(
     is_client: bool,
     video_file: Option<String>,
     audio_file: Option<String>,
-    is_vp9: bool,
+    is_hevc: bool,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
@@ -196,17 +200,21 @@ async fn run(
 
     let video_codec = RTCRtpCodecParameters {
         rtp_codec: RTCRtpCodec {
-            mime_type: if is_vp9 {
-                MIME_TYPE_VP9.to_owned()
+            mime_type: if is_hevc {
+                MIME_TYPE_HEVC.to_owned()
             } else {
-                MIME_TYPE_VP8.to_owned()
+                MIME_TYPE_H264.to_owned()
             },
             clock_rate: 90000,
             channels: 0,
-            sdp_fmtp_line: "".to_owned(),
+            sdp_fmtp_line: if is_hevc {
+                "".to_owned()
+            } else {
+                "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned()
+            },
             rtcp_feedback: vec![],
         },
-        payload_type: if is_vp9 { 98 } else { 96 },
+        payload_type: if is_hevc { 98 } else { 102 },
         ..Default::default()
     };
 
@@ -215,7 +223,7 @@ async fn run(
         media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
     }
 
-    // We'll use a VPx and Opus but you can also define your own
+    // We'll use H26x and Opus
     if video_file.is_some() {
         media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
     }
@@ -332,17 +340,32 @@ async fn run(
         let video_message_tx = message_tx.clone();
         let (ssrc, codec) = kind_codecs.get(&RtpCodecKind::Video).cloned().unwrap();
         tokio::spawn(async move {
-            if let Err(err) = stream_video(
-                (ssrc, codec),
-                video_file_name,
-                video_sender_id,
-                video_notify_rx,
-                video_done_tx,
-                video_message_tx,
-            )
-            .await
-            {
-                eprintln!("video streaming error: {}", err);
+            if is_hevc {
+                if let Err(err) = stream_h265(
+                    (ssrc, codec),
+                    video_file_name,
+                    video_sender_id,
+                    video_notify_rx,
+                    video_done_tx,
+                    video_message_tx,
+                )
+                .await
+                {
+                    eprintln!("video streaming error: {}", err);
+                }
+            } else {
+                if let Err(err) = stream_h264(
+                    (ssrc, codec),
+                    video_file_name,
+                    video_sender_id,
+                    video_notify_rx,
+                    video_done_tx,
+                    video_message_tx,
+                )
+                .await
+                {
+                    eprintln!("video streaming error: {}", err);
+                }
             }
         });
     } else {
@@ -507,7 +530,7 @@ async fn run(
     Ok(())
 }
 
-async fn stream_video(
+async fn stream_h264(
     (ssrc, codec): (SSRC, RTCRtpCodecParameters),
     video_file_name: String,
     video_sender_id: RTCRtpSenderId,
@@ -515,10 +538,10 @@ async fn stream_video(
     video_done_tx: Sender<()>,
     video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
 ) -> Result<()> {
-    // Open a IVF file and start reading using our IVFReader
+    // Open a H264 file and start reading using our H264Reader
     let file = File::open(&video_file_name)?;
     let reader = BufReader::new(file);
-    let (mut ivf, header) = IVFReader::new(reader)?;
+    let mut h264 = H264Reader::new(reader, 1_048_576);
 
     // Wait for connection established
     video_notify_rx.notified().await;
@@ -539,31 +562,104 @@ async fn stream_video(
     // It is important to use a time.Ticker instead of time.Sleep because
     // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
     // * works around latency issues with Sleep
-    // Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
-    // This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
-    let sleep_time = Duration::from_millis(
-        ((1000 * header.timebase_numerator) / header.timebase_denominator) as u64,
-    );
-    let mut ticker = tokio::time::interval(sleep_time);
+    let mut ticker = tokio::time::interval(H26X_FRAME_DURATION);
     loop {
-        let frame = match ivf.parse_next_frame() {
-            Ok((frame, _)) => frame,
+        let nal = match h264.next_nal() {
+            Ok(nal) => nal,
             Err(err) => {
                 println!("All video frames parsed and sent: {err}");
                 break;
             }
         };
 
-        let sample_duration = Duration::from_millis(40);
+        let nalu_type = nal.unit_type;
+        let sample_duration = H26X_FRAME_DURATION;
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&frame.freeze(), samples)?;
+        let packets = packetizer.packetize(&nal.data.freeze(), samples)?;
+        for packet in packets {
+            video_message_tx.send((video_sender_id, packet)).await?;
+        }
+        if nalu_type != NalUnitType::SPS
+            && nalu_type != NalUnitType::PPS
+            && nalu_type != NalUnitType::SEI
+            && nalu_type != NalUnitType::AUD
+        {
+            let _ = ticker.tick().await;
+        }
+    }
+
+    let _ = video_done_tx.try_send(());
+
+    Ok(())
+}
+
+async fn stream_h265(
+    (ssrc, codec): (SSRC, RTCRtpCodecParameters),
+    video_file_name: String,
+    video_sender_id: RTCRtpSenderId,
+    video_notify_rx: Arc<Notify>,
+    video_done_tx: Sender<()>,
+    video_message_tx: Sender<(RTCRtpSenderId, rtp::Packet)>,
+) -> Result<()> {
+    // Read the entire HEVC file
+    let mut file = File::open(&video_file_name)?;
+    let mut buf = vec![];
+    file.read_to_end(&mut buf)?;
+    let mut data = BytesMut::from_iter(buf);
+
+    // Parse NAL units using Annex B start codes
+    let list = memchr::memmem::find_iter(&data, ANNEXB_NALUSTART_CODE);
+    let mut data_list = vec![];
+    let mut idxs = list.into_iter().collect::<Vec<usize>>();
+    idxs.reverse();
+    for i in idxs {
+        let nal_data = data.split_off(i);
+        // let payload_header = H265NALUHeader::new(nal_data[4], nal_data[5]);
+        // let payload_nalu_type = payload_header.nalu_type();
+        // let nalu_type = UnitType::for_id(payload_nalu_type).unwrap_or(UnitType::IGNORE);
+        data_list.insert(0, nal_data);
+    }
+
+    // Wait for connection established
+    video_notify_rx.notified().await;
+
+    println!("play video from disk file {video_file_name}");
+
+    let mut packetizer = rtp::packetizer::new_packetizer(
+        RTP_OUTBOUND_MTU,
+        codec.payload_type,
+        ssrc,
+        codec.rtp_codec.payloader()?,
+        Box::new(rtp::sequence::new_random_sequencer()),
+        codec.rtp_codec.clock_rate,
+    );
+
+    //TODO: packetizer.enable_abs_send_time(ext_id);
+
+    let mut ticker = tokio::time::interval(H26X_FRAME_DURATION);
+
+    for nal_data in data_list {
+        let payload_header = H265NALUHeader::new(nal_data[4], nal_data[5]);
+        let payload_nalu_type = payload_header.nalu_type();
+        let nalu_type = UnitType::for_id(payload_nalu_type).unwrap_or(UnitType::IGNORE);
+
+        let sample_duration = H26X_FRAME_DURATION;
+        let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
+        let packets = packetizer.packetize(&nal_data.freeze(), samples)?;
         for packet in packets {
             video_message_tx.send((video_sender_id, packet)).await?;
         }
 
-        let _ = ticker.tick().await;
+        if nalu_type != UnitType::VPS
+            && nalu_type != UnitType::SPS
+            && nalu_type != UnitType::PPS
+            && nalu_type != UnitType::SEI
+        {
+            let _ = ticker.tick().await;
+        }
     }
 
+    println!("All video frames parsed and sent");
     let _ = video_done_tx.try_send(());
 
     Ok(())
