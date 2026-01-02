@@ -411,11 +411,20 @@ impl RTCPeerConnection {
                 .media_engine
                 .update_from_remote_description(parsed_remote_description)?;
 
-            /*TODO:
-                // Disable RTX/FEC on RTPSenders if the remote didn't support it
-                for sender in self.get_senders() {
-                sender.configureRTXAndFEC()
-            }*/
+            // Disable RTX/FEC on RTPSenders if the remote didn't support it
+            for transceiver in &mut self.rtp_transceivers {
+                if let Some(sender) = transceiver.sender_mut() {
+                    let (is_rtx_enabled, is_fec_enabled) = (
+                        self.configuration
+                            .media_engine
+                            .is_rtx_enabled(sender.kind(), RTCRtpTransceiverDirection::Sendonly),
+                        self.configuration
+                            .media_engine
+                            .is_fec_enabled(sender.kind(), RTCRtpTransceiverDirection::Sendonly),
+                    );
+                    sender.configure_rtx_and_fec(is_rtx_enabled, is_fec_enabled);
+                }
+            }
 
             let we_offer = remote_description.sdp_type == RTCSdpType::Answer;
 

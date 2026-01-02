@@ -222,4 +222,15 @@ impl RTCRtpSenderInternal {
         //TODO:
         Ok(())
     }
+
+    pub(crate) fn configure_rtx_and_fec(&mut self, is_rtx_enabled: bool, is_fec_enabled: bool) {
+        for encoding in self.send_encodings.iter_mut() {
+            if !is_rtx_enabled {
+                encoding.rtp_coding_parameters.rtx = None;
+            }
+            if !is_fec_enabled {
+                encoding.rtp_coding_parameters.fec = None;
+            }
+        }
+    }
 }

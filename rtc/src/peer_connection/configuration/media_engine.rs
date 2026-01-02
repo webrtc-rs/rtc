@@ -1,11 +1,11 @@
 //TODO:#[cfg(test)]
 //mod media_engine_test;
 
+use sdp::description::session::SessionDescription;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use sdp::description::session::SessionDescription;
+use unicase::UniCase;
 
 use crate::peer_connection::sdp::{
     codecs_from_media_description, rtp_extensions_from_media_description,
@@ -49,6 +49,18 @@ pub const MIME_TYPE_PCMU: &str = "audio/PCMU";
 /// MIME_TYPE_PCMA PCMA MIME type
 /// Note: Matching should be case insensitive.
 pub const MIME_TYPE_PCMA: &str = "audio/PCMA";
+/// MIME_TYPE_RTX RTX MIME type
+/// Note: Matching should be case insensitive.
+pub const MIME_TYPE_RTX: &str = "video/rtx";
+/// MIME_TYPE_FLEX_FEC FEC MIME Type
+/// Note: Matching should be case insensitive.
+pub const MIME_TYPE_FLEX_FEC: &str = "video/flexfec";
+/// MIME_TYPE_FLEX_FEC03 FlexFEC03 MIME Type
+/// Note: Matching should be case insensitive.
+pub const MIME_TYPE_FLEX_FEC03: &str = "video/flexfec-03";
+/// MIME_TYPE_ULP_FEC UlpFEC MIME Type
+/// Note: Matching should be case insensitive.
+pub const MIME_TYPE_ULP_FEC: &str = "video/ulpfec";
 /// MIME_TYPE_TELEPHONE_EVENT telephone-event MIME type
 /// Note: Matching should be case insensitive.
 pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
@@ -854,5 +866,35 @@ impl MediaEngine {
             codecs: vec![codec],
             ..Default::default()
         })
+    }
+
+    pub(crate) fn is_rtx_enabled(
+        &mut self,
+        kind: RtpCodecKind,
+        direction: RTCRtpTransceiverDirection,
+    ) -> bool {
+        for codec in &self.get_rtp_parameters_by_kind(kind, direction).codecs {
+            if UniCase::new(codec.rtp_codec.mime_type.as_str()) == UniCase::new(MIME_TYPE_RTX) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn is_fec_enabled(
+        &mut self,
+        kind: RtpCodecKind,
+        direction: RTCRtpTransceiverDirection,
+    ) -> bool {
+        for codec in &self.get_rtp_parameters_by_kind(kind, direction).codecs {
+            if UniCase::new(codec.rtp_codec.mime_type.as_str())
+                .contains(*UniCase::new(MIME_TYPE_FLEX_FEC))
+            {
+                return true;
+            }
+        }
+
+        false
     }
 }
