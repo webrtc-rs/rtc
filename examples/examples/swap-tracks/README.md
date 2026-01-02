@@ -12,7 +12,7 @@ cargo build --example swap-tracks
 
 ### Open swap-tracks example page
 
-[jsfiddle.net](https://jsfiddle.net/dzc17fga/) you should see two text-areas and a 'Start Session' button.
+[jsfiddle.net](https://jsfiddle.net/1rx5on86/) you should see two text-areas and a 'Start Session' button.
 
 ### Run swap-tracks, with your browsers SessionDescription as stdin
 

@@ -20,7 +20,7 @@ cargo build --example play-from-disk-vpx
 
 ### Open play-from-disk-vpx example page
 
-[jsfiddle.net](https://jsfiddle.net/9s10amwL/) you should see two text-areas and a 'Start Session' button
+[jsfiddle.net](https://jsfiddle.net/8kup9mvn/) you should see two text-areas and a 'Start Session' button
 
 ### Run play-from-disk-vpx with your browsers SessionDescription as stdin
 

@@ -12,7 +12,7 @@ cargo build --example data-channels
 
 ### Open data-channels example page
 
-[jsfiddle.net](https://jsfiddle.net/9tsx15mg/90/)
+[jsfiddle.net](https://jsfiddle.net/e41tgovp/)
 
 ### Run data-channels, with your browsers SessionDescription as stdin
 

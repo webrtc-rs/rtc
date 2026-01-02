@@ -12,7 +12,7 @@ cargo build --example reflect
 
 ### Open reflect example page
 
-[jsfiddle.net](https://jsfiddle.net/9jgukzt1/) you should see two text-areas and a 'Start Session' button.
+[jsfiddle.net](https://jsfiddle.net/g643ft1k/) you should see two text-areas and a 'Start Session' button.
 
 ### Run reflect, with your browsers SessionDescription as stdin
 

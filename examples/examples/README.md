@@ -17,8 +17,10 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [Data Channels Flow Control](data-channels-flow-control): Example data-channels-flow-control shows how to use flow
   control.
 - ✅ [Data Channels Offer Answer](data-channels-offer-answer): Example offer-answer is an example of two webrtc-rs
-  instances communicating
-  directly!
+  instances communicating directly!
+- [ ] [Data Channels Simple](TODO): Simple example of a WebRTC DataChannel using it as the signaling server.
+- [ ] [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
+  DataChannel support for real-time chat.
 
 ### Media API
 
@@ -28,13 +30,21 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   your browser from a file saved to disk.
 - ✅ [Play from Disk H26x](play-from-disk-h264): The play-from-disk-h26x example demonstrates how to send H264/H265 video
   to your browser from a file saved to disk.
-- ✅ [Save to Disk VPx](save-to-disk-vpx): The save-to-disk example shows how to record your webcam and save the
+- ✅ [Save to Disk VPx](save-to-disk-vpx): The save-to-disk-vpx example shows how to record your webcam and save the
   footage (VP8/VP9 for video, Opus for audio) to disk on the server side.
-- ✅ [Save to Disk H26x](save-to-disk-h26x): The save-to-disk example shows how to record your webcam and save the
+- ✅ [Save to Disk H26x](save-to-disk-h26x): The save-to-disk-h26x example shows how to record your webcam and save the
   footage (H264/H265 for video, Opus for audio) to disk on the server side.
+- [ ] [Save to Disk AV1](TODO): The save-to-disk-av1 is a simple application that shows how to save a video to disk
+  using AV1.
 - [ ] [Play from Disk Renegotiation](play-from-disk-renegotiation): The play-from-disk-renegotiation example is an
   extension of the play-from-disk example, but demonstrates how you can add/remove video tracks from an already
   negotiated PeerConnection.
+- [ ] [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
+  while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
+  media packets, but browser will recover them using the FEC packets and the delivered packets.
+- [ ] [Play from Disk Playlist Control](TODO): Streams Opus pages from multi or single track Ogg containers, exposes the
+  playlist over an SCTP DataChannel, and lets the browser hop between tracks while showing artist/title metadata parsed
+  from OpusTags.
 - [ ] [Insertable Streams](insertable-streams): The insertable-streams example demonstrates how webrtc-rs can be used to
   send E2E encrypted video and decrypt via insertable streams in the browser.
 - [ ] [Broadcast](broadcast): The broadcast example demonstrates how to broadcast a video to multiple peers. A
@@ -52,6 +62,10 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 
 ### Miscellaneous
 
+- [ ] [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
+- [ ] [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
+  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
+  browser, or pull the video back into OBS and GStreamer via WHEP.
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - [ ] [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
   single port. By default, it listens on a new port for every PeerConnection. webrtc-rs can be configured to use a

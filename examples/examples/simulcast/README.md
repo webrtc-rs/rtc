@@ -16,7 +16,7 @@ cargo build --example simulcast
 
 ### Open simulcast example page
 
-[jsfiddle.net](https://jsfiddle.net/rxk4bftc) you should see two text-areas and a 'Start Session' button.
+[jsfiddle.net](https://jsfiddle.net/tz4d5bhj) you should see two text-areas and a 'Start Session' button.
 
 ### Run simulcast, with your browsers SessionDescription as stdin
 

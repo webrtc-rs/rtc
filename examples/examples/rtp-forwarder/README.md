@@ -12,7 +12,7 @@ cargo build --example rtp-forwarder
 
 ### Open rtp-forwarder example page
 
-[jsfiddle.net](https://jsfiddle.net/1qva2zd8/) you should see your Webcam, two text-areas and a 'Start Session' button
+[jsfiddle.net](https://jsfiddle.net/fm7btvr3/) you should see your Webcam, two text-areas and a 'Start Session' button
 
 ### Run rtp-forwarder, with your browsers SessionDescription as stdin
 

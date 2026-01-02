@@ -13,7 +13,7 @@ cargo build --example save-to-disk-vpx
 
 ### Open save-to-disk-vpx example page
 
-[jsfiddle.net](https://jsfiddle.net/vfmcg8rk/1/) you should see your Webcam, two text-areas and a 'Start Session' button
+[jsfiddle.net](https://jsfiddle.net/2nwt1vjq/) you should see your Webcam, two text-areas and a 'Start Session' button
 
 ### Run save-to-disk-vpx, with your browsers SessionDescription as stdin
 

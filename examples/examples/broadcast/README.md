@@ -14,7 +14,7 @@ cargo build --example broadcast
 
 ### Open broadcast example page
 
-[jsfiddle.net](https://jsfiddle.net/1jc4go7v/) You should see two buttons 'Publish a Broadcast' and 'Join a Broadcast'
+[jsfiddle.net](https://jsfiddle.net/us4h58jx/) You should see two buttons 'Publish a Broadcast' and 'Join a Broadcast'
 
 ### Run Broadcast
 
