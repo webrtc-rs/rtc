@@ -3,7 +3,7 @@ use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
 use crate::media_stream::MediaStreamId;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::SSRC;
 
 pub type MediaStreamTrackId = String;
@@ -14,15 +14,16 @@ pub type MediaStreamTrackId = String;
 pub struct MediaStreamTrack {
     stream_id: MediaStreamId,
     track_id: MediaStreamTrackId,
+    label: String,
+    kind: RtpCodecKind,
     rid: Option<String>,
     ssrc: SSRC,
-    kind: RtpCodecKind,
-    label: String,
+    codec: RTCRtpCodec,
+
     muted: bool,
     enabled: bool,
     ready_state: MediaStreamTrackState,
     restrictable: bool,
-
     capabilities: MediaTrackCapabilities,
     constraints: MediaTrackConstraints,
     settings: MediaTrackSettings,
@@ -32,20 +33,22 @@ impl MediaStreamTrack {
     pub fn new(
         stream_id: MediaStreamId,
         track_id: MediaStreamTrackId,
+        label: String,
+        kind: RtpCodecKind,
         rid: Option<String>,
         ssrc: SSRC,
-        kind: RtpCodecKind,
-        label: String,
-        muted: bool,
+        codec: RTCRtpCodec,
     ) -> Self {
         Self {
             stream_id,
             track_id,
+            label,
             rid,
             ssrc,
             kind,
-            label,
-            muted,
+            codec,
+
+            muted: false,
             enabled: true,
             ready_state: MediaStreamTrackState::Live,
             restrictable: false,
@@ -62,6 +65,13 @@ impl MediaStreamTrack {
         &self.track_id
     }
 
+    pub fn label(&self) -> &String {
+        &self.label
+    }
+
+    pub fn kind(&self) -> RtpCodecKind {
+        self.kind
+    }
     pub fn rid(&self) -> Option<&str> {
         self.rid.as_deref()
     }
@@ -70,12 +80,8 @@ impl MediaStreamTrack {
         self.ssrc
     }
 
-    pub fn kind(&self) -> RtpCodecKind {
-        self.kind
-    }
-
-    pub fn label(&self) -> &String {
-        &self.label
+    pub fn codec(&self) -> &RTCRtpCodec {
+        &self.codec
     }
 
     pub fn enabled(&self) -> bool {

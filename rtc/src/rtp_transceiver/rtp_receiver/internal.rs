@@ -149,6 +149,10 @@ impl RTCRtpReceiverInternal {
         self.receive_codings = receive_codings;
     }
 
+    pub(crate) fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) {
+        self.receive_codecs = codecs;
+    }
+
     pub(crate) fn stop(&mut self) -> Result<()> {
         //TODO:
         Ok(())

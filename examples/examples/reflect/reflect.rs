@@ -161,37 +161,38 @@ async fn run(
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();
 
+    let audio_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 120,
+        ..Default::default()
+    };
+
+    let video_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_VP8.to_owned(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 96,
+        ..Default::default()
+    };
+
     // Setup the codecs you want to use.
     if audio {
-        media_engine.register_codec(
-            RTCRtpCodecParameters {
-                rtp_codec: RTCRtpCodec {
-                    mime_type: MIME_TYPE_OPUS.to_owned(),
-                    ..Default::default()
-                },
-                payload_type: 120,
-                ..Default::default()
-            },
-            RtpCodecKind::Audio,
-        )?;
+        media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
     }
 
     // We'll use a VP8 and Opus but you can also define your own
     if video {
-        media_engine.register_codec(
-            RTCRtpCodecParameters {
-                rtp_codec: RTCRtpCodec {
-                    mime_type: MIME_TYPE_VP8.to_owned(),
-                    clock_rate: 90000,
-                    channels: 0,
-                    sdp_fmtp_line: "".to_owned(),
-                    rtcp_feedback: vec![],
-                },
-                payload_type: 96,
-                ..Default::default()
-            },
-            RtpCodecKind::Video,
-        )?;
+        media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
     }
 
     // Create RTC peer connection configuration
@@ -210,22 +211,22 @@ async fn run(
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
     let mut rtp_receiver_id2ssrcs = HashMap::new();
-    let mut kinds = vec![];
+    let mut kind_codecs = HashMap::new();
     if audio {
-        kinds.push(RtpCodecKind::Audio);
+        kind_codecs.insert(RtpCodecKind::Audio, audio_codec);
     }
     if video {
-        kinds.push(RtpCodecKind::Video);
+        kind_codecs.insert(RtpCodecKind::Video, video_codec);
     };
-    for kind in kinds {
+    for (kind, codec) in kind_codecs {
         let output_track = MediaStreamTrack::new(
             format!("webrtc-rs-stream-id-{}", kind),
             format!("webrtc-rs-track-id-{}", kind),
+            format!("webrtc-rs-track-label-{}", kind),
+            kind,
             None,                  // rid
             rand::random::<u32>(), // ssrc
-            kind,
-            format!("track-{}", kind),
-            false,
+            codec.rtp_codec.clone(),
         );
 
         // Add this newly created track to the PeerConnection

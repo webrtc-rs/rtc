@@ -253,15 +253,15 @@ async fn run(
     if video_file.is_some() {
         kind_codecs.insert(RtpCodecKind::Video, (rand::random::<u32>(), video_codec));
     };
-    for (&kind, (ssrc, _)) in &kind_codecs {
+    for (&kind, (ssrc, codec)) in &kind_codecs {
         let output_track = MediaStreamTrack::new(
             format!("webrtc-rs-stream-id-{}", kind),
             format!("webrtc-rs-track-id-{}", kind),
+            format!("webrtc-rs-track-label-{}", kind),
+            kind,
             None, // rid
             *ssrc,
-            kind,
-            format!("track-{}", kind),
-            false,
+            codec.rtp_codec.clone(),
         );
 
         // Add this newly created track to the PeerConnection

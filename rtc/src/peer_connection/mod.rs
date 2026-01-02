@@ -47,7 +47,7 @@ use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::{
     find_by_mid, satisfy_type_and_direction, RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver,
@@ -488,6 +488,11 @@ impl RTCPeerConnection {
                             {
                                 transceiver.set_direction(RTCRtpTransceiverDirection::Recvonly);
                             }
+
+                            transceiver.set_codec_preferences_from_remote_description(
+                                media,
+                                &self.configuration.media_engine,
+                            )?;
 
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
@@ -982,13 +987,13 @@ impl RTCPeerConnection {
         let transceiver = match direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
                 let track = MediaStreamTrack::new(
-                    math_rand_alpha(16),   // MediaStreamId
-                    math_rand_alpha(16),   // MediaStreamTrackId
-                    None,                  // rid
-                    rand::random::<u32>(), // ssrc
+                    math_rand_alpha(16), // MediaStreamId
+                    math_rand_alpha(16), // MediaStreamTrackId
+                    math_rand_alpha(16), // Label
                     kind,
-                    math_rand_alpha(16),
-                    false,
+                    None,                   // rid
+                    rand::random::<u32>(),  // ssrc
+                    RTCRtpCodec::default(), //TODO:
                 );
                 self.new_transceiver_from_track(
                     track,

@@ -8,7 +8,7 @@ use crate::peer_connection::sdp::{
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
-    RTCRtpCodingParameters, RTCRtpRtxParameters,
+    RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
@@ -712,7 +712,7 @@ impl RTCPeerConnection {
     }
 
     pub(super) fn new_transceiver_from_track(
-        &self,
+        &mut self,
         track: MediaStreamTrack,
         mut init: RTCRtpTransceiverInit,
     ) -> Result<RTCRtpTransceiver> {
@@ -727,30 +727,38 @@ impl RTCPeerConnection {
     }
 
     pub(super) fn send_encodings_from_track(
-        &self,
+        &mut self,
         track: &MediaStreamTrack,
     ) -> Vec<RTCRtpEncodingParameters> {
-        let rtx_enabled = self.configuration.setting_engine.enable_sender_rtx
-            && self
-                .configuration
+        let (is_rtx_enabled, is_fec_enabled) = (
+            self.configuration
                 .media_engine
-                .get_codecs_by_kind(track.kind())
-                .iter()
-                .any(|codec| matches!(codec.rtp_codec.mime_type.split_once("/"), Some((_, "rtx"))));
+                .is_rtx_enabled(track.kind(), RTCRtpTransceiverDirection::Sendonly),
+            self.configuration
+                .media_engine
+                .is_fec_enabled(track.kind(), RTCRtpTransceiverDirection::Sendonly),
+        );
 
         vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 rid: track.rid().unwrap_or_default().into(),
                 ssrc: Some(track.ssrc()),
-                rtx: if rtx_enabled {
+                rtx: if is_rtx_enabled {
                     Some(RTCRtpRtxParameters {
                         ssrc: rand::random::<u32>(),
                     })
                 } else {
                     None
                 },
-                ..Default::default()
+                fec: if is_fec_enabled {
+                    Some(RTCRtpFecParameters {
+                        ssrc: rand::random::<u32>(),
+                    })
+                } else {
+                    None
+                },
             },
+            codec: track.codec().clone(),
             ..Default::default()
         }]
     }

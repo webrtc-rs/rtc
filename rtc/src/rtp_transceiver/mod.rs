@@ -109,13 +109,13 @@ impl RTCRtpTransceiver {
                 Some(RTCRtpReceiverInternal::new(
                     kind,
                     MediaStreamTrack::new(
-                        math_rand_alpha(16),   // MediaStreamId
-                        math_rand_alpha(16),   // MediaStreamTrackId
+                        math_rand_alpha(16),        // MediaStreamId
+                        math_rand_alpha(16),        // MediaStreamTrackId
+                        format!("remote {}", kind), // Label
+                        kind,
                         None,                  // rid
                         rand::random::<u32>(), // ssrc
-                        kind,
-                        format!("remote {}", kind),
-                        true,
+                        RTCRtpCodec::default(),
                     ),
                     vec![],
                 ))
@@ -209,6 +209,11 @@ impl RTCRtpTransceiver {
 
         if let Some(sender) = self.sender_mut() {
             sender.set_codec_preferences(codecs.clone());
+        }
+
+        // TODO: double check whether it is correct?
+        if let Some(receiver) = self.receiver_mut() {
+            receiver.set_codec_preferences(codecs.clone());
         }
 
         self.preferred_codecs = codecs;
