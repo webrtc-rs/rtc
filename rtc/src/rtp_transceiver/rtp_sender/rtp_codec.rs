@@ -176,3 +176,20 @@ pub(crate) fn codec_rtx_search(
 
     None
 }
+
+pub(crate) fn rtcp_feedback_intersection(
+    a: &[RTCPFeedback],
+    b: &[RTCPFeedback],
+) -> Vec<RTCPFeedback> {
+    let mut out = vec![];
+    for a_feedback in a {
+        for b_feeback in b {
+            if a_feedback.typ == b_feeback.typ && a_feedback.parameter == b_feeback.parameter {
+                out.push(a_feedback.clone());
+                break;
+            }
+        }
+    }
+
+    out
+}

@@ -1,26 +1,27 @@
 //TODO:#[cfg(test)]
 //mod media_engine_test;
 
-use sdp::description::session::SessionDescription;
-use std::collections::HashMap;
-use std::ops::Range;
-use std::time::{SystemTime, UNIX_EPOCH};
-use unicase::UniCase;
-
 use crate::peer_connection::sdp::{
     codecs_from_media_description, rtp_extensions_from_media_description,
 };
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::fmtp;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, CodecMatch, RTCRtpCodec, RtpCodecKind,
+    codec_parameters_fuzzy_search, rtcp_feedback_intersection, CodecMatch, RTCRtpCodec,
+    RtpCodecKind,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
 use crate::rtp_transceiver::{rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType};
+use sdp::description::session::SessionDescription;
+use sdp::MediaDescription;
 use shared::error::{Error, Result};
+use std::collections::HashMap;
+use std::ops::Range;
+use std::time::{SystemTime, UNIX_EPOCH};
+use unicase::UniCase;
 
 /// MIME_TYPE_H264 H264 MIME type.
 /// Note: Matching should be case insensitive.
@@ -537,7 +538,7 @@ impl MediaEngine {
         typ: RtpCodecKind,
         exact_matches: &[RTCRtpCodecParameters],
         partial_matches: &[RTCRtpCodecParameters],
-    ) -> Result<CodecMatch> {
+    ) -> Result<(RTCRtpCodecParameters, CodecMatch)> {
         let codecs = if typ == RtpCodecKind::Audio {
             &self.audio_codecs
         } else {
@@ -572,7 +573,8 @@ impl MediaEngine {
             }
 
             if apt_match == CodecMatch::None {
-                return Ok(CodecMatch::None); // not an error, we just ignore this codec we don't support
+                return Ok((RTCRtpCodecParameters::default(), CodecMatch::None));
+                // not an error, we just ignore this codec we don't support
             }
 
             // replace the apt value with the original codec's payload type
@@ -590,16 +592,39 @@ impl MediaEngine {
             }
 
             // if apt's media codec is partial match, then apt codec must be partial match too
-            let (_, mut match_type) =
+            let (local_codec, mut match_type) =
                 codec_parameters_fuzzy_search(&to_match_codec.rtp_codec, codecs);
             if match_type == CodecMatch::Exact && apt_match == CodecMatch::Partial {
                 match_type = CodecMatch::Partial;
             }
-            return Ok(match_type);
+            return Ok((local_codec, match_type));
         }
 
-        let (_, match_type) = codec_parameters_fuzzy_search(&remote_codec.rtp_codec, codecs);
-        Ok(match_type)
+        let (local_codec, match_type) =
+            codec_parameters_fuzzy_search(&remote_codec.rtp_codec, codecs);
+        Ok((local_codec, match_type))
+    }
+
+    // Update header extensions from a remote media section.
+    fn update_header_extension_from_media_section(
+        &mut self,
+        media: &MediaDescription,
+    ) -> Result<()> {
+        let typ = if media.media_name.media.to_lowercase() == "audio" {
+            RtpCodecKind::Audio
+        } else if media.media_name.media.to_lowercase() == "video" {
+            RtpCodecKind::Video
+        } else {
+            return Ok(());
+        };
+
+        let extensions = rtp_extensions_from_media_description(media)?;
+
+        for (extension, id) in extensions {
+            self.update_header_extension(id, extension.as_str(), typ)?;
+        }
+
+        Ok(())
     }
 
     /// Look up a header extension and enable if it exists
@@ -653,35 +678,82 @@ impl MediaEngine {
         &mut self,
         desc: &SessionDescription,
     ) -> Result<()> {
-        //TODO: update the code to keep the latest code change
         for media in &desc.media_descriptions {
-            let typ = if (!self.negotiated_audio || self.negotiate_multi_codecs)
-                && media.media_name.media.to_lowercase() == "audio"
-            {
-                self.negotiated_audio = true;
+            let typ = if media.media_name.media.to_lowercase() == "audio" {
                 RtpCodecKind::Audio
-            } else if (!self.negotiated_video || self.negotiate_multi_codecs)
-                && media.media_name.media.to_lowercase() == "video"
-            {
-                self.negotiated_video = true;
+            } else if media.media_name.media.to_lowercase() == "video" {
                 RtpCodecKind::Video
             } else {
-                continue;
+                RtpCodecKind::Unspecified
             };
 
-            let codecs = codecs_from_media_description(media)?;
+            if !self.negotiated_audio && typ == RtpCodecKind::Audio {
+                self.negotiated_audio = true;
+            } else if !self.negotiated_video && typ == RtpCodecKind::Video {
+                self.negotiated_video = true;
+            } else {
+                // update header extesions from remote sdp if codec is negotiated, Firefox
+                // would send updated header extension in renegotiation.
+                // e.g. publish first track without simucalst ->negotiated-> publish second track with simucalst
+                // then the two media secontions have different rtp header extensions in offer
+                self.update_header_extension_from_media_section(media)?;
 
-            let mut exact_matches = vec![]; //make([]RTPCodecParameters, 0, len(codecs))
-            let mut partial_matches = vec![]; //make([]RTPCodecParameters, 0, len(codecs))
+                if !self.negotiate_multi_codecs
+                    || (typ != RtpCodecKind::Audio && typ != RtpCodecKind::Video)
+                {
+                    continue;
+                }
+            }
 
-            for codec in codecs {
-                let match_type =
-                    self.match_remote_codec(&codec, typ, &exact_matches, &partial_matches)?;
+            let mut codecs = codecs_from_media_description(media)?;
+
+            let add_if_new = |existing_codecs: &mut Vec<RTCRtpCodecParameters>,
+                              codec: &RTCRtpCodecParameters| {
+                let mut found = false;
+                for existing_codec in existing_codecs.iter() {
+                    if existing_codec.payload_type == codec.payload_type {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    existing_codecs.push(codec.clone());
+                }
+            };
+
+            let mut exact_matches = vec![];
+            let mut partial_matches = vec![];
+
+            for remote_codec in &mut codecs {
+                let (local_codec, match_type) =
+                    self.match_remote_codec(remote_codec, typ, &exact_matches, &partial_matches)?;
+
+                remote_codec.rtp_codec.rtcp_feedback = rtcp_feedback_intersection(
+                    &local_codec.rtp_codec.rtcp_feedback,
+                    &remote_codec.rtp_codec.rtcp_feedback,
+                );
 
                 if match_type == CodecMatch::Exact {
-                    exact_matches.push(codec);
+                    add_if_new(&mut exact_matches, remote_codec);
                 } else if match_type == CodecMatch::Partial {
-                    partial_matches.push(codec);
+                    add_if_new(&mut partial_matches, remote_codec);
+                }
+            }
+            // second pass in case there were missed RTX codecs
+            for remote_codec in &mut codecs {
+                let (local_codec, match_type) =
+                    self.match_remote_codec(remote_codec, typ, &exact_matches, &partial_matches)?;
+
+                remote_codec.rtp_codec.rtcp_feedback = rtcp_feedback_intersection(
+                    &local_codec.rtp_codec.rtcp_feedback,
+                    &remote_codec.rtp_codec.rtcp_feedback,
+                );
+
+                if match_type == CodecMatch::Exact {
+                    add_if_new(&mut exact_matches, remote_codec);
+                } else if match_type == CodecMatch::Partial {
+                    add_if_new(&mut partial_matches, remote_codec);
                 }
             }
 
@@ -695,11 +767,7 @@ impl MediaEngine {
                 continue;
             }
 
-            let extensions = rtp_extensions_from_media_description(media)?;
-
-            for (extension, id) in extensions {
-                self.update_header_extension(id, &extension, typ)?;
-            }
+            self.update_header_extension_from_media_section(media)?;
         }
 
         Ok(())
