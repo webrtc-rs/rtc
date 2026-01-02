@@ -482,7 +482,7 @@ impl<R: Read> H26xReader<R> {
             if nal_found {
                 if self.is_hevc {
                     // H.265 NAL unit type is in the first byte, bits 1-6
-                    if self.nal_buffer.len() >= 1 {
+                    if !self.nal_buffer.is_empty() {
                         let nal_unit_type = H265NalUnitType::from((self.nal_buffer[0] & 0x7E) >> 1);
                         // Skip SEI NAL units
                         if nal_unit_type == H265NalUnitType::PrefixSEI

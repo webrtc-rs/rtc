@@ -108,7 +108,9 @@ impl<W: Write> H26xWriter<W> {
             }
         }
 
-        let payload = self.packet.depacketize(&Bytes::copy_from_slice(&packet.payload))?;
+        let payload = self
+            .packet
+            .depacketize(&Bytes::copy_from_slice(&packet.payload))?;
         self.writer.write_all(&payload)?;
 
         Ok(())
@@ -116,7 +118,9 @@ impl<W: Write> H26xWriter<W> {
 
     fn write_h265(&mut self, packet: &rtp::Packet) -> Result<()> {
         // Depacketize the H265 RTP packet
-        let _data = self.packet.depacketize(&Bytes::copy_from_slice(&packet.payload))?;
+        let _data = self
+            .packet
+            .depacketize(&Bytes::copy_from_slice(&packet.payload))?;
 
         if let H26xPacket::H265(h265_packet) = &self.packet {
             match h265_packet.payload() {
