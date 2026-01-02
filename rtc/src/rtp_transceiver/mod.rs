@@ -3,7 +3,8 @@
 
 use crate::media_stream::track::MediaStreamTrack;
 use crate::media_stream::MediaStreamId;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_RTX};
+use crate::peer_connection::sdp::codecs_from_media_description;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
@@ -11,9 +12,12 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use log::trace;
+use sdp::MediaDescription;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
+use std::collections::HashMap;
 use std::fmt;
+use unicase::UniCase;
 
 pub mod direction;
 pub(crate) mod fmtp;
@@ -30,7 +34,7 @@ pub type SSRC = u32;
 
 /// PayloadType identifies the format of the RTP payload and determines
 /// its interpretation by the application. Each codec in a RTP Session
-/// will have a different PayloadType
+/// will have a different payload_type
 /// <https://tools.ietf.org/html/rfc3550#section-3>
 pub type PayloadType = u8;
 
@@ -236,27 +240,93 @@ impl RTCRtpTransceiver {
         }
     }
 
-    /// Perform any subsequent actions after altering the transceiver's direction.
-    ///
-    /// After changing the transceiver's direction this method should be called to perform any
-    /// side-effects that results from the new direction, such as pausing/resuming the RTP receiver.
-    pub(crate) fn process_new_current_direction(
-        &self,
-        previous_direction: RTCRtpTransceiverDirection,
+    // match codecs from remote description, used when remote is offerer and creating a transceiver
+    // from remote description with the aim of keeping order of codecs in remote description.
+    pub(crate) fn set_codec_preferences_from_remote_description(
+        &mut self,
+        media: &MediaDescription,
+        media_engine: &MediaEngine,
     ) -> Result<()> {
-        if self.stopped {
-            return Ok(());
+        let mut remote_codecs = codecs_from_media_description(media)?;
+
+        // make a copy as this slice is modified
+        let mut left_codecs = media_engine.get_codecs_by_kind(self.kind);
+
+        // find codec matches between what is in remote description and
+        // the transceivers codecs and use payload type registered to
+        // media engine.
+        let mut payload_mapping = HashMap::new(); // for RTX re-mapping later
+        let mut filter_by_match = |match_filter: CodecMatch| -> Vec<RTCRtpCodecParameters> {
+            let mut filtered_codecs = vec![];
+            for remote_codec_idx in (0..remote_codecs.len()).rev() {
+                let remote_codec = &mut remote_codecs[remote_codec_idx];
+                if UniCase::new(remote_codec.rtp_codec.mime_type.as_str())
+                    == UniCase::new(MIME_TYPE_RTX)
+                {
+                    continue;
+                }
+
+                let (match_codec, match_type) =
+                    codec_parameters_fuzzy_search(remote_codec, &left_codecs);
+                if match_type == match_filter {
+                    payload_mapping.insert(remote_codec.payload_type, match_codec.payload_type);
+
+                    remote_codec.payload_type = match_codec.payload_type;
+                    filtered_codecs.push(remote_codec.clone());
+
+                    // removed matched codec for next round
+                    remote_codecs.remove(remote_codec_idx);
+
+                    let needle_fmtp = fmtp::parse(
+                        match_codec.rtp_codec.mime_type.as_str(),
+                        //match_codec.RTPCodecCapability.ClockRate,
+                        //match_codec.RTPCodecCapability.Channels,
+                        match_codec.rtp_codec.sdp_fmtp_line.as_str(),
+                    );
+
+                    for left_codec_idx in (0..left_codecs.len()).rev() {
+                        let left_codec = &left_codecs[left_codec_idx];
+                        let left_codec_fmtp = fmtp::parse(
+                            left_codec.rtp_codec.mime_type.as_str(),
+                            //left_codec.RTPCodecCapability.ClockRate,
+                            //left_codec.RTPCodecCapability.Channels,
+                            left_codec.rtp_codec.sdp_fmtp_line.as_str(),
+                        );
+
+                        if needle_fmtp.match_fmtp(&*left_codec_fmtp) {
+                            left_codecs.remove(left_codec_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            filtered_codecs
+        };
+
+        let mut filtered_codecs = filter_by_match(CodecMatch::Exact);
+        filtered_codecs.append(&mut filter_by_match(CodecMatch::Partial));
+
+        // find RTX associations and add those
+        for (remote_payload_type, media_engine_payload_type) in payload_mapping {
+            let remote_rtx = find_rtx_payload_type(remote_payload_type, &remote_codecs);
+            if remote_rtx.is_none() {
+                continue;
+            }
+
+            if let Some(media_engine_rtx) =
+                find_rtx_payload_type(media_engine_payload_type, &left_codecs)
+            {
+                for rtx_codec in &left_codecs {
+                    if rtx_codec.payload_type == media_engine_rtx {
+                        filtered_codecs.push(rtx_codec.clone());
+                        break;
+                    }
+                }
+            }
         }
 
-        let current_direction = self.current_direction;
-        if previous_direction != current_direction {
-            let mid = &self.mid;
-            trace!(
-                    "Processing transceiver({mid:?}) direction change from {previous_direction} to {current_direction}"
-                );
-        }
-
-        Ok(())
+        self.set_codec_preferences(filtered_codecs, media_engine)
     }
 }
 

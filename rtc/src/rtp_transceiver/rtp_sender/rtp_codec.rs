@@ -2,9 +2,9 @@ use std::fmt;
 
 use crate::peer_connection::configuration::media_engine::*;
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
-use crate::rtp_transceiver::fmtp;
 use crate::rtp_transceiver::rtp_sender::rtcp_parameters::RTCPFeedback;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::{fmtp, PayloadType};
 use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec
@@ -132,6 +132,21 @@ pub(crate) fn codec_parameters_fuzzy_search(
     }
 
     (RTCRtpCodecParameters::default(), CodecMatch::None)
+}
+
+// Given a CodecParameters find the RTX CodecParameters if one exists.
+pub(crate) fn find_rtx_payload_type(
+    needle: PayloadType,
+    haystack: &[RTCRtpCodecParameters],
+) -> Option<PayloadType> {
+    let apt_str = format!("apt={}", needle);
+    for c in haystack {
+        if apt_str == c.rtp_codec.sdp_fmtp_line {
+            return Some(c.payload_type);
+        }
+    }
+
+    None
 }
 
 pub(crate) fn codec_rtx_search(

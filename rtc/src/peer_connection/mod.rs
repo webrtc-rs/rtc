@@ -510,7 +510,10 @@ impl RTCPeerConnection {
                                 },
                             )?;
 
-                            //TODO: transceiver.setCodecPreferencesFromRemoteDescription(media);
+                            transceiver.set_codec_preferences_from_remote_description(
+                                media,
+                                &self.configuration.media_engine,
+                            )?;
 
                             if transceiver.mid().is_none() {
                                 transceiver.set_mid(mid_value.to_string())?;
