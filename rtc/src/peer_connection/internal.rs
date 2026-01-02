@@ -77,7 +77,7 @@ impl RTCPeerConnection {
         populate_sdp(
             d,
             &dtls_fingerprints,
-            &mut self.configuration.media_engine,
+            &self.configuration.media_engine,
             &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
@@ -217,7 +217,7 @@ impl RTCPeerConnection {
         populate_sdp(
             d,
             &dtls_fingerprints,
-            &mut self.configuration.media_engine,
+            &self.configuration.media_engine,
             &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
@@ -712,7 +712,7 @@ impl RTCPeerConnection {
     }
 
     pub(super) fn new_transceiver_from_track(
-        &mut self,
+        &self,
         track: MediaStreamTrack,
         mut init: RTCRtpTransceiverInit,
     ) -> Result<RTCRtpTransceiver> {
@@ -727,7 +727,7 @@ impl RTCPeerConnection {
     }
 
     pub(super) fn send_encodings_from_track(
-        &mut self,
+        &self,
         track: &MediaStreamTrack,
     ) -> Vec<RTCRtpEncodingParameters> {
         let (is_rtx_enabled, is_fec_enabled) = (

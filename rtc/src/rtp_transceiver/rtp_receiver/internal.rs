@@ -63,7 +63,7 @@ impl RTCRtpReceiverInternal {
     pub(crate) fn get_capabilities(
         &self,
         kind: RtpCodecKind,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> Option<RTCRtpCapabilities> {
         if kind == RtpCodecKind::Unspecified {
             return None;
@@ -94,7 +94,7 @@ impl RTCRtpReceiverInternal {
 
     pub(crate) fn get_parameters(
         &mut self,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> &RTCRtpReceiveParameters {
         if self.last_returned_parameters.is_none() {
             let mut rtp_parameters = media_engine

@@ -71,7 +71,7 @@ impl RTCRtpSenderInternal {
     pub(crate) fn get_capabilities(
         &self,
         kind: RtpCodecKind,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> Option<RTCRtpCapabilities> {
         if kind == RtpCodecKind::Unspecified {
             return None;
@@ -154,10 +154,7 @@ impl RTCRtpSenderInternal {
 
     /// The getParameters() method returns the RTCRtpSender object's current parameters for
     /// how track is encoded and transmitted to a remote RTCRtpReceiver.
-    pub(crate) fn get_parameters(
-        &mut self,
-        media_engine: &mut MediaEngine,
-    ) -> &RTCRtpSendParameters {
+    pub(crate) fn get_parameters(&mut self, media_engine: &MediaEngine) -> &RTCRtpSendParameters {
         if self.last_returned_parameters.is_none() {
             let mut rtp_parameters = media_engine
                 .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Sendonly);

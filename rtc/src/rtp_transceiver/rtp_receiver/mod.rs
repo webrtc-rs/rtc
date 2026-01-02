@@ -44,7 +44,7 @@ impl RTCRtpReceiver<'_> {
     pub fn get_capabilities(
         &self,
         kind: RtpCodecKind,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> Result<RTCRtpCapabilities> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
@@ -64,7 +64,7 @@ impl RTCRtpReceiver<'_> {
 
     pub fn get_parameters(
         &mut self,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> Result<&RTCRtpReceiveParameters> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]

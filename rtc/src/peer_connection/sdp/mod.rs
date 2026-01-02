@@ -395,7 +395,7 @@ pub(crate) struct AddTransceiverSdpParams {
 pub(crate) fn add_transceiver_sdp(
     mut d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
-    media_engine: &mut MediaEngine,
+    media_engine: &MediaEngine,
     transceivers: &mut [RTCRtpTransceiver],
     ice_params: &RTCIceParameters,
     candidates: &[RTCIceCandidate],
@@ -575,7 +575,7 @@ pub(crate) fn add_transceiver_sdp(
 
 fn add_sender_sdp(
     mut media: MediaDescription,
-    media_engine: &mut MediaEngine,
+    media_engine: &MediaEngine,
     transceiver: &mut RTCRtpTransceiver,
 ) -> MediaDescription {
     if let Some(sender) = transceiver.sender_mut() {
@@ -740,7 +740,7 @@ pub(crate) struct PopulateSdpParams {
 pub(crate) fn populate_sdp(
     mut d: SessionDescription,
     dtls_fingerprints: &[RTCDtlsFingerprint],
-    media_engine: &mut MediaEngine,
+    media_engine: &MediaEngine,
     transceivers: &mut [RTCRtpTransceiver],
     candidates: &[RTCIceCandidate],
     ice_params: &RTCIceParameters,

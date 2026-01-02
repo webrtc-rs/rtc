@@ -104,8 +104,7 @@ pub struct MediaEngine {
     pub(crate) negotiated_video_codecs: Vec<RTCRtpCodecParameters>,
     pub(crate) negotiated_audio_codecs: Vec<RTCRtpCodecParameters>,
 
-    header_extensions: Vec<MediaEngineHeaderExtension>,
-    proposed_header_extensions: HashMap<u16, MediaEngineHeaderExtension>,
+    pub(crate) header_extensions: Vec<MediaEngineHeaderExtension>,
     pub(crate) negotiated_header_extensions: HashMap<u16, MediaEngineHeaderExtension>,
 }
 
@@ -610,48 +609,31 @@ impl MediaEngine {
         extension: &str,
         typ: RtpCodecKind,
     ) -> Result<()> {
-        let (negotiated_header_extensions, proposed_header_extensions) = (
-            &mut self.negotiated_header_extensions,
-            &mut self.proposed_header_extensions,
-        );
+        if self.negotiated_header_extensions.is_empty() {
+            return Ok(());
+        }
 
         for local_extension in &self.header_extensions {
-            if local_extension.uri != extension {
-                continue;
-            }
-
-            let negotiated_ext = negotiated_header_extensions
-                .iter_mut()
-                .find(|(_, ext)| ext.uri == extension);
-
-            if let Some(n_ext) = negotiated_ext {
-                if *n_ext.0 == id {
-                    n_ext.1.is_video |= typ == RtpCodecKind::Video;
-                    n_ext.1.is_audio |= typ == RtpCodecKind::Audio;
+            if local_extension.uri == extension {
+                if let Some(existing_extension) = self.negotiated_header_extensions.get_mut(&id) {
+                    if local_extension.is_audio && typ == RtpCodecKind::Audio {
+                        existing_extension.is_audio = true;
+                    }
+                    if local_extension.is_video && typ == RtpCodecKind::Video {
+                        existing_extension.is_video = true;
+                    }
                 } else {
-                    let nid = n_ext.0;
-                    log::warn!("Invalid ext id mapping in update_header_extension. {extension} was negotiated as {nid}, but was {id} in call");
-                }
-            } else {
-                // We either only have a proposal or we have neither proposal nor a negotiated id
-                // Accept whatevers the peer suggests
-
-                if let Some(prev_ext) = negotiated_header_extensions.get(&id) {
-                    let prev_uri = &prev_ext.uri;
-                    log::warn!("Assigning {id} to {extension} would override previous assignment to {prev_uri}, no action taken");
-                } else {
-                    let h = MediaEngineHeaderExtension {
-                        uri: extension.to_owned(),
-                        is_audio: local_extension.is_audio && typ == RtpCodecKind::Audio,
-                        is_video: local_extension.is_video && typ == RtpCodecKind::Video,
-                        allowed_direction: local_extension.allowed_direction,
-                    };
-                    negotiated_header_extensions.insert(id, h);
+                    self.negotiated_header_extensions.insert(
+                        id,
+                        MediaEngineHeaderExtension {
+                            uri: extension.to_owned(),
+                            is_audio: local_extension.is_audio && typ == RtpCodecKind::Audio,
+                            is_video: local_extension.is_video && typ == RtpCodecKind::Video,
+                            allowed_direction: local_extension.allowed_direction,
+                        },
+                    );
                 }
             }
-
-            // Clear any proposals we had for this id
-            proposed_header_extensions.remove(&id);
         }
         Ok(())
     }
@@ -671,6 +653,7 @@ impl MediaEngine {
         &mut self,
         desc: &SessionDescription,
     ) -> Result<()> {
+        //TODO: update the code to keep the latest code change
         for media in &desc.media_descriptions {
             let typ = if (!self.negotiated_audio || self.negotiate_multi_codecs)
                 && media.media_name.media.to_lowercase() == "audio"
@@ -741,11 +724,13 @@ impl MediaEngine {
     }
 
     pub(crate) fn get_rtp_parameters_by_kind(
-        &mut self,
+        &self,
         typ: RtpCodecKind,
         direction: RTCRtpTransceiverDirection,
     ) -> RTCRtpParameters {
         let mut header_extensions = vec![];
+
+        let found_codecs = self.get_codecs_by_kind(typ);
 
         if self.negotiated_video && typ == RtpCodecKind::Video
             || self.negotiated_audio && typ == RtpCodecKind::Audio
@@ -763,83 +748,48 @@ impl MediaEngine {
                 }
             }
         } else {
-            let (proposed_header_extensions, negotiated_header_extensions) = (
-                &mut self.proposed_header_extensions,
-                &mut self.negotiated_header_extensions,
-            );
+            let mut media_header_extensions = HashMap::new();
 
-            for local_extension in &self.header_extensions {
-                let relevant = local_extension.is_matching_direction(direction)
-                    && (local_extension.is_audio && typ == RtpCodecKind::Audio
-                        || local_extension.is_video && typ == RtpCodecKind::Video);
-
-                if !relevant {
-                    continue;
+            for ext in &self.header_extensions {
+                let mut using_negotiated_id = false;
+                for (id, negotiated_extension) in &self.negotiated_header_extensions {
+                    if negotiated_extension.uri == ext.uri {
+                        using_negotiated_id = true;
+                        media_header_extensions.insert(*id, ext);
+                        break;
+                    }
                 }
+                if !using_negotiated_id {
+                    for id in 1..15 {
+                        let mut id_available = true;
+                        if media_header_extensions.contains_key(&id) {
+                            id_available = false
+                        }
+                        if id_available && !self.negotiated_header_extensions.contains_key(&id) {
+                            media_header_extensions.insert(id, ext);
+                            break;
+                        }
+                    }
+                }
+            }
 
-                if let Some((id, negotiated_extension)) = negotiated_header_extensions
-                    .iter_mut()
-                    .find(|(_, e)| e.uri == local_extension.uri)
+            for (id, e) in media_header_extensions {
+                if e.is_matching_direction(direction)
+                    && (e.is_audio && typ == RtpCodecKind::Audio
+                        || e.is_video && typ == RtpCodecKind::Video)
                 {
-                    // We have previously negotiated this extension, make sure to record it as
-                    // active for the current type
-                    negotiated_extension.is_audio |= typ == RtpCodecKind::Audio;
-                    negotiated_extension.is_video |= typ == RtpCodecKind::Video;
-
-                    header_extensions.push(RTCRtpHeaderExtensionParameters {
-                        id: *id,
-                        uri: negotiated_extension.uri.clone(),
-                        ..Default::default()
-                    });
-
-                    continue;
-                }
-
-                if let Some((id, negotiated_extension)) = proposed_header_extensions
-                    .iter_mut()
-                    .find(|(_, e)| e.uri == local_extension.uri)
-                {
-                    // We have previously proposed this extension, re-use it
-                    header_extensions.push(RTCRtpHeaderExtensionParameters {
-                        id: *id,
-                        uri: negotiated_extension.uri.clone(),
-                        ..Default::default()
-                    });
-
-                    continue;
-                }
-
-                // Figure out which (unused id) to propose.
-                let id = VALID_EXT_IDS.clone().find(|id| {
-                    !negotiated_header_extensions.keys().any(|nid| nid == id)
-                        && !proposed_header_extensions.keys().any(|pid| pid == id)
-                });
-
-                if let Some(id) = id {
-                    proposed_header_extensions.insert(
-                        id,
-                        MediaEngineHeaderExtension {
-                            uri: local_extension.uri.clone(),
-                            is_audio: local_extension.is_audio,
-                            is_video: local_extension.is_video,
-                            allowed_direction: local_extension.allowed_direction,
-                        },
-                    );
-
                     header_extensions.push(RTCRtpHeaderExtensionParameters {
                         id,
-                        uri: local_extension.uri.clone(),
+                        uri: e.uri.clone(),
                         ..Default::default()
-                    });
-                } else {
-                    log::warn!("No available RTP extension ID for {}", local_extension.uri);
+                    })
                 }
             }
         }
 
         RTCRtpParameters {
             header_extensions,
-            codecs: self.get_codecs_by_kind(typ),
+            codecs: found_codecs,
             ..Default::default()
         }
     }
@@ -870,7 +820,7 @@ impl MediaEngine {
     }
 
     pub(crate) fn is_rtx_enabled(
-        &mut self,
+        &self,
         kind: RtpCodecKind,
         direction: RTCRtpTransceiverDirection,
     ) -> bool {
@@ -884,7 +834,7 @@ impl MediaEngine {
     }
 
     pub(crate) fn is_fec_enabled(
-        &mut self,
+        &self,
         kind: RtpCodecKind,
         direction: RTCRtpTransceiverDirection,
     ) -> bool {

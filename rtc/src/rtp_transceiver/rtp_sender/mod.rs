@@ -56,7 +56,7 @@ impl RTCRtpSender<'_> {
     pub fn get_capabilities(
         &self,
         kind: RtpCodecKind,
-        media_engine: &mut MediaEngine,
+        media_engine: &MediaEngine,
     ) -> Result<Option<RTCRtpCapabilities>> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
@@ -94,10 +94,7 @@ impl RTCRtpSender<'_> {
 
     /// The getParameters() method returns the RTCRtpSender object's current parameters for
     /// how track is encoded and transmitted to a remote RTCRtpReceiver.
-    pub fn get_parameters(
-        &mut self,
-        media_engine: &mut MediaEngine,
-    ) -> Result<&RTCRtpSendParameters> {
+    pub fn get_parameters(&mut self, media_engine: &MediaEngine) -> Result<&RTCRtpSendParameters> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
