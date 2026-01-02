@@ -1,113 +1,97 @@
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::Write;
-use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use clap::{AppSettings, Arg, Command};
-use tokio::sync::{Mutex, Notify};
-use tokio::time::Duration;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9};
-use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::media::io::ivf_reader::IVFFileHeader;
-use webrtc::media::io::ivf_writer::IVFWriter;
-use webrtc::media::io::ogg_writer::OggWriter;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use webrtc::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters, RtpCodecKind,
+use bytes::BytesMut;
+use clap::Parser;
+use env_logger::Target;
+use log::{error, trace};
+use rtc::media::io::ivf_reader::IVFFileHeader;
+use rtc::media::io::ivf_writer::IVFWriter;
+use rtc::media::io::ogg_writer::OggWriter;
+use rtc::media::io::Writer;
+use rtc::peer_connection::configuration::media_engine::{
+    MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9,
 };
-use webrtc::track::track_remote::TrackRemote;
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
+use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::dtls::role::DTLSRole;
+use rtc::peer_connection::transport::ice::candidate::{
+    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+};
+use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiverInit};
+use rtc::sansio::Protocol;
+use rtc::shared::error::Error;
+use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::{fs, fs::OpenOptions, io::Write as IoWrite, str::FromStr};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{channel, Receiver};
 
-async fn save_to_disk(
-    writer: Arc<Mutex<dyn webrtc::media::io::Writer + Send + Sync>>,
-    track: Arc<TrackRemote>,
-    notify: Arc<Notify>,
-) -> Result<()> {
-    loop {
-        tokio::select! {
-            result = track.read_rtp() => {
-                if let Ok((rtp_packet, _)) = result {
-                    let mut w = writer.lock().await;
-                    w.write_rtp(&rtp_packet)?;
-                }else{
-                    println!("file closing begin after read_rtp error");
-                    let mut w = writer.lock().await;
-                    if let Err(err) = w.close() {
-                        println!("file close err: {err}");
-                    }
-                    println!("file closing end after read_rtp error");
-                    return Ok(());
-                }
-            }
-            _ = notify.notified() => {
-                println!("file closing begin after notified");
-                let mut w = writer.lock().await;
-                if let Err(err) = w.close() {
-                    println!("file close err: {err}");
-                }
-                println!("file closing end after notified");
-                return Ok(());
-            }
-        }
-    }
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
+
+#[derive(Parser)]
+#[command(name = "save-to-disk-vpx")]
+#[command(author = "Rain Liu <yliu@webrtc.rs>")]
+#[command(version = "0.1.0")]
+#[command(about = "An example of save-to-disk-vpx.")]
+struct Cli {
+    #[arg(short, long)]
+    client: bool,
+    #[arg(short, long)]
+    debug: bool,
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    input_sdp_file: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    output_log_file: String,
+    #[arg(long, default_value_t = format!("127.0.0.1"))]
+    host: String,
+    #[arg(long, default_value_t = 0)]
+    port: u16,
+    #[arg(short, long)]
+    video: Option<String>,
+    #[arg(short, long)]
+    audio: Option<String>,
+    #[arg(long)]
+    vp9: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut app = Command::new("save-to-disk-vpx")
-        .version("0.1.0")
-        .author("Rain Liu <yliu@webrtc.rs>")
-        .about("An example of save-to-disk-vpx.")
-        .setting(AppSettings::DeriveDisplayOrder)
-        .subcommand_negates_reqs(true)
-        .arg(
-            Arg::new("FULLHELP")
-                .help("Prints more detailed help information")
-                .long("fullhelp"),
-        )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .short('d')
-                .help("Prints debug log information"),
-        )
-        .arg(
-            Arg::new("vp9")
-                .long("vp9")
-                .help("Save VP9 to disk. Default: VP8"),
-        )
-        .arg(
-            Arg::new("video")
-                .required_unless_present("FULLHELP")
-                .takes_value(true)
-                .short('v')
-                .long("video")
-                .help("Video file to be streaming."),
-        )
-        .arg(
-            Arg::new("audio")
-                .required_unless_present("FULLHELP")
-                .takes_value(true)
-                .short('a')
-                .long("audio")
-                .help("Audio file to be streaming."),
-        );
-
-    let matches = app.clone().get_matches();
-
-    if matches.is_present("FULLHELP") {
-        app.print_long_help().unwrap();
-        std::process::exit(0);
-    }
-
-    let debug = matches.is_present("debug");
-    if debug {
+    let cli = Cli::parse();
+    let host = cli.host;
+    let port = cli.port;
+    let is_client = cli.client;
+    let input_sdp_file = cli.input_sdp_file;
+    let output_log_file = cli.output_log_file;
+    let log_level = log::LevelFilter::from_str(&cli.log_level)?;
+    let is_vp9 = cli.vp9;
+    let video_file = cli.video;
+    let audio_file = cli.audio;
+    if cli.debug {
         env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
             .format(|buf, record| {
                 writeln!(
                     buf,
@@ -119,17 +103,199 @@ async fn main() -> Result<()> {
                     record.args()
                 )
             })
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log_level)
             .init();
     }
 
-    let is_vp9 = matches.is_present("vp9");
-    let video_file = matches.value_of("video").unwrap();
-    let audio_file = matches.value_of("audio").unwrap();
+    let (stop_tx, stop_rx) = channel::<()>(1);
 
-    let ivf_writer: Arc<Mutex<dyn webrtc::media::io::Writer + Send + Sync>> =
-        Arc::new(Mutex::new(IVFWriter::new(
-            File::create(video_file)?,
+    println!("Press Ctrl-C to stop");
+    std::thread::spawn(move || {
+        let mut stop_tx = Some(stop_tx);
+        ctrlc::set_handler(move || {
+            if let Some(stop_tx) = stop_tx.take() {
+                let _ = stop_tx.try_send(());
+            }
+        })
+        .expect("Error setting Ctrl-C handler");
+    });
+
+    if let Err(err) = run(
+        stop_rx,
+        host,
+        port,
+        input_sdp_file,
+        is_client,
+        video_file,
+        audio_file,
+        is_vp9,
+    )
+    .await
+    {
+        eprintln!("run got error: {}", err);
+    }
+
+    Ok(())
+}
+
+async fn run(
+    mut stop_rx: Receiver<()>,
+    host: String,
+    port: u16,
+    input_sdp_file: String,
+    is_client: bool,
+    video_file: Option<String>,
+    audio_file: Option<String>,
+    is_vp9: bool,
+) -> Result<()> {
+    // Everything below is the RTC API! Thanks for using it ❤️.
+    let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
+    let local_addr = socket.local_addr()?;
+
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_answering_dtls_role(if is_client {
+        DTLSRole::Client
+    } else {
+        DTLSRole::Server
+    })?;
+
+    // Create a MediaEngine object to configure the supported codec
+    let mut media_engine = MediaEngine::default();
+
+    let audio_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 111,
+        ..Default::default()
+    };
+
+    let video_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: if is_vp9 {
+                MIME_TYPE_VP9.to_owned()
+            } else {
+                MIME_TYPE_VP8.to_owned()
+            },
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: if is_vp9 { 98 } else { 96 },
+        ..Default::default()
+    };
+
+    // Setup the codecs you want to use.
+    if audio_file.is_some() {
+        media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
+    }
+
+    // We'll use a VPx and Opus but you can also define your own
+    if video_file.is_some() {
+        media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
+    }
+
+    /*TODO:
+    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
+    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
+    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
+    // for each PeerConnection.
+    let mut registry = Registry::new();
+
+    // Use the default set of Interceptors
+    registry = register_default_interceptors(registry, &mut m)?;
+    */
+
+    // Create RTC peer connection configuration
+    let config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_string()],
+            ..Default::default()
+        }])
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .build();
+
+    // Create a new RTCPeerConnection
+    let mut peer_connection = RTCPeerConnection::new(config)?;
+
+    // Allow us to receive 1 audio track, and 1 video track
+    if audio_file.is_some() {
+        peer_connection.add_transceiver_from_kind(
+            RtpCodecKind::Audio,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            }),
+        )?;
+    }
+    if video_file.is_some() {
+        peer_connection.add_transceiver_from_kind(
+            RtpCodecKind::Video,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            }),
+        )?;
+    }
+
+    // Wait for the offer to be pasted
+    print!("Paste offer from browser and press Enter: ");
+
+    let line = if input_sdp_file.is_empty() {
+        signal::must_read_stdin()?
+    } else {
+        fs::read_to_string(&input_sdp_file)?
+    };
+    let desc_data = signal::decode(line.as_str())?;
+    let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+    println!("Offer received: {}", offer);
+
+    // Set the remote SessionDescription
+    peer_connection.set_remote_description(offer)?;
+
+    // Add local candidate
+    let candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
+    peer_connection.add_local_candidate(local_candidate_init)?;
+
+    // Create an answer
+    let answer = peer_connection.create_answer(None)?;
+
+    // Sets the LocalDescription
+    peer_connection.set_local_description(answer)?;
+
+    // Output the answer in base64 so we can paste it in browser
+    if let Some(local_desc) = peer_connection.local_description() {
+        println!("answer created: {}", local_desc);
+        let json_str = serde_json::to_string(local_desc)?;
+        let b64 = signal::encode(&json_str);
+        println!("{b64}");
+    } else {
+        println!("generate local_description failed!");
+        return Err(Error::ErrPeerConnLocalDescriptionNil.into());
+    }
+
+    println!("listening {}...", socket.local_addr()?);
+
+    let mut ivf_writer: Option<IVFWriter<File>> = if let Some(ref video_file_name) = video_file {
+        Some(IVFWriter::new(
+            File::create(video_file_name)?,
             &IVFFileHeader {
                 signature: *b"DKIF",                               // 0-3
                 version: 0,                                        // 4-5
@@ -142,207 +308,174 @@ async fn main() -> Result<()> {
                 num_frames: 900,                                   // 24-27
                 unused: 0,                                         // 28-31
             },
-        )?));
-    let ogg_writer: Arc<Mutex<dyn webrtc::media::io::Writer + Send + Sync>> = Arc::new(Mutex::new(
-        OggWriter::new(File::create(audio_file)?, 48000, 2)?,
-    ));
-
-    // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
-
-    // Create a MediaEngine object to configure the supported codec
-    let mut m = MediaEngine::default();
-
-    // Setup the codecs you want to use.
-    // We'll use a VP8/VP9 and Opus but you can also define your own
-    m.register_codec(
-        RTCRtpCodecParameters {
-            capability: RTCRtpCodecCapability {
-                mime_type: if is_vp9 {
-                    MIME_TYPE_VP9.to_owned()
-                } else {
-                    MIME_TYPE_VP8.to_owned()
-                },
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: "".to_owned(),
-                rtcp_feedback: vec![],
-            },
-            payload_type: if is_vp9 { 98 } else { 96 },
-            ..Default::default()
-        },
-        RtpCodecKind::Video,
-    )?;
-
-    m.register_codec(
-        RTCRtpCodecParameters {
-            capability: RTCRtpCodecCapability {
-                mime_type: MIME_TYPE_OPUS.to_owned(),
-                clock_rate: 48000,
-                channels: 2,
-                sdp_fmtp_line: "".to_owned(),
-                rtcp_feedback: vec![],
-            },
-            payload_type: 111,
-            ..Default::default()
-        },
-        RtpCodecKind::Audio,
-    )?;
-
-    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-    // for each PeerConnection.
-    let mut registry = Registry::new();
-
-    // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m)?;
-
-    // Create the API object with the MediaEngine
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
+        )?)
+    } else {
+        None
     };
 
-    // Create a new RTCPeerConnection
-    let peer_connection = Arc::new(api.new_peer_connection(config).await?);
+    let mut ogg_writer: Option<OggWriter<File>> = if let Some(ref audio_file_name) = audio_file {
+        Some(OggWriter::new(File::create(audio_file_name)?, 48000, 2)?)
+    } else {
+        None
+    };
 
-    // Allow us to receive 1 audio track, and 1 video track
-    peer_connection
-        .add_transceiver_from_kind(RtpCodecKind::Audio, None)
-        .await?;
-    peer_connection
-        .add_transceiver_from_kind(RtpCodecKind::Video, None)
-        .await?;
+    // Track which receiver_id maps to which track kind
+    let mut receiver_id_to_kind: HashMap<RTCRtpReceiverId, RtpCodecKind> = HashMap::new();
 
-    let notify_tx = Arc::new(Notify::new());
-    let notify_rx = notify_tx.clone();
+    let mut buf = vec![0; 2000];
+    'EventLoop: loop {
+        while let Some(msg) = peer_connection.poll_write() {
+            match socket.send_to(&msg.message, msg.transport.peer_addr).await {
+                Ok(n) => {
+                    trace!(
+                        "socket write to {} with bytes {}",
+                        msg.transport.peer_addr,
+                        n
+                    );
+                }
+                Err(err) => {
+                    error!(
+                        "socket write to {} with error {}",
+                        msg.transport.peer_addr, err
+                    );
+                }
+            }
+        }
 
-    // Set a handler for when a new remote track starts, this handler saves buffers to disk as
-    // an ivf file, since we could have multiple video tracks we provide a counter.
-    // In your application this is where you would handle/process video
-    let pc = Arc::downgrade(&peer_connection);
-    peer_connection.on_track(Box::new(move |track, _, _| {
-        // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
-        let media_ssrc = track.ssrc();
-        let pc2 = pc.clone();
-        tokio::spawn(async move {
-            let mut result = Result::<usize>::Ok(0);
-            while result.is_ok() {
-                let timeout = tokio::time::sleep(Duration::from_secs(3));
-                tokio::pin!(timeout);
+        while let Some(event) = peer_connection.poll_event() {
+            match event {
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(ice_connection_state) => {
+                    println!("ICE Connection State has changed: {ice_connection_state}");
+                }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(peer_connection_state) => {
+                    println!("Peer Connection State has changed: {peer_connection_state}");
+                    if peer_connection_state == RTCPeerConnectionState::Failed {
+                        println!("Peer Connection has gone to failed! Exiting...");
+                        println!("Done writing media files");
+                        break 'EventLoop;
+                    } else if peer_connection_state == RTCPeerConnectionState::Connected {
+                        println!("Ctrl+C the remote client to stop the demo");
+                    }
+                }
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event.packet {
+                    RTCRtpRtcpPacket::Rtp(packet) => {
+                        let rtp_receiver = peer_connection
+                            .rtp_receiver(track_event.receiver_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
+                        let track = rtp_receiver.track()?;
 
-                tokio::select! {
-                    _ = timeout.as_mut() =>{
-                        if let Some(pc) = pc2.upgrade(){
-                            result = pc.write_rtcp(&[Box::new(PictureLossIndication{
-                                sender_ssrc: 0,
-                                media_ssrc,
-                            })]).await.map_err(Into::into);
-                        }else{
-                            break;
+                        // Record the track kind for this receiver on first packet
+                        if !receiver_id_to_kind.contains_key(&track_event.receiver_id) {
+                            let kind = track.kind();
+                            receiver_id_to_kind.insert(track_event.receiver_id, kind);
+
+                            let codec = track.codec();
+                            let mime_type = codec.mime_type.to_lowercase();
+
+                            if mime_type == MIME_TYPE_OPUS.to_lowercase() {
+                                println!(
+                                    "Got Opus track, saving to disk as {} (48 kHz, 2 channels)",
+                                    audio_file.as_ref().ok_or(Error::ErrFileNotOpened)?
+                                );
+                            } else if mime_type == MIME_TYPE_VP8.to_lowercase()
+                                || mime_type == MIME_TYPE_VP9.to_lowercase()
+                            {
+                                println!(
+                                    "Got {} track, saving to disk as {}",
+                                    if is_vp9 { "VP9" } else { "VP8" },
+                                    video_file.as_ref().ok_or(Error::ErrFileNotOpened)?
+                                );
+                            }
+                        }
+
+                        // Write packet to appropriate file
+                        match receiver_id_to_kind.get(&track_event.receiver_id) {
+                            Some(RtpCodecKind::Audio) => {
+                                if let Some(ref mut writer) = ogg_writer {
+                                    writer.write_rtp(&packet)?;
+                                }
+                            }
+                            Some(RtpCodecKind::Video) => {
+                                if let Some(ref mut writer) = ivf_writer {
+                                    writer.write_rtp(&packet)?;
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                };
+                    RTCRtpRtcpPacket::Rtcp(_) => {
+                        // Ignore RTCP packets for this example
+                    }
+                },
+                _ => {}
             }
-        });
+        }
 
-        let notify_rx2 = Arc::clone(&notify_rx);
-        let ivf_writer2 = Arc::clone(&ivf_writer);
-        let ogg_writer2 = Arc::clone(&ogg_writer);
-        Box::pin(async move {
-            let codec = track.codec();
-            let mime_type = codec.capability.mime_type.to_lowercase();
-            if mime_type == MIME_TYPE_OPUS.to_lowercase() {
-                println!("Got Opus track, saving to disk as output.opus (48 kHz, 2 channels)");
-                tokio::spawn(async move {
-                    let _ = save_to_disk(ogg_writer2, track, notify_rx2).await;
-                });
-            } else if mime_type == MIME_TYPE_VP8.to_lowercase()
-                || mime_type == MIME_TYPE_VP9.to_lowercase()
-            {
-                println!(
-                    "Got {} track, saving to disk as output.ivf",
-                    if is_vp9 { "VP9" } else { "VP8" }
-                );
-                tokio::spawn(async move {
-                    let _ = save_to_disk(ivf_writer2, track, notify_rx2).await;
-                });
+        // Poll peer_connection to get next timeout
+        let eto = peer_connection
+            .poll_timeout()
+            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
+
+        let delay_from_now = eto
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::from_secs(0));
+        if delay_from_now.is_zero() {
+            peer_connection.handle_timeout(Instant::now())?;
+            continue;
+        }
+
+        let timer = tokio::time::sleep(delay_from_now);
+        tokio::pin!(timer);
+
+        tokio::select! {
+            biased;
+
+            _ = stop_rx.recv() => {
+                trace!("pipeline socket exit loop");
+                break 'EventLoop;
             }
-        })
-    }));
-
-    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    // Set the handler for ICE connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_ice_connection_state_change(Box::new(
-        move |connection_state: RTCIceConnectionState| {
-            println!("Connection State has changed {connection_state}");
-
-            if connection_state == RTCIceConnectionState::Connected {
-                println!("Ctrl+C the remote client to stop the demo");
-            } else if connection_state == RTCIceConnectionState::Failed {
-                notify_tx.notify_waiters();
-
-                println!("Done writing media files");
-
-                let _ = done_tx.try_send(());
+            _ = timer.as_mut() => {
+                peer_connection.handle_timeout(Instant::now())?;
             }
-            Box::pin(async {})
-        },
-    ));
-
-    // Wait for the offer to be pasted
-    let line = signal::must_read_stdin()?;
-    let desc_data = signal::decode(line.as_str())?;
-    let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
-
-    // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer).await?;
-
-    // Create an answer
-    let answer = peer_connection.create_answer(None).await?;
-
-    // Create channel that is blocked until ICE Gathering is complete
-    let mut gather_complete = peer_connection.gathering_complete_promise().await;
-
-    // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(answer).await?;
-
-    // Block until ICE Gathering is complete, disabling trickle ICE
-    // we do this because we only can exchange one signaling message
-    // in a production application you should exchange ICE Candidates via OnICECandidate
-    let _ = gather_complete.recv().await;
-
-    // Output the answer in base64 so we can paste it in browser
-    if let Some(local_desc) = peer_connection.local_description().await {
-        let json_str = serde_json::to_string(&local_desc)?;
-        let b64 = signal::encode(&json_str);
-        println!("{b64}");
-    } else {
-        println!("generate local_description failed!");
+            res = socket.recv_from(&mut buf) => {
+                match res {
+                    Ok((n, peer_addr)) => {
+                        trace!("socket read {} bytes", n);
+                        peer_connection.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&buf[..n]),
+                        })?;
+                    }
+                    Err(err) => {
+                        eprintln!("socket read error {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+        }
     }
 
-    println!("Press ctrl-c to stop");
-    tokio::select! {
-        _ = done_rx.recv() => {
-            println!("received done signal!");
+    // Close writers
+    if let Some(mut writer) = ivf_writer {
+        println!("Closing video file");
+        if let Err(err) = writer.close() {
+            println!("Error closing video file: {err}");
         }
-        _ = tokio::signal::ctrl_c() => {
-            println!();
+    }
+    if let Some(mut writer) = ogg_writer {
+        println!("Closing audio file");
+        if let Err(err) = writer.close() {
+            println!("Error closing audio file: {err}");
         }
-    };
+    }
 
-    peer_connection.close().await?;
+    peer_connection.close()?;
 
     Ok(())
 }
