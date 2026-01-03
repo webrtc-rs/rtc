@@ -4,6 +4,7 @@ use crate::peer_connection::configuration::media_engine::*;
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use crate::rtp_transceiver::rtp_sender::rtcp_parameters::RTCPFeedback;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::{fmtp, PayloadType};
 use shared::error::{Error, Result};
 
@@ -132,6 +133,27 @@ pub(crate) fn codec_parameters_fuzzy_search(
     }
 
     (RTCRtpCodecParameters::default(), CodecMatch::None)
+}
+
+pub(crate) fn encoding_parameters_fuzzy_search(
+    encodings: &[RTCRtpEncodingParameters],
+    haystack: &[RTCRtpCodecParameters],
+) -> (RTCRtpEncodingParameters, CodecMatch) {
+    let mut result = None;
+    for encoding in encodings {
+        let (_, codec_match_type) = codec_parameters_fuzzy_search(&encoding.codec, haystack);
+        if codec_match_type == CodecMatch::Exact {
+            return (encoding.clone(), codec_match_type);
+        } else if result.is_none() {
+            result = Some((encoding.clone(), CodecMatch::Partial));
+        }
+    }
+
+    if let Some((encoding, code_match_type)) = result {
+        (encoding, code_match_type)
+    } else {
+        (RTCRtpEncodingParameters::default(), CodecMatch::None)
+    }
 }
 
 // Given a CodecParameters find the RTX CodecParameters if one exists.

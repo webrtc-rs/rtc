@@ -47,7 +47,9 @@ use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    encoding_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
+};
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::{
     find_by_mid, satisfy_type_and_direction, RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver,
@@ -952,6 +954,12 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
+        if let Some(init) = init.as_ref() {
+            if !init.direction.has_send() {
+                return Err(Error::ErrInvalidDirection);
+            }
+        }
+
         let transceiver = self.new_transceiver_from_track(
             track,
             if let Some(init) = init {
@@ -978,34 +986,56 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        //TODO: https://github.com/webrtc-rs/rtc/issues/6
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addtransceiver
-        // Validate sendEncodings by running the following addTransceiver sendEncodings validation steps,
         let (direction, streams, send_encodings) = if let Some(init) = init {
+            if init.direction.has_send() && init.send_encodings.is_empty() {
+                return Err(Error::ErrInvalidDirection);
+            }
+
             (init.direction, init.streams, init.send_encodings)
         } else {
-            (RTCRtpTransceiverDirection::Sendrecv, vec![], vec![])
+            (RTCRtpTransceiverDirection::Recvonly, vec![], vec![])
         };
 
         let transceiver = match direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
-                let track = MediaStreamTrack::new(
-                    math_rand_alpha(16), // MediaStreamId
-                    math_rand_alpha(16), // MediaStreamTrackId
-                    math_rand_alpha(16), // Label
-                    kind,
-                    None,                   // rid
-                    rand::random::<u32>(),  // ssrc
-                    RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/6
-                );
-                self.new_transceiver_from_track(
-                    track,
-                    RTCRtpTransceiverInit {
-                        direction,
-                        streams,
-                        send_encodings,
-                    },
-                )?
+                let codecs = self.configuration.media_engine.get_codecs_by_kind(kind);
+                let (encoding, code_match_result) =
+                    encoding_parameters_fuzzy_search(&send_encodings, &codecs);
+                if code_match_result != CodecMatch::None {
+                    if encoding.rtp_coding_parameters.rid.is_empty()
+                        && encoding.rtp_coding_parameters.ssrc.is_none()
+                    {
+                        return Err(Error::ErrRTPSenderNoBaseEncoding);
+                    }
+
+                    let track = MediaStreamTrack::new(
+                        math_rand_alpha(16), // MediaStreamId
+                        math_rand_alpha(16), // MediaStreamTrackId
+                        math_rand_alpha(16), // Label
+                        kind,
+                        if encoding.rtp_coding_parameters.rid.is_empty() {
+                            None
+                        } else {
+                            Some(encoding.rtp_coding_parameters.rid)
+                        },
+                        if let Some(ssrc) = encoding.rtp_coding_parameters.ssrc {
+                            ssrc
+                        } else {
+                            rand::random::<u32>()
+                        },
+                        encoding.codec,
+                    );
+                    self.new_transceiver_from_track(
+                        track,
+                        RTCRtpTransceiverInit {
+                            direction,
+                            streams,
+                            send_encodings,
+                        },
+                    )?
+                } else {
+                    return Err(Error::ErrRTPSenderNoBaseEncoding);
+                }
             }
             RTCRtpTransceiverDirection::Recvonly => RTCRtpTransceiver::new(
                 kind,
