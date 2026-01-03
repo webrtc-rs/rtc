@@ -10,6 +10,7 @@ use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::track_event::RTCTrackEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -281,27 +282,33 @@ async fn run_broadcaster(
                         }
                     }
                     RTCTrackEvent::OnClose(_track_id) => {}
-                    RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
-                        packet_count += 1;
-                        if packet_count % 100 == 0 {
-                            debug!(
-                                "[Receiver] Broadcasting RTP packet #{} from track_id {}",
-                                packet_count, track_id
-                            );
-                        }
-                        // Broadcast the RTP packet directly to all viewers
-                        let _ = broadcast_tx.send(rtp_packet);
-                    }
-                    RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
-                        // Read incoming RTCP packets
-                        // Before these packets are returned they are processed by interceptors. For things
-                        // like NACK this needs to be called.
-                        // Handle RTCP if needed
-                        trace!("[Receiver] Received RTCP packets");
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = peer_connection.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                    packet_count += 1;
+                    if packet_count % 100 == 0 {
+                        debug!(
+                            "[Receiver] Broadcasting RTP packet #{} from track_id {}",
+                            packet_count, track_id
+                        );
+                    }
+                    // Broadcast the RTP packet directly to all viewers
+                    let _ = broadcast_tx.send(rtp_packet);
+                }
+                RTCMessage::RtcpPacket(_, _) => {
+                    // Read incoming RTCP packets
+                    // Before these packets are returned they are processed by interceptors. For things
+                    // like NACK this needs to be called.
+                    // Handle RTCP if needed
+                    trace!("[Receiver] Received RTCP packets");
+                }
+                RTCMessage::DataChannelMessage(_, _) => {}
             }
         }
 

@@ -15,6 +15,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -90,7 +91,7 @@ async fn main() -> Result<()> {
     }
 
     let (stop_tx, stop_rx) = broadcast::channel::<()>(1);
-    let (_message_tx, message_rx) = broadcast::channel::<RTCMessageInternal>(8);
+    let (_message_tx, message_rx) = broadcast::channel::<RTCMessage>(8);
     let (_event_tx, event_rx) = broadcast::channel::<RTCEvent>(8);
 
     println!("Press Ctrl-C to stop");
@@ -123,7 +124,7 @@ async fn main() -> Result<()> {
 
 async fn run(
     mut stop_rx: broadcast::Receiver<()>,
-    mut message_rx: broadcast::Receiver<RTCMessageInternal>,
+    mut message_rx: broadcast::Receiver<RTCMessage>,
     mut event_rx: broadcast::Receiver<RTCEvent>,
     host: String,
     port: u16,
@@ -251,13 +252,6 @@ async fn run(
                             println!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
                             data_channel_opened = Some(dc.id());
                         }
-                        RTCDataChannelEvent::OnMessage(channel_id, message) => {
-                            let dc = peer_connection
-                                .data_channel(channel_id)
-                                .ok_or(Error::ErrDataChannelClosed)?;
-                            let msg_str = String::from_utf8(message.data.to_vec())?;
-                            println!("Message from DataChannel '{}': '{}'", dc.label()?, msg_str);
-                        }
                         RTCDataChannelEvent::OnClose(channel_id) => {
                             println!("Data channel '{}' closed.", channel_id);
                             data_channel_opened = None;
@@ -266,6 +260,20 @@ async fn run(
                     }
                 }
                 _ => {}
+            }
+        }
+
+        while let Some(message) = peer_connection.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
+                    let dc = peer_connection
+                        .data_channel(channel_id)
+                        .ok_or(Error::ErrDataChannelClosed)?;
+                    let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
+                    println!("Message from DataChannel '{}': '{}'", dc.label()?, msg_str);
+                }
             }
         }
 

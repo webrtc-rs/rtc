@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     }
 
     let (stop_tx, stop_rx) = broadcast::channel::<()>(1);
-    let (_message_tx, message_rx) = broadcast::channel::<RTCMessageInternal>(8);
+    let (_message_tx, message_rx) = broadcast::channel::<RTCMessage>(8);
     let (_event_tx, event_rx) = broadcast::channel::<RTCEvent>(8);
 
     println!("Press Ctrl-C to stop");
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
 
 async fn run(
     mut stop_rx: broadcast::Receiver<()>,
-    mut message_rx: broadcast::Receiver<RTCMessageInternal>,
+    mut message_rx: broadcast::Receiver<RTCMessage>,
     mut event_rx: broadcast::Receiver<RTCEvent>,
     host: String,
     port: u16,

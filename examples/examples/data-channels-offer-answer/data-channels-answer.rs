@@ -18,6 +18,7 @@ use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
@@ -244,13 +245,21 @@ async fn main() -> Result<()> {
                             last_send = Instant::now();
                         }
                     }
-                    RTCDataChannelEvent::OnMessage(_channel_id, message) => {
-                        let msg_str = String::from_utf8(message.data.to_vec()).unwrap_or_default();
-                        println!("Message from DataChannel: '{}'", msg_str);
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = peer_connection.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    let msg_str =
+                        String::from_utf8(data_channel_message.data.to_vec()).unwrap_or_default();
+                    println!("Message from DataChannel: '{}'", msg_str);
+                }
             }
         }
 

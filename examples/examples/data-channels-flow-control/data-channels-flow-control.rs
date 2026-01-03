@@ -17,6 +17,7 @@ use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 
@@ -238,13 +239,21 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
                             throughput_start = SystemTime::now();
                             throughput_timer = Instant::now();
                         }
-                        RTCDataChannelEvent::OnMessage(_channel_id, message) => {
-                            total_bytes_received.fetch_add(message.data.len(), Ordering::Relaxed);
-                        }
                         _ => {}
                     }
                 }
                 _ => {}
+            }
+        }
+
+        while let Some(message) = responder.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    total_bytes_received
+                        .fetch_add(data_channel_message.data.len(), Ordering::Relaxed);
+                }
             }
         }
 

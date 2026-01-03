@@ -18,6 +18,7 @@ use rtc::peer_connection::configuration::media_engine::{
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::track_event::RTCTrackEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -351,65 +352,71 @@ async fn run(
                         track_id2_receiver_id.insert(init.track_id, init.receiver_id);
                     }
                     RTCTrackEvent::OnClose(_track_id) => {}
-                    RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
-                        let receiver_id = track_id2_receiver_id
-                            .get(&track_id)
-                            .ok_or(Error::ErrRTPReceiverNotExisted)?
-                            .clone();
-                        let rtp_receiver = peer_connection
-                            .rtp_receiver(receiver_id)
-                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                        let track = rtp_receiver
-                            .track(&track_id)?
-                            .ok_or(Error::ErrTrackNotExisted)?;
-
-                        // Record the track kind for this receiver on first packet
-                        if !receiver_id_to_kind.contains_key(&receiver_id) {
-                            let kind = track.kind();
-                            receiver_id_to_kind.insert(receiver_id, kind);
-
-                            let codec = track.codec();
-                            let mime_type = codec.mime_type.to_lowercase();
-
-                            if mime_type == MIME_TYPE_OPUS.to_lowercase() {
-                                println!(
-                                    "Got Opus track, saving to disk as {} (48 kHz, 2 channels)",
-                                    audio_file.as_ref().ok_or(Error::ErrFileNotOpened)?
-                                );
-                            } else if mime_type == MIME_TYPE_H264.to_lowercase()
-                                || mime_type == MIME_TYPE_HEVC.to_lowercase()
-                            {
-                                println!(
-                                    "Got {} track, saving to disk as {}",
-                                    if is_hevc { "H265" } else { "H264" },
-                                    video_file.as_ref().ok_or(Error::ErrFileNotOpened)?
-                                );
-                            }
-                        }
-
-                        // Write packet to appropriate file
-                        match receiver_id_to_kind.get(&receiver_id) {
-                            Some(RtpCodecKind::Audio) => {
-                                if let Some(ref mut writer) = audio_writer {
-                                    writer.write_rtp(&rtp_packet)?;
-                                }
-                            }
-                            Some(RtpCodecKind::Video) => {
-                                if let Some(ref mut writer) = video_writer {
-                                    writer.write_rtp(&rtp_packet)?;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
-                        // Read incoming RTCP packets
-                        // Before these packets are returned they are processed by interceptors. For things
-                        // like NACK this needs to be called.
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = peer_connection.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                    let receiver_id = track_id2_receiver_id
+                        .get(&track_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?
+                        .clone();
+                    let rtp_receiver = peer_connection
+                        .rtp_receiver(receiver_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?;
+                    let track = rtp_receiver
+                        .track(&track_id)?
+                        .ok_or(Error::ErrTrackNotExisted)?;
+
+                    // Record the track kind for this receiver on first packet
+                    if !receiver_id_to_kind.contains_key(&receiver_id) {
+                        let kind = track.kind();
+                        receiver_id_to_kind.insert(receiver_id, kind);
+
+                        let codec = track.codec();
+                        let mime_type = codec.mime_type.to_lowercase();
+
+                        if mime_type == MIME_TYPE_OPUS.to_lowercase() {
+                            println!(
+                                "Got Opus track, saving to disk as {} (48 kHz, 2 channels)",
+                                audio_file.as_ref().ok_or(Error::ErrFileNotOpened)?
+                            );
+                        } else if mime_type == MIME_TYPE_H264.to_lowercase()
+                            || mime_type == MIME_TYPE_HEVC.to_lowercase()
+                        {
+                            println!(
+                                "Got {} track, saving to disk as {}",
+                                if is_hevc { "H265" } else { "H264" },
+                                video_file.as_ref().ok_or(Error::ErrFileNotOpened)?
+                            );
+                        }
+                    }
+
+                    // Write packet to appropriate file
+                    match receiver_id_to_kind.get(&receiver_id) {
+                        Some(RtpCodecKind::Audio) => {
+                            if let Some(ref mut writer) = audio_writer {
+                                writer.write_rtp(&rtp_packet)?;
+                            }
+                        }
+                        Some(RtpCodecKind::Video) => {
+                            if let Some(ref mut writer) = video_writer {
+                                writer.write_rtp(&rtp_packet)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                RTCMessage::RtcpPacket(_, _) => {
+                    // Read incoming RTCP packets
+                    // Before these packets are returned they are processed by interceptors. For things
+                    // like NACK this needs to be called.
+                }
+                RTCMessage::DataChannelMessage(_, _) => {}
             }
         }
 
