@@ -20,7 +20,7 @@ use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTCMessageInternal, RTPMessage,
-    TaggedRTCMessageInternal, TrackMessage, TrackPacket,
+    TaggedRTCMessageInternal, TrackPacket,
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
@@ -235,17 +235,11 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
                     data_channel_event: DataChannelEvent::Message(data_channel_message),
                 }))
             }
-            RTCMessage::RtpPacket(track_id, rtp_packet) => {
-                RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
-                    track_id,
-                    track_packet: TrackPacket::Rtp(rtp_packet),
-                }))
+            RTCMessage::RtpPacket(_track_id, rtp_packet) => {
+                RTCMessageInternal::Rtp(RTPMessage::Rtp(rtp_packet))
             }
-            RTCMessage::RtcpPacket(track_id, rtcp_packet) => {
-                RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
-                    track_id,
-                    track_packet: TrackPacket::Rtcp(rtcp_packet),
-                }))
+            RTCMessage::RtcpPacket(_track_id, rtcp_packet) => {
+                RTCMessageInternal::Rtp(RTPMessage::Rtcp(rtcp_packet))
             }
         };
 
