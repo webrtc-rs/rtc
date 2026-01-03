@@ -39,7 +39,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   footage (H264/H265 for video, Opus for audio) to disk on the server side.
 - ✅ [Insertable Streams](insertable-streams): The insertable-streams example demonstrates how webrtc-rs can be used to
   send E2E encrypted video and decrypt via insertable streams in the browser.
-- ⌛ [Broadcast](broadcast): The broadcast example demonstrates how to broadcast a video to multiple peers. A
+- ✅ [Broadcast](broadcast): The broadcast example demonstrates how to broadcast a video to multiple peers. A
   broadcaster uploads the video once and the server forwards it to all other peers.
 - ⌛ [RTP Forwarder](rtp-forwarder): The rtp-forwarder example demonstrates how to forward your audio/video streams
   using RTP.

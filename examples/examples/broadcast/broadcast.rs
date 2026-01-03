@@ -17,6 +17,7 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
@@ -24,6 +25,7 @@ use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameter
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::str::FromStr;
@@ -99,11 +101,14 @@ async fn main() -> Result<()> {
     let (broadcast_tx, _) = tokio::sync::broadcast::channel::<rtp::Packet>(1000);
     let broadcast_tx = Arc::new(broadcast_tx);
 
-    // Channel for sharing codec information from receiver to viewers
-    let (codec_tx, _) = tokio::sync::broadcast::channel::<
-        rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec,
-    >(1);
-    let codec_tx = Arc::new(codec_tx);
+    // Use watch channel for codec - Option is needed because:
+    // 1. Watch channel requires an initial value (starts as None)
+    // 2. Viewers might connect before broadcaster receives OnTrack event
+    // 3. Viewers will wait for codec to become Some(codec)
+    let (codec_tx, codec_rx) = tokio::sync::watch::channel::<
+        Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
+    >(None);
+    let codec_rx = Arc::new(tokio::sync::Mutex::new(codec_rx));
 
     let (stop_tx, _stop_rx) = tokio::sync::broadcast::channel::<()>(1);
 
@@ -138,7 +143,7 @@ async fn main() -> Result<()> {
 
     // Handle additional viewer connections in main task
     // Each viewer gets its own thread with its own event loop
-    if let Err(err) = handle_viewers(sdp_chan_rx, broadcast_tx, codec_tx, stop_tx.clone()).await {
+    if let Err(err) = handle_viewers(sdp_chan_rx, broadcast_tx, codec_rx, stop_tx.clone()).await {
         eprintln!("Viewers handler error: {}", err);
     }
 
@@ -158,8 +163,8 @@ async fn run_broadcaster(
     mut stop_rx: tokio::sync::broadcast::Receiver<()>,
     offer: RTCSessionDescription,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<rtp::Packet>>,
-    codec_tx: Arc<
-        tokio::sync::broadcast::Sender<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
+    codec_tx: tokio::sync::watch::Sender<
+        Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
     >,
 ) -> Result<()> {
     use tokio::net::UdpSocket;
@@ -221,6 +226,8 @@ async fn run_broadcaster(
 
     let mut buf = vec![0; 2000];
     let mut packet_count = 0u64;
+    let mut pli_last_sent = Instant::now();
+    let mut rtp_receiver_id2ssrcs = HashMap::new();
 
     // This PeerConnection has its own event loop
     'EventLoop: loop {
@@ -267,7 +274,9 @@ async fn run_broadcaster(
                                     "[Receiver] Received track with codec: {}",
                                     codec.mime_type
                                 );
-                                let _ = codec_tx.send(codec);
+                                // Use watch channel to store codec - late viewers can get it
+                                let _ = codec_tx.send(Some(codec));
+                                rtp_receiver_id2ssrcs.insert(init.receiver_id, track.ssrc());
                             }
                         }
                     }
@@ -330,7 +339,29 @@ async fn run_broadcaster(
                 }
             }
             _ = timer.as_mut() => {
-                peer_connection.handle_timeout(Instant::now())?;
+                let now = Instant::now();
+                peer_connection.handle_timeout(now)?;
+
+                // Send PLI periodically (every 2 seconds) if we have media SSRC
+                if now > pli_last_sent + Duration::from_secs(2) {
+                    // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
+                    // This is a temporary fix until we implement incoming RTCP events,
+                    // then we would push a PLI only when a viewer requests it
+                    for (&receiver_id, &media_ssrc) in &rtp_receiver_id2ssrcs {
+
+                        let mut rtp_receiver = peer_connection
+                            .rtp_receiver(receiver_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
+
+                        debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
+                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                                        sender_ssrc: 0,
+                                        media_ssrc,
+                                })])?;
+                    }
+
+                    pli_last_sent = now;
+                }
             }
             res = socket.recv_from(&mut buf) => {
                 match res {
@@ -368,8 +399,12 @@ async fn run_broadcaster(
 async fn handle_viewers(
     mut sdp_chan_rx: Receiver<String>,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<rtp::Packet>>,
-    codec_tx: Arc<
-        tokio::sync::broadcast::Sender<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
+    codec_rx: Arc<
+        tokio::sync::Mutex<
+            tokio::sync::watch::Receiver<
+                Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
+            >,
+        >,
     >,
     stop_tx: tokio::sync::broadcast::Sender<()>,
 ) -> Result<()> {
@@ -398,7 +433,7 @@ async fn handle_viewers(
 
                 // Each viewer connection runs in its own thread with its own event loop
                 let broadcast_rx = broadcast_tx.subscribe();
-                let codec_rx = codec_tx.subscribe();
+                let codec_rx_clone = codec_rx.clone();
                 let viewer_stop_rx = stop_tx.subscribe();
                 let handle = std::thread::spawn(move || {
                     // Create a new tokio runtime for this thread
@@ -408,7 +443,7 @@ async fn handle_viewers(
                         .unwrap();
 
                     rt.block_on(async move {
-                        if let Err(err) = run_viewer(viewer_id, offer, broadcast_rx, codec_rx, viewer_stop_rx).await {
+                        if let Err(err) = run_viewer(viewer_id, offer, broadcast_rx, codec_rx_clone, viewer_stop_rx).await {
                             eprintln!("[Viewer {}] Error: {}", viewer_id, err);
                         }
                     });
@@ -444,8 +479,12 @@ async fn run_viewer(
     viewer_id: usize,
     offer: RTCSessionDescription,
     mut broadcast_rx: tokio::sync::broadcast::Receiver<rtp::Packet>,
-    mut codec_rx: tokio::sync::broadcast::Receiver<
-        rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec,
+    codec_rx: Arc<
+        tokio::sync::Mutex<
+            tokio::sync::watch::Receiver<
+                Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
+            >,
+        >,
     >,
     mut stop_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<()> {
@@ -476,10 +515,20 @@ async fn run_viewer(
         "[Viewer {}] Waiting for codec information from broadcaster...",
         viewer_id
     );
-    let rtp_codec = codec_rx
-        .recv()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to receive codec: {}", e))?;
+
+    // Use watch channel - get current value or wait for it
+    let mut rx = codec_rx.lock().await;
+    let rtp_codec = loop {
+        let codec_opt = rx.borrow_and_update().clone();
+        if let Some(codec) = codec_opt {
+            break codec;
+        }
+        // Wait for codec to be set
+        rx.changed()
+            .await
+            .map_err(|e| anyhow::anyhow!("Codec channel closed: {}", e))?;
+    };
+    drop(rx);
 
     println!(
         "[Viewer {}] Received codec: {}",
