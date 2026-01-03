@@ -737,7 +737,7 @@ impl RTCPeerConnection {
             if init.send_encodings.is_empty() {
                 init.send_encodings = self.send_encodings_from_track(&track);
             }
-            RTCRtpTransceiver::new(track.kind(), Some(track), init)
+            Ok(RTCRtpTransceiver::new(track.kind(), Some(track), init))
         }
     }
 

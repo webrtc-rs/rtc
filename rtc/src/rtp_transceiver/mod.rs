@@ -86,12 +86,8 @@ impl RTCRtpTransceiver {
         kind: RtpCodecKind,
         track: Option<MediaStreamTrack>,
         init: RTCRtpTransceiverInit,
-    ) -> Result<Self> {
-        if init.direction.has_send() && track.is_none() {
-            return Err(Error::ErrTrackNotExisted);
-        }
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             mid: None,
             kind,
             sender: if let Some(track) = track {
@@ -113,7 +109,7 @@ impl RTCRtpTransceiver {
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
-        })
+        }
     }
 
     /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
@@ -206,6 +202,10 @@ impl RTCRtpTransceiver {
         self.preferred_codecs = codecs;
 
         Ok(())
+    }
+
+    pub(crate) fn get_codec_preferences(&self) -> &[RTCRtpCodecParameters] {
+        &self.preferred_codecs
     }
 
     /// Codecs returns list of supported codecs

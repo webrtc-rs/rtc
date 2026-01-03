@@ -40,7 +40,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day
 #[command(name = "rtp-forwarder")]
 #[command(author = "Rusty Rain <y@liu.mx>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of RTP forwarding using sansio API")]
+#[command(about = "An example of RTP forwarder")]
 struct Cli {
     #[arg(short, long)]
     debug: bool,

@@ -1,53 +1,70 @@
-use std::io::Write;
-use std::sync::Arc;
-
 use anyhow::Result;
-use clap::{AppSettings, Arg, Command};
+use bytes::BytesMut;
+use clap::Parser;
+use env_logger::Target;
+use log::{debug, error, trace};
+use rtc::media_stream::track::MediaStreamTrack;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::ice::candidate::{
+    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
+};
+use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::rtp;
+use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
+use rtc::sansio::Protocol;
+use rtc::shared::marshal::Unmarshal;
+use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use signal;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::str::FromStr;
+use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_VP8};
-use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
-use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
-use webrtc::Error;
+
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day
+
+#[derive(Parser)]
+#[command(name = "rtp-to-webrtc")]
+#[command(author = "Rain Liu <yliu@webrtc.rs>")]
+#[command(version = "0.1.0")]
+#[command(about = "An example of rtp-to-webrtc")]
+struct Cli {
+    #[arg(short, long)]
+    debug: bool,
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    input_sdp_file: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    output_log_file: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut app = Command::new("rtp-forwarder")
-        .version("0.1.0")
-        .author("Rain Liu <yliu@webrtc.rs>")
-        .about("An example of rtp-forwarder.")
-        .setting(AppSettings::DeriveDisplayOrder)
-        .subcommand_negates_reqs(true)
-        .arg(
-            Arg::new("FULLHELP")
-                .help("Prints more detailed help information")
-                .long("fullhelp"),
-        )
-        .arg(
-            Arg::new("debug")
-                .long("debug")
-                .short('d')
-                .help("Prints debug log information"),
-        );
+    let cli = Cli::parse();
+    let input_sdp_file = cli.input_sdp_file;
+    let output_log_file = cli.output_log_file;
+    let log_level = log::LevelFilter::from_str(&cli.log_level)?;
 
-    let matches = app.clone().get_matches();
-
-    if matches.is_present("FULLHELP") {
-        app.print_long_help().unwrap();
-        std::process::exit(0);
-    }
-
-    let debug = matches.is_present("debug");
-    if debug {
+    if cli.debug {
         env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
             .format(|buf, record| {
                 writeln!(
                     buf,
@@ -59,162 +76,243 @@ async fn main() -> Result<()> {
                     record.args()
                 )
             })
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log_level)
             .init();
     }
 
-    // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
-
-    // Create a MediaEngine object to configure the supported codec
-    let mut m = MediaEngine::default();
-
-    m.register_default_codecs()?;
-
-    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-    // for each PeerConnection.
-    let mut registry = Registry::new();
-
-    // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m)?;
-
-    // Create the API object with the MediaEngine
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-
-    // Create a new RTCPeerConnection
-    let peer_connection = Arc::new(api.new_peer_connection(config).await?);
-
-    // Create Track that we send video back to browser on
-    let video_track = Arc::new(TrackLocalStaticRTP::new(
-        RTCRtpCodecCapability {
-            mime_type: MIME_TYPE_VP8.to_owned(),
-            ..Default::default()
-        },
-        "video".to_owned(),
-        "webrtc-rs".to_owned(),
-    ));
-
-    // Add this newly created track to the PeerConnection
-    let rtp_sender = peer_connection
-        .add_track(Arc::clone(&video_track) as Arc<dyn TrackLocal + Send + Sync>)
-        .await?;
-
-    // Read incoming RTCP packets
-    // Before these packets are returned they are processed by interceptors. For things
-    // like NACK this needs to be called.
-    tokio::spawn(async move {
-        let mut rtcp_buf = vec![0u8; 1500];
-        while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-        Result::<()>::Ok(())
-    });
-
-    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    let done_tx1 = done_tx.clone();
-    // Set the handler for ICE connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_ice_connection_state_change(Box::new(
-        move |connection_state: RTCIceConnectionState| {
-            println!("Connection State has changed {connection_state}");
-            if connection_state == RTCIceConnectionState::Failed {
-                let _ = done_tx1.try_send(());
-            }
-            Box::pin(async {})
-        },
-    ));
-
-    let done_tx2 = done_tx.clone();
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-
-        if s == RTCPeerConnectionState::Failed {
-            // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-            // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-            // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-            println!("Peer Connection has gone to failed exiting: Done forwarding");
-            let _ = done_tx2.try_send(());
-        }
-
-        Box::pin(async {})
-    }));
-
     // Wait for the offer to be pasted
-    let line = signal::must_read_stdin()?;
+    println!("Paste your offer here:");
+    let line = if input_sdp_file.is_empty() {
+        signal::must_read_stdin()?
+    } else {
+        std::fs::read_to_string(&input_sdp_file)?
+    };
     let desc_data = signal::decode(line.as_str())?;
     let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
-
-    // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer).await?;
-
-    // Create an answer
-    let answer = peer_connection.create_answer(None).await?;
-
-    // Create channel that is blocked until ICE Gathering is complete
-    let mut gather_complete = peer_connection.gathering_complete_promise().await;
-
-    // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(answer).await?;
-
-    // Block until ICE Gathering is complete, disabling trickle ICE
-    // we do this because we only can exchange one signaling message
-    // in a production application you should exchange ICE Candidates via OnICECandidate
-    let _ = gather_complete.recv().await;
-
-    // Output the answer in base64 so we can paste it in browser
-    if let Some(local_desc) = peer_connection.local_description().await {
-        let json_str = serde_json::to_string(&local_desc)?;
-        let b64 = signal::encode(&json_str);
-        println!("{b64}");
-    } else {
-        println!("generate local_description failed!");
-    }
+    println!("Offer received: {}", offer);
 
     // Open a UDP Listener for RTP Packets on port 5004
-    let listener = UdpSocket::bind("127.0.0.1:5004").await?;
+    let rtp_listener = UdpSocket::bind("127.0.0.1:5004").await?;
+    println!("Listening for RTP packets on 127.0.0.1:5004");
 
-    let done_tx3 = done_tx.clone();
-    // Read RTP packets forever and send them to the WebRTC Client
-    tokio::spawn(async move {
-        let mut inbound_rtp_packet = vec![0u8; 1600]; // UDP MTU
-        while let Ok((n, _)) = listener.recv_from(&mut inbound_rtp_packet).await {
-            if let Err(err) = video_track.write(&inbound_rtp_packet[..n]).await {
-                if Error::ErrClosedPipe == err {
-                    // The peerConnection has been closed.
-                } else {
-                    println!("video_track write err: {err}");
-                }
-                let _ = done_tx3.try_send(());
-                return;
-            }
-        }
-    });
+    // Run the peer connection with event loop
+    run_peer_connection(offer, rtp_listener).await?;
+
+    Ok(())
+}
+
+async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSocket) -> Result<()> {
+    // Create a MediaEngine with VP8 support
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs()?;
+
+    let setting_engine = SettingEngine::default();
+
+    // Create configuration with STUN server
+    let config = RTCConfigurationBuilder::new()
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .with_ice_servers(vec![RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            ..Default::default()
+        }])
+        .build();
+
+    // Create PeerConnection
+    let mut peer_connection = RTCPeerConnection::new(config)?;
+
+    // Bind to local UDP socket
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let local_addr = socket.local_addr()?;
+    println!("RTP forwarder listening on {}", local_addr);
+
+    // Set remote description (offer)
+    peer_connection.set_remote_description(offer)?;
+
+    // Add video track
+    let video_ssrc = rand::random::<u32>();
+
+    let video_track = MediaStreamTrack::new(
+        format!("webrtc-rs-stream-id-{}", rand::random::<u32>()),
+        format!("webrtc-rs-track-id-{}", rand::random::<u32>()),
+        format!("webrtc-rs-track-label-{}", rand::random::<u32>()),
+        RtpCodecKind::Video,
+        None, // rid
+        video_ssrc,
+        RTCRtpCodec {
+            mime_type: MIME_TYPE_VP8.to_owned(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+    );
+
+    let sender_id = peer_connection.add_track(video_track)?;
+    println!("Added video track with sender_id: {:?}", sender_id);
+
+    // Add local candidate
+    let candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
+    peer_connection.add_local_candidate(local_candidate_init)?;
+
+    let answer = peer_connection.create_answer(None)?;
+    println!("Created Answer={}", answer);
+    peer_connection.set_local_description(answer.clone())?;
+
+    // Output the answer
+    let json_str = serde_json::to_string(&answer)?;
+    let b64 = signal::encode(&json_str);
+    println!("\nPaste this answer in your browser:\n{}\n", b64);
+
+    let mut buf = vec![0; 2000];
+    let mut inbound_rtp_buffer = vec![0u8; 1600]; // UDP MTU
 
     println!("Press ctrl-c to stop");
-    tokio::select! {
-        _ = done_rx.recv() => {
-            println!("received done signal!");
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!();
-        }
-    };
 
-    peer_connection.close().await?;
+    // Event loop
+    'EventLoop: loop {
+        // Write outgoing messages
+        while let Some(msg) = peer_connection.poll_write() {
+            match socket.send_to(&msg.message, msg.transport.peer_addr).await {
+                Ok(n) => {
+                    trace!(
+                        "socket write to {} with bytes {}",
+                        msg.transport.peer_addr, n
+                    );
+                }
+                Err(err) => {
+                    error!(
+                        "socket write to {} with error {}",
+                        msg.transport.peer_addr, err
+                    );
+                }
+            }
+        }
 
+        // Handle events
+        while let Some(event) = peer_connection.poll_event() {
+            match event {
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(ice_connection_state) => {
+                    println!("ICE Connection State: {ice_connection_state}");
+                }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
+                    println!("Peer Connection State: {state}");
+                    if state == RTCPeerConnectionState::Failed {
+                        println!("Connection failed, exiting...");
+                        break 'EventLoop;
+                    } else if state == RTCPeerConnectionState::Connected {
+                        println!("Connection established!");
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Poll for outgoing RTCP (we don't need to handle incoming RTP/RTCP here)
+        while let Some(message) = peer_connection.poll_read() {
+            match message {
+                rtc::peer_connection::message::RTCMessage::RtpPacket(_, _) => {
+                    // We're only sending, not receiving
+                }
+                rtc::peer_connection::message::RTCMessage::RtcpPacket(_, _) => {
+                    trace!("Received RTCP packets");
+                }
+                rtc::peer_connection::message::RTCMessage::DataChannelMessage(_, _) => {}
+            }
+        }
+
+        // Poll peer_connection to get next timeout
+        let eto = peer_connection
+            .poll_timeout()
+            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
+
+        let delay_from_now = eto
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::from_secs(0));
+        if delay_from_now.is_zero() {
+            peer_connection.handle_timeout(Instant::now())?;
+            continue;
+        }
+
+        let timer = tokio::time::sleep(delay_from_now);
+        tokio::pin!(timer);
+
+        tokio::select! {
+            // Handle Ctrl-C
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nReceived Ctrl-C, shutting down...");
+                break 'EventLoop;
+            }
+            // Handle timeouts
+            _ = timer.as_mut() => {
+                let now = Instant::now();
+                peer_connection.handle_timeout(now)?;
+            }
+            // Handle socket reads (DTLS/STUN/RTP/RTCP from remote)
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((n, peer_addr)) => {
+                        trace!("socket read from {} with bytes {}", peer_addr, n);
+                        if let Err(err) = peer_connection.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&buf[..n]),
+                        }) {
+                            if err.to_string().contains("AlreadyClosed") {
+                                debug!("Connection already closed");
+                                break 'EventLoop;
+                            } else {
+                                error!("handle_read got error: {}", err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!("socket read error: {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+            // Read RTP packets from UDP listener and forward to WebRTC
+            result = rtp_listener.recv_from(&mut inbound_rtp_buffer) => {
+                match result {
+                    Ok((n, _)) => {
+                        // Parse the RTP packet
+                        let mut buf = BytesMut::from(&inbound_rtp_buffer[..n]);
+                        if let Ok(rtp_packet) = rtp::packet::Packet::unmarshal(&mut buf) {
+                            trace!("Received RTP packet from UDP, {} bytes", n);
+                            // Write the RTP packet to the sender
+                            if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
+                                if let Err(err) = sender.write_rtp(rtp_packet) {
+                                    error!("Failed to write RTP packet: {}", err);
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!("rtp_listener read error: {}", err);
+                    }
+                }
+            }
+        }
+    }
+
+    peer_connection.close()?;
+    println!("Event loop exited");
     Ok(())
 }

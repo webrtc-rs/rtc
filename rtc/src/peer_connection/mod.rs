@@ -508,7 +508,7 @@ impl RTCPeerConnection {
                                     streams: vec![],
                                     send_encodings: vec![],
                                 },
-                            )?;
+                            );
 
                             transceiver.set_codec_preferences_from_remote_description(
                                 media,
@@ -881,7 +881,11 @@ impl RTCPeerConnection {
                 && transceiver.kind() == track.kind()
                 && transceiver.sender().is_none()
             {
-                let sender = RTCRtpSenderInternal::new(track.kind(), track, vec![], send_encodings);
+                let mut sender =
+                    RTCRtpSenderInternal::new(track.kind(), track, vec![], send_encodings);
+
+                sender.set_codec_preferences(transceiver.get_codec_preferences().to_vec());
+
                 transceiver.sender_mut().replace(sender);
 
                 transceiver.set_direction(RTCRtpTransceiverDirection::from_send_recv(
@@ -1034,7 +1038,7 @@ impl RTCPeerConnection {
                     streams: vec![],
                     send_encodings: vec![],
                 },
-            )?,
+            ),
             _ => return Err(Error::ErrPeerConnAddTransceiverFromKindSupport),
         };
 
