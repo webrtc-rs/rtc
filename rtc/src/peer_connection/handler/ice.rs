@@ -1,6 +1,6 @@
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::message::{RTCMessage, STUNMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{RTCMessageInternal, STUNMessage, TaggedRTCMessageInternal};
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use log::{debug, trace};
 use shared::error::{Error, Result};
@@ -12,8 +12,8 @@ use std::time::Instant;
 pub(crate) struct IceHandlerContext {
     pub(crate) ice_transport: RTCIceTransport,
 
-    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
@@ -44,15 +44,17 @@ impl<'a> IceHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> for IceHandler<'a> {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedRTCMessage;
+impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+    for IceHandler<'a>
+{
+    type Rout = TaggedRTCMessageInternal;
+    type Wout = TaggedRTCMessageInternal;
     type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, mut msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Stun(STUNMessage::Raw(message)) = msg.message {
+    fn handle_read(&mut self, mut msg: TaggedRTCMessageInternal) -> Result<()> {
+        if let RTCMessageInternal::Stun(STUNMessage::Raw(message)) = msg.message {
             self.ctx.ice_transport.agent.handle_read(TransportMessage {
                 now: msg.now,
                 transport: msg.transport,
@@ -86,7 +88,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, mut msg: TaggedRTCMessage) -> Result<()> {
+    fn handle_write(&mut self, mut msg: TaggedRTCMessageInternal) -> Result<()> {
         if let Some((local, remote)) = self.ctx.ice_transport.agent.get_selected_candidate_pair() {
             // use ICE selected candidate pair to replace local/peer addr
             msg.transport.local_addr = local.addr();
@@ -105,10 +107,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
         while let Some(transmit) = self.ctx.ice_transport.agent.poll_write() {
-            self.ctx.write_outs.push_back(TaggedRTCMessage {
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                 now: transmit.now,
                 transport: transmit.transport,
-                message: RTCMessage::Stun(STUNMessage::Raw(transmit.message)),
+                message: RTCMessageInternal::Stun(STUNMessage::Raw(transmit.message)),
             });
         }
 

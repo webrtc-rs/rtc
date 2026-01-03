@@ -3,7 +3,8 @@ use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, TaggedRTCMessage,
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
+    TaggedRTCMessageInternal, TrackMessage, TrackPacket,
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
@@ -17,8 +18,8 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
-    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
@@ -46,24 +47,24 @@ impl<'a> EndpointHandler<'a> {
 }
 
 // Implement Protocol trait for message processing
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
     for EndpointHandler<'a>
 {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedRTCMessage;
+    type Rout = TaggedRTCMessageInternal;
+    type Wout = TaggedRTCMessageInternal;
     type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+    fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
         match msg.message {
-            RTCMessage::Dtls(DTLSMessage::DataChannel(message)) => {
+            RTCMessageInternal::Dtls(DTLSMessage::DataChannel(message)) => {
                 self.handle_dtls_message(msg.now, msg.transport, message)
             }
-            RTCMessage::Rtp(RTPMessage::Rtp(message)) => {
+            RTCMessageInternal::Rtp(RTPMessage::Rtp(message)) => {
                 self.handle_rtp_message(msg.now, msg.transport, message)
             }
-            RTCMessage::Rtp(RTPMessage::Rtcp(message)) => {
+            RTCMessageInternal::Rtp(RTPMessage::Rtcp(message)) => {
                 self.handle_rtcp_message(msg.now, msg.transport, message)
             }
             _ => {
@@ -77,7 +78,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
+    fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
         self.ctx.write_outs.push_back(msg);
         Ok(())
     }
@@ -133,7 +134,7 @@ impl<'a> EndpointHandler<'a> {
 
     fn handle_rtp_message(
         &mut self,
-        _now: Instant,
+        now: Instant,
         transport_context: TransportContext,
         rtp_packet: rtp::Packet,
     ) -> Result<()> {
@@ -142,13 +143,14 @@ impl<'a> EndpointHandler<'a> {
         if let Some(track_id) =
             self.find_track_id(rtp_packet.header.ssrc, Some(rtp_packet.header.payload_type))
         {
-            self.ctx
-                .event_outs
-                .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnRtpPacket(
-                        track_id, rtp_packet,
-                    )),
-                ));
+            self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                now,
+                transport: transport_context,
+                message: RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                    track_id,
+                    track_packet: TrackPacket::Rtp(rtp_packet),
+                })),
+            });
         } else {
             debug!("drop rtp packet ssrc = {}", rtp_packet.header.ssrc);
         }
@@ -157,7 +159,7 @@ impl<'a> EndpointHandler<'a> {
 
     fn handle_rtcp_message(
         &mut self,
-        _now: Instant,
+        now: Instant,
         transport_context: TransportContext,
         rtcp_packets: Vec<Box<dyn rtcp::Packet>>,
     ) -> Result<()> {
@@ -171,14 +173,14 @@ impl<'a> EndpointHandler<'a> {
 
         if let Some(rtcp_ssrc) = rtcp_ssrc {
             if let Some(track_id) = self.find_track_id(rtcp_ssrc, None) {
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnRtcpPacket(
-                            track_id,
-                            rtcp_packets,
-                        )),
-                    ));
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                    now,
+                    transport: transport_context,
+                    message: RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                        track_id,
+                        track_packet: TrackPacket::Rtcp(rtcp_packets),
+                    })),
+                });
             } else {
                 debug!("drop rtcp packet ssrc = {}", rtcp_ssrc);
             }
@@ -225,20 +227,20 @@ impl<'a> EndpointHandler<'a> {
 
     fn handle_datachannel_message(
         &mut self,
-        _now: Instant,
+        now: Instant,
         transport_context: TransportContext,
         data_channel_id: u16,
         data_channel_message: RTCDataChannelMessage,
     ) -> Result<()> {
         debug!("data channel recv message for {:?}", transport_context);
-        self.ctx
-            .event_outs
-            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
-                    data_channel_id,
-                    data_channel_message,
-                )),
-            ));
+        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+            now,
+            transport: transport_context,
+            message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                data_channel_id,
+                data_channel_event: DataChannelEvent::Message(data_channel_message),
+            })),
+        });
 
         Ok(())
     }

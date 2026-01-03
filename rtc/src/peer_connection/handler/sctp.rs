@@ -2,7 +2,7 @@ use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
-use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal};
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
@@ -23,8 +23,8 @@ use std::time::Instant;
 pub(crate) struct SctpHandlerContext {
     pub(crate) sctp_transport: RTCSctpTransport,
 
-    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
@@ -59,17 +59,17 @@ enum SctpMessage {
     Outbound(TransportMessage<Payload>),
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
     for SctpHandler<'a>
 {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedRTCMessage;
+    type Rout = TaggedRTCMessageInternal;
+    type Wout = TaggedRTCMessageInternal;
     type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+    fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
 
             if self.ctx.sctp_transport.sctp_endpoint.is_none() {
@@ -222,19 +222,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                                     "recv sctp data channel message {:?}",
                                     msg.transport.peer_addr
                                 );
-                                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                                     now: msg.now,
                                     transport: msg.transport,
-                                    message: RTCMessage::Dtls(DTLSMessage::Sctp(message)),
+                                    message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)),
                                 })
                             }
                             SctpMessage::Outbound(transmit) => {
                                 if let Payload::RawEncode(raw_data) = transmit.message {
                                     for raw in raw_data {
-                                        self.ctx.write_outs.push_back(TaggedRTCMessage {
+                                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                                             now: transmit.now,
                                             transport: transmit.transport,
-                                            message: RTCMessage::Dtls(DTLSMessage::Raw(
+                                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
                                                 BytesMut::from(&raw[..]),
                                             )),
                                         });
@@ -261,8 +261,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Sctp(message)) = msg.message {
+    fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "send sctp data channel message to {:?}",
                 msg.transport.peer_addr
@@ -360,12 +360,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                     for transmit in transmits {
                         if let Payload::RawEncode(raw_data) = transmit.message {
                             for raw in raw_data {
-                                self.ctx.write_outs.push_back(TaggedRTCMessage {
+                                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                                     now: transmit.now,
                                     transport: transmit.transport,
-                                    message: RTCMessage::Dtls(DTLSMessage::Raw(BytesMut::from(
-                                        &raw[..],
-                                    ))),
+                                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
+                                        BytesMut::from(&raw[..]),
+                                    )),
                                 });
                             }
                         }
@@ -469,12 +469,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 for transmit in transmits {
                     if let Payload::RawEncode(raw_data) = transmit.message {
                         for raw in raw_data {
-                            self.ctx.write_outs.push_back(TaggedRTCMessage {
+                            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                                 now: transmit.now,
                                 transport: transmit.transport,
-                                message: RTCMessage::Dtls(DTLSMessage::Raw(BytesMut::from(
-                                    &raw[..],
-                                ))),
+                                message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
+                                    BytesMut::from(&raw[..]),
+                                )),
                             });
                         }
                     }

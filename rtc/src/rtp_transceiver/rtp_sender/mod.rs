@@ -19,7 +19,7 @@ use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
-use crate::peer_connection::message::{RTCMessage, RTPMessage};
+use crate::peer_connection::message::RTCMessage;
 use crate::rtp_transceiver::RTCRtpSenderId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
@@ -181,10 +181,11 @@ impl RTCRtpSender<'_> {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
             }
 
+            let track_id = "".to_string(); //TODO:
             packet.header.payload_type = codec.payload_type;
             packet.header.ssrc = ssrc;
             self.peer_connection
-                .handle_write(RTCMessage::Rtp(RTPMessage::Rtp(packet)))
+                .handle_write(RTCMessage::RtpPacket(track_id, packet))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }
@@ -198,8 +199,9 @@ impl RTCRtpSender<'_> {
                 .has_send()
         {
             //TODO: handle rtcp sender ssrc, header extension, etc.
+            let track_id = "".to_string(); //TODO:
             self.peer_connection
-                .handle_write(RTCMessage::Rtp(RTPMessage::Rtcp(packets)))
+                .handle_write(RTCMessage::RtcpPacket(track_id, packets))
         } else {
             Err(Error::ErrRTPSenderNotExisted)
         }

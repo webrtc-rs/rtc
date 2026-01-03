@@ -1,9 +1,7 @@
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::peer_connection::RTCPeerConnection;
-use crate::peer_connection::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage,
-};
+use crate::peer_connection::message::RTCMessage;
 use bytes::BytesMut;
 use sansio::Protocol;
 use shared::error::{Error, Result};
@@ -184,15 +182,13 @@ impl RTCDataChannel<'_> {
     pub fn send(&mut self, data: BytesMut) -> Result<()> {
         if self.peer_connection.data_channels.contains_key(&self.id) {
             self.peer_connection
-                .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
-                    ApplicationMessage {
-                        data_channel_id: self.id,
-                        data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                            is_string: false,
-                            data,
-                        }),
+                .handle_write(RTCMessage::DataChannelMessage(
+                    self.id,
+                    RTCDataChannelMessage {
+                        is_string: false,
+                        data,
                     },
-                )))
+                ))
         } else {
             Err(Error::ErrDataChannelClosed)
         }
@@ -202,15 +198,13 @@ impl RTCDataChannel<'_> {
     pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
         if self.peer_connection.data_channels.contains_key(&self.id) {
             self.peer_connection
-                .handle_write(RTCMessage::Dtls(DTLSMessage::DataChannel(
-                    ApplicationMessage {
-                        data_channel_id: self.id,
-                        data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                            is_string: true,
-                            data: BytesMut::from(s.into().as_str()),
-                        }),
+                .handle_write(RTCMessage::DataChannelMessage(
+                    self.id,
+                    RTCDataChannelMessage {
+                        is_string: true,
+                        data: BytesMut::from(s.into().as_str()),
                     },
-                )))
+                ))
         } else {
             Err(Error::ErrDataChannelClosed)
         }

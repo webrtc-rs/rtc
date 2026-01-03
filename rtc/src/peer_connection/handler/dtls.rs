@@ -1,7 +1,7 @@
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
-use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal};
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::DTLSRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -22,8 +22,8 @@ use std::time::Instant;
 pub(crate) struct DtlsHandlerContext {
     pub(crate) dtls_transport: RTCDtlsTransport,
 
-    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
@@ -53,17 +53,17 @@ impl<'a> DtlsHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
     for DtlsHandler<'a>
 {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedRTCMessage;
+    type Rout = TaggedRTCMessageInternal;
+    type Wout = TaggedRTCMessageInternal;
     type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+    fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
             let try_read = || -> Result<Vec<BytesMut>> {
@@ -110,10 +110,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 }
 
                 while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                    self.ctx.write_outs.push_back(TaggedRTCMessage {
+                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                         now: transmit.now,
                         transport: transmit.transport,
-                        message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                        message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
                     });
                 }
 
@@ -138,10 +138,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 Ok(messages) => {
                     for message in messages {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        self.ctx.read_outs.push_back(TaggedRTCMessage {
+                        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                             now: msg.now,
                             transport: msg.transport,
-                            message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
+                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(message)),
                         });
                     }
                 }
@@ -162,8 +162,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<()> {
-        if let RTCMessage::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
+    fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("send dtls RAW {:?}", msg.transport.peer_addr);
 
             let dtls_endpoint = self
@@ -175,10 +175,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
             dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
             while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                self.ctx.write_outs.push_back(TaggedRTCMessage {
+                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: transmit.now,
                     transport: transmit.transport,
-                    message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
                 });
             }
         } else {
@@ -236,10 +236,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
             let _ = dtls_endpoint.handle_timeout(remote, now);
         }
         while let Some(transmit) = dtls_endpoint.poll_transmit() {
-            self.ctx.write_outs.push_back(TaggedRTCMessage {
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                 now: transmit.now,
                 transport: transmit.transport,
-                message: RTCMessage::Dtls(DTLSMessage::Raw(transmit.message)),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
             });
         }
 

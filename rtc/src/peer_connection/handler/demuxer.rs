@@ -1,6 +1,6 @@
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::message::{
-    DTLSMessage, RTCMessage, RTPMessage, STUNMessage, TaggedRTCMessage,
+    DTLSMessage, RTCMessageInternal, RTPMessage, STUNMessage, TaggedRTCMessageInternal,
 };
 
 use log::{debug, error};
@@ -44,8 +44,8 @@ fn match_srtp(b: &[u8]) -> bool {
 
 #[derive(Default)]
 pub(crate) struct DemuxerHandlerContext {
-    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
+    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
 }
 
@@ -64,36 +64,36 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
+impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
     for DemuxerHandler<'a>
 {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedRTCMessage;
+    type Rout = TaggedRTCMessageInternal;
+    type Wout = TaggedRTCMessageInternal;
     type Eout = RTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
-        if let RTCMessage::Raw(message) = msg.message {
+    fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<(), Self::Error> {
+        if let RTCMessageInternal::Raw(message) = msg.message {
             if message.is_empty() {
                 error!("drop invalid packet due to zero length");
             } else if match_dtls(&message) {
-                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessage::Dtls(DTLSMessage::Raw(message)),
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(message)),
                 });
             } else if match_srtp(&message) {
-                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessage::Rtp(RTPMessage::Raw(message)),
+                    message: RTCMessageInternal::Rtp(RTPMessage::Raw(message)),
                 });
             } else {
-                self.ctx.read_outs.push_back(TaggedRTCMessage {
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessage::Stun(STUNMessage::Raw(message)),
+                    message: RTCMessageInternal::Stun(STUNMessage::Raw(message)),
                 });
             }
         } else {
@@ -106,16 +106,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         self.ctx.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+    fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<(), Self::Error> {
         match msg.message {
-            RTCMessage::Raw(message)
-            | RTCMessage::Stun(STUNMessage::Raw(message))
-            | RTCMessage::Dtls(DTLSMessage::Raw(message))
-            | RTCMessage::Rtp(RTPMessage::Raw(message)) => {
-                self.ctx.write_outs.push_back(TaggedRTCMessage {
+            RTCMessageInternal::Raw(message)
+            | RTCMessageInternal::Stun(STUNMessage::Raw(message))
+            | RTCMessageInternal::Dtls(DTLSMessage::Raw(message))
+            | RTCMessageInternal::Rtp(RTPMessage::Raw(message)) => {
+                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,
-                    message: RTCMessage::Raw(message),
+                    message: RTCMessageInternal::Raw(message),
                 });
             }
             _ => {

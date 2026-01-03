@@ -18,7 +18,10 @@ use crate::peer_connection::handler::ice::{IceHandler, IceHandlerContext};
 use crate::peer_connection::handler::interceptor::{InterceptorHandler, InterceptorHandlerContext};
 use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
-use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::message::{
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTCMessageInternal, RTPMessage,
+    TaggedRTCMessageInternal, TrackMessage, TrackPacket,
+};
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use log::warn;
@@ -167,10 +170,10 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
         let mut intermediate_routs = VecDeque::new();
-        intermediate_routs.push_back(TaggedRTCMessage {
+        intermediate_routs.push_back(TaggedRTCMessageInternal {
             now: msg.now,
             transport: msg.transport,
-            message: RTCMessage::Raw(msg.message),
+            message: RTCMessageInternal::Raw(msg.message),
         });
 
         for_each_handler!(forward: process_handler!(self, handler, {
@@ -186,7 +189,35 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
 
         // Finally, put intermediate_routs into RTCPeerConnection's routs
         while let Some(msg) = intermediate_routs.pop_front() {
-            self.pipeline_context.read_outs.push_back(msg.message);
+            let rtc_message = match msg.message {
+                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(application_message)) => {
+                    if let DataChannelEvent::Message(data_channel_message) =
+                        application_message.data_channel_event
+                    {
+                        Some(RTCMessage::DataChannelMessage(
+                            application_message.data_channel_id,
+                            data_channel_message,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+                RTCMessageInternal::Rtp(RTPMessage::Track(track_message)) => {
+                    match track_message.track_packet {
+                        TrackPacket::Rtp(packet) => {
+                            Some(RTCMessage::RtpPacket(track_message.track_id, packet))
+                        }
+                        TrackPacket::Rtcp(packet) => {
+                            Some(RTCMessage::RtcpPacket(track_message.track_id, packet))
+                        }
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(rtc_message) = rtc_message {
+                self.pipeline_context.read_outs.push_back(rtc_message);
+            }
         }
 
         Ok(())
@@ -197,12 +228,33 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
     }
 
     fn handle_write(&mut self, msg: RTCMessage) -> Result<(), Self::Error> {
+        let rtc_message_internal = match msg {
+            RTCMessage::DataChannelMessage(data_channel_id, data_channel_message) => {
+                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                    data_channel_id,
+                    data_channel_event: DataChannelEvent::Message(data_channel_message),
+                }))
+            }
+            RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                    track_id,
+                    track_packet: TrackPacket::Rtp(rtp_packet),
+                }))
+            }
+            RTCMessage::RtcpPacket(track_id, rtcp_packet) => {
+                RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                    track_id,
+                    track_packet: TrackPacket::Rtcp(rtcp_packet),
+                }))
+            }
+        };
+
         // Only endpoint can handle user write message
         let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.handle_write(TaggedRTCMessage {
+        endpoint_handler.handle_write(TaggedRTCMessageInternal {
             now: Instant::now(),
             transport: Default::default(),
-            message: msg,
+            message: rtc_message_internal,
         })
     }
 
@@ -222,7 +274,7 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
 
         // Final poll write out to pipeline's write out
         while let Some(msg) = intermediate_wouts.pop_front() {
-            if let RTCMessage::Raw(message) = msg.message {
+            if let RTCMessageInternal::Raw(message) = msg.message {
                 self.pipeline_context.write_outs.push_back(TaggedBytesMut {
                     now: msg.now,
                     transport: msg.transport,

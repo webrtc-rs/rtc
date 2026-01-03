@@ -18,8 +18,6 @@ pub enum RTCTrackEvent {
     OnError(MediaStreamTrackId),
     OnClosing(MediaStreamTrackId),
     OnClose(MediaStreamTrackId),
-    OnRtpPacket(MediaStreamTrackId, rtp::Packet),
-    OnRtcpPacket(MediaStreamTrackId, Vec<Box<dyn rtcp::Packet>>),
 }
 
 impl Default for RTCTrackEvent {
