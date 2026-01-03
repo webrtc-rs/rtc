@@ -84,10 +84,10 @@ name = "save-to-disk-h26x"
 path = "examples/save-to-disk-h26x/save-to-disk-h26x.rs"
 bench = false
 
-#[[example]]
-#name = "play-from-disk-renegotiation"
-#path = "examples/play-from-disk-renegotiation/play-from-disk-renegotiation.rs"
-#bench = false
+[[example]]
+name = "play-from-disk-renegotiation"
+path = "examples/play-from-disk-renegotiation/play-from-disk-renegotiation.rs"
+bench = false
 
 [[example]]
 name = "reflect"
