@@ -6,8 +6,9 @@ use crate::peer_connection::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, TaggedRTCMessage,
 };
 
-use crate::peer_connection::event::track_event::{RTCRtpRtcpPacket, RTCTrackEvent};
-use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver};
+use crate::media_stream::track::MediaStreamTrackId;
+use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
+use crate::rtp_transceiver::{PayloadType, RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
 use log::{debug, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
@@ -138,45 +139,19 @@ impl<'a> EndpointHandler<'a> {
     ) -> Result<()> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
 
-        if let Some((id, transceiver)) =
-            self.rtp_transceivers
-                .iter()
-                .enumerate()
-                .find(|(_, transceiver)| {
-                    if let Some(receiver) = transceiver.receiver() {
-                        receiver.get_coding_parameters().iter().any(|coding| {
-                            coding
-                                .ssrc
-                                .is_some_and(|ssrc| ssrc == rtp_packet.header.ssrc)
-                        })
-                    } else {
-                        false
-                    }
-                })
+        if let Some(track_id) =
+            self.find_track_id(rtp_packet.header.ssrc, Some(rtp_packet.header.payload_type))
         {
-            let (track_id, stream_ids) = if let Some(receiver) = transceiver.receiver() {
-                (
-                    receiver.track().track_id().to_owned(),
-                    vec![receiver.track().stream_id().to_owned()],
-                )
-            } else {
-                ("".to_owned(), vec![])
-            };
-
             self.ctx
                 .event_outs
                 .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent {
-                        receiver_id: RTCRtpReceiverId(id),
-                        track_id,
-                        stream_ids,
-                        packet: RTCRtpRtcpPacket::Rtp(rtp_packet),
-                    }),
+                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnRtpPacket(
+                        track_id, rtp_packet,
+                    )),
                 ));
         } else {
             debug!("drop rtp packet ssrc = {}", rtp_packet.header.ssrc);
         }
-
         Ok(())
     }
 
@@ -195,39 +170,14 @@ impl<'a> EndpointHandler<'a> {
         };
 
         if let Some(rtcp_ssrc) = rtcp_ssrc {
-            if let Some((id, transceiver)) =
-                self.rtp_transceivers
-                    .iter()
-                    .enumerate()
-                    .find(|(_, transceiver)| {
-                        if let Some(receiver) = transceiver.receiver() {
-                            receiver
-                                .get_coding_parameters()
-                                .iter()
-                                .any(|coding| coding.ssrc.is_some_and(|ssrc| ssrc == rtcp_ssrc))
-                        } else {
-                            false
-                        }
-                    })
-            {
-                let (track_id, stream_ids) = if let Some(receiver) = transceiver.receiver() {
-                    (
-                        receiver.track().track_id().to_owned(),
-                        vec![receiver.track().stream_id().to_owned()],
-                    )
-                } else {
-                    ("".to_owned(), vec![])
-                };
-
+            if let Some(track_id) = self.find_track_id(rtcp_ssrc, None) {
                 self.ctx
                     .event_outs
                     .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent {
-                            receiver_id: RTCRtpReceiverId(id),
+                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnRtcpPacket(
                             track_id,
-                            stream_ids,
-                            packet: RTCRtpRtcpPacket::Rtcp(rtcp_packets),
-                        }),
+                            rtcp_packets,
+                        )),
                     ));
             } else {
                 debug!("drop rtcp packet ssrc = {}", rtcp_ssrc);
@@ -291,5 +241,66 @@ impl<'a> EndpointHandler<'a> {
             ));
 
         Ok(())
+    }
+
+    fn find_track_id(
+        &mut self,
+        ssrc: SSRC,
+        payload_type: Option<PayloadType>,
+    ) -> Option<MediaStreamTrackId> {
+        if let Some((id, transceiver)) =
+            self.rtp_transceivers
+                .iter_mut()
+                .enumerate()
+                .find(|(_, transceiver)| {
+                    if let Some(receiver) = transceiver.receiver() {
+                        receiver.get_coding_parameters().iter().any(|coding| {
+                            coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc)
+                        })
+                    } else {
+                        false
+                    }
+                })
+            && let Some(receiver) = transceiver.receiver_mut()
+            && let Some(track) = receiver.tracks().find(|track| track.ssrc() == ssrc)
+        {
+            let (is_track_codec_empty, track_id) =
+                (track.codec().mime_type.is_empty(), track.track_id().clone());
+
+            let track_codec = if is_track_codec_empty
+                && let Some(payload_type) = payload_type
+                && let Some(codec) = receiver
+                    .get_codec_preferences()
+                    .iter()
+                    .find(|codec| codec.payload_type == payload_type)
+            {
+                Some(codec.rtp_codec.clone())
+            } else {
+                None
+            };
+
+            if let Some(codec) = track_codec
+                && let Some(track) = receiver.track_mut(&track_id)
+            {
+                // Set valid Codec for track when received the first RTP packet for such ssrc stream
+                track.set_codec(codec);
+
+                // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
+                self.ctx
+                    .event_outs
+                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
+                            receiver_id: RTCRtpReceiverId(id),
+                            track_id: track.track_id().to_owned(),
+                            stream_ids: vec![track.stream_id().to_owned()],
+                            transceiver_id: id,
+                        })),
+                    ));
+            }
+
+            return Some(track_id);
+        }
+
+        None
     }
 }

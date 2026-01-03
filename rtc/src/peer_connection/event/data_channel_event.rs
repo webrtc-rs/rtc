@@ -2,10 +2,8 @@ use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum RTCDataChannelEvent {
-    #[default]
-    Unspecified,
     OnOpen(RTCDataChannelId),
     OnBufferedAmountLow(RTCDataChannelId),
     OnBufferedAmountHigh(RTCDataChannelId),
@@ -13,4 +11,10 @@ pub enum RTCDataChannelEvent {
     OnClosing(RTCDataChannelId),
     OnClose(RTCDataChannelId),
     OnMessage(RTCDataChannelId, RTCDataChannelMessage),
+}
+
+impl Default for RTCDataChannelEvent {
+    fn default() -> Self {
+        Self::OnOpen(Default::default())
+    }
 }

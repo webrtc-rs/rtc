@@ -18,7 +18,7 @@ pub const ATTR_KEY_END_OF_CANDIDATES: &str = "end-of-candidates";
 pub const ATTR_KEY_IDENTITY: &str = "identity";
 pub const ATTR_KEY_GROUP: &str = "group";
 pub const ATTR_KEY_SSRC: &str = "ssrc";
-pub const ATTR_KEY_SSRCGROUP: &str = "ssrc-group";
+pub const ATTR_KEY_SSRC_GROUP: &str = "ssrc-group";
 pub const ATTR_KEY_MSID: &str = "msid";
 pub const ATTR_KEY_MSID_SEMANTIC: &str = "msid-semantic";
 pub const ATTR_KEY_CONNECTION_SETUP: &str = "setup";
@@ -38,6 +38,8 @@ pub const ATTR_KEY_MAX_MESSAGE_SIZE: &str = "max-message-size";
 pub const SEMANTIC_TOKEN_LIP_SYNCHRONIZATION: &str = "LS";
 pub const SEMANTIC_TOKEN_FLOW_IDENTIFICATION: &str = "FID";
 pub const SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION: &str = "FEC";
+// https://datatracker.ietf.org/doc/html/rfc5956#section-4.1
+pub const SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION_FRAMEWORK: &str = "FEC-FR";
 pub const SEMANTIC_TOKEN_WEBRTC_MEDIA_STREAMS: &str = "WMS";
 
 /// Version describes the value provided by the "v=" field which gives

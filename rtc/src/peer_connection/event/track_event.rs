@@ -1,24 +1,29 @@
 use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::rtp_transceiver::RTCRtpReceiverId;
+use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiverId};
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Default, Debug, Clone)]
-pub struct RTCTrackEvent {
+pub struct RTCTrackEventInit {
     pub receiver_id: RTCRtpReceiverId,
     pub track_id: MediaStreamTrackId,
     pub stream_ids: Vec<MediaStreamId>,
-    pub packet: RTCRtpRtcpPacket,
+    pub transceiver_id: RTCRtpTransceiverId,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
-pub enum RTCRtpRtcpPacket {
-    Rtp(rtp::Packet),
-    Rtcp(Vec<Box<dyn rtcp::Packet>>),
+pub enum RTCTrackEvent {
+    OnOpen(RTCTrackEventInit),
+    OnError(MediaStreamTrackId),
+    OnClosing(MediaStreamTrackId),
+    OnClose(MediaStreamTrackId),
+    OnRtpPacket(MediaStreamTrackId, rtp::Packet),
+    OnRtcpPacket(MediaStreamTrackId, Vec<Box<dyn rtcp::Packet>>),
 }
 
-impl Default for RTCRtpRtcpPacket {
+impl Default for RTCTrackEvent {
     fn default() -> Self {
-        Self::Rtcp(vec![])
+        Self::OnOpen(Default::default())
     }
 }

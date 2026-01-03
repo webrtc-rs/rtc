@@ -45,6 +45,7 @@ pub(crate) struct TrackDetails {
     pub(crate) track_id: MediaStreamTrackId,
     pub(crate) ssrc: Option<SSRC>,
     pub(crate) rtx_ssrc: Option<SSRC>,
+    pub(crate) fec_ssrc: Option<SSRC>,
     pub(crate) rids: Vec<String>,
 }
 
@@ -57,9 +58,12 @@ pub(crate) fn track_details_for_ssrc(
 
 pub(crate) fn track_details_for_rid<'a>(
     track_details: &'a [TrackDetails],
+    mid: &String,
     rid: &String,
 ) -> Option<&'a TrackDetails> {
-    track_details.iter().find(|x| x.rids.contains(rid))
+    track_details
+        .iter()
+        .find(|x| &x.mid == mid && x.rids.contains(rid))
 }
 
 pub(crate) fn filter_track_with_ssrc(incoming_tracks: &mut Vec<TrackDetails>, ssrc: SSRC) {
@@ -67,29 +71,27 @@ pub(crate) fn filter_track_with_ssrc(incoming_tracks: &mut Vec<TrackDetails>, ss
 }
 
 /// extract all TrackDetails from an SDP.
-pub(crate) fn track_details_from_sdp(
-    s: &SessionDescription,
-    exclude_inactive: bool,
-) -> Vec<TrackDetails> {
+pub(crate) fn track_details_from_sdp(s: &SessionDescription) -> Vec<TrackDetails> {
     let mut incoming_tracks = vec![];
 
     for media in &s.media_descriptions {
         let mut tracks_in_media_section = vec![];
         let mut rtx_repair_flows = HashMap::new();
+        let mut fec_repair_flows = HashMap::new();
 
         let mut stream_id = "";
         let mut track_id = "";
 
         // If media section is recvonly or inactive skip
         if media.attribute(ATTR_KEY_RECV_ONLY).is_some()
-            || (exclude_inactive && media.attribute(ATTR_KEY_INACTIVE).is_some())
+            || media.attribute(ATTR_KEY_INACTIVE).is_some()
         {
             continue;
         }
 
         let mid_value = match get_mid_value(media) {
-            Some(mid_value) => mid_value,
-            None => continue,
+            Some(mid_value) if !mid_value.is_empty() => mid_value,
+            _ => continue,
         };
 
         let codec_type = RtpCodecKind::from(media.media_name.media.as_str());
@@ -99,7 +101,7 @@ pub(crate) fn track_details_from_sdp(
 
         for attr in &media.attributes {
             match attr.key.as_str() {
-                ATTR_KEY_SSRCGROUP => {
+                ATTR_KEY_SSRC_GROUP => {
                     if let Some(value) = &attr.value {
                         let split: Vec<&str> = value.split(' ').collect();
                         if split[0] == SEMANTIC_TOKEN_FLOW_IDENTIFICATION {
@@ -128,6 +130,43 @@ pub(crate) fn track_details_from_sdp(
                                     &mut tracks_in_media_section,
                                     rtx_repair_flow as SSRC,
                                 );
+
+                                tracks_in_media_section.iter_mut().for_each(|x| {
+                                    if x.ssrc.is_some_and(|ssrc| ssrc == base_ssrc) {
+                                        x.rtx_ssrc = Some(rtx_repair_flow);
+                                    }
+                                });
+                            }
+                        } else if split[0] == SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION_FRAMEWORK {
+                            // Similar to above, lines like `a=ssrc-group:FEC-FR aaaaa bbbbb`
+                            // means for video ssrc aaaaa, there's a FEC track bbbbb
+                            if split.len() == 3 {
+                                let base_ssrc = match split[1].parse::<u32>() {
+                                    Ok(ssrc) => ssrc,
+                                    Err(err) => {
+                                        log::warn!("Failed to parse SSRC: {err}");
+                                        continue;
+                                    }
+                                };
+                                let fec_repair_flow = match split[2].parse::<u32>() {
+                                    Ok(n) => n,
+                                    Err(err) => {
+                                        log::warn!("Failed to parse SSRC: {err}");
+                                        continue;
+                                    }
+                                };
+                                fec_repair_flows.insert(fec_repair_flow, base_ssrc);
+                                // Remove if fec was added as track before
+                                filter_track_with_ssrc(
+                                    &mut tracks_in_media_section,
+                                    fec_repair_flow as SSRC,
+                                );
+
+                                tracks_in_media_section.iter_mut().for_each(|x| {
+                                    if x.ssrc.is_some_and(|ssrc| ssrc == base_ssrc) {
+                                        x.fec_ssrc = Some(fec_repair_flow);
+                                    }
+                                });
                             }
                         }
                     }
@@ -163,6 +202,9 @@ pub(crate) fn track_details_from_sdp(
                         if rtx_repair_flows.contains_key(&ssrc) {
                             continue; // This ssrc is a RTX repair flow, ignore
                         }
+                        if fec_repair_flows.contains_key(&ssrc) {
+                            continue; // This ssrc is a FEC repair flow, ignore
+                        }
 
                         if split.len() == 3 && split[1].starts_with("msid:") {
                             stream_id = &split[1]["msid:".len()..];
@@ -170,7 +212,6 @@ pub(crate) fn track_details_from_sdp(
                         }
 
                         let mut track_idx = tracks_in_media_section.len();
-
                         for (i, t) in tracks_in_media_section.iter().enumerate() {
                             if t.ssrc == Some(ssrc) {
                                 track_idx = i;
@@ -200,10 +241,19 @@ pub(crate) fn track_details_from_sdp(
                 _ => {}
             };
         }
-        for (repair, base) in &rtx_repair_flows {
+
+        for (repair_ssrc, base_ssrc) in rtx_repair_flows {
             for track in &mut tracks_in_media_section {
-                if track.ssrc == Some(*base) {
-                    track.rtx_ssrc = Some(*repair);
+                if track.ssrc == Some(base_ssrc) {
+                    track.rtx_ssrc = Some(repair_ssrc);
+                }
+            }
+        }
+
+        for (repair_ssrc, base_ssrc) in fec_repair_flows {
+            for track in &mut tracks_in_media_section {
+                if track.ssrc == Some(base_ssrc) {
+                    track.fec_ssrc = Some(repair_ssrc);
                 }
             }
         }
@@ -214,14 +264,16 @@ pub(crate) fn track_details_from_sdp(
         // and 'a=ssrc' lines.
         let rids = get_rids(media);
         if !rids.is_empty() && !track_id.is_empty() && !stream_id.is_empty() {
-            tracks_in_media_section = vec![TrackDetails {
+            let simulcast_track = TrackDetails {
                 mid: mid_value.to_string(),
                 kind: codec_type,
                 stream_id: stream_id.to_owned(),
                 track_id: track_id.to_owned(),
                 rids: rids.iter().map(|r| r.id.clone()).collect(),
                 ..Default::default()
-            }];
+            };
+
+            tracks_in_media_section = vec![simulcast_track];
         }
 
         incoming_tracks.extend(tracks_in_media_section);
@@ -587,7 +639,7 @@ fn add_sender_sdp(
             if let Some(&ssrc) = encoding.rtp_coding_parameters.ssrc.as_ref() {
                 if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
                     media = media.with_value_attribute(
-                        ATTR_KEY_SSRCGROUP.to_owned(),
+                        ATTR_KEY_SSRC_GROUP.to_owned(),
                         format!(
                             "{} {} {}",
                             SEMANTIC_TOKEN_FLOW_IDENTIFICATION, ssrc, rtx.ssrc
@@ -597,7 +649,7 @@ fn add_sender_sdp(
 
                 if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
                     media = media.with_value_attribute(
-                        ATTR_KEY_SSRCGROUP.to_owned(),
+                        ATTR_KEY_SSRC_GROUP.to_owned(),
                         format!(
                             "{} {} {}",
                             SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION, ssrc, fec.ssrc

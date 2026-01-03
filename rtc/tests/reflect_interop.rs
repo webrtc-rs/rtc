@@ -19,7 +19,6 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -31,6 +30,7 @@ use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use rtc::shared::error::Error;
 
+use rtc::peer_connection::event::track_event::RTCTrackEvent;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
@@ -231,6 +231,7 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
     let mut webrtc_connected = false;
     let mut packets_sent = 0u32;
     let mut rtp_receiver_id2ssrcs = HashMap::new();
+    let mut track_id2_receiver_id = HashMap::new();
 
     let start_time = Instant::now();
     let test_timeout = Duration::from_secs(30);
@@ -267,14 +268,24 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                     }
                 }
                 RTCPeerConnectionEvent::OnTrack(track_event) => {
-                    match track_event.packet {
-                        RTCRtpRtcpPacket::Rtp(packet) => {
+                    match track_event {
+                        RTCTrackEvent::OnOpen(init) => {
+                            track_id2_receiver_id.insert(init.track_id, init.receiver_id);
+                        }
+                        RTCTrackEvent::OnClose(_track_id) => {}
+                        RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
+                            let receiver_id = track_id2_receiver_id
+                                .get(&track_id)
+                                .ok_or(Error::ErrRTPReceiverNotExisted)?
+                                .clone();
                             let rtp_receiver = rtc_pc
-                                .rtp_receiver(track_event.receiver_id)
+                                .rtp_receiver(receiver_id)
                                 .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                            let track = rtp_receiver.track()?;
+                            let track = rtp_receiver
+                                .track(&track_id)?
+                                .ok_or(Error::ErrTrackNotExisted)?;
                             let media_ssrc = track.ssrc();
-                            rtp_receiver_id2ssrcs.insert(track_event.receiver_id, media_ssrc);
+                            rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
 
                             let rtp_sender_id = rtp_sender_ids
                                 .get(&track.kind())
@@ -286,14 +297,17 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
 
                             log::debug!(
                                 "RTC reflecting rtp packet (seq: {}, ssrc: {})",
-                                packet.header.sequence_number,
+                                rtp_packet.header.sequence_number,
                                 media_ssrc
                             );
-                            rtp_sender.write_rtp(packet)?;
+                            rtp_sender.write_rtp(rtp_packet)?;
                         }
-                        RTCRtpRtcpPacket::Rtcp(_) => {
-                            // Process RTCP packets
+                        RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
+                            // Read incoming RTCP packets
+                            // Before these packets are returned they are processed by interceptors. For things
+                            // like NACK this needs to be called.
                         }
+                        _ => {}
                     }
                 }
                 _ => {}

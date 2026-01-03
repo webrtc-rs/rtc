@@ -4,7 +4,7 @@
 pub(crate) mod internal;
 pub(crate) mod rtp_contributing_source;
 
-use crate::media_stream::track::MediaStreamTrack;
+use crate::media_stream::track::{MediaStreamTrack, MediaStreamTrackId};
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::RTCRtpReceiverId;
@@ -25,7 +25,7 @@ pub struct RTCRtpReceiver<'a> {
 }
 
 impl RTCRtpReceiver<'_> {
-    pub fn track(&self) -> Result<&MediaStreamTrack> {
+    pub fn track(&self, track_id: &MediaStreamTrackId) -> Result<Option<&MediaStreamTrack>> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -35,7 +35,7 @@ impl RTCRtpReceiver<'_> {
                 .receiver
                 .as_ref()
                 .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .track())
+                .track(track_id))
         } else {
             Err(Error::ErrRTPReceiverNotExisted)
         }

@@ -14,7 +14,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingP
 use log::trace;
 use sdp::MediaDescription;
 use shared::error::{Error, Result};
-use shared::util::math_rand_alpha;
 use std::collections::HashMap;
 use std::fmt;
 use unicase::UniCase;
@@ -106,19 +105,7 @@ impl RTCRtpTransceiver {
                 None
             },
             receiver: if init.direction.has_recv() {
-                Some(RTCRtpReceiverInternal::new(
-                    kind,
-                    MediaStreamTrack::new(
-                        math_rand_alpha(16),        // MediaStreamId
-                        math_rand_alpha(16),        // MediaStreamTrackId
-                        format!("remote {}", kind), // Label
-                        kind,
-                        None,                   // rid
-                        rand::random::<u32>(),  // ssrc
-                        RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/7
-                    ),
-                    vec![],
-                ))
+                Some(RTCRtpReceiverInternal::new(kind, vec![], vec![]))
             } else {
                 None
             },
@@ -212,7 +199,6 @@ impl RTCRtpTransceiver {
             sender.set_codec_preferences(codecs.clone());
         }
 
-        // TODO: double check whether it is correct?
         if let Some(receiver) = self.receiver_mut() {
             receiver.set_codec_preferences(codecs.clone());
         }

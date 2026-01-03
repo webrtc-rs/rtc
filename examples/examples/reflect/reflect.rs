@@ -10,7 +10,7 @@ use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
+use rtc::peer_connection::event::track_event::RTCTrackEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -211,6 +211,7 @@ async fn run(
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
     let mut rtp_receiver_id2ssrcs = HashMap::new();
+    let mut track_id2_receiver_id = HashMap::new();
     let mut kind_codecs = HashMap::new();
     if audio {
         kind_codecs.insert(RtpCodecKind::Audio, audio_codec);
@@ -323,14 +324,24 @@ async fn run(
                 RTCPeerConnectionEvent::OnDataChannel(_) => {
                     println!("Peer Connection got onDataChannel event");
                 }
-                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event.packet {
-                    RTCRtpRtcpPacket::Rtp(packet) => {
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event {
+                    RTCTrackEvent::OnOpen(init) => {
+                        track_id2_receiver_id.insert(init.track_id, init.receiver_id);
+                    }
+                    RTCTrackEvent::OnClose(_track_id) => {}
+                    RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
+                        let receiver_id = track_id2_receiver_id
+                            .get(&track_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?
+                            .clone();
                         let rtp_receiver = peer_connection
-                            .rtp_receiver(track_event.receiver_id)
+                            .rtp_receiver(receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                        let track = rtp_receiver.track()?;
+                        let track = rtp_receiver
+                            .track(&track_id)?
+                            .ok_or(Error::ErrTrackNotExisted)?;
                         let media_ssrc = track.ssrc();
-                        rtp_receiver_id2ssrcs.insert(track_event.receiver_id, media_ssrc);
+                        rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
 
                         let rtp_sender_id = rtp_sender_ids
                             .get(&track.kind())
@@ -341,13 +352,14 @@ async fn run(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         debug!("sending rtp packet with media_ssrc={}", media_ssrc);
-                        rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(rtp_packet)?;
                     }
-                    RTCRtpRtcpPacket::Rtcp(_) => {
+                    RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
                         // Read incoming RTCP packets
                         // Before these packets are returned they are processed by interceptors. For things
                         // like NACK this needs to be called.
                     }
+                    _ => {}
                 },
                 _ => {}
             }

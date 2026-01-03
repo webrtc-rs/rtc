@@ -8,6 +8,7 @@ use crate::peer_connection::sdp::{
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
@@ -440,7 +441,7 @@ impl RTCPeerConnection {
 
     pub(super) fn start_rtp(&mut self, remote_desc: RTCSessionDescription) -> Result<()> {
         let incoming_tracks = if let Some(parsed) = &remote_desc.parsed {
-            track_details_from_sdp(parsed, false)
+            track_details_from_sdp(parsed)
         } else {
             vec![]
         };
@@ -454,6 +455,7 @@ impl RTCPeerConnection {
             {
                 let mut receive_codings = vec![];
                 if !incoming_track.rids.is_empty() {
+                    //TODO: handle simulcast rid without ssrc in RTCPeerConnection's start_rtp for incoming_track handling #8
                     for rid in incoming_track.rids {
                         receive_codings.push(RTCRtpCodingParameters {
                             rid,
@@ -464,14 +466,28 @@ impl RTCPeerConnection {
                             ..Default::default()
                         });
                     }
-                } else if incoming_track.ssrc.is_some() {
+                } else if let Some(ssrc) = incoming_track.ssrc {
+                    if receiver.track(&incoming_track.track_id).is_none() {
+                        receiver.add_track(MediaStreamTrack::new(
+                            incoming_track.stream_id,
+                            incoming_track.track_id,
+                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                            incoming_track.kind,
+                            None,
+                            ssrc,
+                            RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                        ));
+                    }
+
                     receive_codings.push(RTCRtpCodingParameters {
                         rid: "".to_string(),
-                        ssrc: incoming_track.ssrc,
+                        ssrc: Some(ssrc),
                         rtx: incoming_track
                             .rtx_ssrc
                             .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
-                        ..Default::default()
+                        fec: incoming_track
+                            .fec_ssrc
+                            .map(|fec_ssrc| RTCRtpFecParameters { ssrc: fec_ssrc }),
                     });
                 } else {
                     return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);

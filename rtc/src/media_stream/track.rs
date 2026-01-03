@@ -122,4 +122,8 @@ impl MediaStreamTrack {
             self.constraints = constraints;
         }
     }
+
+    pub(crate) fn set_codec(&mut self, codec: RTCRtpCodec) {
+        self.codec = codec;
+    }
 }

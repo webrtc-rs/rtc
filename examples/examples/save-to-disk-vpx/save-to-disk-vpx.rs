@@ -18,7 +18,7 @@ use rtc::peer_connection::configuration::media_engine::{
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
+use rtc::peer_connection::event::track_event::RTCTrackEvent;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -321,6 +321,7 @@ async fn run(
 
     // Track which receiver_id maps to which track kind
     let mut receiver_id_to_kind: HashMap<RTCRtpReceiverId, RtpCodecKind> = HashMap::new();
+    let mut track_id2_receiver_id = HashMap::new();
 
     let mut buf = vec![0; 2000];
     'EventLoop: loop {
@@ -356,17 +357,27 @@ async fn run(
                         println!("Ctrl+C the remote client to stop the demo");
                     }
                 }
-                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event.packet {
-                    RTCRtpRtcpPacket::Rtp(packet) => {
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event {
+                    RTCTrackEvent::OnOpen(init) => {
+                        track_id2_receiver_id.insert(init.track_id, init.receiver_id);
+                    }
+                    RTCTrackEvent::OnClose(_track_id) => {}
+                    RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
+                        let receiver_id = track_id2_receiver_id
+                            .get(&track_id)
+                            .ok_or(Error::ErrRTPReceiverNotExisted)?
+                            .clone();
                         let rtp_receiver = peer_connection
-                            .rtp_receiver(track_event.receiver_id)
+                            .rtp_receiver(receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                        let track = rtp_receiver.track()?;
+                        let track = rtp_receiver
+                            .track(&track_id)?
+                            .ok_or(Error::ErrTrackNotExisted)?;
 
                         // Record the track kind for this receiver on first packet
-                        if !receiver_id_to_kind.contains_key(&track_event.receiver_id) {
+                        if !receiver_id_to_kind.contains_key(&receiver_id) {
                             let kind = track.kind();
-                            receiver_id_to_kind.insert(track_event.receiver_id, kind);
+                            receiver_id_to_kind.insert(receiver_id, kind);
 
                             let codec = track.codec();
                             let mime_type = codec.mime_type.to_lowercase();
@@ -388,23 +399,26 @@ async fn run(
                         }
 
                         // Write packet to appropriate file
-                        match receiver_id_to_kind.get(&track_event.receiver_id) {
+                        match receiver_id_to_kind.get(&receiver_id) {
                             Some(RtpCodecKind::Audio) => {
                                 if let Some(ref mut writer) = audio_writer {
-                                    writer.write_rtp(&packet)?;
+                                    writer.write_rtp(&rtp_packet)?;
                                 }
                             }
                             Some(RtpCodecKind::Video) => {
                                 if let Some(ref mut writer) = video_writer {
-                                    writer.write_rtp(&packet)?;
+                                    writer.write_rtp(&rtp_packet)?;
                                 }
                             }
                             _ => {}
                         }
                     }
-                    RTCRtpRtcpPacket::Rtcp(_) => {
-                        // Ignore RTCP packets for this example
+                    RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
+                        // Read incoming RTCP packets
+                        // Before these packets are returned they are processed by interceptors. For things
+                        // like NACK this needs to be called.
                     }
+                    _ => {}
                 },
                 _ => {}
             }

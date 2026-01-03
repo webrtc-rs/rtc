@@ -8,7 +8,7 @@ use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
+use rtc::peer_connection::event::track_event::RTCTrackEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
@@ -253,14 +253,15 @@ async fn run_broadcaster(
                         break 'EventLoop;
                     }
                 }
-                RTCPeerConnectionEvent::OnTrack(track_event) => {
-                    // On first track, get the codec information and broadcast it
-                    // TODO: https://github.com/webrtc-rs/rtc/issues/7
-                    if packet_count == 0 {
-                        if let Some(receiver) =
-                            peer_connection.rtp_receiver(track_event.receiver_id)
-                        {
-                            if let Ok(track) = receiver.track() {
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event {
+                    RTCTrackEvent::OnOpen(init) => {
+                        trace!(
+                            "[Receiver] OnTrack::OnOpen event for receiver {:?}",
+                            init.receiver_id
+                        );
+
+                        if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
+                            if let Some(track) = receiver.track(&init.track_id)? {
                                 let codec = track.codec().clone();
                                 println!(
                                     "[Receiver] Received track with codec: {}",
@@ -270,28 +271,27 @@ async fn run_broadcaster(
                             }
                         }
                     }
-
-                    trace!(
-                        "[Receiver] OnTrack event for receiver {:?}",
-                        track_event.receiver_id
-                    );
-
-                    // Handle RTP/RTCP packets from the track
-                    match track_event.packet {
-                        RTCRtpRtcpPacket::Rtp(packet) => {
-                            packet_count += 1;
-                            if packet_count % 100 == 0 {
-                                debug!("[Receiver] Broadcasting RTP packet #{}", packet_count);
-                            }
-                            // Broadcast the RTP packet directly to all viewers
-                            let _ = broadcast_tx.send(packet);
+                    RTCTrackEvent::OnClose(_track_id) => {}
+                    RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
+                        packet_count += 1;
+                        if packet_count % 100 == 0 {
+                            debug!(
+                                "[Receiver] Broadcasting RTP packet #{} from track_id {}",
+                                packet_count, track_id
+                            );
                         }
-                        RTCRtpRtcpPacket::Rtcp(_rtcp_packets) => {
-                            // Handle RTCP if needed
-                            trace!("[Receiver] Received RTCP packets");
-                        }
+                        // Broadcast the RTP packet directly to all viewers
+                        let _ = broadcast_tx.send(rtp_packet);
                     }
-                }
+                    RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
+                        // Read incoming RTCP packets
+                        // Before these packets are returned they are processed by interceptors. For things
+                        // like NACK this needs to be called.
+                        // Handle RTCP if needed
+                        trace!("[Receiver] Received RTCP packets");
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
