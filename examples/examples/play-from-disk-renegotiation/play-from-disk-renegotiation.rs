@@ -410,7 +410,7 @@ async fn run(
     video_file: Arc<Mutex<Option<String>>>,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
-    let socket = Arc::new(UdpSocket::bind(format!("{host}:{port}")).await?);
+    let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let local_addr = socket.local_addr()?;
 
     let mut setting_engine = SettingEngine::default();
