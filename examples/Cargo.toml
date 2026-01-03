@@ -2,7 +2,7 @@
 name = "examples"
 version = "0.0.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2021"
+edition = "2024"
 description = "Examples of ortc.rs stack"
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/examples"

@@ -1,9 +1,9 @@
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
+use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage,
 };
-use crate::peer_connection::RTCPeerConnection;
 use bytes::BytesMut;
 use sansio::Protocol;
 use shared::error::{Error, Result};

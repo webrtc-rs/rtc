@@ -1,7 +1,7 @@
 use crate::data_channel::message::RTCDataChannelMessage;
-use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::message::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTPMessage, TaggedRTCMessage,
 };
@@ -9,8 +9,8 @@ use crate::peer_connection::message::{
 use crate::peer_connection::event::track_event::{RTCRtpRtcpPacket, RTCTrackEvent};
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver};
 use log::{debug, warn};
-use shared::error::{Error, Result};
 use shared::TransportContext;
+use shared::error::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
 

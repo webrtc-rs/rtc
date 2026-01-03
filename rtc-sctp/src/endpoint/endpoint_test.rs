@@ -2,6 +2,7 @@ use super::*;
 use crate::association::Event;
 use shared::error::{Error, Result};
 
+use crate::AssociationError;
 use crate::association::state::{AckMode, AssociationState};
 use crate::association::stream::{ReliabilityType, Stream};
 use crate::chunk::chunk_abort::ChunkAbort;
@@ -20,7 +21,6 @@ use crate::chunk::{ErrorCauseProtocolViolation, PROTOCOL_VIOLATION};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::param_outgoing_reset_request::ParamOutgoingResetRequest;
 use crate::param::param_reconfig_response::ParamReconfigResponse;
-use crate::AssociationError;
 use assert_matches::assert_matches;
 use lazy_static::lazy_static;
 use log::{info, trace};

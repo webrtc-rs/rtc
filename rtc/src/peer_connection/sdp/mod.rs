@@ -4,8 +4,8 @@
 pub mod sdp_type;
 pub mod session_description;
 
-use crate::media_stream::track::MediaStreamTrackId;
 use crate::media_stream::MediaStreamId;
+use crate::media_stream::track::MediaStreamTrackId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
@@ -16,9 +16,9 @@ use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{
-    rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType, RTCRtpTransceiver, SSRC,
+    PayloadType, RTCRtpTransceiver, SSRC, rtp_sender::rtcp_parameters::RTCPFeedback,
 };
-use ice::candidate::{unmarshal_candidate, Candidate};
+use ice::candidate::{Candidate, unmarshal_candidate};
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;
 use sdp::description::session::*;
@@ -284,10 +284,10 @@ pub(crate) fn add_candidates_to_media_descriptions(
     let append_candidate_if_new = |c: &Candidate, m: MediaDescription| -> MediaDescription {
         let marshaled = c.marshal();
         for a in &m.attributes {
-            if let Some(value) = &a.value {
-                if &marshaled == value {
-                    return m;
-                }
+            if let Some(value) = &a.value
+                && &marshaled == value
+            {
+                return m;
             }
         }
 
@@ -935,12 +935,12 @@ pub(crate) fn extract_ice_details(
         }
 
         for a in &m.attributes {
-            if a.is_ice_candidate() {
-                if let Some(value) = &a.value {
-                    let c: Candidate = unmarshal_candidate(value)?;
-                    //let candidate = RTCIceCandidate::from(&c);
-                    candidates.push(c);
-                }
+            if a.is_ice_candidate()
+                && let Some(value) = &a.value
+            {
+                let c: Candidate = unmarshal_candidate(value)?;
+                //let candidate = RTCIceCandidate::from(&c);
+                candidates.push(c);
             }
         }
     }
@@ -1008,10 +1008,10 @@ pub(crate) fn get_by_mid<'a>(
 ) -> Option<&'a MediaDescription> {
     if let Some(parsed) = &desc.parsed {
         for m in &parsed.media_descriptions {
-            if let Some(mid) = m.attribute(ATTR_KEY_MID).flatten() {
-                if mid == search_mid {
-                    return Some(m);
-                }
+            if let Some(mid) = m.attribute(ATTR_KEY_MID).flatten()
+                && mid == search_mid
+            {
+                return Some(m);
             }
         }
     }

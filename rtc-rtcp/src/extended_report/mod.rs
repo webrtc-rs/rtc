@@ -17,9 +17,9 @@ pub use ssr::{StatisticsSummaryReportBlock, TTLorHopLimitType};
 pub use unknown::UnknownReportBlock;
 pub use vm::VoIPMetricsReportBlock;
 
-use crate::header::{Header, PacketType, HEADER_LENGTH, SSRC_LENGTH};
-use crate::util::{get_padding_size, put_padding};
 use crate::Packet;
+use crate::header::{HEADER_LENGTH, Header, PacketType, SSRC_LENGTH};
+use crate::util::{get_padding_size, put_padding};
 use bytes::{Buf, BufMut, Bytes};
 use shared::{
     error::{Error, Result},

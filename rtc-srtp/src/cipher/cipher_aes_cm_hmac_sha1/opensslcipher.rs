@@ -29,7 +29,7 @@ impl CipherAesCmHmacSha1 {
             _ => {
                 return Err(Error::Other(String::from(
                     "no AES protection profile passed to CipherAesCmHmacSha1",
-                )))
+                )));
             }
         };
 

@@ -1,5 +1,5 @@
-use crate::association::state::AssociationState;
 use crate::association::Association;
+use crate::association::state::AssociationState;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
 use crate::{ErrorCauseCode, Event, Side};
@@ -108,13 +108,13 @@ impl Stream<'_> {
     /// Returns EOF when the stream is reset or an error if the stream is closed
     /// otherwise.
     pub fn read_sctp(&mut self) -> Result<Option<Chunks>> {
-        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
-            if s.state == RecvSendState::ReadWritable || s.state == RecvSendState::Readable {
-                return Ok(s.reassembly_queue.read());
-            }
+        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier)
+            && (s.state == RecvSendState::ReadWritable || s.state == RecvSendState::Readable)
+        {
+            Ok(s.reassembly_queue.read())
+        } else {
+            Err(Error::ErrStreamClosed)
         }
-
-        Err(Error::ErrStreamClosed)
     }
 
     /// write_sctp writes len(p) bytes from p to the DTLS connection
@@ -506,11 +506,7 @@ impl StreamState {
 
         trace!(
             "[{}] new_amount = {}, old_amount = {}, buffered_amount_high = {}, n_bytes_added = {}",
-            self.side,
-            new_amount,
-            old_amount,
-            self.buffered_amount_high,
-            n_bytes_added,
+            self.side, new_amount, old_amount, self.buffered_amount_high, n_bytes_added,
         );
 
         let is_buffered_amount_high =
@@ -542,11 +538,7 @@ impl StreamState {
 
         trace!(
             "[{}] new_amount = {}, old_amount = {}, buffered_amount_low = {}, n_bytes_released = {}",
-            self.side,
-            new_amount,
-            old_amount,
-            self.buffered_amount_low,
-            n_bytes_released,
+            self.side, new_amount, old_amount, self.buffered_amount_low, n_bytes_released,
         );
 
         old_amount > self.buffered_amount_low && new_amount <= self.buffered_amount_low

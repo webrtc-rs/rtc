@@ -1,6 +1,6 @@
 use std::fmt;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 
 /// Sequencer generates sequential sequence numbers for building RTP packets
 pub trait Sequencer: Send + Sync + fmt::Debug {

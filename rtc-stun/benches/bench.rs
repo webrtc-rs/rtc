@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::io::Cursor;
@@ -8,17 +8,17 @@ use stun::attributes::{
     ATTR_CHANNEL_NUMBER, ATTR_DONT_FRAGMENT, ATTR_ERROR_CODE, ATTR_MESSAGE_INTEGRITY, ATTR_NONCE,
     ATTR_REALM, ATTR_SOFTWARE, ATTR_USERNAME, ATTR_XORMAPPED_ADDRESS,
 };
-use stun::error_code::{ErrorCode, ErrorCodeAttribute, CODE_STALE_NONCE};
+use stun::error_code::{CODE_STALE_NONCE, ErrorCode, ErrorCodeAttribute};
 use stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
 use stun::integrity::MessageIntegrity;
 use stun::message::TransactionId;
 use stun::message::{
-    is_message, Getter, Message, MessageType, Setter, ATTRIBUTE_HEADER_SIZE, BINDING_REQUEST,
-    CLASS_REQUEST, MESSAGE_HEADER_SIZE, METHOD_BINDING,
+    ATTRIBUTE_HEADER_SIZE, BINDING_REQUEST, CLASS_REQUEST, Getter, MESSAGE_HEADER_SIZE,
+    METHOD_BINDING, Message, MessageType, Setter, is_message,
 };
 use stun::textattrs::{Nonce, Realm, Software, Username};
 use stun::uattrs::UnknownAttributes;
-use stun::xoraddr::{xor_bytes, XorMappedAddress};
+use stun::xoraddr::{XorMappedAddress, xor_bytes};
 
 // AGENT_COLLECT_CAP is initial capacity for Agent.Collect slices,
 // sufficient to make function zero-alloc in most cases.

@@ -1383,7 +1383,8 @@ pub enum Error {
 
     /// ErrRegisterHeaderExtensionNoFreeID indicates that there was no extension ID available which
     /// in turn means that all 15 available id(1 through 14) have been used.
-    #[error("no header extension ID was free to use(this means the maximum of 15 extensions have been registered)"
+    #[error(
+        "no header extension ID was free to use(this means the maximum of 15 extensions have been registered)"
     )]
     ErrRegisterHeaderExtensionNoFreeID,
 

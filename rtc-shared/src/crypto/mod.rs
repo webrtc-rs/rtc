@@ -6,5 +6,5 @@ use crate::error::Result;
 /// the dtls and srtp crates.
 pub trait KeyingMaterialExporter {
     fn export_keying_material(&self, label: &str, context: &[u8], length: usize)
-        -> Result<Vec<u8>>;
+    -> Result<Vec<u8>>;
 }

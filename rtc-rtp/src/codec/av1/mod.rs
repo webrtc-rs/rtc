@@ -1,9 +1,9 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::codec::av1::leb128::BytesMutExt;
-use crate::codec::av1::obu::{obu_has_extension, parse_obus, OBU_HAS_SIZE_BIT};
+use crate::codec::av1::obu::{OBU_HAS_SIZE_BIT, obu_has_extension, parse_obus};
 use crate::codec::av1::packetizer::{
-    get_aggregation_header, packetize, AGGREGATION_HEADER_SIZE, MAX_NUM_OBUS_TO_OMIT_SIZE,
+    AGGREGATION_HEADER_SIZE, MAX_NUM_OBUS_TO_OMIT_SIZE, get_aggregation_header, packetize,
 };
 use crate::packetizer::Payloader;
 use shared::error::Result;

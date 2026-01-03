@@ -4,9 +4,10 @@ use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::media_stream::track::MediaStreamTrack;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -16,11 +17,10 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtp;
+use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
-use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -29,7 +29,7 @@ use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{Receiver, channel};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
@@ -229,8 +229,7 @@ async fn run_broadcaster(
                 Ok(n) => {
                     trace!(
                         "socket write to {} with bytes {}",
-                        msg.transport.peer_addr,
-                        n
+                        msg.transport.peer_addr, n
                     );
                 }
                 Err(err) => {

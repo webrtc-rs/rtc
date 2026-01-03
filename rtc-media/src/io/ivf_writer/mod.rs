@@ -7,8 +7,8 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use bytes::{Bytes, BytesMut};
 use rtp::packetizer::Depacketizer;
 
-use crate::io::ivf_reader::IVFFileHeader;
 use crate::io::Writer;
+use crate::io::ivf_reader::IVFFileHeader;
 use shared::error::Result;
 
 /// IVFWriter is used to take RTP packets and write them to an IVF on disk

@@ -7,26 +7,26 @@ use bytes::BytesMut;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
 use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 
+use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_server::RTCIceServer as WebrtcIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
@@ -340,8 +340,13 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                                 continue;
                             }
 
-                            log::info!("RTC: ICE credentials changed: ufrag {:?} -> {:?}, pwd {:?} -> {:?}", 
-                                old_ufrag, new_ufrag, old_pwd, new_pwd);
+                            log::info!(
+                                "RTC: ICE credentials changed: ufrag {:?} -> {:?}, pwd {:?} -> {:?}",
+                                old_ufrag,
+                                new_ufrag,
+                                old_pwd,
+                                new_pwd
+                            );
 
                             if let Err(e) = rtc_pc.set_local_description(offer.clone()) {
                                 resp_tx

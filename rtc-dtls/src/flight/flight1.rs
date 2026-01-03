@@ -81,7 +81,7 @@ impl Flight for Flight1 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 

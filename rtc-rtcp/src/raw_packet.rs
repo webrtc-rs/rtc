@@ -1,4 +1,4 @@
-use crate::{header::*, util::*, Packet};
+use crate::{Packet, header::*, util::*};
 
 use shared::{
     error::{Error, Result},

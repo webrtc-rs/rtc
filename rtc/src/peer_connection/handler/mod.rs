@@ -7,6 +7,7 @@ pub(crate) mod interceptor;
 pub(crate) mod sctp;
 pub(crate) mod srtp;
 
+use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::{RTCEvent, RTCEventInternal};
 use crate::peer_connection::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
@@ -20,10 +21,9 @@ use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
-use crate::peer_connection::RTCPeerConnection;
 use log::warn;
-use shared::error::{flatten_errs, Error};
 use shared::TaggedBytesMut;
+use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 

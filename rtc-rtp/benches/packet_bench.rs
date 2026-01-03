@@ -2,7 +2,7 @@
 #![allow(clippy::needless_update)]
 
 use bytes::{Bytes, BytesMut};
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rtp::{header::*, packet::*};
 use shared::marshal::{Marshal, MarshalSize, Unmarshal};
 

@@ -99,7 +99,7 @@ impl Flight for Flight4 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 
@@ -120,7 +120,7 @@ impl Flight for Flight4 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 
@@ -233,7 +233,7 @@ impl Flight for Flight4 {
                                         alert_description: AlertDescription::BadCertificate,
                                     }),
                                     Some(err),
-                                ))
+                                ));
                             }
                         };
                 } else {
@@ -248,16 +248,16 @@ impl Flight for Flight4 {
 
                 verified = true
             }
-            if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate {
-                if let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains) {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::BadCertificate,
-                        }),
-                        Some(err),
-                    ));
-                }
+            if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate
+                && let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains)
+            {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::BadCertificate,
+                    }),
+                    Some(err),
+                ));
             }
             state.peer_certificates_verified = verified
         } else if !state.peer_certificates.is_empty() {
@@ -272,115 +272,25 @@ impl Flight for Flight4 {
                 .as_ref()
                 .map(|cipher_suite| (cipher_suite.is_initialized(), cipher_suite.hash_func()));
 
-            if let Some((cipher_suite_is_initialized, cipher_suite_hash_func)) = cipher_suite {
-                if !cipher_suite_is_initialized {
-                    let mut server_random = vec![];
-                    {
-                        let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
-                        let _ = state.local_random.marshal(&mut writer);
-                    }
-                    let mut client_random = vec![];
-                    {
-                        let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
-                        let _ = state.remote_random.marshal(&mut writer);
-                    }
+            if let Some((cipher_suite_is_initialized, cipher_suite_hash_func)) = cipher_suite
+                && !cipher_suite_is_initialized
+            {
+                let mut server_random = vec![];
+                {
+                    let mut writer = BufWriter::<&mut Vec<u8>>::new(server_random.as_mut());
+                    let _ = state.local_random.marshal(&mut writer);
+                }
+                let mut client_random = vec![];
+                {
+                    let mut writer = BufWriter::<&mut Vec<u8>>::new(client_random.as_mut());
+                    let _ = state.remote_random.marshal(&mut writer);
+                }
 
-                    let mut pre_master_secret = vec![];
-                    if let Some(local_psk_callback) = &cfg.local_psk_callback {
-                        let psk = match local_psk_callback(&client_key_exchange.identity_hint) {
-                            Ok(psk) => psk,
-                            Err(err) => {
-                                return Err((
-                                    Some(Alert {
-                                        alert_level: AlertLevel::Fatal,
-                                        alert_description: AlertDescription::InternalError,
-                                    }),
-                                    Some(err),
-                                ))
-                            }
-                        };
-
-                        state
-                            .identity_hint
-                            .clone_from(&client_key_exchange.identity_hint);
-                        pre_master_secret = prf_psk_pre_master_secret(&psk);
-                    } else if let Some(local_keypair) = &state.local_keypair {
-                        pre_master_secret = match prf_pre_master_secret(
-                            &client_key_exchange.public_key,
-                            &local_keypair.private_key,
-                            local_keypair.curve,
-                        ) {
-                            Ok(pre_master_secret) => pre_master_secret,
-                            Err(err) => {
-                                return Err((
-                                    Some(Alert {
-                                        alert_level: AlertLevel::Fatal,
-                                        alert_description: AlertDescription::IllegalParameter,
-                                    }),
-                                    Some(err),
-                                ))
-                            }
-                        };
-                    }
-
-                    if state.extended_master_secret {
-                        let hf = cipher_suite_hash_func;
-                        let session_hash = match cache.session_hash(hf, cfg.initial_epoch, &[]) {
-                            Ok(s) => s,
-                            Err(err) => {
-                                return Err((
-                                    Some(Alert {
-                                        alert_level: AlertLevel::Fatal,
-                                        alert_description: AlertDescription::InternalError,
-                                    }),
-                                    Some(err),
-                                ))
-                            }
-                        };
-
-                        state.master_secret = match prf_extended_master_secret(
-                            &pre_master_secret,
-                            &session_hash,
-                            cipher_suite_hash_func,
-                        ) {
-                            Ok(ms) => ms,
-                            Err(err) => {
-                                return Err((
-                                    Some(Alert {
-                                        alert_level: AlertLevel::Fatal,
-                                        alert_description: AlertDescription::InternalError,
-                                    }),
-                                    Some(err),
-                                ))
-                            }
-                        };
-                    } else {
-                        state.master_secret = match prf_master_secret(
-                            &pre_master_secret,
-                            &client_random,
-                            &server_random,
-                            cipher_suite_hash_func,
-                        ) {
-                            Ok(ms) => ms,
-                            Err(err) => {
-                                return Err((
-                                    Some(Alert {
-                                        alert_level: AlertLevel::Fatal,
-                                        alert_description: AlertDescription::InternalError,
-                                    }),
-                                    Some(err),
-                                ))
-                            }
-                        };
-                    }
-
-                    if let Some(cipher_suite) = &mut state.cipher_suite {
-                        if let Err(err) = cipher_suite.init(
-                            &state.master_secret,
-                            &client_random,
-                            &server_random,
-                            false,
-                        ) {
+                let mut pre_master_secret = vec![];
+                if let Some(local_psk_callback) = &cfg.local_psk_callback {
+                    let psk = match local_psk_callback(&client_key_exchange.identity_hint) {
+                        Ok(psk) => psk,
+                        Err(err) => {
                             return Err((
                                 Some(Alert {
                                     alert_level: AlertLevel::Fatal,
@@ -389,7 +299,97 @@ impl Flight for Flight4 {
                                 Some(err),
                             ));
                         }
-                    }
+                    };
+
+                    state
+                        .identity_hint
+                        .clone_from(&client_key_exchange.identity_hint);
+                    pre_master_secret = prf_psk_pre_master_secret(&psk);
+                } else if let Some(local_keypair) = &state.local_keypair {
+                    pre_master_secret = match prf_pre_master_secret(
+                        &client_key_exchange.public_key,
+                        &local_keypair.private_key,
+                        local_keypair.curve,
+                    ) {
+                        Ok(pre_master_secret) => pre_master_secret,
+                        Err(err) => {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::IllegalParameter,
+                                }),
+                                Some(err),
+                            ));
+                        }
+                    };
+                }
+
+                if state.extended_master_secret {
+                    let hf = cipher_suite_hash_func;
+                    let session_hash = match cache.session_hash(hf, cfg.initial_epoch, &[]) {
+                        Ok(s) => s,
+                        Err(err) => {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::InternalError,
+                                }),
+                                Some(err),
+                            ));
+                        }
+                    };
+
+                    state.master_secret = match prf_extended_master_secret(
+                        &pre_master_secret,
+                        &session_hash,
+                        cipher_suite_hash_func,
+                    ) {
+                        Ok(ms) => ms,
+                        Err(err) => {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::InternalError,
+                                }),
+                                Some(err),
+                            ));
+                        }
+                    };
+                } else {
+                    state.master_secret = match prf_master_secret(
+                        &pre_master_secret,
+                        &client_random,
+                        &server_random,
+                        cipher_suite_hash_func,
+                    ) {
+                        Ok(ms) => ms,
+                        Err(err) => {
+                            return Err((
+                                Some(Alert {
+                                    alert_level: AlertLevel::Fatal,
+                                    alert_description: AlertDescription::InternalError,
+                                }),
+                                Some(err),
+                            ));
+                        }
+                    };
+                }
+
+                if let Some(cipher_suite) = &mut state.cipher_suite
+                    && let Err(err) = cipher_suite.init(
+                        &state.master_secret,
+                        &client_random,
+                        &server_random,
+                        false,
+                    )
+                {
+                    return Err((
+                        Some(Alert {
+                            alert_level: AlertLevel::Fatal,
+                            alert_description: AlertDescription::InternalError,
+                        }),
+                        Some(err),
+                    ));
                 }
             }
         }
@@ -562,7 +562,7 @@ impl Flight for Flight4 {
                             alert_description: AlertDescription::HandshakeFailure,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
 
@@ -608,7 +608,7 @@ impl Flight for Flight4 {
                             alert_description: AlertDescription::InsufficientSecurity,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
 
@@ -628,7 +628,7 @@ impl Flight for Flight4 {
                                 alert_description: AlertDescription::InternalError,
                             }),
                             Some(err),
-                        ))
+                        ));
                     }
                 };
 

@@ -62,7 +62,7 @@ mod test {
     use std::collections::HashSet;
 
     use sdp::description::media::MediaDescription;
-    use sdp::description::session::{SessionDescription, ATTR_KEY_SSRC};
+    use sdp::description::session::{ATTR_KEY_SSRC, SessionDescription};
 
     use super::*;
 

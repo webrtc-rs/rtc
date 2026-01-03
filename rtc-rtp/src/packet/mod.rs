@@ -70,11 +70,7 @@ impl MarshalSize for Packet {
         let payload_len = self.payload.len();
         let padding_len = if self.header.padding {
             let padding_len = get_padding(payload_len);
-            if padding_len == 0 {
-                4
-            } else {
-                padding_len
-            }
+            if padding_len == 0 { 4 } else { padding_len }
         } else {
             0
         };

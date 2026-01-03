@@ -6,7 +6,7 @@ use crate::checks::*;
 use crate::message::*;
 use shared::error::*;
 
-use crc::{Crc, CRC_32_ISO_HDLC};
+use crc::{CRC_32_ISO_HDLC, Crc};
 
 // FingerprintAttr represents FINGERPRINT attribute.
 //

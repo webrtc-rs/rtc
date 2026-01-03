@@ -1,20 +1,20 @@
 use super::*;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
-    get_by_mid, get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
-    populate_sdp, rtp_extensions_from_media_description, track_details_from_sdp, MediaSection,
-    PopulateSdpParams,
+    MediaSection, PopulateSdpParams, get_by_mid, get_peer_direction, get_rids, have_data_channel,
+    is_ext_map_allow_mixed_set, populate_sdp, rtp_extensions_from_media_description,
+    track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::rtp_transceiver::RTCRtpTransceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::RTCRtpTransceiverId;
+use ::sdp::MediaDescription;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
-use ::sdp::MediaDescription;
 use std::collections::HashSet;
 
 impl RTCPeerConnection {
@@ -450,35 +450,34 @@ impl RTCPeerConnection {
                 transceiver.mid().as_ref() == Some(&incoming_track.mid)
                     && incoming_track.kind == transceiver.kind()
                     && transceiver.direction().has_recv()
-            }) {
-                if let Some(receiver) = transceiver.receiver_mut() {
-                    let mut receive_codings = vec![];
-                    if !incoming_track.rids.is_empty() {
-                        for rid in incoming_track.rids {
-                            receive_codings.push(RTCRtpCodingParameters {
-                                rid,
-                                ssrc: incoming_track.ssrc,
-                                rtx: incoming_track
-                                    .rtx_ssrc
-                                    .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
-                                ..Default::default()
-                            });
-                        }
-                    } else if incoming_track.ssrc.is_some() {
+            }) && let Some(receiver) = transceiver.receiver_mut()
+            {
+                let mut receive_codings = vec![];
+                if !incoming_track.rids.is_empty() {
+                    for rid in incoming_track.rids {
                         receive_codings.push(RTCRtpCodingParameters {
-                            rid: "".to_string(),
+                            rid,
                             ssrc: incoming_track.ssrc,
                             rtx: incoming_track
                                 .rtx_ssrc
                                 .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
                             ..Default::default()
                         });
-                    } else {
-                        return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                     }
-
-                    receiver.set_coding_parameters(receive_codings);
+                } else if incoming_track.ssrc.is_some() {
+                    receive_codings.push(RTCRtpCodingParameters {
+                        rid: "".to_string(),
+                        ssrc: incoming_track.ssrc,
+                        rtx: incoming_track
+                            .rtx_ssrc
+                            .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
+                        ..Default::default()
+                    });
+                } else {
+                    return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                 }
+
+                receiver.set_coding_parameters(receive_codings);
             }
         }
 

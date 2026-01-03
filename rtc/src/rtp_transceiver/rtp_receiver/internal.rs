@@ -6,7 +6,7 @@ use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
 };
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
+    CodecMatch, RtpCodecKind, codec_parameters_fuzzy_search,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;

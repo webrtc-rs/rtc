@@ -98,10 +98,10 @@ impl TimerTable {
 
     /// Restarts the timer if the current instant is none or elapsed.
     pub fn restart_if_stale(&mut self, timer: Timer, now: Instant, interval: u64) {
-        if let Some(current) = self.data[timer as usize] {
-            if current >= now {
-                return;
-            }
+        if let Some(current) = self.data[timer as usize]
+            && current >= now
+        {
+            return;
         }
 
         self.start(timer, now, interval);

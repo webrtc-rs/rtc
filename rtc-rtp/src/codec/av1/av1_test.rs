@@ -65,9 +65,11 @@ fn build_av1_frame(obus: &Vec<Av1Obu>) -> Bytes {
 
 #[test]
 fn test_packetize_one_obu_without_size_and_extension() -> Result<()> {
-    let frame = build_av1_frame(&vec![Av1Obu::new(OBU_TYPE_FRAME)
-        .without_size()
-        .with_payload(vec![1, 2, 3, 4, 5, 6, 7])]);
+    let frame = build_av1_frame(&vec![
+        Av1Obu::new(OBU_TYPE_FRAME)
+            .without_size()
+            .with_payload(vec![1, 2, 3, 4, 5, 6, 7]),
+    ]);
     let mut payloader = Av1Payloader {};
     assert_eq!(
         payloader.payload(1200, &frame)?,
@@ -88,10 +90,12 @@ fn test_packetize_one_obu_without_size_and_extension() -> Result<()> {
 
 #[test]
 fn test_packetize_one_obu_without_size_with_extension() -> Result<()> {
-    let frame = build_av1_frame(&vec![Av1Obu::new(OBU_TYPE_FRAME)
-        .without_size()
-        .with_extension(OBU_EXTENSION_S1T1)
-        .with_payload(vec![2, 3, 4, 5, 6, 7])]);
+    let frame = build_av1_frame(&vec![
+        Av1Obu::new(OBU_TYPE_FRAME)
+            .without_size()
+            .with_extension(OBU_EXTENSION_S1T1)
+            .with_payload(vec![2, 3, 4, 5, 6, 7]),
+    ]);
     let mut payloader = Av1Payloader {};
     assert_eq!(
         payloader.payload(1200, &frame)?,
@@ -113,7 +117,7 @@ fn test_packetize_one_obu_without_size_with_extension() -> Result<()> {
 #[test]
 fn removes_obu_size_field_without_extension() -> Result<()> {
     let frame = build_av1_frame(&vec![
-        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![11, 12, 13, 14, 15, 16, 17])
+        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![11, 12, 13, 14, 15, 16, 17]),
     ]);
     let mut payloader = Av1Payloader {};
     assert_eq!(
@@ -135,9 +139,11 @@ fn removes_obu_size_field_without_extension() -> Result<()> {
 
 #[test]
 fn removes_obu_size_field_with_extension() -> Result<()> {
-    let frame = build_av1_frame(&vec![Av1Obu::new(OBU_TYPE_FRAME)
-        .with_extension(OBU_EXTENSION_S1T1)
-        .with_payload(vec![1, 2, 3, 4, 5, 6, 7])]);
+    let frame = build_av1_frame(&vec![
+        Av1Obu::new(OBU_TYPE_FRAME)
+            .with_extension(OBU_EXTENSION_S1T1)
+            .with_payload(vec![1, 2, 3, 4, 5, 6, 7]),
+    ]);
     let mut payloader = Av1Payloader {};
     assert_eq!(
         payloader.payload(1200, &frame)?,
@@ -314,7 +320,7 @@ fn test_split_two_obus_into_two_packet_force_split_obu_header() -> Result<()> {
 #[test]
 fn test_sets_n_bit_at_the_first_packet_of_a_key_frame_with_sequence_header() -> Result<()> {
     let frame = build_av1_frame(&vec![
-        Av1Obu::new(OBU_TYPE_SEQUENCE_HEADER).with_payload(vec![1, 2, 3, 4, 5, 6, 7])
+        Av1Obu::new(OBU_TYPE_SEQUENCE_HEADER).with_payload(vec![1, 2, 3, 4, 5, 6, 7]),
     ]);
     let mut payloader = Av1Payloader {};
     let result = payloader.payload(6, &frame)?;
@@ -330,7 +336,7 @@ fn test_sets_n_bit_at_the_first_packet_of_a_key_frame_with_sequence_header() -> 
 #[test]
 fn test_doesnt_set_n_bit_at_the_packets_of_a_key_frame_without_sequence_header() -> Result<()> {
     let frame = build_av1_frame(&vec![
-        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![1, 2, 3, 4, 5, 6, 7])
+        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![1, 2, 3, 4, 5, 6, 7]),
     ]);
     let mut payloader = Av1Payloader {};
     let result = payloader.payload(6, &frame)?;
@@ -349,7 +355,7 @@ fn test_doesnt_set_n_bit_at_the_packets_of_a_delta_frame() -> Result<()> {
 #[test]
 fn test_split_single_obu_into_two_packets() -> Result<()> {
     let frame = build_av1_frame(&vec![
-        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![11, 12, 13, 14, 15, 16, 17, 18, 19])
+        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![11, 12, 13, 14, 15, 16, 17, 18, 19]),
     ]);
     let mut payloader = Av1Payloader {};
     // let result = payloader.payload(8, &frame)?;
@@ -383,7 +389,7 @@ fn test_split_single_obu_into_two_packets() -> Result<()> {
 #[test]
 fn test_split_single_obu_into_many_packets() -> Result<()> {
     let frame = build_av1_frame(&vec![
-        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![27; 1200])
+        Av1Obu::new(OBU_TYPE_FRAME).with_payload(vec![27; 1200]),
     ]);
     let mut payloader = Av1Payloader {};
     let result = payloader.payload(100, &frame)?;

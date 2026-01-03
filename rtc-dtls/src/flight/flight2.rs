@@ -61,7 +61,7 @@ impl Flight for Flight2 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 

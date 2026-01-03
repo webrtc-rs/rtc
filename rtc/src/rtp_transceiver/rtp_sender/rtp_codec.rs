@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::peer_connection::configuration::media_engine::*;
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
+use crate::peer_connection::configuration::media_engine::*;
 use crate::rtp_transceiver::rtp_sender::rtcp_parameters::RTCPFeedback;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::{fmtp, PayloadType};
+use crate::rtp_transceiver::{PayloadType, fmtp};
 use shared::error::{Error, Result};
 
 /// RTPCodecType determines the type of a codec

@@ -60,10 +60,10 @@ impl PendingQueue {
             } else {
                 self.ordered_queue.pop_front()
             };
-            if let Some(p) = &popped {
-                if p.ending_fragment {
-                    self.selected = false;
-                }
+            if let Some(p) = &popped
+                && p.ending_fragment
+            {
+                self.selected = false;
             }
             popped
         } else {
@@ -72,20 +72,20 @@ impl PendingQueue {
             }
             if unordered {
                 let popped = { self.unordered_queue.pop_front() };
-                if let Some(p) = &popped {
-                    if !p.ending_fragment {
-                        self.selected = true;
-                        self.unordered_is_selected = true;
-                    }
+                if let Some(p) = &popped
+                    && !p.ending_fragment
+                {
+                    self.selected = true;
+                    self.unordered_is_selected = true;
                 }
                 popped
             } else {
                 let popped = { self.ordered_queue.pop_front() };
-                if let Some(p) = &popped {
-                    if !p.ending_fragment {
-                        self.selected = true;
-                        self.unordered_is_selected = false;
-                    }
+                if let Some(p) = &popped
+                    && !p.ending_fragment
+                {
+                    self.selected = true;
+                    self.unordered_is_selected = false;
                 }
                 popped
             }

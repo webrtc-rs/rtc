@@ -1,21 +1,21 @@
-use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
-use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use datachannel::message::Message;
+use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, error, warn};
 use sctp::{
     AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
     Payload, PayloadProtocolIdentifier, StreamEvent,
 };
+use shared::TransportMessage;
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
-use shared::TransportMessage;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -399,26 +399,25 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
 
         self.ctx.event_outs.push_back(evt);
 
-        if let Some(remote_addr) = remote_addr {
-            if let Some(sctp_transport_config) =
+        if let Some(remote_addr) = remote_addr
+            && let Some(sctp_transport_config) =
                 self.ctx.sctp_transport.sctp_transport_config.clone()
-            {
-                let (sctp_endpoint, sctp_associations) = (
-                    self.ctx
-                        .sctp_transport
-                        .sctp_endpoint
-                        .as_mut()
-                        .ok_or(Error::ErrSCTPNotEstablished)?,
-                    &mut self.ctx.sctp_transport.sctp_associations,
-                );
+        {
+            let (sctp_endpoint, sctp_associations) = (
+                self.ctx
+                    .sctp_transport
+                    .sctp_endpoint
+                    .as_mut()
+                    .ok_or(Error::ErrSCTPNotEstablished)?,
+                &mut self.ctx.sctp_transport.sctp_associations,
+            );
 
-                debug!("sctp endpoint initiates connection for dtls client role");
-                let (ch, conn) = sctp_endpoint
-                    .connect(ClientConfig::new(sctp_transport_config), remote_addr)
-                    .map_err(|e| Error::Other(e.to_string()))?;
+            debug!("sctp endpoint initiates connection for dtls client role");
+            let (ch, conn) = sctp_endpoint
+                .connect(ClientConfig::new(sctp_transport_config), remote_addr)
+                .map_err(|e| Error::Other(e.to_string()))?;
 
-                sctp_associations.insert(ch, conn);
-            }
+            sctp_associations.insert(ch, conn);
         }
 
         Ok(())
@@ -494,18 +493,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
         let mut eto = max_eto;
 
         for conn in self.ctx.sctp_transport.sctp_associations.values() {
-            if let Some(timeout) = conn.poll_timeout() {
-                if timeout < eto {
-                    eto = timeout;
-                }
+            if let Some(timeout) = conn.poll_timeout()
+                && timeout < eto
+            {
+                eto = timeout;
             }
         }
 
-        if eto != max_eto {
-            Some(eto)
-        } else {
-            None
-        }
+        if eto != max_eto { Some(eto) } else { None }
     }
 
     fn close(&mut self) -> Result<()> {

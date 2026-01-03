@@ -3,8 +3,8 @@ use clap::Parser;
 use futures::StreamExt;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
-use rtc_ice::agent::agent_config::AgentConfig;
 use rtc_ice::agent::Agent;
+use rtc_ice::agent::agent_config::AgentConfig;
 use rtc_ice::candidate::candidate_host::CandidateHostConfig;
 use rtc_ice::candidate::*;
 use rtc_ice::state::*;
@@ -18,7 +18,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{Mutex, mpsc, watch};
 
 #[macro_use]
 extern crate lazy_static;

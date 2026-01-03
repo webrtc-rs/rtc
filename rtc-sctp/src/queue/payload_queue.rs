@@ -128,7 +128,7 @@ impl PayloadQueue {
     }
 
     pub(crate) fn mark_as_acked(&mut self, tsn: u32) -> usize {
-        let n_bytes_acked = if let Some(c) = self.chunk_map.get_mut(&tsn) {
+        if let Some(c) = self.chunk_map.get_mut(&tsn) {
             c.acked = true;
             c.retransmit = false;
             let n = c.user_data.len();
@@ -137,9 +137,7 @@ impl PayloadQueue {
             n
         } else {
             0
-        };
-
-        n_bytes_acked
+        }
     }
 
     pub(crate) fn get_last_tsn_received(&self) -> Option<&u32> {

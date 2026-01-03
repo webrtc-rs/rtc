@@ -1,7 +1,7 @@
 use crate::agent::Agent;
 use std::time::Instant;
 
-use crate::candidate::{candidate_pair::CandidatePairState, CandidateType};
+use crate::candidate::{CandidateType, candidate_pair::CandidatePairState};
 use crate::network_type::NetworkType;
 
 /// Contains ICE candidate pair statistics.

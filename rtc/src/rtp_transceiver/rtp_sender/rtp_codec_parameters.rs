@@ -1,5 +1,5 @@
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 use crate::rtp_transceiver::PayloadType;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 
 /// RTPCodecParameters is a sequence containing the media codecs that an RtpSender
 /// will choose from, as well as entries for RTX, RED and FEC mechanisms. This also

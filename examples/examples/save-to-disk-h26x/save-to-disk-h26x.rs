@@ -7,16 +7,17 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
+use rtc::media::io::Writer;
 use rtc::media::io::h26x_writer::H26xWriter;
 use rtc::media::io::ogg_writer::OggWriter;
-use rtc::media::io::Writer;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
-    MediaEngine, MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS,
+    MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MediaEngine,
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -24,7 +25,6 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
@@ -34,7 +34,7 @@ use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::{fs, fs::OpenOptions, io::Write, str::FromStr};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{Receiver, channel};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 
@@ -318,8 +318,7 @@ async fn run(
                 Ok(n) => {
                     trace!(
                         "socket write to {} with bytes {}",
-                        msg.transport.peer_addr,
-                        n
+                        msg.transport.peer_addr, n
                     );
                 }
                 Err(err) => {

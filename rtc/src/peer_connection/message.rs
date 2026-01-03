@@ -1,5 +1,5 @@
-use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
+use crate::data_channel::message::RTCDataChannelMessage;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use shared::TransportContext;

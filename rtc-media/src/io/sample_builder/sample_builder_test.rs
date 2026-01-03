@@ -1,6 +1,6 @@
-use rtp::packetizer::Depacketizer;
 use rtp::Header;
 use rtp::Packet;
+use rtp::packetizer::Depacketizer;
 use shared::error::Result;
 
 use super::*;

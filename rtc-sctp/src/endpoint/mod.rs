@@ -10,6 +10,7 @@ use std::{
     time::Instant,
 };
 
+use crate::Payload;
 use crate::association::Association;
 use crate::chunk::chunk_type::CT_INIT;
 use crate::config::{ClientConfig, EndpointConfig, ServerConfig, TransportConfig};
@@ -18,7 +19,6 @@ use crate::shared::{
     AssociationEvent, AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner,
 };
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
-use crate::Payload;
 use shared::{EcnCodepoint, TransportContext, TransportMessage, TransportProtocol};
 
 use bytes::Bytes;

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::aead::AeadInPlace;
+use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
 
 use super::*;

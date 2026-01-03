@@ -1,7 +1,7 @@
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
-use crate::peer_connection::transport::dtls::role::{DTLSRole, DEFAULT_DTLS_ROLE_ANSWER};
+use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, DTLSRole};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
 use dtls::config::{ClientAuthType, VerifyPeerCertificateFn};

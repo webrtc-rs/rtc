@@ -155,10 +155,10 @@ impl Client {
 
     pub fn poll_timout(&mut self) -> Option<Instant> {
         let mut eto = None;
-        if let Some(to) = self.tr_map.poll_timout() {
-            if eto.is_none() || to < *eto.as_ref().unwrap() {
-                eto = Some(to);
-            }
+        if let Some(to) = self.tr_map.poll_timout()
+            && (eto.is_none() || to < *eto.as_ref().unwrap())
+        {
+            eto = Some(to);
         }
 
         #[allow(clippy::map_clone)]
@@ -168,10 +168,10 @@ impl Client {
                 relayed_addr,
                 client: self,
             };
-            if let Some(to) = relay.poll_timeout() {
-                if eto.is_none() || to < *eto.as_ref().unwrap() {
-                    eto = Some(to);
-                }
+            if let Some(to) = relay.poll_timeout()
+                && (eto.is_none() || to < *eto.as_ref().unwrap())
+            {
+                eto = Some(to);
             }
         }
 
@@ -377,8 +377,7 @@ impl Client {
 
         trace!(
             "channel data received from {} (ch={})",
-            addr,
-            ch_data.number.0
+            addr, ch_data.number.0
         );
 
         self.events.push_back(Event::DataIndicationOrChannelData(
@@ -664,9 +663,7 @@ impl Client {
 
         trace!(
             "start {} transaction {:?} to {}",
-            msg.typ,
-            msg.transaction_id,
-            tr.peer_addr
+            msg.typ, msg.transaction_id, tr.peer_addr
         );
         self.tr_map.insert(msg.transaction_id, tr);
 

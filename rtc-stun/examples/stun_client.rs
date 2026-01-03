@@ -3,8 +3,8 @@ use rtc_stun::message::*;
 use rtc_stun::xoraddr::*;
 
 use clap::Parser;
-use shared::error::Error;
 use shared::TransportProtocol;
+use shared::error::Error;
 use std::net::UdpSocket;
 
 #[derive(Parser)]

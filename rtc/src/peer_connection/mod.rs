@@ -10,17 +10,17 @@ pub mod transport;
 
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
-use crate::data_channel::{internal::RTCDataChannelInternal, RTCDataChannel, RTCDataChannelId};
+use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataChannelInternal};
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
-    offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
     RTCConfiguration,
+    offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
 };
+use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::handler::dtls::DtlsHandlerContext;
 use crate::peer_connection::handler::ice::IceHandlerContext;
 use crate::peer_connection::handler::sctp::SctpHandlerContext;
-use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
@@ -32,32 +32,32 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
+use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
 use crate::peer_connection::transport::dtls::role::{
-    DTLSRole, DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER,
+    DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, DTLSRole,
 };
-use crate::peer_connection::transport::dtls::RTCDtlsTransport;
+use crate::peer_connection::transport::ice::RTCIceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
-use crate::peer_connection::transport::ice::RTCIceTransport;
-use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
+use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    encoding_parameters_fuzzy_search, CodecMatch, RtpCodecKind,
+    CodecMatch, RtpCodecKind, encoding_parameters_fuzzy_search,
 };
-use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::{
-    find_by_mid, satisfy_type_and_direction, RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver,
-    RTCRtpTransceiverId, RTCRtpTransceiverInit,
+    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
+    RTCRtpTransceiverInit, find_by_mid, satisfy_type_and_direction,
 };
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
-use ice::candidate::{unmarshal_candidate, Candidate};
+use ice::candidate::{Candidate, unmarshal_candidate};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
@@ -196,38 +196,38 @@ impl RTCPeerConnection {
 
         // include unmatched local transceivers
         // update the greater mid if the remote description provides a greater one
-        if let Some(d) = self.current_remote_description.as_ref() {
-            if let Some(parsed) = &d.parsed {
-                for media in &parsed.media_descriptions {
-                    if let Some(mid) = get_mid_value(media) {
-                        if mid.is_empty() {
-                            continue;
-                        }
-                        let numeric_mid = match mid.parse::<isize>() {
-                            Ok(n) => n,
-                            Err(_) => continue,
-                        };
-                        if numeric_mid > self.greater_mid {
-                            self.greater_mid = numeric_mid;
-                        }
+        if let Some(d) = self.current_remote_description.as_ref()
+            && let Some(parsed) = &d.parsed
+        {
+            for media in &parsed.media_descriptions {
+                if let Some(mid) = get_mid_value(media) {
+                    if mid.is_empty() {
+                        continue;
+                    }
+                    let numeric_mid = match mid.parse::<isize>() {
+                        Ok(n) => n,
+                        Err(_) => continue,
+                    };
+                    if numeric_mid > self.greater_mid {
+                        self.greater_mid = numeric_mid;
                     }
                 }
-                for transceiver in &mut self.rtp_transceivers {
-                    if let Some(mid) = transceiver.mid() {
-                        if !mid.is_empty() {
-                            if let Ok(numeric_mid) = mid.parse::<isize>() {
-                                if numeric_mid > self.greater_mid {
-                                    self.greater_mid = numeric_mid;
-                                }
-                            }
-
-                            continue;
-                        }
+            }
+            for transceiver in &mut self.rtp_transceivers {
+                if let Some(mid) = transceiver.mid()
+                    && !mid.is_empty()
+                {
+                    if let Ok(numeric_mid) = mid.parse::<isize>()
+                        && numeric_mid > self.greater_mid
+                    {
+                        self.greater_mid = numeric_mid;
                     }
 
-                    self.greater_mid += 1;
-                    transceiver.set_mid(format!("{}", self.greater_mid))?;
+                    continue;
                 }
+
+                self.greater_mid += 1;
+                transceiver.set_mid(format!("{}", self.greater_mid))?;
             }
         }
 
@@ -283,13 +283,12 @@ impl RTCPeerConnection {
         if connection_role == ConnectionRole::Unspecified {
             connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
 
-            if let Some(remote_description) = self.remote_description() {
-                if let Some(parsed) = remote_description.parsed.as_ref() {
-                    if is_lite_set(parsed) && !self.configuration.setting_engine.candidates.ice_lite
-                    {
-                        connection_role = DTLSRole::Server.to_connection_role();
-                    }
-                }
+            if let Some(remote_description) = self.remote_description()
+                && let Some(parsed) = remote_description.parsed.as_ref()
+                && is_lite_set(parsed)
+                && !self.configuration.setting_engine.candidates.ice_lite
+            {
+                connection_role = DTLSRole::Server.to_connection_role();
             }
         }
 
@@ -340,42 +339,36 @@ impl RTCPeerConnection {
         self.set_description(&local_description, StateChangeOp::SetLocal)?;
 
         let we_answer = local_description.sdp_type == RTCSdpType::Answer;
-        if we_answer {
-            if let Some(parsed_local_description) = &local_description.parsed {
-                // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
-                // Section 4.4.1.5
-                self.set_rtp_transceiver_current_direction(
-                    &parsed_local_description.media_descriptions,
-                    false,
-                )?;
+        if we_answer && let Some(parsed_local_description) = &local_description.parsed {
+            // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
+            // Section 4.4.1.5
+            self.set_rtp_transceiver_current_direction(
+                &parsed_local_description.media_descriptions,
+                false,
+            )?;
 
-                if let Some(remote_description) = self.remote_description().cloned() {
-                    if let Some(parsed_remote_description) = remote_description.parsed.as_ref() {
-                        if let Some(remote_port) =
-                            get_application_media_section_sctp_port(parsed_remote_description)
-                        {
-                            if let Some(local_port) =
-                                get_application_media_section_sctp_port(parsed_local_description)
-                            {
-                                let max_message_size =
-                                    get_application_media_section_max_message_size(
-                                        parsed_remote_description,
-                                    )
-                                    .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
-                                let dtls_role = self.dtls_transport().role();
+            if let Some(remote_description) = self.remote_description().cloned()
+                && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
+            {
+                if let Some(remote_port) =
+                    get_application_media_section_sctp_port(parsed_remote_description)
+                    && let Some(local_port) =
+                        get_application_media_section_sctp_port(parsed_local_description)
+                {
+                    let max_message_size =
+                        get_application_media_section_max_message_size(parsed_remote_description)
+                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
+                    let dtls_role = self.dtls_transport().role();
 
-                                self.sctp_transport_mut().start(
-                                    dtls_role,
-                                    SCTPTransportCapabilities { max_message_size },
-                                    local_port,
-                                    remote_port,
-                                )?;
-                            }
-                        }
-
-                        self.start_rtp(remote_description)?;
-                    }
+                    self.sctp_transport_mut().start(
+                        dtls_role,
+                        SCTPTransportCapabilities { max_message_size },
+                        local_port,
+                        remote_port,
+                    )?;
                 }
+
+                self.start_rtp(remote_description)?;
             }
         }
 
@@ -628,35 +621,31 @@ impl RTCPeerConnection {
                 self.update_connection_state(false);
             }
 
-            if we_offer {
-                if let Some(parsed_local_description) = self
+            if we_offer
+                && let Some(parsed_local_description) = self
                     .current_local_description
                     .as_ref()
                     .and_then(|desc| desc.parsed.as_ref())
+            {
+                if let Some(remote_port) =
+                    get_application_media_section_sctp_port(parsed_remote_description)
+                    && let Some(local_port) =
+                        get_application_media_section_sctp_port(parsed_local_description)
                 {
-                    if let Some(remote_port) =
-                        get_application_media_section_sctp_port(parsed_remote_description)
-                    {
-                        if let Some(local_port) =
-                            get_application_media_section_sctp_port(parsed_local_description)
-                        {
-                            let max_message_size = get_application_media_section_max_message_size(
-                                parsed_remote_description,
-                            )
+                    let max_message_size =
+                        get_application_media_section_max_message_size(parsed_remote_description)
                             .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
-                            let dtls_role = self.dtls_transport().role();
+                    let dtls_role = self.dtls_transport().role();
 
-                            self.sctp_transport_mut().start(
-                                dtls_role,
-                                SCTPTransportCapabilities { max_message_size },
-                                local_port,
-                                remote_port,
-                            )?;
-                        }
-                    }
-
-                    self.start_rtp(remote_description)?;
+                    self.sctp_transport_mut().start(
+                        dtls_role,
+                        SCTPTransportCapabilities { max_message_size },
+                        local_port,
+                        remote_port,
+                    )?;
                 }
+
+                self.start_rtp(remote_description)?;
             }
         }
 
@@ -933,10 +922,10 @@ impl RTCPeerConnection {
         self.rtp_transceivers[sender_id.0]
             .set_direction(RTCRtpTransceiverDirection::from_send_recv(false, has_recv));
 
-        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut() {
-            if sender.stop().is_ok() {
-                self.trigger_negotiation_needed();
-            }
+        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
+            && sender.stop().is_ok()
+        {
+            self.trigger_negotiation_needed();
         }
 
         self.rtp_transceivers[sender_id.0].sender_mut().take();
@@ -954,10 +943,10 @@ impl RTCPeerConnection {
             return Err(Error::ErrConnectionClosed);
         }
 
-        if let Some(init) = init.as_ref() {
-            if !init.direction.has_send() {
-                return Err(Error::ErrInvalidDirection);
-            }
+        if let Some(init) = init.as_ref()
+            && !init.direction.has_send()
+        {
+            return Err(Error::ErrInvalidDirection);
         }
 
         let transceiver = self.new_transceiver_from_track(

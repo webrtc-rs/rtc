@@ -32,7 +32,7 @@ impl CipherAesCmHmacSha1 {
             _ => {
                 return Err(Error::Other(String::from(
                     "no AES protection profile passed to CipherAesCmHmacSha1",
-                )))
+                )));
             }
         };
         let inner = CipherInner::new(profile, kdf, master_key, master_salt)?;

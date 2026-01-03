@@ -1,6 +1,6 @@
+use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannelId;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;

@@ -1,7 +1,7 @@
+use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
-use crate::data_channel::RTCDataChannelId;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::{RTCEventInternal, RTCPeerConnectionEvent};
 use crate::peer_connection::message::{
@@ -9,8 +9,8 @@ use crate::peer_connection::message::{
 };
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;
-use shared::error::{Error, Result};
 use shared::TransportContext;
+use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 

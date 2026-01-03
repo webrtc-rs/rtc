@@ -35,7 +35,7 @@ impl Setter for UnknownAttributes {
     // add_to adds UNKNOWN-ATTRIBUTES attribute to message.
     fn add_to(&self, m: &mut Message) -> Result<()> {
         let mut v = Vec::with_capacity(ATTR_TYPE_SIZE * 20); // 20 should be enough
-                                                             // If len(a.Types) > 20, there will be allocations.
+        // If len(a.Types) > 20, there will be allocations.
         for t in &self.0 {
             v.extend_from_slice(&t.value().to_be_bytes());
         }

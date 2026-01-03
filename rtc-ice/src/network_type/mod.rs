@@ -6,8 +6,8 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-use shared::error::*;
 use shared::TransportProtocol;
+use shared::error::*;
 
 pub(crate) const UDP: &str = "udp";
 pub(crate) const TCP: &str = "tcp";

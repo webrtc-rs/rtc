@@ -12,10 +12,10 @@ impl Context {
         let index = self.cipher.get_rtcp_index(encrypted);
         let ssrc = u32::from_be_bytes([encrypted[4], encrypted[5], encrypted[6], encrypted[7]]);
 
-        if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector {
-            if !replay_detector.check(index as u64) {
-                return Err(Error::SrtcpSsrcDuplicated(ssrc, index));
-            }
+        if let Some(replay_detector) = &mut self.get_srtcp_ssrc_state(ssrc).replay_detector
+            && !replay_detector.check(index as u64)
+        {
+            return Err(Error::SrtcpSsrcDuplicated(ssrc, index));
         }
 
         let dst = self.cipher.decrypt_rtcp(encrypted, index, ssrc)?;

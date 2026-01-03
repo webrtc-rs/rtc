@@ -21,16 +21,16 @@ use std::{fmt, ops};
 
 mod association;
 pub use crate::association::{
+    Association, AssociationError, Event,
     stats::AssociationStats,
     stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState},
     timer::TimerConfig,
-    Association, AssociationError, Event,
 };
 
 pub(crate) mod chunk;
 pub use crate::chunk::{
-    chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier},
     ErrorCauseCode,
+    chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier},
 };
 
 mod config;

@@ -610,9 +610,9 @@ impl Agent {
         let name = self.get_name().to_string();
         if self.candidate_pairs.is_empty() {
             warn!(
-                    "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
-                    name,
-                );
+                "[{}]: pingAllCandidates called with no candidate pairs. Connection is not possible yet.",
+                name,
+            );
         }
         for p in &mut self.candidate_pairs {
             if p.state == CandidatePairState::Waiting {
@@ -623,12 +623,12 @@ impl Agent {
 
             if p.binding_request_count > self.max_binding_requests {
                 trace!(
-                        "[{}]: max requests reached for pair {} (local_addr {} <-> remote_addr {}), marking it as failed",
-                        name,
-                        *p,
-                        self.local_candidates[p.local_index].addr(),
-                        self.remote_candidates[p.remote_index].addr()
-                    );
+                    "[{}]: max requests reached for pair {} (local_addr {} <-> remote_addr {}), marking it as failed",
+                    name,
+                    *p,
+                    self.local_candidates[p.local_index].addr(),
+                    self.remote_candidates[p.remote_index].addr()
+                );
                 p.state = CandidatePairState::Failed;
             } else {
                 p.binding_request_count += 1;

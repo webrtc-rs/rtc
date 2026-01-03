@@ -56,7 +56,7 @@ impl Flight for Flight0 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 
@@ -162,7 +162,7 @@ impl Flight for Flight0 {
                                 alert_description: AlertDescription::IllegalParameter,
                             }),
                             Some(err),
-                        ))
+                        ));
                     }
                 };
             }

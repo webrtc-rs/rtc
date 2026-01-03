@@ -1,10 +1,10 @@
+use crate::media_stream::MediaStreamId;
 use crate::media_stream::track_capabilities::MediaTrackCapabilities;
 use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
-use crate::media_stream::MediaStreamId;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::SSRC;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 
 pub type MediaStreamTrackId = String;
 

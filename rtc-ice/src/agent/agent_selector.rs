@@ -303,14 +303,16 @@ impl ControllingSelector for Agent {
             // Assert that NAT is not symmetric
             // https://tools.ietf.org/html/rfc8445#section-7.2.5.2.1
             if transaction_addr != remote_addr {
-                debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
+                debug!(
+                    "discard message: transaction source and destination does not match expected({}), actual({})",
+                    transaction_addr, remote_index
+                );
                 return;
             }
 
             trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
-                self.remote_candidates[remote_index],
-                self.local_candidates[local_index]
+                self.remote_candidates[remote_index], self.local_candidates[local_index]
             );
             let selected_pair_is_none = self.get_selected_pair().is_none();
 
@@ -369,8 +371,10 @@ impl ControllingSelector for Agent {
                         && self.is_nominatable(p.local_index, true)
                         && self.is_nominatable(p.remote_index, false)
                     {
-                        trace!("The candidate ({}, {}) is the best candidate available, marking it as nominated",
-                            p.local_index, p.remote_index);
+                        trace!(
+                            "The candidate ({}, {}) is the best candidate available, marking it as nominated",
+                            p.local_index, p.remote_index
+                        );
                         self.nominated_pair = Some(pair_index);
                         self.nominate_pair();
                     }
@@ -452,14 +456,16 @@ impl ControlledSelector for Agent {
             // Assert that NAT is not symmetric
             // https://tools.ietf.org/html/rfc8445#section-7.2.5.2.1
             if transaction_addr != remote_addr {
-                debug!("discard message: transaction source and destination does not match expected({}), actual({})", transaction_addr, remote_index);
+                debug!(
+                    "discard message: transaction source and destination does not match expected({}), actual({})",
+                    transaction_addr, remote_index
+                );
                 return;
             }
 
             trace!(
                 "inbound STUN (SuccessResponse) from {} to {}",
-                self.remote_candidates[remote_index],
-                self.local_candidates[local_index]
+                self.remote_candidates[remote_index], self.local_candidates[local_index]
             );
 
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {

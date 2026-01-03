@@ -324,10 +324,10 @@ impl DTLSConn {
             p.record.marshal(&mut writer)?;
         }
 
-        if p.should_encrypt {
-            if let Some(cipher_suite) = &self.state.cipher_suite {
-                raw_packet = cipher_suite.encrypt(&p.record.record_layer_header, &raw_packet)?;
-            }
+        if p.should_encrypt
+            && let Some(cipher_suite) = &self.state.cipher_suite
+        {
+            raw_packet = cipher_suite.encrypt(&p.record.record_layer_header, &raw_packet)?;
         }
 
         Ok(raw_packet)
@@ -373,10 +373,10 @@ impl DTLSConn {
             let mut raw_packet = vec![];
             raw_packet.extend_from_slice(&record_layer_header_bytes);
             raw_packet.extend_from_slice(handshake_fragment);
-            if p.should_encrypt {
-                if let Some(cipher_suite) = &self.state.cipher_suite {
-                    raw_packet = cipher_suite.encrypt(&record_layer_header, &raw_packet)?;
-                }
+            if p.should_encrypt
+                && let Some(cipher_suite) = &self.state.cipher_suite
+            {
+                raw_packet = cipher_suite.encrypt(&record_layer_header, &raw_packet)?;
             }
 
             raw_packets.push(raw_packet);

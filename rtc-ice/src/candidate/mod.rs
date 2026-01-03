@@ -17,7 +17,7 @@ pub mod candidate_server_reflexive;
 
 use crate::network_type::NetworkType;
 use crate::tcp_type::TcpType;
-use crc::{Crc, CRC_32_ISCSI};
+use crc::{CRC_32_ISCSI, Crc};
 use serde::{Deserialize, Serialize};
 use shared::error::*;
 use std::fmt;

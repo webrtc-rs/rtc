@@ -30,11 +30,7 @@ pub struct Obu {
 
 impl Obu {
     pub fn header_size(&self) -> usize {
-        if obu_has_extension(self.header) {
-            2
-        } else {
-            1
-        }
+        if obu_has_extension(self.header) { 2 } else { 1 }
     }
 }
 

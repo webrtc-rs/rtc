@@ -12,7 +12,7 @@ pub mod tcp_type;
 pub mod url;
 
 pub use agent::{
+    Agent, Credentials, Event,
     agent_config::AgentConfig,
     agent_stats::{CandidatePairStats, CandidateStats},
-    Agent, Credentials, Event,
 };

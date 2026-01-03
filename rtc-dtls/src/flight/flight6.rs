@@ -54,7 +54,7 @@ impl Flight for Flight6 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
         }
@@ -157,7 +157,7 @@ impl Flight for Flight6 {
                                 alert_description: AlertDescription::InternalError,
                             }),
                             Some(err),
-                        ))
+                        ));
                     }
                 };
             }

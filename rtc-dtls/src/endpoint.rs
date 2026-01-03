@@ -7,7 +7,7 @@ use crate::config::HandshakeConfig;
 use crate::state::State;
 use bytes::BytesMut;
 use std::collections::hash_map::Keys;
-use std::collections::{hash_map::Entry::Vacant, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, hash_map::Entry::Vacant};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -222,25 +222,24 @@ impl Endpoint {
 
     pub fn handle_timeout(&mut self, remote: SocketAddr, now: Instant) -> Result<()> {
         if let Some(conn) = self.connections.get_mut(&remote) {
-            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer {
-                if now >= *current_retransmit_timer {
-                    if conn.current_retransmit_timer.take().is_some()
-                        && !conn.is_handshake_completed()
-                    {
-                        conn.handshake_timeout(now)?;
-                    }
-                    while let Some(payload) = conn.outgoing_raw_packet() {
-                        self.transmits.push_back(TransportMessage {
-                            now,
-                            transport: TransportContext {
-                                local_addr: self.local_addr,
-                                peer_addr: remote,
-                                ecn: None,
-                                transport_protocol: self.transport_protocol,
-                            },
-                            message: payload,
-                        });
-                    }
+            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer
+                && now >= *current_retransmit_timer
+            {
+                if conn.current_retransmit_timer.take().is_some() && !conn.is_handshake_completed()
+                {
+                    conn.handshake_timeout(now)?;
+                }
+                while let Some(payload) = conn.outgoing_raw_packet() {
+                    self.transmits.push_back(TransportMessage {
+                        now,
+                        transport: TransportContext {
+                            local_addr: self.local_addr,
+                            peer_addr: remote,
+                            ecn: None,
+                            transport_protocol: self.transport_protocol,
+                        },
+                        message: payload,
+                    });
                 }
             }
             Ok(())
@@ -251,10 +250,10 @@ impl Endpoint {
 
     pub fn poll_timeout(&self, remote: SocketAddr, eto: &mut Instant) -> Result<()> {
         if let Some(conn) = self.connections.get(&remote) {
-            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer {
-                if *current_retransmit_timer < *eto {
-                    *eto = *current_retransmit_timer;
-                }
+            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer
+                && *current_retransmit_timer < *eto
+            {
+                *eto = *current_retransmit_timer;
             }
             Ok(())
         } else {

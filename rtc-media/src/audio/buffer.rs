@@ -305,20 +305,22 @@ where
     MaybeUninit<T>: Clone,
     F: FnOnce(&mut [MaybeUninit<T>]),
 {
-    // Create a vec of uninitialized values.
-    let mut vec: Vec<MaybeUninit<T>> = vec![MaybeUninit::uninit(); len];
+    unsafe {
+        // Create a vec of uninitialized values.
+        let mut vec: Vec<MaybeUninit<T>> = vec![MaybeUninit::uninit(); len];
 
-    // Initialize values:
-    f(&mut vec[..]);
+        // Initialize values:
+        f(&mut vec[..]);
 
-    // Take owner-ship away from `vec`:
-    let mut manually_drop: ManuallyDrop<_> = ManuallyDrop::new(vec);
+        // Take owner-ship away from `vec`:
+        let mut manually_drop: ManuallyDrop<_> = ManuallyDrop::new(vec);
 
-    // Create vec of proper type from `vec`'s raw parts.
-    let ptr = manually_drop.as_mut_ptr() as *mut T;
-    let len = manually_drop.len();
-    let cap = manually_drop.capacity();
-    Vec::from_raw_parts(ptr, len, cap)
+        // Create vec of proper type from `vec`'s raw parts.
+        let ptr = manually_drop.as_mut_ptr() as *mut T;
+        let len = manually_drop.len();
+        let cap = manually_drop.capacity();
+        Vec::from_raw_parts(ptr, len, cap)
+    }
 }
 
 #[cfg(test)]

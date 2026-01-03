@@ -6,9 +6,9 @@ use super::protocol::RTCIceProtocol;
 use shared::error::{Error, Result};
 
 pub use ice::candidate::{
-    candidate_host::CandidateHostConfig, candidate_peer_reflexive::CandidatePeerReflexiveConfig,
-    candidate_relay::CandidateRelayConfig,
-    candidate_server_reflexive::CandidateServerReflexiveConfig, Candidate, CandidateConfig,
+    Candidate, CandidateConfig, candidate_host::CandidateHostConfig,
+    candidate_peer_reflexive::CandidatePeerReflexiveConfig, candidate_relay::CandidateRelayConfig,
+    candidate_server_reflexive::CandidateServerReflexiveConfig,
 };
 
 /// ICECandidate represents a ice candidate

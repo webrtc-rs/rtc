@@ -3,9 +3,9 @@ use std::fmt::{Debug, Display, Formatter};
 
 use bytes::{Bytes, BytesMut};
 
-use crate::param::param_header::{ParamHeader, PARAM_HEADER_LENGTH};
-use crate::param::param_type::ParamType;
 use crate::param::Param;
+use crate::param::param_header::{PARAM_HEADER_LENGTH, ParamHeader};
+use crate::param::param_type::ParamType;
 use shared::error::Result;
 
 /// This type is meant to represent ANY parameter for un/remarshaling purposes, where we do not have a more specific type for it.

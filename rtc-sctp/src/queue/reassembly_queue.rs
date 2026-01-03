@@ -1,6 +1,6 @@
+use crate::StreamId;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::util::*;
-use crate::StreamId;
 use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};

@@ -55,39 +55,38 @@ impl Flight for Flight3 {
                 is_client: false,
                 optional: true,
             }],
-        ) {
-            if let Some(message) = msgs.get(&HandshakeType::HelloVerifyRequest) {
-                // DTLS 1.2 clients must not assume that the server will use the protocol version
-                // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
-                let h = match message {
-                    HandshakeMessage::HelloVerifyRequest(h) => h,
-                    _ => {
-                        return Err((
-                            Some(Alert {
-                                alert_level: AlertLevel::Fatal,
-                                alert_description: AlertDescription::InternalError,
-                            }),
-                            None,
-                        ))
-                    }
-                };
-
-                // DTLS 1.2 clients must not assume that the server will use the protocol version
-                // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
-                if h.version != PROTOCOL_VERSION1_0 && h.version != PROTOCOL_VERSION1_2 {
+        ) && let Some(message) = msgs.get(&HandshakeType::HelloVerifyRequest)
+        {
+            // DTLS 1.2 clients must not assume that the server will use the protocol version
+            // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
+            let h = match message {
+                HandshakeMessage::HelloVerifyRequest(h) => h,
+                _ => {
                     return Err((
                         Some(Alert {
                             alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::ProtocolVersion,
+                            alert_description: AlertDescription::InternalError,
                         }),
-                        Some(Error::ErrUnsupportedProtocolVersion),
+                        None,
                     ));
                 }
+            };
 
-                state.cookie.clone_from(&h.cookie);
-                state.handshake_recv_sequence = seq;
-                return Ok(Box::new(Flight3 {}) as Box<dyn Flight>);
+            // DTLS 1.2 clients must not assume that the server will use the protocol version
+            // specified in HelloVerifyRequest message. RFC 6347 Section 4.2.1
+            if h.version != PROTOCOL_VERSION1_0 && h.version != PROTOCOL_VERSION1_2 {
+                return Err((
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::ProtocolVersion,
+                    }),
+                    Some(Error::ErrUnsupportedProtocolVersion),
+                ));
             }
+
+            state.cookie.clone_from(&h.cookie);
+            state.handshake_recv_sequence = seq;
+            return Ok(Box::new(Flight3 {}) as Box<dyn Flight>);
         }
 
         let result = if cfg.local_psk_callback.is_some() {
@@ -169,7 +168,7 @@ impl Flight for Flight3 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 
@@ -198,7 +197,7 @@ impl Flight for Flight3 {
                                         alert_description: AlertDescription::IllegalParameter,
                                     }),
                                     Some(Error::ErrClientNoMatchingSrtpProfile),
-                                ))
+                                ));
                             }
                         };
                         state.srtp_protection_profile = profile;
@@ -289,7 +288,7 @@ impl Flight for Flight3 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
             state.peer_certificates.clone_from(&h.certificate);
@@ -305,7 +304,7 @@ impl Flight for Flight3 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
 
@@ -324,7 +323,7 @@ impl Flight for Flight3 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         None,
-                    ))
+                    ));
                 }
             };
             state.remote_requested_certificate = true;
@@ -416,7 +415,7 @@ pub(crate) fn handle_server_key_exchange(
                         alert_description: AlertDescription::InternalError,
                     }),
                     Some(err),
-                ))
+                ));
             }
         };
 
@@ -432,7 +431,7 @@ pub(crate) fn handle_server_key_exchange(
                         alert_description: AlertDescription::InternalError,
                     }),
                     Some(err),
-                ))
+                ));
             }
         };
 
@@ -449,7 +448,7 @@ pub(crate) fn handle_server_key_exchange(
                         alert_description: AlertDescription::InternalError,
                     }),
                     Some(err),
-                ))
+                ));
             }
         };
 

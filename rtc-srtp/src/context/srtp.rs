@@ -19,13 +19,13 @@ impl Context {
 
         let state = self.get_srtp_ssrc_state(header.ssrc);
         let (roc, diff, _) = state.next_rollover_count(header.sequence_number);
-        if let Some(replay_detector) = &mut state.replay_detector {
-            if !replay_detector.check(header.sequence_number as u64) {
-                return Err(Error::SrtpSsrcDuplicated(
-                    header.ssrc,
-                    header.sequence_number,
-                ));
-            }
+        if let Some(replay_detector) = &mut state.replay_detector
+            && !replay_detector.check(header.sequence_number as u64)
+        {
+            return Err(Error::SrtpSsrcDuplicated(
+                header.ssrc,
+                header.sequence_number,
+            ));
         }
 
         let dst = self.cipher.decrypt_rtp(encrypted, header, roc)?;

@@ -1,6 +1,6 @@
 use super::*;
 use crate::candidate::candidate_pair::CandidatePairState;
-use crate::candidate::{unmarshal_candidate, Candidate};
+use crate::candidate::{Candidate, unmarshal_candidate};
 use std::time::Instant;
 
 #[test]
@@ -299,65 +299,64 @@ fn test_candidate_type_to_string() {
 #[test]
 fn test_candidate_marshal() -> Result<()> {
     let tests = vec![
-       (
-            Some(Candidate{
-                    network_type:       NetworkType::Udp6,
-                    candidate_type:      CandidateType::Host,
-                    address:            "fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a".to_owned(),
-                    port:               53987,
-                    priority_override:   500,
-                    foundation_override: "750".to_owned(),
-                    ..Default::default()
+        (
+            Some(Candidate {
+                network_type: NetworkType::Udp6,
+                candidate_type: CandidateType::Host,
+                address: "fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a".to_owned(),
+                port: 53987,
+                priority_override: 500,
+                foundation_override: "750".to_owned(),
+                ..Default::default()
             }),
             "750 1 udp 500 fcd9:e3b8:12ce:9fc5:74a5:c6bb:d8b:e08a 53987 typ host",
         ),
         (
-            Some(Candidate{
-                    network_type:   NetworkType::Udp4,
-                    candidate_type: CandidateType::Host,
-                    address:       "10.0.75.1".to_owned(),
-                    port:          53634,
+            Some(Candidate {
+                network_type: NetworkType::Udp4,
+                candidate_type: CandidateType::Host,
+                address: "10.0.75.1".to_owned(),
+                port: 53634,
                 ..Default::default()
             }),
             "4273957277 1 udp 2130706431 10.0.75.1 53634 typ host",
         ),
         (
-            Some(Candidate{
-                    network_type:    NetworkType::Udp4,
-                    candidate_type:  CandidateType::ServerReflexive,
-                    address:        "191.228.238.68".to_owned(),
-                    port:           53991,
-                    related_address: Some(CandidateRelatedAddress{
-                        address: "192.168.0.274".to_owned(),
-                        port:53991
-                    }),
+            Some(Candidate {
+                network_type: NetworkType::Udp4,
+                candidate_type: CandidateType::ServerReflexive,
+                address: "191.228.238.68".to_owned(),
+                port: 53991,
+                related_address: Some(CandidateRelatedAddress {
+                    address: "192.168.0.274".to_owned(),
+                    port: 53991,
+                }),
                 ..Default::default()
             }),
             "647372371 1 udp 1694498815 191.228.238.68 53991 typ srflx raddr 192.168.0.274 rport 53991",
         ),
         (
-            Some(Candidate{
-                    network_type:   NetworkType::Udp4,
-                    candidate_type:  CandidateType::Relay,
-                    address:        "50.0.0.1".to_owned(),
-                    port:           5000,
-                    related_address: Some(
-                        CandidateRelatedAddress{
-                            address: "192.168.0.1".to_owned(),
-                            port:5001}
-                    ),
+            Some(Candidate {
+                network_type: NetworkType::Udp4,
+                candidate_type: CandidateType::Relay,
+                address: "50.0.0.1".to_owned(),
+                port: 5000,
+                related_address: Some(CandidateRelatedAddress {
+                    address: "192.168.0.1".to_owned(),
+                    port: 5001,
+                }),
                 ..Default::default()
             }),
             "848194626 1 udp 16777215 50.0.0.1 5000 typ relay raddr 192.168.0.1 rport 5001",
         ),
         (
-            Some(Candidate{
-                    network_type:   NetworkType::Tcp4,
-                    candidate_type: CandidateType::Host,
-                    address:       "192.168.0.196".to_owned(),
-                    port:          0,
-                    tcp_type:       TcpType::Active,
-               ..Default::default()
+            Some(Candidate {
+                network_type: NetworkType::Tcp4,
+                candidate_type: CandidateType::Host,
+                address: "192.168.0.196".to_owned(),
+                port: 0,
+                tcp_type: TcpType::Active,
+                ..Default::default()
             }),
             "1052353102 1 tcp 2128609279 192.168.0.196 0 typ host tcptype active",
         ),
@@ -374,15 +373,39 @@ fn test_candidate_marshal() -> Result<()> {
         // Invalid candidates
         (None, ""),
         (None, "1938809241"),
-        (None, "1986380506 99999999 udp 2122063615 10.0.75.1 53634 typ host generation 0 network-id 2"),
-        (None, "1986380506 1 udp 99999999999 10.0.75.1 53634 typ host"),
-        (None, "4207374051 1 udp 1685790463 191.228.238.68 99999999 typ srflx raddr 192.168.0.278 rport 53991 generation 0 network-id 3"),
-        (None, "4207374051 1 udp 1685790463 191.228.238.68 53991 typ srflx raddr"),
-        (None, "4207374051 1 udp 1685790463 191.228.238.68 53991 typ srflx raddr 192.168.0.278 rport 99999999 generation 0 network-id 3"),
-        (None, "4207374051 INVALID udp 2130706431 10.0.75.1 53634 typ host"),
+        (
+            None,
+            "1986380506 99999999 udp 2122063615 10.0.75.1 53634 typ host generation 0 network-id 2",
+        ),
+        (
+            None,
+            "1986380506 1 udp 99999999999 10.0.75.1 53634 typ host",
+        ),
+        (
+            None,
+            "4207374051 1 udp 1685790463 191.228.238.68 99999999 typ srflx raddr 192.168.0.278 rport 53991 generation 0 network-id 3",
+        ),
+        (
+            None,
+            "4207374051 1 udp 1685790463 191.228.238.68 53991 typ srflx raddr",
+        ),
+        (
+            None,
+            "4207374051 1 udp 1685790463 191.228.238.68 53991 typ srflx raddr 192.168.0.278 rport 99999999 generation 0 network-id 3",
+        ),
+        (
+            None,
+            "4207374051 INVALID udp 2130706431 10.0.75.1 53634 typ host",
+        ),
         (None, "4207374051 1 udp INVALID 10.0.75.1 53634 typ host"),
-        (None, "4207374051 INVALID udp 2130706431 10.0.75.1 INVALID typ host"),
-        (None, "4207374051 1 udp 2130706431 10.0.75.1 53634 typ INVALID"),
+        (
+            None,
+            "4207374051 INVALID udp 2130706431 10.0.75.1 INVALID typ host",
+        ),
+        (
+            None,
+            "4207374051 1 udp 2130706431 10.0.75.1 53634 typ INVALID",
+        ),
     ];
 
     for (candidate, marshaled) in tests {

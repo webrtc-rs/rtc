@@ -146,7 +146,7 @@ impl Flight for Flight5 {
                                 alert_description: AlertDescription::InsufficientSecurity,
                             }),
                             Some(err),
-                        ))
+                        ));
                     }
                 };
 
@@ -181,7 +181,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::HandshakeFailure,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
             Some(cert)
@@ -278,7 +278,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::UnexpectedMessage,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
 
@@ -291,7 +291,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::UnexpectedMessage,
                         }),
                         Some(Error::ErrInvalidContentType),
-                    ))
+                    ));
                 }
             };
         }
@@ -309,7 +309,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         Some(Error::ErrInvalidContentType),
-                    ))
+                    ));
                 }
             };
             h.handshake_header.message_sequence = seq_pred;
@@ -408,7 +408,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::InsufficientSecurity,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
 
@@ -424,7 +424,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
             state.local_certificates_verify = cert_verify;
@@ -453,7 +453,7 @@ impl Flight for Flight5 {
                             alert_description: AlertDescription::InternalError,
                         }),
                         Some(Error::ErrInvalidContentType),
-                    ))
+                    ));
                 }
             };
             h.handshake_header.message_sequence = seq_pred;
@@ -568,7 +568,7 @@ impl Flight for Flight5 {
                                 alert_description: AlertDescription::InternalError,
                             }),
                             Some(err),
-                        ))
+                        ));
                     }
                 };
             }
@@ -604,10 +604,10 @@ fn initalize_cipher_suite(
         .as_ref()
         .map(|cipher_suite| (cipher_suite.is_initialized(), cipher_suite.hash_func()));
 
-    if let Some(cipher_suite) = &cipher_suite {
-        if cipher_suite.0 {
-            return Ok(());
-        }
+    if let Some(cipher_suite) = &cipher_suite
+        && cipher_suite.0
+    {
+        return Ok(());
     }
 
     let mut client_random = vec![];
@@ -636,7 +636,7 @@ fn initalize_cipher_suite(
                             alert_description: AlertDescription::InternalError,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
 
@@ -653,7 +653,7 @@ fn initalize_cipher_suite(
                             alert_description: AlertDescription::IllegalParameter,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
         } else {
@@ -671,7 +671,7 @@ fn initalize_cipher_suite(
                             alert_description: AlertDescription::InternalError,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             };
         }
@@ -729,35 +729,34 @@ fn initalize_cipher_suite(
                             alert_description: AlertDescription::BadCertificate,
                         }),
                         Some(err),
-                    ))
+                    ));
                 }
             }
         }
-        if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate {
-            if let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains) {
-                return Err((
-                    Some(Alert {
-                        alert_level: AlertLevel::Fatal,
-                        alert_description: AlertDescription::BadCertificate,
-                    }),
-                    Some(err),
-                ));
-            }
-        }
-    }
-
-    if let Some(cipher_suite) = &mut state.cipher_suite {
-        if let Err(err) =
-            cipher_suite.init(&state.master_secret, &client_random, &server_random, true)
+        if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate
+            && let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains)
         {
             return Err((
                 Some(Alert {
                     alert_level: AlertLevel::Fatal,
-                    alert_description: AlertDescription::InternalError,
+                    alert_description: AlertDescription::BadCertificate,
                 }),
                 Some(err),
             ));
         }
+    }
+
+    if let Some(cipher_suite) = &mut state.cipher_suite
+        && let Err(err) =
+            cipher_suite.init(&state.master_secret, &client_random, &server_random, true)
+    {
+        return Err((
+            Some(Alert {
+                alert_level: AlertLevel::Fatal,
+                alert_description: AlertDescription::InternalError,
+            }),
+            Some(err),
+        ));
     }
 
     Ok(())

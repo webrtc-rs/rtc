@@ -4,11 +4,12 @@ use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::media_stream::track::MediaStreamTrack;
+use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
-    MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8,
+    MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::track_event::RTCRtpRtcpPacket;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
@@ -20,7 +21,6 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
@@ -292,8 +292,7 @@ async fn run(
                 Ok(n) => {
                     trace!(
                         "socket write to {} with bytes {}",
-                        msg.transport.peer_addr,
-                        n
+                        msg.transport.peer_addr, n
                     );
                 }
                 Err(err) => {

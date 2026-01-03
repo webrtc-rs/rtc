@@ -1,5 +1,5 @@
-use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::RTCDataChannelId;
+use crate::data_channel::message::RTCDataChannelMessage;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Default, Debug, Clone)]

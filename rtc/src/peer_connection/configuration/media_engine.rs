@@ -7,16 +7,16 @@ use crate::peer_connection::sdp::{
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::fmtp;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, rtcp_feedback_intersection, CodecMatch, RTCRtpCodec,
-    RtpCodecKind,
+    CodecMatch, RTCRtpCodec, RtpCodecKind, codec_parameters_fuzzy_search,
+    rtcp_feedback_intersection,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_parameters::RTCRtpParameters;
-use crate::rtp_transceiver::{rtp_sender::rtcp_parameters::RTCPFeedback, PayloadType};
-use sdp::description::session::SessionDescription;
+use crate::rtp_transceiver::{PayloadType, rtp_sender::rtcp_parameters::RTCPFeedback};
 use sdp::MediaDescription;
+use sdp::description::session::SessionDescription;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::ops::Range;

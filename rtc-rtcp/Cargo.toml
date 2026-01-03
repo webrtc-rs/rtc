@@ -2,7 +2,7 @@
 name = "rtc-rtcp"
 version = "0.2.0"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2021"
+edition = "2024"
 description = "RTC RTCP in Rust"
 license = "MIT/Apache-2.0"
 documentation = "https://docs.rs/rtc-rtcp"

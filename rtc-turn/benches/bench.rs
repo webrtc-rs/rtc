@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use rtc_turn::proto::chandata::ChannelData;
 use rtc_turn::proto::channum::{ChannelNumber, MIN_CHANNEL_NUMBER};
 use rtc_turn::proto::data::Data;

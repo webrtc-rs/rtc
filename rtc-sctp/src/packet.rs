@@ -1,3 +1,4 @@
+use crate::chunk::Chunk;
 use crate::chunk::chunk_abort::ChunkAbort;
 use crate::chunk::chunk_cookie_ack::ChunkCookieAck;
 use crate::chunk::chunk_cookie_echo::ChunkCookieEcho;
@@ -13,12 +14,11 @@ use crate::chunk::chunk_shutdown::ChunkShutdown;
 use crate::chunk::chunk_shutdown_ack::ChunkShutdownAck;
 use crate::chunk::chunk_shutdown_complete::ChunkShutdownComplete;
 use crate::chunk::chunk_type::*;
-use crate::chunk::Chunk;
 use crate::util::*;
 use shared::error::{Error, Result};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use crc::{Crc, CRC_32_ISCSI};
+use crc::{CRC_32_ISCSI, Crc};
 use std::fmt;
 
 ///Packet represents an SCTP packet, defined in https://tools.ietf.org/html/rfc4960#section-3
@@ -335,20 +335,20 @@ impl Packet {
 
         // Check values on the packet that are specific to a particular chunk type
         for c in &self.chunks {
-            if let Some(ci) = c.as_any().downcast_ref::<ChunkInit>() {
-                if !ci.is_ack {
-                    // An INIT or INIT ACK chunk MUST NOT be bundled with any other chunk.
-                    // They MUST be the only chunks present in the SCTP packets that carry
-                    // them.
-                    if self.chunks.len() != 1 {
-                        return Err(Error::ErrInitChunkBundled);
-                    }
+            if let Some(ci) = c.as_any().downcast_ref::<ChunkInit>()
+                && !ci.is_ack
+            {
+                // An INIT or INIT ACK chunk MUST NOT be bundled with any other chunk.
+                // They MUST be the only chunks present in the SCTP packets that carry
+                // them.
+                if self.chunks.len() != 1 {
+                    return Err(Error::ErrInitChunkBundled);
+                }
 
-                    // A packet containing an INIT chunk MUST have a zero Verification
-                    // Tag.
-                    if self.common_header.verification_tag != 0 {
-                        return Err(Error::ErrInitChunkVerifyTagNotZero);
-                    }
+                // A packet containing an INIT chunk MUST have a zero Verification
+                // Tag.
+                if self.common_header.verification_tag != 0 {
+                    return Err(Error::ErrInitChunkVerifyTagNotZero);
                 }
             }
         }
@@ -413,7 +413,11 @@ mod test {
         ]);
         let pkt = Packet::unmarshal(&header_only)?;
         let header_only_marshaled = pkt.marshal()?;
-        assert_eq!(header_only, header_only_marshaled, "Unmarshal/Marshaled header only packet did not match \nheaderOnly: {:?} \nheader_only_marshaled {:?}", header_only, header_only_marshaled);
+        assert_eq!(
+            header_only, header_only_marshaled,
+            "Unmarshal/Marshaled header only packet did not match \nheaderOnly: {:?} \nheader_only_marshaled {:?}",
+            header_only, header_only_marshaled
+        );
 
         Ok(())
     }

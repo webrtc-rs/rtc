@@ -81,12 +81,12 @@ impl Relay<'_> {
                 .perm_map
                 .entry(peer_addr)
                 .or_insert_with(Permission::default);
-            if let Some(perm) = relay.perm_map.get(&peer_addr) {
-                if perm.state() == PermState::Idle {
-                    return Ok(Some(
-                        self.create_permissions(&[peer_addr], Some(peer_addr))?,
-                    ));
-                }
+            if let Some(perm) = relay.perm_map.get(&peer_addr)
+                && perm.state() == PermState::Idle
+            {
+                return Ok(Some(
+                    self.create_permissions(&[peer_addr], Some(peer_addr))?,
+                ));
             }
             Ok(None)
         } else {
@@ -302,16 +302,16 @@ impl Relay<'_> {
                         .push_back(Event::CreatePermissionError(res.transaction_id, err));
                     relay.perm_map.remove(&peer_addr);
                 }
-            } else if let Some(peer_addr) = peer_addr_opt {
-                if let Some(perm) = relay.perm_map.get_mut(&peer_addr) {
-                    perm.set_state(PermState::Permitted);
-                    self.client
-                        .events
-                        .push_back(Event::CreatePermissionResponse(
-                            res.transaction_id,
-                            peer_addr,
-                        ));
-                }
+            } else if let Some(peer_addr) = peer_addr_opt
+                && let Some(perm) = relay.perm_map.get_mut(&peer_addr)
+            {
+                perm.set_state(PermState::Permitted);
+                self.client
+                    .events
+                    .push_back(Event::CreatePermissionResponse(
+                        res.transaction_id,
+                        peer_addr,
+                    ));
             }
 
             Ok(())

@@ -2,16 +2,16 @@ use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::{DTLSMessage, RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::DTLSRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, error, warn};
-use shared::error::{Error, Result};
 use shared::TransportContext;
+use shared::error::{Error, Result};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 use std::collections::VecDeque;
@@ -256,11 +256,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal>
                 let _ = dtls_endpoint.poll_timeout(*remote, &mut eto);
             }
 
-            if eto != max_eto {
-                Some(eto)
-            } else {
-                None
-            }
+            if eto != max_eto { Some(eto) } else { None }
         } else {
             None
         }

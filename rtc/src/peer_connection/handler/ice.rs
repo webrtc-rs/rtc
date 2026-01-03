@@ -75,8 +75,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         } else {
             trace!(
                 "drop message from {:?} to {:?} before ICE connection is connected",
-                msg.transport.peer_addr,
-                msg.transport.local_addr
+                msg.transport.peer_addr, msg.transport.local_addr
             );
         }
 
@@ -97,8 +96,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessage, TaggedRTCMessage, RTCEventInternal> 
         } else {
             trace!(
                 "drop message from {:?} to {:?} before ICE connection is connected",
-                msg.transport.local_addr,
-                msg.transport.peer_addr,
+                msg.transport.local_addr, msg.transport.peer_addr,
             );
         }
 

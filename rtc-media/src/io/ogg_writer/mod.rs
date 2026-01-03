@@ -7,8 +7,8 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use bytes::Bytes;
 use rtp::packetizer::Depacketizer;
 
-use crate::io::ogg_reader::*;
 use crate::io::Writer;
+use crate::io::ogg_reader::*;
 use shared::error::Result;
 
 /// OggWriter is used to take RTP packets and write them to an OGG on disk

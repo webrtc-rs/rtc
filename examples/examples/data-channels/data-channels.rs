@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
@@ -21,7 +22,6 @@ use rtc::peer_connection::transport::dtls::role::DTLSRole;
 use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::shared::error::Error;
 use rtc::{
     peer_connection::sdp::session_description::RTCSessionDescription,
@@ -206,8 +206,7 @@ async fn run(
                 Ok(n) => {
                     trace!(
                         "socket write to {} with bytes {}",
-                        msg.transport.peer_addr,
-                        n
+                        msg.transport.peer_addr, n
                     );
                 }
                 Err(err) => {

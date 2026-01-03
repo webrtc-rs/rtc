@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use std::net::{SocketAddr, ToSocketAddrs};
 
 // match_range is a MatchFunc that accepts packets with the first byte in [lower..upper]

@@ -17,7 +17,7 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::server::danger::ClientCertVerifier;
 
-use rcgen::{generate_simple_self_signed, CertifiedKey, KeyPair};
+use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 
@@ -294,8 +294,8 @@ pub(crate) fn generate_key_signature(
 }
 
 // add OID_ED25519 which is not defined in x509_parser
-pub const OID_ED25519: Oid<'static> = oid!(1.3.101 .112);
-pub const OID_ECDSA: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
+pub const OID_ED25519: Oid<'static> = oid!(1.3.101.112);
+pub const OID_ECDSA: Oid<'static> = oid!(1.2.840.10045.2.1);
 
 fn verify_signature(
     message: &[u8],

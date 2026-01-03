@@ -98,9 +98,7 @@ impl Transaction {
 
         trace!(
             "retransmitting transaction {:?} to {} (n_rtx={})",
-            self.transaction_id,
-            self.peer_addr,
-            self.n_rtx
+            self.transaction_id, self.peer_addr, self.n_rtx
         );
 
         self.transmits.push_back(TransportMessage {
@@ -142,10 +140,10 @@ impl TransactionMap {
     pub(crate) fn poll_timout(&self) -> Option<Instant> {
         let mut eto = None;
         for tr in self.tr_map.values() {
-            if let Some(to) = tr.poll_timeout() {
-                if eto.is_none() || to < *eto.as_ref().unwrap() {
-                    eto = Some(to);
-                }
+            if let Some(to) = tr.poll_timeout()
+                && (eto.is_none() || to < *eto.as_ref().unwrap())
+            {
+                eto = Some(to);
             }
         }
         eto

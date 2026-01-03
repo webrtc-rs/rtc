@@ -487,8 +487,16 @@ fn test_init_chunk() -> Result<()> {
             "Unmarshal passed for SCTP packet, but got incorrect initiate tag exp: {} act: {}",
             1438213285, c.initiate_tag
         );
-        assert_eq!(c.advertised_receiver_window_credit, 131072, "Unmarshal passed for SCTP packet, but got incorrect advertisedReceiverWindowCredit exp: {} act: {}", 131072, c.advertised_receiver_window_credit);
-        assert_eq!(c.num_outbound_streams, 1024, "Unmarshal passed for SCTP packet, but got incorrect numOutboundStreams tag exp:{} act: {}", 1024, c.num_outbound_streams);
+        assert_eq!(
+            c.advertised_receiver_window_credit, 131072,
+            "Unmarshal passed for SCTP packet, but got incorrect advertisedReceiverWindowCredit exp: {} act: {}",
+            131072, c.advertised_receiver_window_credit
+        );
+        assert_eq!(
+            c.num_outbound_streams, 1024,
+            "Unmarshal passed for SCTP packet, but got incorrect numOutboundStreams tag exp:{} act: {}",
+            1024, c.num_outbound_streams
+        );
         assert_eq!(
             c.num_inbound_streams, 2048,
             "Unmarshal passed for SCTP packet, but got incorrect numInboundStreams exp: {} act: {}",
@@ -614,8 +622,16 @@ fn test_init_marshal_unmarshal() -> Result<()> {
             "Unmarshal passed for SCTP packet, but got incorrect initiate tag exp: {} act: {}",
             123, c.initiate_tag
         );
-        assert_eq!(c.advertised_receiver_window_credit, 1024, "Unmarshal passed for SCTP packet, but got incorrect advertisedReceiverWindowCredit exp: {} act: {}", 1024, c.advertised_receiver_window_credit);
-        assert_eq!(c.num_outbound_streams, 1, "Unmarshal passed for SCTP packet, but got incorrect numOutboundStreams tag exp:{} act: {}", 1, c.num_outbound_streams);
+        assert_eq!(
+            c.advertised_receiver_window_credit, 1024,
+            "Unmarshal passed for SCTP packet, but got incorrect advertisedReceiverWindowCredit exp: {} act: {}",
+            1024, c.advertised_receiver_window_credit
+        );
+        assert_eq!(
+            c.num_outbound_streams, 1,
+            "Unmarshal passed for SCTP packet, but got incorrect numOutboundStreams tag exp:{} act: {}",
+            1, c.num_outbound_streams
+        );
         assert_eq!(
             c.num_inbound_streams, 1,
             "Unmarshal passed for SCTP packet, but got incorrect numInboundStreams exp: {} act: {}",

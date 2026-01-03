@@ -1,5 +1,5 @@
-use crate::media_stream::track::MediaStreamTrackId;
 use crate::media_stream::MediaStreamId;
+use crate::media_stream::track::MediaStreamTrackId;
 use crate::rtp_transceiver::RTCRtpReceiverId;
 
 #[allow(clippy::enum_variant_names)]
