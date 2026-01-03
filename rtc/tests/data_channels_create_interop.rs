@@ -30,6 +30,7 @@ use rtc::peer_connection::transport::dtls::role::DTLSRole;
 use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
 
+use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -242,25 +243,32 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
                             rtc_data_channel_opened = true;
                             rtc_dc_id = Some(channel_id);
                         }
-                        RTCDataChannelEvent::OnMessage(channel_id, message) => {
-                            let _dc = rtc_pc
-                                .data_channel(channel_id)
-                                .expect("data channel should exist");
-                            let msg_str = String::from_utf8(message.data.to_vec())?;
-                            log::info!(
-                                "RTC received message on channel {}: '{}'",
-                                channel_id,
-                                msg_str
-                            );
-
-                            // Store received message
-                            let mut rtc_msgs = rtc_received_messages.lock().await;
-                            rtc_msgs.push(msg_str.clone());
-                        }
                         _ => {}
                     }
                 }
                 _ => {}
+            }
+        }
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
+                    let _dc = rtc_pc
+                        .data_channel(channel_id)
+                        .expect("data channel should exist");
+                    let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
+                    log::info!(
+                        "RTC received message on channel {}: '{}'",
+                        channel_id,
+                        msg_str
+                    );
+
+                    // Store received message
+                    let mut rtc_msgs = rtc_received_messages.lock().await;
+                    rtc_msgs.push(msg_str.clone());
+                }
             }
         }
 

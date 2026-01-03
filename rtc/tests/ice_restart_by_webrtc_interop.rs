@@ -23,6 +23,7 @@ use rtc::peer_connection::transport::dtls::role::DTLSRole;
 use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
 
+use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -251,14 +252,21 @@ async fn test_ice_restart_interop() -> Result<()> {
                             rtc_dc_id = Some(channel_id);
                         }
                     }
-                    RTCDataChannelEvent::OnMessage(_channel_id, message) => {
-                        let msg_str = String::from_utf8_lossy(&message.data);
-                        log::info!("RTC received message: {}", msg_str);
-                        rtc_received_messages.lock().await.push(msg_str.to_string());
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8_lossy(&data_channel_message.data);
+                    log::info!("RTC received message: {}", msg_str);
+                    rtc_received_messages.lock().await.push(msg_str.to_string());
+                }
             }
         }
 
@@ -379,15 +387,17 @@ async fn test_ice_restart_interop() -> Result<()> {
                 .await?;
         }
 
-        while let Some(event) = rtc_pc.poll_event() {
-            if let RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
-                _,
-                message,
-            )) = event
-            {
-                let msg_str = String::from_utf8_lossy(&message.data);
-                log::info!("RTC received message: {}", msg_str);
-                rtc_received_messages.lock().await.push(msg_str.to_string());
+        while let Some(_event) = rtc_pc.poll_event() {}
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8_lossy(&data_channel_message.data);
+                    log::info!("RTC received message: {}", msg_str);
+                    rtc_received_messages.lock().await.push(msg_str.to_string());
+                }
             }
         }
 
@@ -535,14 +545,21 @@ async fn test_ice_restart_interop() -> Result<()> {
                     }
                 }
                 RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnMessage(_channel_id, message) => {
-                        let msg_str = String::from_utf8_lossy(&message.data);
-                        log::info!("RTC received message after restart: {}", msg_str);
-                        rtc_received_messages.lock().await.push(msg_str.to_string());
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8_lossy(&data_channel_message.data);
+                    log::info!("RTC received message after restart: {}", msg_str);
+                    rtc_received_messages.lock().await.push(msg_str.to_string());
+                }
             }
         }
 
@@ -604,15 +621,17 @@ async fn test_ice_restart_interop() -> Result<()> {
                 .await?;
         }
 
-        while let Some(event) = rtc_pc.poll_event() {
-            if let RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnMessage(
-                _,
-                message,
-            )) = event
-            {
-                let msg_str = String::from_utf8_lossy(&message.data);
-                log::info!("RTC received message after restart: {}", msg_str);
-                rtc_received_messages.lock().await.push(msg_str.to_string());
+        while let Some(_event) = rtc_pc.poll_event() {}
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8_lossy(&data_channel_message.data);
+                    log::info!("RTC received message after restart: {}", msg_str);
+                    rtc_received_messages.lock().await.push(msg_str.to_string());
+                }
             }
         }
 

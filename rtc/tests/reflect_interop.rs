@@ -31,6 +31,7 @@ use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameter
 use rtc::shared::error::Error;
 
 use rtc::peer_connection::event::track_event::RTCTrackEvent;
+use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
@@ -267,50 +268,54 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                         rtc_connected = true;
                     }
                 }
-                RTCPeerConnectionEvent::OnTrack(track_event) => {
-                    match track_event {
-                        RTCTrackEvent::OnOpen(init) => {
-                            track_id2_receiver_id.insert(init.track_id, init.receiver_id);
-                        }
-                        RTCTrackEvent::OnClose(_track_id) => {}
-                        RTCTrackEvent::OnRtpPacket(track_id, rtp_packet) => {
-                            let receiver_id = track_id2_receiver_id
-                                .get(&track_id)
-                                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                                .clone();
-                            let rtp_receiver = rtc_pc
-                                .rtp_receiver(receiver_id)
-                                .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                            let track = rtp_receiver
-                                .track(&track_id)?
-                                .ok_or(Error::ErrTrackNotExisted)?;
-                            let media_ssrc = track.ssrc();
-                            rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
-
-                            let rtp_sender_id = rtp_sender_ids
-                                .get(&track.kind())
-                                .ok_or(Error::ErrRTPSenderNotExisted)?;
-
-                            let mut rtp_sender = rtc_pc
-                                .rtp_sender(*rtp_sender_id)
-                                .ok_or(Error::ErrRTPReceiverNotExisted)?;
-
-                            log::debug!(
-                                "RTC reflecting rtp packet (seq: {}, ssrc: {})",
-                                rtp_packet.header.sequence_number,
-                                media_ssrc
-                            );
-                            rtp_sender.write_rtp(rtp_packet)?;
-                        }
-                        RTCTrackEvent::OnRtcpPacket(_track_id, _rtcp_packet) => {
-                            // Read incoming RTCP packets
-                            // Before these packets are returned they are processed by interceptors. For things
-                            // like NACK this needs to be called.
-                        }
-                        _ => {}
+                RTCPeerConnectionEvent::OnTrack(track_event) => match track_event {
+                    RTCTrackEvent::OnOpen(init) => {
+                        track_id2_receiver_id.insert(init.track_id, init.receiver_id);
                     }
-                }
+                    RTCTrackEvent::OnClose(_track_id) => {}
+                    _ => {}
+                },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = rtc_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                    let receiver_id = track_id2_receiver_id
+                        .get(&track_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?
+                        .clone();
+                    let rtp_receiver = rtc_pc
+                        .rtp_receiver(receiver_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?;
+                    let track = rtp_receiver
+                        .track(&track_id)?
+                        .ok_or(Error::ErrTrackNotExisted)?;
+                    let media_ssrc = track.ssrc();
+                    rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
+
+                    let rtp_sender_id = rtp_sender_ids
+                        .get(&track.kind())
+                        .ok_or(Error::ErrRTPSenderNotExisted)?;
+
+                    let mut rtp_sender = rtc_pc
+                        .rtp_sender(*rtp_sender_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?;
+
+                    log::debug!(
+                        "RTC reflecting rtp packet (seq: {}, ssrc: {})",
+                        rtp_packet.header.sequence_number,
+                        media_ssrc
+                    );
+                    rtp_sender.write_rtp(rtp_packet)?;
+                }
+                RTCMessage::RtcpPacket(_, _) => {
+                    // Read incoming RTCP packets
+                    // Before these packets are returned they are processed by interceptors. For things
+                    // like NACK this needs to be called.
+                }
+                RTCMessage::DataChannelMessage(_, _) => {}
             }
         }
 

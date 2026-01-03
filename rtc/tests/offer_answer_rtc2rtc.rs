@@ -17,6 +17,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::dtls::role::DTLSRole;
@@ -217,15 +218,22 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                         log::info!("Offer data channel {} opened", channel_id);
                         offer_dc_id = Some(channel_id);
                     }
-                    RTCDataChannelEvent::OnMessage(channel_id, message) => {
-                        let msg_str = String::from_utf8(message.data.to_vec())?;
-                        log::info!("Offer received message: '{}' from {}", msg_str, channel_id);
-                        let mut msgs = offer_received_messages.lock().await;
-                        msgs.push(msg_str);
-                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+
+        while let Some(message) = offer_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
+                    log::info!("Offer received message: '{}' from {}", msg_str, channel_id);
+                    let mut msgs = offer_received_messages.lock().await;
+                    msgs.push(msg_str);
+                }
             }
         }
 
@@ -262,30 +270,35 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                         answer_connected = true;
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => {
-                    match dc_event {
-                        RTCDataChannelEvent::OnOpen(channel_id) => {
-                            log::info!("Answer data channel {} opened", channel_id);
-                        }
-                        RTCDataChannelEvent::OnMessage(channel_id, message) => {
-                            let msg_str = String::from_utf8(message.data.to_vec())?;
-                            log::info!("Answer received message: '{}'", msg_str);
-                            let mut msgs = answer_received_messages.lock().await;
-                            msgs.push(msg_str.clone());
+                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
+                    RTCDataChannelEvent::OnOpen(channel_id) => {
+                        log::info!("Answer data channel {} opened", channel_id);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
 
-                            // Echo back
-                            if !echo_sent {
-                                if let Some(mut dc) = answer_pc.data_channel(channel_id) {
-                                    log::info!("Answer echoing: '{}'", ECHO_MESSAGE);
-                                    dc.send_text(ECHO_MESSAGE.to_string())?;
-                                    echo_sent = true;
-                                }
-                            }
+        while let Some(message) = answer_pc.poll_read() {
+            match message {
+                RTCMessage::RtpPacket(_, _) => {}
+                RTCMessage::RtcpPacket(_, _) => {}
+                RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
+                    let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
+                    log::info!("Answer received message: '{}'", msg_str);
+                    let mut msgs = answer_received_messages.lock().await;
+                    msgs.push(msg_str.clone());
+
+                    // Echo back
+                    if !echo_sent {
+                        if let Some(mut dc) = answer_pc.data_channel(channel_id) {
+                            log::info!("Answer echoing: '{}'", ECHO_MESSAGE);
+                            dc.send_text(ECHO_MESSAGE.to_string())?;
+                            echo_sent = true;
                         }
-                        _ => {}
                     }
                 }
-                _ => {}
             }
         }
 
