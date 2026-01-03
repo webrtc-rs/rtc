@@ -41,7 +41,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   send E2E encrypted video and decrypt via insertable streams in the browser.
 - ✅ [Broadcast](broadcast): The broadcast example demonstrates how to broadcast a video to multiple peers. A
   broadcaster uploads the video once and the server forwards it to all other peers.
-- ⌛ [RTP Forwarder](rtp-forwarder): The rtp-forwarder example demonstrates how to forward your audio/video streams
+- ✅ [RTP Forwarder](rtp-forwarder): The rtp-forwarder example demonstrates how to forward your audio/video streams
   using RTP.
 - ⌛ [RTP to WebRTC](rtp-to-webrtc): The rtp-to-webrtc example demonstrates how to take RTP packets sent to a webrtc-rs
   process into your browser.
