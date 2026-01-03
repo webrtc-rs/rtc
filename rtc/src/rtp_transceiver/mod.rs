@@ -115,7 +115,7 @@ impl RTCRtpTransceiver {
                         kind,
                         None,                   // rid
                         rand::random::<u32>(),  // ssrc
-                        RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/6
+                        RTCRtpCodec::default(), //TODO: https://github.com/webrtc-rs/rtc/issues/7
                     ),
                     vec![],
                 ))

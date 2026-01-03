@@ -134,11 +134,11 @@ name = "ice-restart"
 path = "examples/ice-restart/ice-restart.rs"
 bench = false
 
-#[[example]]
-#name = "broadcast"
-#path = "examples/broadcast/broadcast.rs"
-#bench = false
-#
+[[example]]
+name = "broadcast"
+path = "examples/broadcast/broadcast.rs"
+bench = false
+
 #[[example]]
 #name = "rc-cycle"
 #path = "examples/rc-cycle/rc-cycle.rs"
