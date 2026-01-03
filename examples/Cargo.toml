@@ -59,11 +59,11 @@ name = "data-channels-answer"
 path = "examples/data-channels-offer-answer/data-channels-answer.rs"
 bench = false
 
-#[[example]]
-#name = "insertable-streams"
-#path = "examples/insertable-streams/insertable-streams.rs"
-#bench = false
-#
+[[example]]
+name = "insertable-streams"
+path = "examples/insertable-streams/insertable-streams.rs"
+bench = false
+
 [[example]]
 name = "play-from-disk-vpx"
 path = "examples/play-from-disk-vpx/play-from-disk-vpx.rs"

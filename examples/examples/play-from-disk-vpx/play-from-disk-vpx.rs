@@ -407,7 +407,7 @@ async fn run(
                         eprintln!("Peer Connection State has gone to failed! Exiting...");
                         break 'EventLoop;
                     } else if peer_connection_state == RTCPeerConnectionState::Connected {
-                        eprintln!("Peer Connection State has gone to connected! Exiting...");
+                        println!("Peer Connection State has gone to connected!");
                         connection_established = true;
                         notify_tx.notify_waiters();
                     }
