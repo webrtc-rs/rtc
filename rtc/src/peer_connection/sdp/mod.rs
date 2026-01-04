@@ -647,10 +647,14 @@ pub(crate) fn add_transceiver_sdp(
         for feedback in &codec.rtp_codec.rtcp_feedback {
             media = media.with_value_attribute(
                 "rtcp-fb".to_owned(),
-                format!(
-                    "{} {} {}",
-                    codec.payload_type, feedback.typ, feedback.parameter
-                ),
+                if feedback.parameter.is_empty() {
+                    format!("{} {}", codec.payload_type, feedback.typ)
+                } else {
+                    format!(
+                        "{} {} {}",
+                        codec.payload_type, feedback.typ, feedback.parameter
+                    )
+                },
             );
         }
     }
