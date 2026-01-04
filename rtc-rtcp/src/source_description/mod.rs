@@ -20,7 +20,7 @@ const SDES_MAX_OCTET_COUNT: usize = (1 << 8) - 1;
 const SDES_TEXT_OFFSET: usize = 2;
 
 /// SDESType is the item type used in the RTCP SDES control packet.
-/// RTP SDES item types registered with IANA. See: https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-5
+/// RTP SDES item types registered with IANA. See: <https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-5>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SdesType {

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
-use rtc::data_channel::init::RTCDataChannelInit;
+use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;

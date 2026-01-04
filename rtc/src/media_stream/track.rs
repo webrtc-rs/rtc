@@ -8,8 +8,14 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 
 pub type MediaStreamTrackId = String;
 
-/// TrackStreams maintains a mapping of RTP/RTCP streams to a specific track
-/// a RTPReceiver may contain multiple streams if we are dealing with Simulcast
+/// Represents a single media track within a stream.
+///
+/// A `MediaStreamTrack` represents a media source such as audio or video. It contains
+/// information about the codec, SSRC, and other parameters needed to send or receive media.
+///
+/// # Specification
+///
+/// See [MediaStreamTrack](https://www.w3.org/TR/mediacapture-streams/#mediastreamtrack)
 #[derive(Default, Debug, Clone)]
 pub struct MediaStreamTrack {
     stream_id: MediaStreamId,
@@ -30,6 +36,17 @@ pub struct MediaStreamTrack {
 }
 
 impl MediaStreamTrack {
+    /// Creates a new media stream track.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_id` - The ID of the stream this track belongs to
+    /// * `track_id` - A unique identifier for this track
+    /// * `label` - A human-readable label for the track
+    /// * `kind` - The kind of media (audio or video)
+    /// * `rid` - Optional RTP stream ID (used for simulcast)
+    /// * `ssrc` - The synchronization source identifier
+    /// * `codec` - The RTP codec information
     pub fn new(
         stream_id: MediaStreamId,
         track_id: MediaStreamTrackId,

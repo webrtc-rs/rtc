@@ -13,10 +13,10 @@ use bytes::{Buf, BufMut};
 pub const AUDIO_LEVEL_EXTENSION_SIZE: usize = 1;
 
 /// AudioLevelExtension is a extension payload format described in
-/// https://tools.ietf.org/html/rfc6464
+/// <https://tools.ietf.org/html/rfc6464>
 ///
 /// Implementation based on:
-/// https://chromium.googlesource.com/external/webrtc/+/e2a017725570ead5946a4ca8235af27470ca0df9/webrtc/modules/rtp_rtcp/source/rtp_header_extensions.cc#49
+/// <https://chromium.googlesource.com/external/webrtc/+/e2a017725570ead5946a4ca8235af27470ca0df9/webrtc/modules/rtp_rtcp/source/rtp_header_extensions.cc#49>
 ///
 /// One byte format:
 /// 0                   1

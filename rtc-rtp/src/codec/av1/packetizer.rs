@@ -1,5 +1,5 @@
-//! Based on https://chromium.googlesource.com/external/webrtc/+/4e513346ec56c829b3a6010664998469fc237b35/modules/rtp_rtcp/source/rtp_packetizer_av1.cc
-//! Reference: https://aomediacodec.github.io/av1-rtp-spec
+//! Based on <https://chromium.googlesource.com/external/webrtc/+/4e513346ec56c829b3a6010664998469fc237b35/modules/rtp_rtcp/source/rtp_packetizer_av1.cc>
+//! Reference: <https://aomediacodec.github.io/av1-rtp-spec>
 
 use std::cmp::min;
 

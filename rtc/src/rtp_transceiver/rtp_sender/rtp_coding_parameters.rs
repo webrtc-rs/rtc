@@ -20,7 +20,7 @@ pub struct RTCRtpRtxParameters {
 }
 
 /// RTPFecParameters dictionary contains information relating to forward error correction (FEC) settings.
-/// https://draft.ortc.org/#dom-rtcrtpfecparameters
+/// <https://draft.ortc.org/#dom-rtcrtpfecparameters>
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpFecParameters {
     pub ssrc: SSRC,

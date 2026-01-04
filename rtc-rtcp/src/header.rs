@@ -6,7 +6,7 @@ use shared::{
 use bytes::{Buf, BufMut};
 
 /// PacketType specifies the type of an RTCP packet
-/// RTCP packet types registered with IANA. See: https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-4
+/// RTCP packet types registered with IANA. See: <https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-4>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PacketType {
@@ -35,7 +35,7 @@ pub const FORMAT_RRR: u8 = 5;
 /// Transport and Payload specific feedback messages overload the count field to act as a message type. those are listed here
 pub const FORMAT_REMB: u8 = 15;
 /// Transport and Payload specific feedback messages overload the count field to act as a message type. those are listed here.
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5>
 pub const FORMAT_TCC: u8 = 15;
 
 impl std::fmt::Display for PacketType {

@@ -113,7 +113,7 @@ impl RTCRtpSender<'_> {
     /// replace_track replaces the track currently being used as the sender's source with a new TrackLocal.
     /// The new track must be of the same media kind (audio, video, etc) and switching the track should not
     /// require negotiation.
-    /// https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack
+    /// <https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack>
     pub fn replace_track(&mut self, track: MediaStreamTrack) -> Result<()> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]

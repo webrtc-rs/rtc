@@ -39,13 +39,26 @@ pub type PayloadType = u8;
 
 pub type RTCRtpTransceiverId = usize;
 
+/// Identifier for an `RTCRtpSender` within a peer connection.
+///
+/// Used to reference a specific RTP sender when calling methods like `remove_track`.
 #[derive(Default, Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct RTCRtpSenderId(pub(crate) RTCRtpTransceiverId);
 
+/// Identifier for an `RTCRtpReceiver` within a peer connection.
+///
+/// Used to reference a specific RTP receiver when handling incoming media.
 #[derive(Default, Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct RTCRtpReceiverId(pub(crate) RTCRtpTransceiverId);
 
-/// RTPTransceiverInit dictionary is used when calling the WebRTC function addTransceiver() to provide configuration options for the new transceiver.
+/// Initialization parameters for creating an `RTCRtpTransceiver`.
+///
+/// Used with `add_transceiver_from_track` or `add_transceiver_from_kind` to configure
+/// the transceiver's initial direction and encoding parameters.
+///
+/// # Specification
+///
+/// See [RTCRtpTransceiverInit](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiverinit)
 #[derive(Default, Clone)]
 pub struct RTCRtpTransceiverInit {
     pub direction: RTCRtpTransceiverDirection,

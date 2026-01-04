@@ -9,7 +9,7 @@ pub const PLAYOUT_DELAY_EXTENSION_SIZE: usize = 3;
 pub const PLAYOUT_DELAY_MAX_VALUE: u16 = (1 << 12) - 1;
 
 /// PlayoutDelayExtension is an extension payload format described in
-/// http://www.webrtc.org/experiments/rtp-hdrext/playout-delay
+/// <http://www.webrtc.org/experiments/rtp-hdrext/playout-delay>
 /// 0                   1                   2                   3
 /// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+

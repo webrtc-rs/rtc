@@ -13,7 +13,7 @@ use bytes::{Buf, BufMut};
 pub const TRANSPORT_CC_EXTENSION_SIZE: usize = 2;
 
 /// TransportCCExtension is a extension payload format in
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01>
 /// 0                   1                   2                   3
 /// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+

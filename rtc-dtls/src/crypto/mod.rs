@@ -50,7 +50,7 @@ impl Certificate {
 
     /// Generate a self-signed certificate with the given algorithm.
     ///
-    /// See [`rcgen::Certificate::from_params`].
+    /// See `rcgen::Certificate::self_signed`.
     pub fn generate_self_signed_with_alg(
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,

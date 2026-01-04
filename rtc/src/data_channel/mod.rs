@@ -1,39 +1,70 @@
-use crate::data_channel::message::RTCDataChannelMessage;
-use crate::data_channel::state::RTCDataChannelState;
+//! WebRTC Data Channel API
+//!
+//! This module implements the RTCDataChannel interface as defined in the
+//! [W3C WebRTC specification](https://w3c.github.io/webrtc-pc/#rtcdatachannel).
+//!
+//! Data channels enable peer-to-peer exchange of arbitrary application data with low latency
+//! and optional reliability. They are useful for scenarios like gaming, real-time text chat,
+//! file transfer, and other applications that benefit from low-latency communication.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::data_channel::RTCDataChannelInit;
+//!
+//! let mut pc = RTCPeerConnection::new();
+//! let init = RTCDataChannelInit {
+//!     label: "my-channel".to_string(),
+//!     ordered: true,
+//!     ..Default::default()
+//! };
+//!
+//! // Create a data channel
+//! let dc_id = pc.create_data_channel(init)?;
+//! # Ok::<(), shared::error::Error>(())
+//! ```
+//!
+//! # Specifications
+//!
+//! * [W3C WebRTC - RTCDataChannel](https://w3c.github.io/webrtc-pc/#rtcdatachannel)
+//! * [RFC 8831 - WebRTC Data Channels](https://www.rfc-editor.org/rfc/rfc8831.html)
+//! * [RFC 8832 - WebRTC Data Channel Establishment Protocol](https://www.rfc-editor.org/rfc/rfc8832.html)
+
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::RTCMessage;
 use bytes::BytesMut;
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
-pub mod init;
+pub(crate) mod init;
 pub(crate) mod internal;
-pub mod message;
-pub mod parameters;
-pub mod state;
+pub(crate) mod message;
+pub(crate) mod parameters;
+pub(crate) mod state;
 
-/// Identifier for a data channel within a particular peer connection
+/// Identifier for a data channel within a particular peer connection.
+///
+/// Each data channel has a unique 16-bit identifier within its peer connection.
 pub type RTCDataChannelId = u16;
 
-#[derive(Default, Clone)]
-pub enum BinaryType {
-    #[default]
-    String,
-    Blob,
-    ArrayBuffer,
-}
+pub use init::RTCDataChannelInit;
 
-/// DataChannel represents a WebRTC DataChannel
-/// The DataChannel interface represents a network channel
-/// which can be used for bidirectional peer-to-peer transfers of arbitrary data
+pub use message::RTCDataChannelMessage;
+
+pub use state::RTCDataChannelState;
+
+/// Represents a WebRTC data channel for bidirectional peer-to-peer data transfer.
 ///
-/// ## Specifications
+/// The `RTCDataChannel` interface represents a network channel which can be used for
+/// bidirectional peer-to-peer transfers of arbitrary data. Each data channel is associated
+/// with an [`RTCPeerConnection`] and provides configurable delivery semantics including
+/// ordered/unordered delivery and reliable/unreliable transport.
 ///
-/// * [MDN]
-/// * [W3C]
+/// # Specifications
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel
+/// * [W3C WebRTC - RTCDataChannel](https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel)
+/// * [MDN - RTCDataChannel](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel)
 pub struct RTCDataChannel<'a> {
     pub(crate) id: RTCDataChannelId,
     pub(crate) peer_connection: &'a mut RTCPeerConnection,

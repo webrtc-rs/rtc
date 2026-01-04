@@ -11,7 +11,7 @@ use bytes::{Buf, BufMut};
 use std::any::Any;
 use std::fmt;
 
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5>
 /// 0                   1                   2                   3
 /// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -57,14 +57,14 @@ pub enum StatusChunkTypeTcc {
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
 #[repr(u16)]
 pub enum SymbolTypeTcc {
-    /// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1
+    /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1>
     #[default]
     PacketNotReceived = 0,
-    /// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1
+    /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1>
     PacketReceivedSmallDelta = 1,
-    /// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1
+    /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.1>
     PacketReceivedLargeDelta = 2,
-    /// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-7
+    /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-7>
     /// see Example 2: "packet received, w/o recv delta"
     PacketReceivedWithoutDelta = 3,
 }
@@ -73,7 +73,7 @@ pub enum SymbolTypeTcc {
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
 #[repr(u16)]
 pub enum SymbolSizeTypeTcc {
-    /// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.4
+    /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.4>
     #[default]
     OneBit = 0,
     TwoBit = 1,
@@ -310,7 +310,7 @@ impl Unmarshal for StatusVectorChunk {
 /// RecvDelta are represented as multiples of 250us
 /// small delta is 1 byte: [0，63.75]ms = [0, 63750]us = [0, 255]*250us
 /// big delta is 2 bytes: [-8192.0, 8191.75]ms = [-8192000, 8191750]us = [-32768, 32767]*250us
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.5
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.5>
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RecvDelta {
     pub type_tcc_packet: SymbolTypeTcc,
@@ -418,7 +418,7 @@ const PACKET_CHUNK_OFFSET: usize = 16;
 /// len of packet status chunk
 const TYPE_TCC_STATUS_VECTOR_CHUNK: usize = 1;
 
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.5
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.5>
 pub const TYPE_TCC_DELTA_SCALE_FACTOR: i64 = 250;
 
 // Notice: RFC is wrong: "packet received" (0) and "packet not received" (1)
@@ -431,7 +431,7 @@ static NUM_OF_BITS_OF_SYMBOL_SIZE: [u16; 2] = [1, 2];
 const PACKET_STATUS_CHUNK_LENGTH: usize = 2;
 
 /// TransportLayerCC for sender-BWE
-/// https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5
+/// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5>
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct TransportLayerCc {
     /// SSRC of sender

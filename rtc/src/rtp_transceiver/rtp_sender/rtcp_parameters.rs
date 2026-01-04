@@ -1,4 +1,4 @@
-/// RTCRtcpParameters is defined in https://www.w3.org/TR/webrtc/#rtcrtcpparameters
+/// RTCRtcpParameters is defined in <https://www.w3.org/TR/webrtc/#rtcrtcpparameters>
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCRtcpParameters {
     pub cname: String,

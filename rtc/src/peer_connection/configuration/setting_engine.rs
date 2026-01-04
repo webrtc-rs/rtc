@@ -297,7 +297,7 @@ impl SettingEngine {
     /// set_include_loopback_candidate enables webrtc-rs to gather loopback candidates, it is
     /// useful for, e.g., some VMs that have public IP mapped to loopback interface.
     /// Note that allowing loopback candidates to be gathered is technically inconsistent with the
-    /// webRTC spec (see https://www.rfc-editor.org/rfc/rfc8445#section-5.1.1.1). This option is
+    /// webRTC spec (see <https://www.rfc-editor.org/rfc/rfc8445#section-5.1.1.1>). This option is
     /// therefore disabled by default, and should be used with caution.
     pub fn set_include_loopback_candidate(&mut self, allow_loopback: bool) {
         self.candidates.include_loopback_candidate = allow_loopback;
