@@ -13,7 +13,10 @@ use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOp
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 
-/// RTPSender allows an application to control how a given Track is encoded and transmitted to a remote peer
+/// Internal RTP sender implementation.
+///
+/// This structure manages the state and configuration of an RTP sender,
+/// including track association, encoding parameters, codec selection, and negotiation status.
 ///
 /// ## Specifications
 ///
@@ -24,17 +27,32 @@ use shared::util::math_rand_alpha;
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpSenderInternal {
+    /// The codec kind (audio or video) for this sender
     kind: RtpCodecKind,
+    /// The media track being sent
     sender_track: MediaStreamTrack,
+    /// Media stream IDs associated with this sender's track
     associated_media_stream_ids: Vec<MediaStreamId>,
+    /// Encoding parameters for each simulcast/layered encoding
     send_encodings: Vec<RTCRtpEncodingParameters>,
+    /// Negotiated codec parameters
     send_codecs: Vec<RTCRtpCodecParameters>,
 
+    /// Cached parameters returned by get_parameters()
     last_returned_parameters: Option<RTCRtpSendParameters>,
+    /// Whether SDP negotiation has occurred for this sender
     negotiated: bool,
 }
 
 impl RTCRtpSenderInternal {
+    /// Creates a new RTP sender internal state.
+    ///
+    /// # Parameters
+    ///
+    /// * `kind` - The codec kind (audio or video)
+    /// * `track` - The media track to send
+    /// * `streams` - Media stream IDs to associate with the track (uses track's stream if empty)
+    /// * `send_encodings` - Initial encoding parameters for the sender
     pub(crate) fn new(
         kind: RtpCodecKind,
         track: MediaStreamTrack,
@@ -59,15 +77,29 @@ impl RTCRtpSenderInternal {
         }
     }
 
-    /// track returns the RTCRtpTransceiver track, or nil
+    /// Returns the media track being sent.
     pub(crate) fn track(&self) -> &MediaStreamTrack {
         &self.sender_track
     }
 
+    /// Returns the codec kind (audio or video) for this sender.
     pub(crate) fn kind(&self) -> RtpCodecKind {
         self.kind
     }
 
+    /// Returns the RTP capabilities for the specified codec kind.
+    ///
+    /// Filters codecs by the requested kind and returns available codecs
+    /// and header extensions supported by the media engine.
+    ///
+    /// # Parameters
+    ///
+    /// * `kind` - The codec kind to query capabilities for
+    /// * `media_engine` - The media engine containing codec information
+    ///
+    /// # Returns
+    ///
+    /// `None` if the kind is unspecified, otherwise returns the capabilities.
     pub(crate) fn get_capabilities(
         &self,
         kind: RtpCodecKind,
@@ -99,6 +131,22 @@ impl RTCRtpSenderInternal {
                 .collect(),
         })
     }
+    /// Updates the sender's RTP send parameters.
+    ///
+    /// Validates and applies new encoding parameters including bitrate limits,
+    /// frame rates, and resolution scaling.
+    ///
+    /// # Parameters
+    ///
+    /// * `parameters` - The new send parameters to apply
+    /// * `_set_parameter_options` - Reserved for future options (currently unused)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The number of encodings doesn't match the current configuration
+    /// - RIDs don't match between new and existing encodings
+    /// - Invalid resolution scaling values are provided (must be >= 1.0)
     pub(crate) fn set_parameters(
         &mut self,
         mut parameters: RTCRtpSendParameters,
@@ -152,8 +200,15 @@ impl RTCRtpSenderInternal {
         Ok(())
     }
 
-    /// The getParameters() method returns the RTCRtpSender object's current parameters for
-    /// how track is encoded and transmitted to a remote RTCRtpReceiver.
+    /// Returns the sender's current RTP send parameters.
+    ///
+    /// Constructs and caches the send parameters including codecs, encodings,
+    /// and header extensions. Subsequent calls return the cached version until
+    /// `set_parameters` is called.
+    ///
+    /// # Parameters
+    ///
+    /// * `media_engine` - The media engine containing codec and extension information
     pub(crate) fn get_parameters(&mut self, media_engine: &MediaEngine) -> &RTCRtpSendParameters {
         if self.last_returned_parameters.is_none() {
             let mut rtp_parameters = media_engine
@@ -171,10 +226,22 @@ impl RTCRtpSenderInternal {
         self.last_returned_parameters.as_ref().unwrap()
     }
 
-    /// replace_track replaces the track currently being used as the sender's source with a new TrackLocal.
-    /// The new track must be of the same media kind (audio, video, etc) and switching the track should not
-    /// require negotiation.
-    /// https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack
+    /// Replaces the current track with a new media track.
+    ///
+    /// The new track must be of the same media kind (audio or video) as the existing track.
+    ///
+    /// # Parameters
+    ///
+    /// * `track` - The new media track to send
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::ErrRTPSenderNewTrackHasIncorrectKind` if the new track's kind
+    /// doesn't match the sender's kind.
+    ///
+    /// ## Specifications
+    ///
+    /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack)
     pub(crate) fn replace_track(&mut self, track: MediaStreamTrack) -> Result<()> {
         if self.kind() != track.kind() {
             return Err(Error::ErrRTPSenderNewTrackHasIncorrectKind);
@@ -191,10 +258,18 @@ impl RTCRtpSenderInternal {
         Ok(())
     }
 
+    /// Returns the media stream IDs associated with this sender's track.
     pub(crate) fn streams(&self) -> &[MediaStreamId] {
         &self.associated_media_stream_ids
     }
 
+    /// Sets the media stream IDs for this sender's track.
+    ///
+    /// If the streams vector is empty, uses the track's own stream ID.
+    ///
+    /// # Parameters
+    ///
+    /// * `streams` - Vector of stream IDs to associate with the track
     pub(crate) fn set_streams(&mut self, streams: Vec<MediaStreamId>) {
         let associated_media_stream_ids = if streams.is_empty() {
             vec![self.sender_track.stream_id().to_string()]
@@ -207,23 +282,37 @@ impl RTCRtpSenderInternal {
         // Update the negotiation-needed flag for connection.
     }
 
+    /// Returns whether this sender has been negotiated via SDP.
     pub(crate) fn negotiated(&self) -> bool {
         self.negotiated
     }
 
+    /// Marks this sender as having been negotiated.
     pub(crate) fn set_negotiated(&mut self) {
         self.negotiated = true;
     }
 
+    /// Stops the sender (placeholder for future implementation).
     pub(crate) fn stop(&mut self) -> Result<()> {
         //TODO:
         Ok(())
     }
 
+    /// Sets the preferred codecs for this sender.
+    ///
+    /// # Parameters
+    ///
+    /// * `codecs` - Vector of codec parameters in preference order
     pub(crate) fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) {
         self.send_codecs = codecs;
     }
 
+    /// Configures RTX (retransmission) and FEC (forward error correction) for all encodings.
+    ///
+    /// # Parameters
+    ///
+    /// * `is_rtx_enabled` - Whether to enable RTX
+    /// * `is_fec_enabled` - Whether to enable FEC
     pub(crate) fn configure_rtx_and_fec(&mut self, is_rtx_enabled: bool, is_fec_enabled: bool) {
         for encoding in self.send_encodings.iter_mut() {
             if !is_rtx_enabled {

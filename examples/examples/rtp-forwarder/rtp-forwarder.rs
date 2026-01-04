@@ -19,8 +19,8 @@ use rtc::peer_connection::transport::ice::candidate::{
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::marshal::Marshal;
@@ -129,7 +129,7 @@ async fn run_peer_connection(
     // Register VP8 codec for video
     media_engine.register_codec(
         RTCRtpCodecParameters {
-            rtp_codec: rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec {
+            rtp_codec: rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
                 mime_type: MIME_TYPE_VP8.to_string(),
                 clock_rate: 90000,
                 channels: 0,
@@ -145,7 +145,7 @@ async fn run_peer_connection(
     // Register Opus codec for audio
     media_engine.register_codec(
         RTCRtpCodecParameters {
-            rtp_codec: rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec {
+            rtp_codec: rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
                 mime_type: MIME_TYPE_OPUS.to_string(),
                 clock_rate: 48000,
                 channels: 2,

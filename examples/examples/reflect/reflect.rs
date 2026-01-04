@@ -22,8 +22,8 @@ use rtc::peer_connection::transport::ice::candidate::{
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};

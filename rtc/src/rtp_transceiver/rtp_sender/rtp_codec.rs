@@ -8,16 +8,17 @@ use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingP
 use crate::rtp_transceiver::{PayloadType, fmtp};
 use shared::error::{Error, Result};
 
-/// RTPCodecType determines the type of a codec
+/// Codec kind identifying the media type.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum RtpCodecKind {
+    /// Unspecified or unknown codec type
     #[default]
     Unspecified = 0,
 
-    /// Audio indicates this is an audio codec
+    /// Audio codec
     Audio = 1,
 
-    /// Video indicates this is a video codec
+    /// Video codec
     Video = 2,
 }
 
@@ -52,24 +53,34 @@ impl fmt::Display for RtpCodecKind {
     }
 }
 
-/// RTPCodecCapability provides information about codec capabilities.
+/// RTP codec capability providing information about supported codecs.
 ///
 /// ## Specifications
 ///
-/// * [W3C]
-///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpcodeccapability-members
+/// * [W3C](https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpcodeccapability-members)
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCRtpCodec {
+    /// MIME type of the codec (e.g., "video/VP8", "audio/opus")
     pub mime_type: String,
+    /// Codec clock rate in Hz
     pub clock_rate: u32,
+    /// Number of audio channels (0 for video codecs)
     pub channels: u16,
+    /// Format-specific parameters as SDP fmtp line
     pub sdp_fmtp_line: String,
+    /// RTCP feedback mechanisms supported by this codec (deprecated, will be removed)
     pub rtcp_feedback: Vec<RTCPFeedback>, //TODO: to be removed
 }
 
 impl RTCRtpCodec {
-    /// Turn codec capability into a `packetizer::Payloader`
+    /// Creates an RTP payloader for this codec.
+    ///
+    /// Returns a boxed trait object implementing the Payloader interface
+    /// for packetizing media frames into RTP packets.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::ErrNoPayloaderForCodec` if the codec is not supported.
     pub fn payloader(&self) -> Result<Box<dyn rtp::packetizer::Payloader>> {
         let mime_type = self.mime_type.to_lowercase();
         if mime_type == MIME_TYPE_H264.to_lowercase() {
@@ -98,17 +109,31 @@ impl RTCRtpCodec {
     }
 }
 
+/// Codec match quality result from fuzzy search.
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 pub(crate) enum CodecMatch {
+    /// No match found
     #[default]
     None = 0,
+    /// Partial match (MIME type matches)
     Partial = 1,
+    /// Exact match (MIME type and format parameters match)
     Exact = 2,
 }
 
-/// Do a fuzzy find for a codec in the list of codecs
-/// Used for lookup up a codec in an existing list to find a match
-/// Returns codecMatchExact, codecMatchPartial, or codecMatchNone
+/// Performs fuzzy search for a codec in a list of available codecs.
+///
+/// First attempts an exact match on both MIME type and format parameters,
+/// then falls back to matching only the MIME type.
+///
+/// # Parameters
+///
+/// * `needle_rtp_codec` - The codec to search for
+/// * `haystack` - List of available codecs to search in
+///
+/// # Returns
+///
+/// A tuple of (matched codec parameters, match quality)
 pub(crate) fn codec_parameters_fuzzy_search(
     needle_rtp_codec: &RTCRtpCodec,
     haystack: &[RTCRtpCodecParameters],
@@ -135,6 +160,18 @@ pub(crate) fn codec_parameters_fuzzy_search(
     (RTCRtpCodecParameters::default(), CodecMatch::None)
 }
 
+/// Searches for a matching encoding in available codecs.
+///
+/// Iterates through encodings looking for the best codec match, preferring exact matches.
+///
+/// # Parameters
+///
+/// * `encodings` - List of encoding parameters to search through
+/// * `haystack` - List of available codec parameters
+///
+/// # Returns
+///
+/// A tuple of (matched encoding, match quality)
 pub(crate) fn encoding_parameters_fuzzy_search(
     encodings: &[RTCRtpEncodingParameters],
     haystack: &[RTCRtpCodecParameters],
@@ -156,7 +193,18 @@ pub(crate) fn encoding_parameters_fuzzy_search(
     }
 }
 
-// Given a CodecParameters find the RTX CodecParameters if one exists.
+/// Finds the RTX payload type associated with a given payload type.
+///
+/// Searches for an RTX codec with the matching APT (Associated Payload Type) parameter.
+///
+/// # Parameters
+///
+/// * `needle` - The primary payload type to find RTX for
+/// * `haystack` - List of codec parameters to search
+///
+/// # Returns
+///
+/// The RTX payload type if found, None otherwise
 pub(crate) fn find_rtx_payload_type(
     needle: PayloadType,
     haystack: &[RTCRtpCodecParameters],
@@ -171,6 +219,19 @@ pub(crate) fn find_rtx_payload_type(
     None
 }
 
+/// Finds the RTX codec parameters for a given codec.
+///
+/// Searches for the appropriate RTX codec as defined in RFC 4588,
+/// matching the original codec's payload type via the APT parameter.
+///
+/// # Parameters
+///
+/// * `original_codec` - The codec to find RTX parameters for
+/// * `available_codecs` - List of available codec parameters
+///
+/// # Returns
+///
+/// The RTX codec parameters if found, None otherwise
 pub(crate) fn codec_rtx_search(
     original_codec: &RTCRtpCodecParameters,
     available_codecs: &[RTCRtpCodecParameters],
@@ -199,6 +260,19 @@ pub(crate) fn codec_rtx_search(
     None
 }
 
+/// Computes the intersection of two RTCP feedback lists.
+///
+/// Returns feedback mechanisms that are supported by both lists,
+/// matching on both type and parameter fields.
+///
+/// # Parameters
+///
+/// * `a` - First feedback list
+/// * `b` - Second feedback list
+///
+/// # Returns
+///
+/// Vector of common feedback mechanisms
 pub(crate) fn rtcp_feedback_intersection(
     a: &[RTCPFeedback],
     b: &[RTCPFeedback],

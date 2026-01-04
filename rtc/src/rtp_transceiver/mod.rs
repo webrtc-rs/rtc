@@ -1,3 +1,105 @@
+//! RTP transceiver implementation.
+//!
+//! This module provides the RTCRtpTransceiver, which represents a permanent pairing
+//! of an [`RTCRtpSender`](rtp_sender::RTCRtpSender) and an [`RTCRtpReceiver`](rtp_receiver::RTCRtpReceiver),
+//! along with shared state.
+//!
+//! # Overview
+//!
+//! A transceiver manages bidirectional media exchange for a single media type (audio or video).
+//! It combines:
+//! - An RTP sender for outgoing media
+//! - An RTP receiver for incoming media  
+//! - Shared state including direction, mid, and codec preferences
+//!
+//! # Examples
+//!
+//! ## Adding a transceiver from a track
+//!
+//! ```no_run
+//! # use rtc::peer_connection::RTCPeerConnection;
+//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::media_stream::track::MediaStreamTrack;
+//! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
+//! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Add a transceiver for sending audio
+//! let init = RTCRtpTransceiverInit {
+//!     direction: RTCRtpTransceiverDirection::Sendrecv,
+//!     ..Default::default()
+//! };
+//!
+//! let sender_id = peer_connection
+//!     .add_transceiver_from_track(audio_track, Some(init))?;
+//!
+//! println!("Added sender with ID: {:?}", sender_id);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Adding a transceiver by media kind
+//!
+//! ```no_run
+//! # use rtc::peer_connection::RTCPeerConnection;
+//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+//! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Add a video transceiver for receiving only
+//! let init = RTCRtpTransceiverInit {
+//!     direction: RTCRtpTransceiverDirection::Recvonly,
+//!     ..Default::default()
+//! };
+//!
+//! let receiver_id = peer_connection
+//!     .add_transceiver_from_kind(RtpCodecKind::Video, Some(init))?;
+//!
+//! println!("Added receiver with ID: {:?}", receiver_id);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Controlling transceiver direction
+//!
+//! ```no_run
+//! # use rtc::peer_connection::RTCPeerConnection;
+//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Iterate through transceivers and change direction
+//! for transceiver_id in peer_connection.get_transceivers() {
+//!     // Access the transceiver through peer_connection's internal methods
+//!     // Note: Direct transceiver access may be internal API
+//!     // This demonstrates the concept - actual usage depends on your API design
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Setting codec preferences
+//!
+//! ```no_run
+//! # use rtc::peer_connection::RTCPeerConnection;
+//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+//! # fn example(preferred_codecs: Vec<RTCRtpCodecParameters>) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Codec preferences would be set through peer connection methods
+//! // The exact API depends on your implementation
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Specification
+//!
+//! See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
+
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
@@ -5,7 +107,6 @@ use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::sdp::codecs_from_media_description;
-use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
@@ -18,25 +119,35 @@ use std::collections::HashMap;
 use std::fmt;
 use unicase::UniCase;
 
-pub mod direction;
+pub(crate) mod direction;
 pub(crate) mod fmtp;
 pub mod rtp_receiver;
 pub mod rtp_sender;
 
-/// SSRC represents a synchronization source
-/// A synchronization source is a randomly chosen
-/// value meant to be globally unique within a particular
-/// RTP session. Used to identify a single stream of media.
-/// <https://tools.ietf.org/html/rfc3550#section-3>
+pub use direction::RTCRtpTransceiverDirection;
+
+/// SSRC (Synchronization Source) identifier.
+///
+/// A synchronization source is a randomly chosen value meant to be globally unique
+/// within a particular RTP session. It is used to identify a single stream of media.
+///
+/// # Specification
+///
+/// See [RFC 3550 Section 3](https://tools.ietf.org/html/rfc3550#section-3).
 #[allow(clippy::upper_case_acronyms)]
 pub type SSRC = u32;
 
-/// PayloadType identifies the format of the RTP payload and determines
-/// its interpretation by the application. Each codec in a RTP Session
-/// will have a different payload_type
-/// <https://tools.ietf.org/html/rfc3550#section-3>
+/// RTP payload type identifier.
+///
+/// Identifies the format of the RTP payload and determines its interpretation by the
+/// application. Each codec in an RTP session will have a different payload type.
+///
+/// # Specification
+///
+/// See [RFC 3550 Section 3](https://tools.ietf.org/html/rfc3550#section-3).
 pub type PayloadType = u8;
 
+/// Internal identifier for an RTP transceiver.
 pub type RTCRtpTransceiverId = usize;
 
 /// Identifier for an `RTCRtpSender` within a peer connection.
@@ -66,7 +177,14 @@ pub struct RTCRtpTransceiverInit {
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
 }
 
-/// RTPTransceiver represents a combination of an RTPSender and an RTPReceiver that share a common mid.
+/// Internal representation of an RTP transceiver.
+///
+/// Represents a permanent pairing of an RTP sender and RTP receiver that share a common mid.
+/// The transceiver manages the direction of media flow and codec preferences.
+///
+/// # Specification
+///
+/// See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 #[derive(Default, Clone)]
 pub(crate) struct RTCRtpTransceiver {
     mid: Option<String>,
@@ -125,11 +243,23 @@ impl RTCRtpTransceiver {
         }
     }
 
-    /// mid gets the Transceiver's mid value. When not already set, this value will be set in CreateOffer or create_answer.
+    /// Returns the media stream identification tag (mid) for this transceiver.
+    ///
+    /// The mid uniquely identifies the media description in the SDP. When not already set,
+    /// this value will be assigned during `create_offer` or `create_answer`.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
     pub fn mid(&self) -> &Option<String> {
         &self.mid
     }
 
+    /// Returns the media kind (audio or video) of this transceiver.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
     pub fn kind(&self) -> RtpCodecKind {
         self.kind
     }
@@ -152,12 +282,24 @@ impl RTCRtpTransceiver {
         &mut self.receiver
     }
 
-    /// direction returns the RTPTransceiver's desired direction.
+    /// Returns the preferred direction of the transceiver.
+    ///
+    /// This indicates the direction that the application prefers for media flow.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
     pub fn direction(&self) -> RTCRtpTransceiverDirection {
         self.direction
     }
 
-    /// Set the direction of this transceiver. This might trigger a renegotiation.
+    /// Sets the preferred direction of this transceiver.
+    ///
+    /// Changing the direction may trigger renegotiation to update the session description.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
     pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
         let previous_direction: RTCRtpTransceiverDirection = self.direction;
 
@@ -171,14 +313,27 @@ impl RTCRtpTransceiver {
         }
     }
 
-    /// current_direction returns the RTPTransceiver's current direction as negotiated.
+    /// Returns the negotiated direction of the transceiver.
     ///
-    /// If this transceiver has never been negotiated or if it's stopped this returns [`RTCRtpTransceiverDirection::Unspecified`].
+    /// This indicates the current direction as established by the most recent session description
+    /// exchange. If this transceiver has never been negotiated or if it's stopped, this returns
+    /// [`RTCRtpTransceiverDirection::Unspecified`].
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
     pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
         self.current_direction
     }
 
-    /// stop irreversibly stops the RTPTransceiver
+    /// Irreversibly stops the transceiver.
+    ///
+    /// After calling this method, the transceiver will no longer send or receive media.
+    /// This operation cannot be undone.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
     pub fn stop(&mut self) {
         if self.stopped {
             return;
@@ -188,8 +343,18 @@ impl RTCRtpTransceiver {
         self.current_direction = RTCRtpTransceiverDirection::Inactive;
     }
 
-    /// set_codec_preferences sets preferred list of supported codecs
-    /// if codecs is empty or nil we reset to default from MediaEngine
+    /// Sets the preferred codec list for this transceiver.
+    ///
+    /// This overrides the default codec preferences from the media engine. If an empty list is
+    /// provided, the transceiver resets to use the default codecs from the media engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any codec in the list is not supported by the media engine.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.setCodecPreferences()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-setcodecpreferences).
     pub fn set_codec_preferences(
         &mut self,
         codecs: Vec<RTCRtpCodecParameters>,

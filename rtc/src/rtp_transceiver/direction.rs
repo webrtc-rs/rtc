@@ -1,32 +1,42 @@
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use std::fmt;
 
-/// RTPTransceiverDirection indicates the direction of the RTPTransceiver.
+/// Direction of media flow for an RTP transceiver.
 ///
-/// ## Specifications
+/// Indicates whether the transceiver will send and/or receive RTP media.
 ///
-/// * [MDN]
-/// * [W3C]
+/// # Specification
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpTransceiver/direction
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcrtptransceiver-direction
+/// See [RTCRtpTransceiverDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiverdirection)
+/// in the W3C WebRTC specification.
+///
+/// # MDN
+///
+/// See [RTCRtpTransceiver.direction](https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpTransceiver/direction).
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCRtpTransceiverDirection {
+    /// Direction is not specified (internal use only).
     #[default]
     Unspecified,
 
-    /// Sendrecv indicates the RTPSender will offer
-    /// to send RTP and RTPReceiver will offer to receive RTP.
+    /// Transceiver will both send and receive RTP media.
+    ///
+    /// The RTP sender will offer to send RTP and the RTP receiver will offer to receive RTP.
     Sendrecv,
 
-    /// Sendonly indicates the RTPSender will offer to send RTP.
+    /// Transceiver will only send RTP media.
+    ///
+    /// The RTP sender will offer to send RTP.
     Sendonly,
 
-    /// Recvonly indicates the RTPReceiver will offer to receive RTP.
+    /// Transceiver will only receive RTP media.
+    ///
+    /// The RTP receiver will offer to receive RTP.
     Recvonly,
 
-    /// Inactive indicates the RTPSender won't offer
-    /// to send RTP and RTPReceiver won't offer to receive RTP.
+    /// Transceiver will neither send nor receive RTP media.
+    ///
+    /// Neither the RTP sender nor receiver will be active.
     Inactive,
 }
 
@@ -82,7 +92,9 @@ impl fmt::Display for RTCRtpTransceiverDirection {
 }
 
 impl RTCRtpTransceiverDirection {
-    /// reverse indicate the opposite direction
+    /// Returns the opposite direction.
+    ///
+    /// Swaps send-only with receive-only. Sendrecv and Inactive remain unchanged.
     pub fn reverse(&self) -> RTCRtpTransceiverDirection {
         match *self {
             RTCRtpTransceiverDirection::Sendonly => RTCRtpTransceiverDirection::Recvonly,
@@ -91,6 +103,10 @@ impl RTCRtpTransceiverDirection {
         }
     }
 
+    /// Returns the intersection of two directions.
+    ///
+    /// The resulting direction will only send if both directions can send,
+    /// and will only receive if both directions can receive.
     pub fn intersect(&self, other: RTCRtpTransceiverDirection) -> RTCRtpTransceiverDirection {
         Self::from_send_recv(
             self.has_send() && other.has_send(),
@@ -98,6 +114,7 @@ impl RTCRtpTransceiverDirection {
         )
     }
 
+    /// Creates a direction from separate send and receive capabilities.
     pub fn from_send_recv(send: bool, recv: bool) -> RTCRtpTransceiverDirection {
         match (send, recv) {
             (true, true) => Self::Sendrecv,
@@ -107,10 +124,12 @@ impl RTCRtpTransceiverDirection {
         }
     }
 
+    /// Returns true if this direction includes sending media.
     pub fn has_send(&self) -> bool {
         matches!(self, Self::Sendrecv | Self::Sendonly)
     }
 
+    /// Returns true if this direction includes receiving media.
     pub fn has_recv(&self) -> bool {
         matches!(self, Self::Sendrecv | Self::Recvonly)
     }

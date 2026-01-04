@@ -1,27 +1,44 @@
 use crate::rtp_transceiver::SSRC;
 
-/// RTPCodingParameters provides information relating to both encoding and decoding.
-/// This is a subset of the RFC since WebRTC-rs doesn't implement encoding/decoding itself
-/// <http://draft.ortc.org/#dom-rtcrtpcodingparameters>
+/// RTP coding parameters providing information for encoding and decoding.
+///
+/// This is a subset of the ORTC specification since this implementation
+/// doesn't perform encoding/decoding directly.
+///
+/// ## Specifications
+///
+/// * [ORTC](http://draft.ortc.org/#dom-rtcrtpcodingparameters)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCodingParameters {
+    /// RTP stream identifier for simulcast/layered streams
     pub rid: String,
 
+    /// Synchronization source identifier
     pub ssrc: Option<SSRC>,
+    /// RTX (retransmission) parameters
     pub rtx: Option<RTCRtpRtxParameters>,
+    /// FEC (forward error correction) parameters
     pub fec: Option<RTCRtpFecParameters>,
 }
 
-/// RTPRtxParameters dictionary contains information relating to retransmission (RTX) settings.
-/// <https://draft.ortc.org/#dom-rtcrtprtxparameters>
+/// RTX parameters for retransmission streams.
+///
+/// ## Specifications
+///
+/// * [ORTC](https://draft.ortc.org/#dom-rtcrtprtxparameters)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpRtxParameters {
+    /// SSRC for the RTX stream
     pub ssrc: SSRC,
 }
 
-/// RTPFecParameters dictionary contains information relating to forward error correction (FEC) settings.
-/// <https://draft.ortc.org/#dom-rtcrtpfecparameters>
+/// FEC parameters for forward error correction streams.
+///
+/// ## Specifications
+///
+/// * [ORTC](https://draft.ortc.org/#dom-rtcrtpfecparameters)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpFecParameters {
+    /// SSRC for the FEC stream
     pub ssrc: SSRC,
 }

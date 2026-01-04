@@ -11,18 +11,22 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
-//! let mut pc = RTCPeerConnection::new();
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
 //! let init = RTCDataChannelInit {
-//!     label: "my-channel".to_string(),
 //!     ordered: true,
+//!     max_retransmits: Some(3),
 //!     ..Default::default()
 //! };
 //!
-//! // Create a data channel
-//! let dc_id = pc.create_data_channel(init)?;
-//! # Ok::<(), shared::error::Error>(())
+//! // Create a data channel with label "my-channel"
+//! let dc = pc.create_data_channel("my-channel", Some(init))?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Specifications

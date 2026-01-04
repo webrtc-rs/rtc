@@ -26,8 +26,8 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::shared::error::Error;
 
 use rtc::peer_connection::event::track_event::RTCTrackEvent;

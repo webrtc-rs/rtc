@@ -10,7 +10,7 @@ use h264::H264Fmtp;
 
 /// Fmtp interface for implementing custom
 /// Fmtp parsers based on mime_type
-pub trait Fmtp: fmt::Debug {
+pub(crate) trait Fmtp: fmt::Debug {
     /// mime_type returns the mime_type associated with
     /// the fmtp
     fn mime_type(&self) -> &str;
@@ -34,7 +34,7 @@ impl PartialEq for dyn Fmtp {
 }
 
 /// parse parses an fmtp string based on the MimeType
-pub fn parse(mime_type: &str, line: &str) -> Box<dyn Fmtp> {
+pub(crate) fn parse(mime_type: &str, line: &str) -> Box<dyn Fmtp> {
     let mut parameters = HashMap::new();
     for p in line.split(';').collect::<Vec<&str>>() {
         let pp: Vec<&str> = p.trim().splitn(2, '=').collect();

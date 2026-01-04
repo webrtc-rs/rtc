@@ -21,8 +21,8 @@ use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -106,9 +106,8 @@ async fn main() -> Result<()> {
     // 1. Watch channel requires an initial value (starts as None)
     // 2. Viewers might connect before broadcaster receives OnTrack event
     // 3. Viewers will wait for codec to become Some(codec)
-    let (codec_tx, codec_rx) = tokio::sync::watch::channel::<
-        Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
-    >(None);
+    let (codec_tx, codec_rx) =
+        tokio::sync::watch::channel::<Option<rtc::rtp_transceiver::rtp_sender::RTCRtpCodec>>(None);
     let codec_rx = Arc::new(tokio::sync::Mutex::new(codec_rx));
 
     let (stop_tx, _stop_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -164,9 +163,7 @@ async fn run_broadcaster(
     mut stop_rx: tokio::sync::broadcast::Receiver<()>,
     offer: RTCSessionDescription,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<rtp::Packet>>,
-    codec_tx: tokio::sync::watch::Sender<
-        Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
-    >,
+    codec_tx: tokio::sync::watch::Sender<Option<rtc::rtp_transceiver::rtp_sender::RTCRtpCodec>>,
 ) -> Result<()> {
     use tokio::net::UdpSocket;
 
@@ -408,9 +405,7 @@ async fn handle_viewers(
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<rtp::Packet>>,
     codec_rx: Arc<
         tokio::sync::Mutex<
-            tokio::sync::watch::Receiver<
-                Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
-            >,
+            tokio::sync::watch::Receiver<Option<rtc::rtp_transceiver::rtp_sender::RTCRtpCodec>>,
         >,
     >,
     stop_tx: tokio::sync::broadcast::Sender<()>,
@@ -488,9 +483,7 @@ async fn run_viewer(
     mut broadcast_rx: tokio::sync::broadcast::Receiver<rtp::Packet>,
     codec_rx: Arc<
         tokio::sync::Mutex<
-            tokio::sync::watch::Receiver<
-                Option<rtc::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec>,
-            >,
+            tokio::sync::watch::Receiver<Option<rtc::rtp_transceiver::rtp_sender::RTCRtpCodec>>,
         >,
     >,
     mut stop_rx: tokio::sync::broadcast::Receiver<()>,

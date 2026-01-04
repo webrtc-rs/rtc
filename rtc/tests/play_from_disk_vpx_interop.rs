@@ -36,8 +36,8 @@ use rtc::peer_connection::transport::ice::candidate::{
 use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
 use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
 
 use webrtc::api::APIBuilder;

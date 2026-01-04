@@ -27,9 +27,9 @@ use rtc::peer_connection::transport::ice::candidate::{
     CandidateConfig, CandidateHostConfig, RTCIceCandidate,
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
-use rtc::rtp_transceiver::direction::RTCRtpTransceiverDirection;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
-use rtc::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
+use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiverInit};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;

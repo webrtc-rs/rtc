@@ -1,35 +1,51 @@
-/// RTCRtcpParameters is defined in <https://www.w3.org/TR/webrtc/#rtcrtcpparameters>
+/// RTCP parameters for RTP streams.
+///
+/// ## Specifications
+///
+/// * [W3C](https://www.w3.org/TR/webrtc/#rtcrtcpparameters)
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCRtcpParameters {
+    /// The Canonical Name (CNAME) used by RTCP (e.g., in SDES messages)
     pub cname: String,
+    /// Whether reduced-size RTCP mode is in use
     pub reduced_size: bool,
 }
 
-/// TYPE_RTCP_FBT_RANSPORT_CC ..
+/// Transport-wide congestion control feedback type
 pub const TYPE_RTCP_FB_TRANSPORT_CC: &str = "transport-cc";
 
-/// TYPE_RTCP_FB_GOOG_REMB ..
+/// Google REMB (Receiver Estimated Maximum Bitrate) feedback type
 pub const TYPE_RTCP_FB_GOOG_REMB: &str = "goog-remb";
 
-/// TYPE_RTCP_FB_ACK ..
+/// Acknowledgment feedback type
 pub const TYPE_RTCP_FB_ACK: &str = "ack";
 
-/// TYPE_RTCP_FB_CCM ..
+/// Codec Control Message feedback type
 pub const TYPE_RTCP_FB_CCM: &str = "ccm";
 
-/// TYPE_RTCP_FB_NACK ..
+/// Negative Acknowledgment feedback type
 pub const TYPE_RTCP_FB_NACK: &str = "nack";
 
-/// rtcpfeedback signals the connection to use additional RTCP packet types.
-/// <https://draft.ortc.org/#dom-rtcrtcpfeedback>
+/// RTCP feedback parameters for specifying additional packet types.
+///
+/// Used to signal support for specific RTCP feedback mechanisms such as NACK, PLI, FIR, etc.
+///
+/// ## Specifications
+///
+/// * [ORTC](https://draft.ortc.org/#dom-rtcrtcpfeedback)
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCPFeedback {
-    /// Type is the type of feedback.
-    /// see: <https://draft.ortc.org/#dom-rtcrtcpfeedback>
-    /// valid: ack, ccm, nack, goog-remb, transport-cc
+    /// The type of feedback mechanism.
+    ///
+    /// Valid values: `ack`, `ccm`, `nack`, `goog-remb`, `transport-cc`
+    ///
+    /// ## Specifications
+    ///
+    /// * [ORTC](https://draft.ortc.org/#dom-rtcrtcpfeedback)
     pub typ: String,
 
-    /// The parameter value depends on the type.
-    /// For example, type="nack" parameter="pli" will send Picture Loss Indicator packets.
+    /// Additional parameter specific to the feedback type.
+    ///
+    /// For example: `type="nack" parameter="pli"` indicates Picture Loss Indicator packets.
     pub parameter: String,
 }

@@ -16,7 +16,7 @@ use rtc::peer_connection::transport::ice::candidate::{
 };
 use rtc::peer_connection::transport::ice::server::RTCIceServer;
 use rtc::rtp;
-use rtc::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::sansio::Protocol;
 use rtc::shared::marshal::Unmarshal;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
