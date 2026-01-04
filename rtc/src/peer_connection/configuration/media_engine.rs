@@ -645,6 +645,14 @@ impl MediaEngine {
         typ: RtpCodecKind,
         allowed_direction: Option<RTCRtpTransceiverDirection>,
     ) -> Result<()> {
+        if let Some(direction) = &allowed_direction {
+            if direction == &RTCRtpTransceiverDirection::Unspecified
+                || direction == &RTCRtpTransceiverDirection::Inactive
+            {
+                return Err(Error::ErrRegisterHeaderExtensionInvalidDirection);
+            }
+        }
+
         let ext = {
             match self
                 .header_extensions
@@ -657,10 +665,8 @@ impl MediaEngine {
                     if self.header_extensions.len() > VALID_EXT_IDS.end as usize {
                         return Err(Error::ErrRegisterHeaderExtensionNoFreeID);
                     }
-                    self.header_extensions.push(MediaEngineHeaderExtension {
-                        allowed_direction,
-                        ..Default::default()
-                    });
+                    self.header_extensions
+                        .push(MediaEngineHeaderExtension::default());
 
                     // Unwrap is fine because we just pushed
                     self.header_extensions.last_mut().unwrap()
@@ -675,10 +681,7 @@ impl MediaEngine {
         }
 
         ext.uri = extension.uri;
-
-        if ext.allowed_direction != allowed_direction {
-            return Err(Error::ErrRegisterHeaderExtensionInvalidDirection);
-        }
+        ext.allowed_direction = allowed_direction;
 
         Ok(())
     }
@@ -894,10 +897,6 @@ impl MediaEngine {
         extension: &str,
         typ: RtpCodecKind,
     ) -> Result<()> {
-        if self.negotiated_header_extensions.is_empty() {
-            return Ok(());
-        }
-
         for local_extension in &self.header_extensions {
             if local_extension.uri == extension {
                 if let Some(existing_extension) = self.negotiated_header_extensions.get_mut(&id) {
