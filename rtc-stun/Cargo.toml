@@ -14,7 +14,7 @@ default = []
 bench = []
 
 [dependencies]
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { workspace = true, default-features = false, features = [] }
 
 bytes = "1.5.0"
 lazy_static = "1.4.0"

@@ -10,8 +10,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-rtp = { version = "0.3.0", path = "../rtc-rtp", package = "rtc-rtp" }
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { workspace = true, default-features = false, features = [] }
+rtp.workspace = true
 
 byteorder = "1"
 bytes = "1"

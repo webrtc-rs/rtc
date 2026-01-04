@@ -14,9 +14,9 @@ openssl = ["dep:openssl"]
 vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
-rtp = { version = "0.3.0", path = "../rtc-rtp", package = "rtc-rtp" }
-rtcp = { version = "0.3.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
+shared = { workspace = true, default-features = false, features = ["crypto", "marshal", "replay"] }
+rtp.workspace = true
+rtcp.workspace = true
 
 byteorder = "1.5.0"
 bytes = "1.5.0"

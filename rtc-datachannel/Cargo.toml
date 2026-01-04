@@ -10,12 +10,12 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
-sctp = { version = "0.3.0", path = "../rtc-sctp", package = "rtc-sctp" }
+shared = { workspace = true, default-features = false, features = ["marshal"] }
+sansio.workspace = true
+sctp.workspace = true
 
 bytes = "1.5.0"
 log = "0.4.21"
-sansio = "1.0.1"
 
 [dev-dependencies]
 env_logger = "0.11.3"

@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { workspace = true, default-features = false, features = [] }
 
 url = "2.5.0"
 rand = "0.8.5"

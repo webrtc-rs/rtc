@@ -10,8 +10,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
-stun = { version = "0.3.0", path = "../rtc-stun", package = "rtc-stun" }
+shared = { workspace = true, default-features = false, features = [] }
+stun.workspace = true
 
 bytes = "1.5.0"
 log = "0.4.21"
