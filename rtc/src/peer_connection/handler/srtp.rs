@@ -1,5 +1,7 @@
 use crate::peer_connection::event::RTCEventInternal;
-use crate::peer_connection::message::{RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal};
+use crate::peer_connection::message::internal::{
+    RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
+};
 
 use bytes::BytesMut;
 use log::{debug, error};

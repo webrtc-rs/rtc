@@ -19,8 +19,11 @@ use crate::peer_connection::handler::interceptor::{InterceptorHandler, Intercept
 use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::message::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessage, RTCMessageInternal, RTPMessage,
-    TaggedRTCMessageInternal, TrackPacket,
+    RTCMessage,
+    internal::{
+        ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
+        TaggedRTCMessageInternal, TrackPacket,
+    },
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;

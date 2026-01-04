@@ -4,7 +4,7 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::{RTCEventInternal, RTCPeerConnectionEvent};
-use crate::peer_connection::message::{
+use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, TaggedRTCMessageInternal,
 };
 use log::{debug, warn};

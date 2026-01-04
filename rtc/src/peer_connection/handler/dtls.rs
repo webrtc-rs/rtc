@@ -1,7 +1,9 @@
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
-use crate::peer_connection::message::{DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal};
+use crate::peer_connection::message::internal::{
+    DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
+};
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;

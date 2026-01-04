@@ -2,7 +2,7 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::message::{
+use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
     TaggedRTCMessageInternal, TrackMessage, TrackPacket,
 };

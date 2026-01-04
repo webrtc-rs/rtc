@@ -1,6 +1,8 @@
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::message::{RTCMessageInternal, STUNMessage, TaggedRTCMessageInternal};
+use crate::peer_connection::message::internal::{
+    RTCMessageInternal, STUNMessage, TaggedRTCMessageInternal,
+};
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use log::{debug, trace};
 use shared::error::{Error, Result};

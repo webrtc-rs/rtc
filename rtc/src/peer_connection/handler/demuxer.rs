@@ -1,5 +1,5 @@
 use crate::peer_connection::event::RTCEventInternal;
-use crate::peer_connection::message::{
+use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, RTPMessage, STUNMessage, TaggedRTCMessageInternal,
 };
 
