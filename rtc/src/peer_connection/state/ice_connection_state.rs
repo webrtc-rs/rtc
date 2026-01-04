@@ -1,52 +1,169 @@
 use ice::state::ConnectionState;
 use std::fmt;
 
-/// RTCIceConnectionState indicates signaling state of the ICE Connection.
+/// Indicates the state of the ICE connection.
 ///
-/// ## Specifications
+/// `RTCIceConnectionState` describes the current state of the ICE (Interactive
+/// Connectivity Establishment) transport layer, which is responsible for establishing
+/// network connectivity between peers through NAT traversal.
 ///
-/// * [MDN]
-/// * [W3C]
+/// # State Transitions
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceConnectionState
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-ice-connection-state
+/// The ICE connection typically progresses through these states:
+///
+/// 1. **New** - Initial state, no connectivity checks yet
+/// 2. **Checking** - ICE agent is checking candidate pairs
+/// 3. **Connected** - At least one working candidate pair found
+/// 4. **Completed** - ICE has finished checking all candidates
+///
+/// The connection may also enter error states:
+///
+/// - **Disconnected** - Connectivity lost but recovery possible
+/// - **Failed** - All candidate pairs failed, connection cannot be established
+/// - **Closed** - Connection has been closed
+///
+/// # Examples
+///
+/// ## Monitoring ICE State Changes
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCIceConnectionState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_event(event: RTCPeerConnectionEvent) {
+/// match event {
+///     RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
+///         match state {
+///             RTCIceConnectionState::New => {
+///                 println!("ICE connectivity checking not started");
+///             }
+///             RTCIceConnectionState::Checking => {
+///                 println!("ICE agent is checking connectivity...");
+///             }
+///             RTCIceConnectionState::Connected => {
+///                 println!("ICE connected! Media can flow.");
+///             }
+///             RTCIceConnectionState::Completed => {
+///                 println!("ICE finished checking all candidates");
+///             }
+///             RTCIceConnectionState::Disconnected => {
+///                 println!("ICE connection lost - may reconnect");
+///             }
+///             RTCIceConnectionState::Failed => {
+///                 println!("ICE failed - cannot establish connection");
+///             }
+///             RTCIceConnectionState::Closed => {
+///                 println!("ICE connection closed");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// ## String Conversion
+///
+/// ```
+/// use rtc::peer_connection::state::RTCIceConnectionState;
+///
+/// // Convert state to string
+/// let state = RTCIceConnectionState::Connected;
+/// assert_eq!(state.to_string(), "connected");
+///
+/// // Parse from string
+/// let parsed: RTCIceConnectionState = "checking".into();
+/// assert_eq!(parsed, RTCIceConnectionState::Checking);
+/// ```
+///
+/// ## Checking for Active Connection
+///
+/// ```
+/// use rtc::peer_connection::state::RTCIceConnectionState;
+///
+/// fn is_ice_active(state: RTCIceConnectionState) -> bool {
+///     matches!(
+///         state,
+///         RTCIceConnectionState::Connected | RTCIceConnectionState::Completed
+///     )
+/// }
+///
+/// assert!(is_ice_active(RTCIceConnectionState::Connected));
+/// assert!(is_ice_active(RTCIceConnectionState::Completed));
+/// assert!(!is_ice_active(RTCIceConnectionState::Disconnected));
+/// ```
+///
+/// # Specifications
+///
+/// - [W3C RTCPeerConnection.iceConnectionState]
+/// - [MDN RTCPeerConnection.iceConnectionState]
+/// - [RFC 8445] - ICE Protocol
+///
+/// [W3C RTCPeerConnection.iceConnectionState]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-ice-connection-state
+/// [MDN RTCPeerConnection.iceConnectionState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceConnectionState
+/// [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCIceConnectionState {
+    /// State not specified. This should not occur in normal operation.
     #[default]
     Unspecified,
 
-    /// ICEConnectionStateNew indicates that any of the ICETransports are
-    /// in the "new" state and none of them are in the "checking", "disconnected"
-    /// or "failed" state, or all ICETransports are in the "closed" state, or
-    /// there are no transports.
+    /// ICE agent is gathering addresses or waiting to be given remote candidates.
+    ///
+    /// This is the initial state before connectivity checks begin. Any of the
+    /// ICE transports are in the "new" state and none are in "checking",
+    /// "disconnected", or "failed" state, or all ICE transports are in the
+    /// "closed" state, or there are no transports.
     New,
 
-    /// ICEConnectionStateChecking indicates that any of the ICETransports
-    /// are in the "checking" state and none of them are in the "disconnected"
-    /// or "failed" state.
+    /// ICE agent has been given remote candidates and is checking pairs.
+    ///
+    /// The ICE agent is actively checking candidate pairs to find a working
+    /// connection. At least one ICE transport is in the "checking" state and
+    /// none are in "disconnected" or "failed" state.
     Checking,
 
-    /// ICEConnectionStateConnected indicates that all ICETransports are
-    /// in the "connected", "completed" or "closed" state and at least one of
-    /// them is in the "connected" state.
+    /// ICE agent has found a usable connection for all components.
+    ///
+    /// A working candidate pair has been found and is being used for
+    /// communication. All ICE transports are in "connected", "completed",
+    /// or "closed" state, and at least one is in the "connected" state.
+    ///
+    /// Media can flow in this state.
     Connected,
 
-    /// ICEConnectionStateCompleted indicates that all ICETransports are
-    /// in the "completed" or "closed" state and at least one of them is in the
-    /// "completed" state.
+    /// ICE agent has finished gathering and checking candidates.
+    ///
+    /// The ICE agent has finished checking all candidate pairs and found
+    /// working connections. All ICE transports are in "completed" or "closed"
+    /// state, and at least one is in "completed" state.
+    ///
+    /// This is a more stable state than Connected.
     Completed,
 
-    /// ICEConnectionStateDisconnected indicates that any of the
-    /// ICETransports are in the "disconnected" state and none of them are
-    /// in the "failed" state.
+    /// ICE connection has been lost, but recovery may be possible.
+    ///
+    /// The connection was working but has been lost. The ICE agent may be
+    /// able to re-establish connectivity through ICE restart. At least one
+    /// ICE transport is in "disconnected" state and none are in "failed" state.
+    ///
+    /// Consider triggering ICE restart if this state persists.
     Disconnected,
 
-    /// ICEConnectionStateFailed indicates that any of the ICETransports
-    /// are in the "failed" state.
+    /// ICE agent has determined that connection is not possible.
+    ///
+    /// All candidate pairs have failed connectivity checks. At least one ICE
+    /// transport is in the "failed" state. Connection cannot be established
+    /// without ICE restart.
+    ///
+    /// This typically indicates NAT/firewall issues or network problems.
     Failed,
 
-    /// ICEConnectionStateClosed indicates that the PeerConnection's
-    /// isClosed is true.
+    /// ICE agent has shut down and is no longer processing candidates.
+    ///
+    /// The peer connection's `isClosed` is true. No further ICE processing
+    /// will occur.
     Closed,
 }
 

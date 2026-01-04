@@ -20,44 +20,229 @@ impl fmt::Display for StateChangeOp {
     }
 }
 
-/// SignalingState indicates the signaling state of the offer/answer process.
+/// Indicates the state of the SDP offer/answer negotiation process.
 ///
-/// ## Specifications
+/// `RTCSignalingState` describes the current state of the SDP (Session Description
+/// Protocol) signaling exchange between local and remote peers. The signaling state
+/// tracks progress through the offer/answer model defined in RFC 3264.
 ///
-/// * [MDN]
-/// * [W3C]
+/// # Signaling Flow
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/signalingState
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-signaling-state
+/// The typical offer/answer exchange follows this pattern:
+///
+/// **Initiating Peer (Offerer):**
+/// ```text
+/// Stable → (setLocalDescription with offer) → HaveLocalOffer
+///       → (setRemoteDescription with answer) → Stable
+/// ```
+///
+/// **Responding Peer (Answerer):**
+/// ```text
+/// Stable → (setRemoteDescription with offer) → HaveRemoteOffer
+///       → (setLocalDescription with answer) → Stable
+/// ```
+///
+/// Provisional answers add intermediate states:
+/// ```text
+/// HaveLocalOffer → (setRemoteDescription with pranswer) → HaveRemotePranswer
+///                → (setRemoteDescription with answer) → Stable
+/// ```
+///
+/// # State Machine Rules
+///
+/// The signaling state machine enforces valid transitions according to the
+/// WebRTC specification. Invalid transitions (e.g., setting an answer when
+/// in Stable state) will result in errors.
+///
+/// # Examples
+///
+/// ## Monitoring Signaling State (Offerer)
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCSignalingState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_event_offerer(event: RTCPeerConnectionEvent) {
+/// match event {
+///     RTCPeerConnectionEvent::OnSignalingStateChangeEvent(state) => {
+///         match state {
+///             RTCSignalingState::Stable => {
+///                 println!("Ready to create new offer");
+///             }
+///             RTCSignalingState::HaveLocalOffer => {
+///                 println!("Offer sent, waiting for answer from remote peer");
+///             }
+///             RTCSignalingState::HaveRemotePranswer => {
+///                 println!("Received provisional answer, waiting for final answer");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// ## Monitoring Signaling State (Answerer)
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCSignalingState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_event_answerer(event: RTCPeerConnectionEvent) {
+/// match event {
+///     RTCPeerConnectionEvent::OnSignalingStateChangeEvent(state) => {
+///         match state {
+///             RTCSignalingState::HaveRemoteOffer => {
+///                 println!("Received offer from remote peer");
+///                 println!("Need to create and set answer");
+///             }
+///             RTCSignalingState::Stable => {
+///                 println!("Answer sent and accepted - negotiation complete");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// ## Checking if Negotiation is in Progress
+///
+/// ```
+/// use rtc::peer_connection::state::RTCSignalingState;
+///
+/// fn is_negotiating(state: RTCSignalingState) -> bool {
+///     !matches!(state, RTCSignalingState::Stable | RTCSignalingState::Closed)
+/// }
+///
+/// fn can_create_offer(state: RTCSignalingState) -> bool {
+///     matches!(state, RTCSignalingState::Stable)
+/// }
+///
+/// assert!(!is_negotiating(RTCSignalingState::Stable));
+/// assert!(is_negotiating(RTCSignalingState::HaveLocalOffer));
+/// assert!(can_create_offer(RTCSignalingState::Stable));
+/// assert!(!can_create_offer(RTCSignalingState::HaveRemoteOffer));
+/// ```
+///
+/// ## String Conversion
+///
+/// ```
+/// use rtc::peer_connection::state::RTCSignalingState;
+///
+/// // Convert to string
+/// let state = RTCSignalingState::HaveLocalOffer;
+/// assert_eq!(state.to_string(), "have-local-offer");
+///
+/// // Parse from string
+/// let parsed: RTCSignalingState = "have-remote-offer".into();
+/// assert_eq!(parsed, RTCSignalingState::HaveRemoteOffer);
+/// ```
+///
+/// ## Handling State Transitions
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCSignalingState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_transitions(event: RTCPeerConnectionEvent, is_offerer: bool) {
+/// match event {
+///     RTCPeerConnectionEvent::OnSignalingStateChangeEvent(state) => {
+///         match (is_offerer, state) {
+///             (true, RTCSignalingState::Stable) => {
+///                 println!("Ready to renegotiate if needed");
+///             }
+///             (true, RTCSignalingState::HaveLocalOffer) => {
+///                 // Offer created and set locally
+///                 println!("Send offer SDP to remote peer via signaling channel");
+///             }
+///             (false, RTCSignalingState::HaveRemoteOffer) => {
+///                 // Offer received from remote
+///                 println!("Create and send answer");
+///             }
+///             (false, RTCSignalingState::Stable) => {
+///                 println!("Negotiation complete");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// # Specifications
+///
+/// - [W3C RTCPeerConnection.signalingState]
+/// - [MDN RTCPeerConnection.signalingState]
+/// - [RFC 3264] - Offer/Answer Model
+///
+/// [W3C RTCPeerConnection.signalingState]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-signaling-state
+/// [MDN RTCPeerConnection.signalingState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/signalingState
+/// [RFC 3264]: https://datatracker.ietf.org/doc/html/rfc3264
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCSignalingState {
+    /// State not specified. This should not occur in normal operation.
     Unspecified = 0,
 
-    /// SignalingStateStable indicates there is no offer/answer exchange in
-    /// progress. This is also the initial state, in which case the local and
-    /// remote descriptions are nil.
+    /// No offer/answer exchange is in progress.
+    ///
+    /// This is the initial state and also the state after a successful
+    /// offer/answer exchange completes. In this state:
+    ///
+    /// - Both local and remote descriptions may be null (initial state)
+    /// - Or both descriptions are set (after successful negotiation)
+    ///
+    /// A new negotiation can only be started from this state. This is the
+    /// default state.
     #[default]
     Stable,
 
-    /// SignalingStateHaveLocalOffer indicates that a local description, of
-    /// type "offer", has been successfully applied.
+    /// Local offer has been set, waiting for remote answer.
+    ///
+    /// A local description of type "offer" has been successfully applied via
+    /// `setLocalDescription()`. The local peer is now waiting for the remote
+    /// peer to respond with an answer or provisional answer.
+    ///
+    /// Transition: Stable → (setLocalDescription with offer) → HaveLocalOffer
     HaveLocalOffer,
 
-    /// SignalingStateHaveRemoteOffer indicates that a remote description, of
-    /// type "offer", has been successfully applied.
+    /// Remote offer has been set, need to create local answer.
+    ///
+    /// A remote description of type "offer" has been successfully applied via
+    /// `setRemoteDescription()`. The local peer should now create and set a
+    /// local answer (or provisional answer) to complete the negotiation.
+    ///
+    /// Transition: Stable → (setRemoteDescription with offer) → HaveRemoteOffer
     HaveRemoteOffer,
 
-    /// SignalingStateHaveLocalPranswer indicates that a remote description
-    /// of type "offer" has been successfully applied and a local description
-    /// of type "pranswer" has been successfully applied.
+    /// Remote offer received, local provisional answer set.
+    ///
+    /// A remote description of type "offer" was applied, followed by a local
+    /// description of type "pranswer" (provisional answer). The local peer
+    /// will later send a final answer to complete negotiation.
+    ///
+    /// Provisional answers allow early media to flow before final codec/
+    /// transport selection is complete.
+    ///
+    /// Transition: HaveRemoteOffer → (setLocalDescription with pranswer) → HaveLocalPranswer
     HaveLocalPranswer,
 
-    /// SignalingStateHaveRemotePranswer indicates that a local description
-    /// of type "offer" has been successfully applied and a remote description
-    /// of type "pranswer" has been successfully applied.
+    /// Local offer sent, remote provisional answer received.
+    ///
+    /// A local description of type "offer" was applied, followed by a remote
+    /// description of type "pranswer" (provisional answer). The remote peer
+    /// will later send a final answer to complete negotiation.
+    ///
+    /// Transition: HaveLocalOffer → (setRemoteDescription with pranswer) → HaveRemotePranswer
     HaveRemotePranswer,
 
-    /// SignalingStateClosed indicates The PeerConnection has been closed.
+    /// The peer connection has been closed.
+    ///
+    /// No further signaling operations are possible. The connection must be
+    /// recreated to establish communication again.
     Closed,
 }
 

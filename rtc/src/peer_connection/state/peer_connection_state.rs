@@ -1,46 +1,201 @@
 use std::fmt;
 
-/// PeerConnectionState indicates the state of the PeerConnection.
+/// Indicates the overall state of the peer connection.
 ///
-/// ## Specifications
+/// `RTCPeerConnectionState` is an aggregate state that combines the states of
+/// both the ICE transport layer and the DTLS transport layer. It provides a
+/// high-level view of whether the connection is ready for media to flow.
 ///
-/// * [MDN]
-/// * [W3C]
+/// # State Determination
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/connectionState
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-connection-state
+/// This state is derived from the combination of:
+///
+/// - **ICE transport states** - Network connectivity
+/// - **DTLS transport states** - Encryption handshake
+///
+/// The peer connection is only fully "connected" when both ICE and DTLS are
+/// successfully established.
+///
+/// # State Transitions
+///
+/// Typical progression for a successful connection:
+///
+/// ```text
+/// New → Connecting → Connected
+/// ```
+///
+/// If problems occur:
+///
+/// ```text
+/// Connected → Disconnected → (may recover to Connected)
+/// Connected → Failed (permanent failure)
+/// Any state → Closed (connection closed)
+/// ```
+///
+/// # Examples
+///
+/// ## Monitoring Overall Connection State
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCPeerConnectionState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_event(event: RTCPeerConnectionEvent) {
+/// match event {
+///     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
+///         match state {
+///             RTCPeerConnectionState::New => {
+///                 println!("Connection initialized");
+///             }
+///             RTCPeerConnectionState::Connecting => {
+///                 println!("Establishing connection (ICE + DTLS)...");
+///             }
+///             RTCPeerConnectionState::Connected => {
+///                 println!("✓ Connection established - media can flow!");
+///             }
+///             RTCPeerConnectionState::Disconnected => {
+///                 println!("⚠ Connection lost - may reconnect automatically");
+///             }
+///             RTCPeerConnectionState::Failed => {
+///                 println!("✗ Connection failed - requires ICE restart");
+///             }
+///             RTCPeerConnectionState::Closed => {
+///                 println!("Connection closed");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// ## Checking if Connection is Active
+///
+/// ```
+/// use rtc::peer_connection::state::RTCPeerConnectionState;
+///
+/// fn is_connected(state: RTCPeerConnectionState) -> bool {
+///     matches!(state, RTCPeerConnectionState::Connected)
+/// }
+///
+/// fn can_send_media(state: RTCPeerConnectionState) -> bool {
+///     matches!(state, RTCPeerConnectionState::Connected)
+/// }
+///
+/// assert!(is_connected(RTCPeerConnectionState::Connected));
+/// assert!(!is_connected(RTCPeerConnectionState::Connecting));
+/// assert!(can_send_media(RTCPeerConnectionState::Connected));
+/// ```
+///
+/// ## String Conversion
+///
+/// ```
+/// use rtc::peer_connection::state::RTCPeerConnectionState;
+///
+/// // Convert to string
+/// let state = RTCPeerConnectionState::Connected;
+/// assert_eq!(state.to_string(), "connected");
+///
+/// // Parse from string
+/// let parsed: RTCPeerConnectionState = "connecting".into();
+/// assert_eq!(parsed, RTCPeerConnectionState::Connecting);
+/// ```
+///
+/// ## Handling Disconnections
+///
+/// ```no_run
+/// use rtc::peer_connection::state::RTCPeerConnectionState;
+/// use rtc::peer_connection::event::RTCPeerConnectionEvent;
+///
+/// # fn handle_disconnection(event: RTCPeerConnectionEvent) {
+/// match event {
+///     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
+///         match state {
+///             RTCPeerConnectionState::Disconnected => {
+///                 println!("Connection lost - ICE will try to reconnect");
+///                 // Optionally: Show reconnecting UI
+///                 // Wait for automatic recovery or timeout
+///             }
+///             RTCPeerConnectionState::Failed => {
+///                 println!("Connection failed permanently");
+///                 // Typically: Trigger ICE restart
+///                 // Or: Close and recreate connection
+///             }
+///             RTCPeerConnectionState::Connected => {
+///                 println!("Connection restored!");
+///             }
+///             _ => {}
+///         }
+///     }
+///     _ => {}
+/// }
+/// # }
+/// ```
+///
+/// # Specifications
+///
+/// - [W3C RTCPeerConnection.connectionState]
+/// - [MDN RTCPeerConnection.connectionState]
+///
+/// [W3C RTCPeerConnection.connectionState]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-connection-state
+/// [MDN RTCPeerConnection.connectionState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/connectionState
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RTCPeerConnectionState {
+    /// State not specified. This should not occur in normal operation.
     #[default]
     Unspecified,
 
-    /// PeerConnectionStateNew indicates that any of the ICETransports or
-    /// DTLSTransports are in the "new" state and none of the transports are
-    /// in the "connecting", "checking", "failed" or "disconnected" state, or
-    /// all transports are in the "closed" state, or there are no transports.
+    /// Connection is in initial state.
+    ///
+    /// Any of the ICE or DTLS transports are in the "new" state and none are
+    /// in "connecting", "checking", "failed", or "disconnected" state, or all
+    /// transports are in "closed" state, or there are no transports.
     New,
 
-    /// PeerConnectionStateConnecting indicates that any of the
-    /// ICETransports or DTLSTransports are in the "connecting" or
-    /// "checking" state and none of them is in the "failed" state.
+    /// Connection establishment is in progress.
+    ///
+    /// At least one ICE or DTLS transport is in the "connecting" or "checking"
+    /// state and none are in "failed" state. This indicates that ICE connectivity
+    /// checks are running and/or DTLS handshake is in progress.
+    ///
+    /// Media cannot flow yet in this state.
     Connecting,
 
-    /// PeerConnectionStateConnected indicates that all ICETransports and
-    /// DTLSTransports are in the "connected", "completed" or "closed" state
-    /// and at least one of them is in the "connected" or "completed" state.
+    /// Connection is established and media can flow.
+    ///
+    /// All ICE and DTLS transports are in "connected", "completed", or "closed"
+    /// state, and at least one is in "connected" or "completed" state. Both
+    /// ICE connectivity and DTLS encryption are successfully established.
+    ///
+    /// This is the desired state for active media communication.
     Connected,
 
-    /// PeerConnectionStateDisconnected indicates that any of the
-    /// ICETransports or DTLSTransports are in the "disconnected" state
-    /// and none of them are in the "failed" or "connecting" or "checking" state.
+    /// Connection was established but has been lost.
+    ///
+    /// At least one ICE or DTLS transport is in "disconnected" state and none
+    /// are in "failed", "connecting", or "checking" state. This may be a
+    /// temporary condition due to network changes.
+    ///
+    /// ICE will attempt to restore connectivity automatically. If it succeeds,
+    /// the state will return to Connected. If it fails, the state will move to
+    /// Failed.
     Disconnected,
 
-    /// PeerConnectionStateFailed indicates that any of the ICETransports
-    /// or DTLSTransports are in a "failed" state.
+    /// Connection has permanently failed.
+    ///
+    /// At least one ICE or DTLS transport is in "failed" state. The connection
+    /// cannot be established or restored without intervention, typically
+    /// requiring an ICE restart.
+    ///
+    /// Common causes: NAT/firewall blocking, network unreachable, DTLS
+    /// handshake failure.
     Failed,
 
-    /// PeerConnectionStateClosed indicates the peer connection is closed
-    /// and the isClosed member variable of PeerConnection is true.
+    /// Connection has been closed.
+    ///
+    /// The peer connection's `isClosed` member is true. All transports have
+    /// been shut down. No further communication is possible.
     Closed,
 }
 
