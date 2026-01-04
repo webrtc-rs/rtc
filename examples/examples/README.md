@@ -18,8 +18,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   control.
 - ✅ [Data Channels Offer Answer](data-channels-offer-answer): Example offer-answer is an example of two webrtc-rs
   instances communicating directly!
-- ⛔ [Data Channels Simple](TODO): Simple example of a WebRTC DataChannel using it as the signaling server.
-- ⛔ [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
+- 🚧 [Data Channels Simple](TODO): Simple example of a WebRTC DataChannel using it as the signaling server.
+- 🚧 [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
   DataChannel support for real-time chat.
 
 ### Media API
@@ -49,31 +49,31 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   Simulcast streams. It then returns the media as 3 independent Tracks back to the sender.
 - ⌛ [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
   track.
-- ⛔ [RTCP Processing](TODO) The rtcp-processing example demonstrates RTCP APIs. This allows access to media statistics
+- 🚧 [RTCP Processing](TODO) The rtcp-processing example demonstrates RTCP APIs. This allows access to media statistics
   and control information.
-- ⛔ [Save to Disk AV1](TODO): The save-to-disk-av1 is a simple application that shows how to save a video to disk
+- 🚧 [Save to Disk AV1](TODO): The save-to-disk-av1 is a simple application that shows how to save a video to disk
   using AV1.
-- ⛔ [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
+- 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
   while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
   media packets, but browser will recover them using the FEC packets and the delivered packets.
-- ⛔ [Play from Disk Playlist Control](TODO): Streams Opus pages from multi or single track Ogg containers, exposes the
+- 🚧 [Play from Disk Playlist Control](TODO): Streams Opus pages from multi or single track Ogg containers, exposes the
   playlist over an SCTP DataChannel, and lets the browser hop between tracks while showing artist/title metadata parsed
   from OpusTags.
 
 ### Miscellaneous
 
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
-- ⛔ [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
+- 🚧 [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
   single port. By default, it listens on a new port for every PeerConnection. webrtc-rs can be configured to use a
   single port for multiple connections.
-- ⛔ [ICE TCP](TODO) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
+- 🚧 [ICE TCP](TODO) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port, and this TCP port can be used for
   many
   connections.
-- ⛔ [ICE Proxy](TODO) Example ice-proxy demonstrates how to use a proxy for TURN connections.
-- ⛔ [Trickle ICE](TODO) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to use
+- 🚧 [ICE Proxy](TODO) Example ice-proxy demonstrates how to use a proxy for TURN connections.
+- 🚧 [Trickle ICE](TODO) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to use
   since it allows ICE Gathering and Connecting to happen concurrently.
-- ⛔ [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
-- ⛔ [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
+- 🚧 [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
+- 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
   signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
   browser, or pull the video back into OBS and GStreamer via WHEP.
