@@ -1,3 +1,246 @@
+//! WebRTC Peer Connection implementation.
+//!
+//! This module implements the `RTCPeerConnection` interface as defined in the
+//! [W3C WebRTC specification](https://w3c.github.io/webrtc-pc/). It provides
+//! the core functionality for establishing peer-to-peer connections, negotiating
+//! media capabilities, and managing data channels.
+//!
+//! # Overview
+//!
+//! `RTCPeerConnection` is the central interface in WebRTC. It handles:
+//!
+//! - **Signaling**: Creating and exchanging SDP offers/answers
+//! - **ICE**: Gathering candidates and establishing connectivity
+//! - **Media**: Managing audio/video tracks and transceivers
+//! - **Data**: Creating and managing data channels
+//! - **Security**: DTLS encryption for all communication
+//!
+//! # Architecture
+//!
+//! This is a **sans-I/O** implementation, meaning it separates protocol logic
+//! from I/O operations. The application is responsible for:
+//!
+//! - Transmitting/receiving network packets
+//! - Managing the event loop
+//! - Handling signaling channel communication
+//!
+//! ## Sans-I/O Benefits
+//!
+//! - **Flexibility**: Works with any I/O runtime (tokio, async-std, blocking, etc.)
+//! - **Testability**: Protocol logic can be tested without network I/O
+//! - **Control**: Application has full control over threading and scheduling
+//!
+//! # Connection Establishment
+//!
+//! The typical WebRTC connection flow:
+//!
+//! ```text
+//! Peer A (Offerer)              Signaling Server              Peer B (Answerer)
+//! ════════════════              ════════════════              ═══════════════════
+//!      │                               │                               │
+//!      │ 1. create_offer()             │                               │
+//!      │─────────────────┐             │                               │
+//!      │                 │             │                               │
+//!      │<────────────────┘             │                               │
+//!      │                               │                               │
+//!      │ 2. set_local_description()    │                               │
+//!      │─────────────────┐             │                               │
+//!      │                 │             │                               │
+//!      │<────────────────┘             │                               │
+//!      │                               │                               │
+//!      │ 3. send offer (via signaling) │                               │
+//!      │──────────────────────────────>│──────────────────────────────>│
+//!      │                               │                               │
+//!      │                               │  4. set_remote_description()  │
+//!      │                               │                  ┌────────────┤
+//!      │                               │                  │            │
+//!      │                               │                  └───────────>│
+//!      │                               │                               │
+//!      │                               │       5. create_answer()      │
+//!      │                               │                  ┌────────────┤
+//!      │                               │                  │            │
+//!      │                               │                  └───────────>│
+//!      │                               │                               │
+//!      │                               │  6. set_local_description()   │
+//!      │                               │                  ┌────────────┤
+//!      │                               │                  │            │
+//!      │                               │                  └───────────>│
+//!      │                               │                               │
+//!      │ 7. receive answer             │<──────────────────────────────│
+//!      │<──────────────────────────────┤                               │
+//!      │                               │                               │
+//!      │ 8. set_remote_description()   │                               │
+//!      │─────────────────┐             │                               │
+//!      │                 │             │                               │
+//!      │<────────────────┘             │                               │
+//!      │                               │                               │
+//!      │ 9. ICE candidates exchanged   │                               │
+//!      │<─────────────────────────────────────────────────────────────>│
+//!      │                               │                               │
+//!      │ 10. Media/data flows directly │                               │
+//!      │<═════════════════════════════════════════════════════════════>│
+//! ```
+//!
+//! # Examples
+//!
+//! ## Creating a Peer Connection
+//!
+//! ```
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create with default configuration
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Creating an Offer (Initiating Peer)
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Add media track or data channel first
+//! // pc.add_track(audio_track)?;
+//!
+//! // Create offer
+//! let offer = pc.create_offer(None)?;
+//!
+//! // Set as local description
+//! pc.set_local_description(offer.clone())?;
+//!
+//! // Send offer.sdp to remote peer via signaling channel
+//! // signaling_channel.send(offer.sdp)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Answering an Offer (Responding Peer)
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::sdp::RTCSessionDescription;
+//!
+//! # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Receive offer from remote peer
+//! let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
+//!
+//! // Set as remote description
+//! pc.set_remote_description(offer)?;
+//!
+//! // Create answer
+//! let answer = pc.create_answer(None)?;
+//!
+//! // Set as local description
+//! pc.set_local_description(answer.clone())?;
+//!
+//! // Send answer.sdp to remote peer via signaling channel
+//! // signaling_channel.send(answer.sdp)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Adding Media Tracks
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::media_stream::track::MediaStreamTrack;
+//! use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+//!
+//! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Add an audio track
+//! let sender_id = pc.add_track(audio_track)?;
+//!
+//! // Or add a transceiver for receiving
+//! let transceiver_id = pc.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Creating Data Channels
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::data_channel::RTCDataChannelInit;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//!
+//! // Create a reliable, ordered data channel
+//! let init = RTCDataChannelInit {
+//!     ordered: true,
+//!     max_retransmits: None,
+//!     ..Default::default()
+//! };
+//!
+//! let channel_id = pc.create_data_channel("my-channel", Some(init))?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## ICE Candidate Exchange
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::transport::RTCIceCandidateInit;
+//!
+//! # fn example(mut pc: RTCPeerConnection) -> Result<(), Box<dyn std::error::Error>> {
+//! // When local candidates are gathered, send to remote peer
+//! // (In sans-I/O, you'd poll for events to get candidates)
+//!
+//! // When receiving remote candidate from signaling channel
+//! let remote_candidate = RTCIceCandidateInit {
+//!     candidate: "candidate:1 1 UDP 2130706431 192.168.1.100 54321 typ host".to_string(),
+//!     ..Default::default()
+//! };
+//!
+//! pc.add_remote_candidate(remote_candidate)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # State Management
+//!
+//! The peer connection maintains several state machines:
+//!
+//! - **Signaling State**: SDP negotiation progress (stable, have-local-offer, etc.)
+//! - **ICE Connection State**: Network connectivity status
+//! - **ICE Gathering State**: Candidate gathering progress
+//! - **Connection State**: Overall connection health
+//!
+//! Monitor these states through the event system (sans-I/O polling).
+//!
+//! # Thread Safety
+//!
+//! `RTCPeerConnection` is **not** thread-safe. The application must ensure
+//! exclusive access or use appropriate synchronization primitives.
+//!
+//! # Specifications
+//!
+//! - [W3C WebRTC 1.0] - Main specification
+//! - [RFC 8829] - JSEP: JavaScript Session Establishment Protocol
+//! - [RFC 8866] - SDP: Session Description Protocol
+//! - [RFC 8445] - ICE: Interactive Connectivity Establishment
+//! - [RFC 8831] - WebRTC Data Channels
+//!
+//! [W3C WebRTC 1.0]: https://w3c.github.io/webrtc-pc/
+//! [RFC 8829]: https://datatracker.ietf.org/doc/html/rfc8829
+//! [RFC 8866]: https://datatracker.ietf.org/doc/html/rfc8866
+//! [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
+//! [RFC 8831]: https://datatracker.ietf.org/doc/html/rfc8831
+
 pub mod certificate;
 pub mod configuration;
 pub mod event;
@@ -132,6 +375,47 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [RTCPeerConnection constructor](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-constructor)
+    /// Creates a new `RTCPeerConnection` with the specified configuration.
+    ///
+    /// This initializes all the necessary transport layers (ICE, DTLS, SCTP) and
+    /// prepares the peer connection for media and data channel creation.
+    ///
+    /// # Parameters
+    ///
+    /// - `configuration`: Configuration including ICE servers, certificates, and
+    ///   engine settings. See [`RTCConfiguration`] for details.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `RTCPeerConnection` ready for establishing a connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Configuration validation fails
+    /// - Certificate initialization fails
+    /// - Transport layer creation fails
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Usage
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = RTCConfiguration::default();
+    /// let pc = RTCPeerConnection::new(config)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Specifications
+    ///
+    /// - [W3C RTCPeerConnection constructor]
+    ///
+    /// [W3C RTCPeerConnection constructor]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-constructor
     pub fn new(mut configuration: RTCConfiguration) -> Result<Self> {
         configuration.validate()?;
 
@@ -329,6 +613,106 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [createAnswer](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-createanswer)
+    /// Creates an SDP answer in response to an offer from a remote peer.
+    ///
+    /// This method must be called after `set_remote_description()` has been called
+    /// with an offer. The answer describes which media formats and codecs this peer
+    /// will accept and how the connection will be established.
+    ///
+    /// # Parameters
+    ///
+    /// - `options`: Optional answer configuration. Currently not used but reserved
+    ///   for future extensions.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `RTCSessionDescription` containing the SDP answer that should be
+    /// set as the local description and sent to the remote peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No remote description has been set (`ErrNoRemoteDescription`)
+    /// - The peer connection is closed (`ErrConnectionClosed`)
+    /// - The signaling state is incorrect (`ErrIncorrectSignalingState`)
+    /// - SDP generation fails
+    ///
+    /// # Signaling State Requirements
+    ///
+    /// This method can only be called when the signaling state is:
+    /// - `HaveRemoteOffer` - After receiving an initial offer
+    /// - `HaveLocalPranswer` - After sending a provisional answer
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Answer Flow
+    ///
+    /// ```no_run
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::sdp::RTCSessionDescription;
+    ///
+    /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    ///
+    /// // 1. Receive and set remote offer
+    /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
+    /// pc.set_remote_description(offer)?;
+    ///
+    /// // 2. Create answer
+    /// let answer = pc.create_answer(None)?;
+    ///
+    /// // 3. Set as local description
+    /// pc.set_local_description(answer.clone())?;
+    ///
+    /// // 4. Send answer to remote peer
+    /// // signaling_channel.send(answer.sdp)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## With Media Tracks
+    ///
+    /// ```no_run
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::sdp::RTCSessionDescription;
+    /// use rtc::media_stream::track::MediaStreamTrack;
+    ///
+    /// # fn example(
+    /// #     remote_offer_sdp: String,
+    /// #     audio_track: MediaStreamTrack,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    ///
+    /// // Set remote offer
+    /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
+    /// pc.set_remote_description(offer)?;
+    ///
+    /// // Add local track before creating answer
+    /// pc.add_track(audio_track)?;
+    ///
+    /// // Create answer (will include the track)
+    /// let answer = pc.create_answer(None)?;
+    /// pc.set_local_description(answer)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # DTLS Role Selection
+    ///
+    /// The answer automatically determines the appropriate DTLS role:
+    /// - Uses `answering_dtls_role` from settings if configured
+    /// - Defaults to `Client` (active) for lower latency
+    /// - Uses `Server` (passive) if remote is ICE-Lite
+    ///
+    /// # Specifications
+    ///
+    /// - [W3C RTCPeerConnection.createAnswer]
+    /// - [RFC 8829 Section 5.3] - Generating an Answer
+    ///
+    /// [W3C RTCPeerConnection.createAnswer]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createanswer
+    /// [RFC 8829 Section 5.3]: https://datatracker.ietf.org/doc/html/rfc8829#section-5.3
     pub fn create_answer(
         &mut self,
         _options: Option<RTCAnswerOptions>,
@@ -404,6 +788,106 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [setLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setlocaldescription)
+    /// Sets the local description for this peer connection.
+    ///
+    /// This method applies a local SDP description (offer or answer) to the peer
+    /// connection, updating the local media and transport configuration. It must be
+    /// called after creating an offer or answer.
+    ///
+    /// # Parameters
+    ///
+    /// - `local_description`: The session description to set as the local description.
+    ///   This should be an offer or answer created by `create_offer()` or `create_answer()`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The peer connection is closed (`ErrConnectionClosed`)
+    /// - The SDP type is invalid for the current signaling state
+    /// - SDP parsing fails
+    /// - Transport configuration fails
+    ///
+    /// # Signaling State Transitions
+    ///
+    /// Setting the local description causes signaling state transitions:
+    ///
+    /// - **Offer**: `Stable` → `HaveLocalOffer`
+    /// - **Answer**: `HaveRemoteOffer` → `Stable`
+    /// - **Pranswer**: `HaveRemoteOffer` → `HaveLocalPranswer`
+    ///
+    /// # Examples
+    ///
+    /// ## Setting Local Offer
+    ///
+    /// ```no_run
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    ///
+    /// // Create offer
+    /// let offer = pc.create_offer(None)?;
+    ///
+    /// // Set as local description
+    /// pc.set_local_description(offer.clone())?;
+    ///
+    /// // Now send offer.sdp to remote peer via signaling
+    /// // signaling_channel.send(offer.sdp)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Setting Local Answer
+    ///
+    /// ```no_run
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::sdp::RTCSessionDescription;
+    ///
+    /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    ///
+    /// // Set remote offer first
+    /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
+    /// pc.set_remote_description(offer)?;
+    ///
+    /// // Create and set local answer
+    /// let answer = pc.create_answer(None)?;
+    /// pc.set_local_description(answer.clone())?;
+    ///
+    /// // Send answer to remote peer
+    /// // signaling_channel.send(answer.sdp)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Empty SDP Handling (JSEP 5.4)
+    ///
+    /// If the SDP string is empty, the last offer or answer is reused:
+    /// - For offers: Uses the last generated offer
+    /// - For answers: Uses the last generated answer
+    ///
+    /// This allows re-applying descriptions without regenerating SDP.
+    ///
+    /// # Media and Transport Activation
+    ///
+    /// When setting a local answer:
+    /// - RTP transceivers are activated
+    /// - SCTP transport is started for data channels
+    /// - Media can begin flowing
+    ///
+    /// # Specifications
+    ///
+    /// - [W3C RTCPeerConnection.setLocalDescription]
+    /// - [RFC 8829 Section 5.4] - Setting the Session Description
+    ///
+    /// [W3C RTCPeerConnection.setLocalDescription]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-setlocaldescription
+    /// [RFC 8829 Section 5.4]: https://datatracker.ietf.org/doc/html/rfc8829#section-5.4
     pub fn set_local_description(
         &mut self,
         mut local_description: RTCSessionDescription,
