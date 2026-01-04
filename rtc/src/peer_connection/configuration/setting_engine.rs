@@ -44,7 +44,7 @@
 //!
 //! ```
 //! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-//! use rtc::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
+//! use rtc::peer_connection::transport::RTCIceCandidateType;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut setting_engine = SettingEngine::default();
@@ -602,7 +602,7 @@ impl SettingEngine {
     ///
     /// ```
     /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-    /// use rtc::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
+    /// use rtc::peer_connection::transport::RTCIceCandidateType;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut setting_engine = SettingEngine::default();
@@ -655,7 +655,7 @@ impl SettingEngine {
     ///
     /// ```
     /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-    /// use rtc::peer_connection::transport::dtls::role::RTCDtlsRole;
+    /// use rtc::peer_connection::transport::RTCDtlsRole;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut setting_engine = SettingEngine::default();

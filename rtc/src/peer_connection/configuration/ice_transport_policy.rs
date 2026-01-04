@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```
 /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
-/// use rtc::peer_connection::transport::ice::server::RTCIceServer;
+/// use rtc::peer_connection::configuration::RTCIceServer;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Only use TURN relays to hide IP addresses

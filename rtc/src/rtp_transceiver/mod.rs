@@ -251,7 +251,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
-    pub fn mid(&self) -> &Option<String> {
+    pub(crate) fn mid(&self) -> &Option<String> {
         &self.mid
     }
 
@@ -260,7 +260,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
-    pub fn kind(&self) -> RtpCodecKind {
+    pub(crate) fn kind(&self) -> RtpCodecKind {
         self.kind
     }
 
@@ -300,7 +300,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
-    pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
+    pub(crate) fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
         let previous_direction: RTCRtpTransceiverDirection = self.direction;
 
         self.direction = direction;
@@ -322,7 +322,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
-    pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
+    pub(crate) fn current_direction(&self) -> RTCRtpTransceiverDirection {
         self.current_direction
     }
 
@@ -334,7 +334,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         if self.stopped {
             return;
         }
@@ -355,7 +355,7 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.setCodecPreferences()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-setcodecpreferences).
-    pub fn set_codec_preferences(
+    pub(crate) fn set_codec_preferences(
         &mut self,
         codecs: Vec<RTCRtpCodecParameters>,
         media_engine: &MediaEngine,

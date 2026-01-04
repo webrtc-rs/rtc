@@ -20,7 +20,7 @@
 //! ```
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//! use rtc::peer_connection::configuration::RTCIceServer;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Simple configuration with STUN server
@@ -44,7 +44,7 @@
 //!
 //! ```
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//! use rtc::peer_connection::configuration::RTCIceServer;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = RTCConfigurationBuilder::new()
@@ -71,7 +71,7 @@
 //!
 //! ```
 //! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
-//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//! use rtc::peer_connection::configuration::RTCIceServer;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Only use TURN relays, hide local IP addresses
@@ -146,7 +146,7 @@
 //!     RTCRtcpMuxPolicy,
 //!     RTCIceTransportPolicy,
 //! };
-//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//! use rtc::peer_connection::configuration::RTCIceServer;
 //! use rtc::peer_connection::certificate::RTCCertificate;
 //! use rcgen::KeyPair;
 //!
