@@ -1,13 +1,13 @@
 [package]
 name = "rtc-signal"
-version = "0.0.0"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 description = "Examples of WebRTC.rs stack"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 documentation = "https://docs.rs/examples"
-homepage = "https://webrtc.rs"
-repository = "https://github.com/webrtc-rs/webrtc/tree/master/examples"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 tokio = { version = "1.32.0", features = ["full"] }

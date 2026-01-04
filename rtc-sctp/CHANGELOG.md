@@ -1,3 +1,0 @@
-# rtc-sctp changelog
-
-## Unreleased

@@ -1,3 +1,0 @@
-# rtc-sdp changelog
-
-## Unreleased

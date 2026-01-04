@@ -1,3 +1,0 @@
-# rtc-dtls changelog
-
-## Unreleased

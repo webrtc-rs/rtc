@@ -1,3 +1,0 @@
-# rtc-stun changelog
-
-## Unreleased

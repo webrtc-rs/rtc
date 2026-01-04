@@ -1,16 +1,16 @@
 [package]
 name = "rtc-sdp"
-version = "0.2.0"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 description = "RTC SDP in Rust"
-license = "MIT/Apache-2.0"
+license.workspace = true
 documentation = "https://docs.rs/rtc-sdp"
-homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-sdp"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
 
 url = "2.5.0"
 rand = "0.8.5"

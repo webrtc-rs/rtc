@@ -1,13 +1,13 @@
 [package]
 name = "rtc"
-version = "0.0.3"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
-description = "RTC in Rust"
-license = "MIT/Apache-2.0"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Sans-I/O WebRTC implementation in Rust"
+license.workspace = true
 documentation = "https://docs.rs/rtc"
-homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc"
+homepage.workspace = true
+repository.workspace = true
 readme = "../README.md"
 
 [dependencies]
@@ -26,20 +26,20 @@ unicase = "2.8"
 rand = "0.9.2"
 
 sansio = "1"
-datachannel = { version = "0.2.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
-dtls = { version = "0.2.0", path = "../rtc-dtls", package = "rtc-dtls" }
-ice = { version = "0.2.0", path = "../rtc-ice", package = "rtc-ice" }
-interceptor = { version = "0.0.0", path = "../rtc-interceptor", package = "rtc-interceptor" }
-mdns = { version = "0.0.0", path = "../rtc-mdns", package = "rtc-mdns" }
-media = { version = "0.0.0", path = "../rtc-media", package = "rtc-media" }
-rtcp = { version = "0.2.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
-rtp = { version = "0.2.0", path = "../rtc-rtp", package = "rtc-rtp" }
-sctp = { version = "0.2.0", path = "../rtc-sctp", package = "rtc-sctp" }
-sdp = { version = "0.2.0", path = "../rtc-sdp", package = "rtc-sdp" }
-shared = { version = "0.2.1", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
-srtp = { version = "0.2.0", path = "../rtc-srtp", package = "rtc-srtp" }
-stun = { version = "0.2.0", path = "../rtc-stun", package = "rtc-stun" }
-turn = { version = "0.1.0", path = "../rtc-turn", package = "rtc-turn" }
+datachannel = { version = "0.3.0", path = "../rtc-datachannel", package = "rtc-datachannel" }
+dtls = { version = "0.3.0", path = "../rtc-dtls", package = "rtc-dtls" }
+ice = { version = "0.3.0", path = "../rtc-ice", package = "rtc-ice" }
+interceptor = { version = "0.3.0", path = "../rtc-interceptor", package = "rtc-interceptor" }
+mdns = { version = "0.3.0", path = "../rtc-mdns", package = "rtc-mdns" }
+media = { version = "0.3.0", path = "../rtc-media", package = "rtc-media" }
+rtcp = { version = "0.3.0", path = "../rtc-rtcp", package = "rtc-rtcp" }
+rtp = { version = "0.3.0", path = "../rtc-rtp", package = "rtc-rtp" }
+sctp = { version = "0.3.0", path = "../rtc-sctp", package = "rtc-sctp" }
+sdp = { version = "0.3.0", path = "../rtc-sdp", package = "rtc-sdp" }
+shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "marshal", "replay"] }
+srtp = { version = "0.3.0", path = "../rtc-srtp", package = "rtc-srtp" }
+stun = { version = "0.3.0", path = "../rtc-stun", package = "rtc-stun" }
+turn = { version = "0.3.0", path = "../rtc-turn", package = "rtc-turn" }
 
 [dev-dependencies]
 webrtc = "0.14.0"

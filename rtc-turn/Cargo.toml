@@ -1,17 +1,17 @@
 [package]
 name = "rtc-turn"
-version = "0.1.0"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 description = "RTC TURN in Rust"
-license = "MIT/Apache-2.0"
+license.workspace = true
 documentation = "https://docs.rs/rtc-turn"
-homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-turn"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
-stun = { version = "0.2.0", path = "../rtc-stun", package = "rtc-stun" }
+shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = [] }
+stun = { version = "0.3.0", path = "../rtc-stun", package = "rtc-stun" }
 
 bytes = "1.5.0"
 log = "0.4.21"

@@ -1,16 +1,16 @@
 [package]
 name = "rtc-dtls"
-version = "0.2.0"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 description = "RTC DTLS in Rust"
-license = "MIT/Apache-2.0"
+license.workspace = true
 documentation = "https://docs.rs/rtc-dtls"
-homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-dtls"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
+shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["crypto", "replay"] }
 
 bytes = "1.5.0"
 byteorder = "1.5.0"

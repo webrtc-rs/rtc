@@ -1,3 +1,0 @@
-# rtc-ice changelog
-
-## Unreleased

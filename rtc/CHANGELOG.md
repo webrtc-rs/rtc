@@ -1,3 +1,0 @@
-# rtc changelog
-
-## Unreleased

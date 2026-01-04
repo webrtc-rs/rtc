@@ -1,3 +1,0 @@
-# rtc-rtp changelog
-
-## Unreleased

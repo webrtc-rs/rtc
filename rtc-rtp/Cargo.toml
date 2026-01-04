@@ -1,16 +1,16 @@
 [package]
 name = "rtc-rtp"
-version = "0.2.0"
-authors = ["Rain Liu <yliu@webrtc.rs>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 description = "RTC RTP in Rust"
-license = "MIT/Apache-2.0"
+license.workspace = true
 documentation = "https://docs.rs/rtc-rtp"
-homepage = "https://ortc.rs"
-repository = "https://github.com/webrtc-rs/rtc/tree/master/rtc-rtp"
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
-shared = { version = "0.2.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
+shared = { version = "0.3.0", path = "../rtc-shared", package = "rtc-shared", default-features = false, features = ["marshal"] }
 
 bytes = "1.5.0"
 rand = "0.9"
