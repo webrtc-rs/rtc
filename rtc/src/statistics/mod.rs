@@ -1,3 +1,5 @@
+//! Statistics Model (WIP)
+
 /*use std::collections::HashMap;
 use std::time::SystemTime;
 

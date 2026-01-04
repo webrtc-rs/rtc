@@ -1,4 +1,4 @@
-//! WebRTC Data Channel API
+//! Peer-to-peer Data API
 //!
 //! This module implements the RTCDataChannel interface as defined in the
 //! [W3C WebRTC specification](https://w3c.github.io/webrtc-pc/#rtcdatachannel).

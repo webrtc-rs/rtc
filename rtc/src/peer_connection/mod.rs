@@ -1,4 +1,4 @@
-//! WebRTC Peer Connection implementation.
+//! Peer-to-peer connections
 //!
 //! This module implements the `RTCPeerConnection` interface as defined in the
 //! [W3C WebRTC specification](https://w3c.github.io/webrtc-pc/). It provides

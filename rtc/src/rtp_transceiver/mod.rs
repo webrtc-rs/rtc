@@ -1,4 +1,4 @@
-//! RTP transceiver implementation.
+//! RTP Media API
 //!
 //! This module provides the RTCRtpTransceiver, which represents a permanent pairing
 //! of an [`RTCRtpSender`](rtp_sender::RTCRtpSender) and an [`RTCRtpReceiver`](rtp_receiver::RTCRtpReceiver),
