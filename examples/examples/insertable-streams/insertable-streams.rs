@@ -4,7 +4,7 @@ use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::media::io::ivf_reader::IVFReader;
-use rtc::media_stream::track::MediaStreamTrack;
+use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};

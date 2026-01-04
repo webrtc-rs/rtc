@@ -17,7 +17,7 @@ use tokio::time::timeout;
 
 use rtc::media::io::ivf_reader::IVFReader;
 use rtc::media::io::ogg_reader::OggReader;
-use rtc::media_stream::track::MediaStreamTrack;
+use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{

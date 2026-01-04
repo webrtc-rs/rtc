@@ -153,7 +153,7 @@
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::peer_connection::configuration::RTCConfiguration;
-//! use rtc::media_stream::track::MediaStreamTrack;
+//! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //!
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
@@ -677,7 +677,7 @@ impl RTCPeerConnection {
     /// use rtc::peer_connection::RTCPeerConnection;
     /// use rtc::peer_connection::configuration::RTCConfiguration;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
-    /// use rtc::media_stream::track::MediaStreamTrack;
+    /// use rtc::media_stream::MediaStreamTrack;
     ///
     /// # fn example(
     /// #     remote_offer_sdp: String,

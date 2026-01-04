@@ -63,7 +63,7 @@
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
 //! # use rtc::peer_connection::configuration::RTCConfiguration;
-//! # use rtc::media_stream::track::MediaStreamTrack;
+//! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(
 //! #     sender_id: RTCRtpSenderId,
@@ -106,7 +106,7 @@
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
 //! # use rtc::peer_connection::configuration::RTCConfiguration;
-//! # use rtc::media_stream::track::MediaStreamTrack;
+//! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # use rtc::rtp_transceiver::rtp_sender::{
 //! #     RTCRtpEncodingParameters, RTCRtpCodingParameters

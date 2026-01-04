@@ -427,7 +427,7 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::media_stream::track::MediaStreamTrack;
+//! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
 //! use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MIME_TYPE_OPUS};
 //!
@@ -564,6 +564,9 @@
 //! - [WebRTC for the Curious](https://webrtcforthecurious.com/) - Comprehensive WebRTC guide
 //! - [MDN WebRTC API](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API) - Browser WebRTC documentation
 
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/webrtc-rs/webrtc-rs.github.io/master/res/rtc.png"
+)]
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 

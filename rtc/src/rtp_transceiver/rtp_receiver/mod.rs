@@ -18,7 +18,7 @@
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
 //! # use rtc::peer_connection::configuration::RTCConfiguration;
-//! # use rtc::media_stream::track::MediaStreamTrackId;
+//! # use rtc::media_stream::MediaStreamTrackId;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(
 //! #     receiver_id: RTCRtpReceiverId,

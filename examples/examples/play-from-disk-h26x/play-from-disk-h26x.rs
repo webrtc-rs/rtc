@@ -5,7 +5,7 @@ use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::media::io::h26x_reader::{H26xNAL, H26xReader, H264NalUnitType, H265NalUnitType};
 use rtc::media::io::ogg_reader::OggReader;
-use rtc::media_stream::track::MediaStreamTrack;
+use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
