@@ -77,13 +77,13 @@ pub enum RTCMessage {
     /// Contains the track ID and the RTP packet data. Used for sending or receiving
     /// media data (audio or video).
     RtpPacket(MediaStreamTrackId, rtp::Packet),
-    
+
     /// An RTCP packet for a specific media track.
     ///
     /// Contains the track ID and one or more RTCP packets. Used for sending or receiving
     /// control information like sender reports, receiver reports, etc.
     RtcpPacket(MediaStreamTrackId, Vec<Box<dyn rtcp::Packet>>),
-    
+
     /// A data channel message.
     ///
     /// Contains the data channel ID and the message data. Used for sending or receiving

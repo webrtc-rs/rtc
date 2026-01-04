@@ -37,7 +37,7 @@ pub enum RTCPeerConnectionEvent {
     /// See [negotiationneeded](https://www.w3.org/TR/webrtc/#event-negotiation)
     #[default]
     OnNegotiationNeededEvent,
-    
+
     /// Fired when a new ICE candidate is available.
     ///
     /// This event provides an ICE candidate that should be sent to the remote peer
@@ -47,14 +47,14 @@ pub enum RTCPeerConnectionEvent {
     ///
     /// See [icecandidate](https://www.w3.org/TR/webrtc/#event-icecandidate)
     OnIceCandidateEvent(RTCPeerConnectionIceEvent),
-    
+
     /// Fired when an error occurs during ICE candidate gathering.
     ///
     /// # Specification
     ///
     /// See [icecandidateerror](https://www.w3.org/TR/webrtc/#event-icecandidateerror)
     OnIceCandidateErrorEvent(RTCPeerConnectionIceErrorEvent),
-    
+
     /// Fired when the signaling state changes.
     ///
     /// The signaling state describes where the peer connection is in the
@@ -64,7 +64,7 @@ pub enum RTCPeerConnectionEvent {
     ///
     /// See [signalingstatechange](https://www.w3.org/TR/webrtc/#event-signalingstatechange)
     OnSignalingStateChangeEvent(RTCSignalingState),
-    
+
     /// Fired when the ICE connection state changes.
     ///
     /// This indicates the state of the ICE connection (new, checking, connected, etc.).
@@ -73,7 +73,7 @@ pub enum RTCPeerConnectionEvent {
     ///
     /// See [iceconnectionstatechange](https://www.w3.org/TR/webrtc/#event-iceconnectionstatechange)
     OnIceConnectionStateChangeEvent(RTCIceConnectionState),
-    
+
     /// Fired when the ICE gathering state changes.
     ///
     /// This indicates whether ICE is gathering candidates, has completed, etc.
@@ -82,7 +82,7 @@ pub enum RTCPeerConnectionEvent {
     ///
     /// See [icegatheringstatechange](https://www.w3.org/TR/webrtc/#event-icegatheringstatechange)
     OnIceGatheringStateChangeEvent(RTCIceGatheringState),
-    
+
     /// Fired when the peer connection state changes.
     ///
     /// This represents the overall connection state (new, connecting, connected, etc.).

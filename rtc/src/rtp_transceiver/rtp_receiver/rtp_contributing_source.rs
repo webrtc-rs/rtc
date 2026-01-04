@@ -19,14 +19,14 @@ pub struct RTCRtpContributingSource {
     /// Corresponds to the `timestamp` attribute in
     /// [RTCRtpContributingSource](https://www.w3.org/TR/webrtc/#dom-rtcrtpcontributingsource-timestamp).
     pub timestamp: Duration,
-    
+
     /// The CSRC or SSRC identifier of the contributing or synchronization source.
     ///
     /// # W3C Specification
     /// Corresponds to the `source` attribute in
     /// [RTCRtpContributingSource](https://www.w3.org/TR/webrtc/#dom-rtcrtpcontributingsource-source).
     pub source: u32,
-    
+
     /// The audio level of the contributing source, ranging from 0 to 1.
     /// A value of 0 indicates silence, and 1 indicates the maximum audio level.
     ///
@@ -34,7 +34,7 @@ pub struct RTCRtpContributingSource {
     /// Corresponds to the `audioLevel` attribute in
     /// [RTCRtpContributingSource](https://www.w3.org/TR/webrtc/#dom-rtcrtpcontributingsource-audiolevel).
     pub audio_level: f64,
-    
+
     /// The RTP timestamp of the media. This is the timestamp at which the media was sampled,
     /// as defined in RFC 3550 section 5.1.
     ///

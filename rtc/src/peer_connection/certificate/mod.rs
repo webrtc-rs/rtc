@@ -304,10 +304,10 @@ use shared::util::math_rand_alpha;
 pub struct RTCCertificate {
     /// DTLS certificate containing X.509 certificate chain and private key
     pub(crate) dtls_certificate: dtls::crypto::Certificate,
-    
+
     /// Timestamp after which this certificate is no longer valid
     pub(crate) expires: SystemTime,
-    
+
     /// Unique identifier for this certificate used in statistics reporting
     ///
     /// Format: "certificate-{nanosecond_timestamp}"

@@ -159,24 +159,24 @@ pub struct Timeout {
     /// Duration without network activity before ICE is considered disconnected.
     /// Default: 5 seconds.
     pub ice_disconnected_timeout: Option<Duration>,
-    
+
     /// Duration without network activity before ICE is considered failed after disconnected.
     /// Default: 25 seconds.
     pub ice_failed_timeout: Option<Duration>,
-    
+
     /// How often ICE sends keepalive packets when there's no media flow.
     /// Default: 2 seconds. If media is flowing, no keepalives are sent.
     pub ice_keepalive_interval: Option<Duration>,
-    
+
     /// Minimum wait time before accepting host candidates.
     pub ice_host_acceptance_min_wait: Option<Duration>,
-    
+
     /// Minimum wait time before accepting server reflexive candidates.
     pub ice_srflx_acceptance_min_wait: Option<Duration>,
-    
+
     /// Minimum wait time before accepting peer reflexive candidates.
     pub ice_prflx_acceptance_min_wait: Option<Duration>,
-    
+
     /// Minimum wait time before accepting relay candidates.
     pub ice_relay_acceptance_min_wait: Option<Duration>,
 }
@@ -189,29 +189,27 @@ pub struct Timeout {
 pub struct Candidates {
     /// Enable ICE Lite mode (only respond to connectivity checks, don't initiate).
     pub ice_lite: bool,
-    
+
     /// Restrict candidate gathering to specific network types (e.g., UDP4, UDP6, TCP4).
     pub ice_network_types: Vec<NetworkType>,
     //TODO: pub interface_filter: Arc<Option<InterfaceFilterFn>>,
     //TODO: pub ip_filter: Arc<Option<IpFilterFn>>,
-    
     /// External IP addresses for 1:1 NAT mappings (e.g., AWS Elastic IP).
     pub nat_1to1_ips: Vec<String>,
-    
+
     /// Candidate type to use for NAT 1:1 IPs (Host or Srflx).
     pub nat_1to1_ip_candidate_type: RTCIceCandidateType,
     //TODO: pub multicast_dns_mode: MulticastDnsMode,
     //TODO: pub multicast_dns_host_name: String,
-    
     /// Static ICE username fragment (ufrag) for reproducible sessions.
     pub username_fragment: String,
-    
+
     /// Static ICE password for reproducible sessions.
     pub password: String,
-    
+
     /// Whether to discard local candidates during ICE restart.
     pub discard_local_candidates_during_ice_restart: bool,
-    
+
     /// Allow gathering loopback candidates (useful for some VM configurations).
     /// Note: This is non-standard per RFC 8445.
     pub include_loopback_candidate: bool,
@@ -225,10 +223,10 @@ pub struct Candidates {
 pub struct ReplayProtection {
     /// DTLS replay protection window size (in packets).
     pub dtls: usize,
-    
+
     /// SRTP replay protection window size (in packets).
     pub srtp: usize,
-    
+
     /// SRTCP replay protection window size (in packets).
     pub srtcp: usize,
 }
@@ -241,7 +239,7 @@ pub struct ReplayProtection {
 pub enum SctpMaxMessageSize {
     /// Fixed maximum message size in bytes.
     Bounded(u32),
-    
+
     /// No practical limit (uses MAX_MESSAGE_SIZE internally).
     Unbounded,
 }
@@ -249,10 +247,10 @@ pub enum SctpMaxMessageSize {
 impl SctpMaxMessageSize {
     /// Default message size per RFC 8841 (64KB).
     pub const DEFAULT_MESSAGE_SIZE: u32 = 65536;
-    
+
     /// Maximum message size (256KB).
     pub const MAX_MESSAGE_SIZE: u32 = 262144;
-    
+
     /// Returns the message size as `usize`.
     pub fn as_usize(&self) -> usize {
         match self {
@@ -353,7 +351,7 @@ impl SettingEngine {
             RECEIVE_MTU
         }
     }
-    
+
     /// Enables detached mode for data channels.
     ///
     /// When enabled, data channels must be explicitly detached in the `on_open`
@@ -769,7 +767,7 @@ impl SettingEngine {
     pub fn allow_insecure_verification_algorithm(&mut self, is_allowed: bool) {
         self.allow_insecure_verification_algorithm = is_allowed;
     }
-    
+
     /// Sets the DTLS replay protection window size.
     ///
     /// The replay protection window prevents attackers from re-sending captured
