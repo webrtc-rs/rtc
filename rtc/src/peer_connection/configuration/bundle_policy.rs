@@ -2,37 +2,68 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// BundlePolicy affects which media tracks are negotiated if the remote
-/// endpoint is not bundle-aware, and what ICE candidates are gathered. If the
-/// remote endpoint is bundle-aware, all media tracks and data channels are
-/// bundled onto the same transport.
+/// Media bundling policy for ICE candidate gathering and transport usage.
+///
+/// Bundle policy determines how media tracks are multiplexed onto ICE transports
+/// when the remote endpoint may or may not support bundling. Bundling multiple
+/// media streams onto a single transport reduces overhead and improves performance.
+///
+/// # Recommendations
+///
+/// - **MaxBundle** - Recommended for modern WebRTC (Chrome/Firefox/Safari all support it)
+/// - **Balanced** - Good fallback for legacy compatibility
+/// - **MaxCompat** - Only use if connecting to very old implementations
+///
+/// # Examples
+///
+/// ```
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCBundlePolicy};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Recommended: Use max-bundle for best performance
+/// let config = RTCConfigurationBuilder::new()
+///     .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// ## Specifications
 ///
-/// * [W3C]
-///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcbundlepolicy-enum
+/// * [W3C RTCBundlePolicy](https://w3c.github.io/webrtc-pc/#rtcbundlepolicy-enum)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum RTCBundlePolicy {
+    /// Unspecified - not a valid policy, used as default value
     #[default]
     Unspecified = 0,
 
-    /// BundlePolicyBalanced indicates to gather ICE candidates for each
-    /// media type in use (audio, video, and data). If the remote endpoint is
-    /// not bundle-aware, negotiate only one audio and video track on separate
-    /// transports.
+    /// Gather ICE candidates for each media type (audio, video, data).
+    ///
+    /// If the remote endpoint is not bundle-aware, negotiate only one audio
+    /// and one video track on separate transports. This provides a balance
+    /// between compatibility and efficiency.
+    ///
+    /// **Use when:** Connecting to peers that may not support bundling
     #[serde(rename = "balanced")]
     Balanced = 1,
 
-    /// BundlePolicyMaxCompat indicates to gather ICE candidates for each
-    /// track. If the remote endpoint is not bundle-aware, negotiate all media
-    /// tracks on separate transports.
+    /// Gather ICE candidates for each track individually.
+    ///
+    /// If the remote endpoint is not bundle-aware, negotiate all media tracks
+    /// on separate transports. This maximizes compatibility at the cost of
+    /// performance and resource usage.
+    ///
+    /// **Use when:** Maximum compatibility with legacy systems is required
     #[serde(rename = "max-compat")]
     MaxCompat = 2,
 
-    /// BundlePolicyMaxBundle indicates to gather ICE candidates for only
-    /// one track. If the remote endpoint is not bundle-aware, negotiate only
-    /// one media track.
+    /// Gather ICE candidates for only one track (recommended).
+    ///
+    /// All media is bundled onto a single transport. If the remote endpoint
+    /// is not bundle-aware, only negotiate one media track. This provides
+    /// the best performance by minimizing overhead.
+    ///
+    /// **Use when:** Connecting to modern WebRTC implementations (recommended)
     #[serde(rename = "max-bundle")]
     MaxBundle = 3,
 }

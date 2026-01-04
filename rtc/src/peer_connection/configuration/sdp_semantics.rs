@@ -2,30 +2,65 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// SDPSemantics determines which style of SDP offers and answers
-/// can be used.
+/// SDP semantics determining the style of SDP offers and answers.
 ///
-/// This is unused, we only support UnifiedPlan.
+/// **Note:** This library only supports Unified Plan. Plan B is deprecated and
+/// should not be used for new applications.
+///
+/// # Unified Plan vs Plan B
+///
+/// - **Unified Plan** - Modern standard (Chrome 72+, Firefox, Safari)
+///   - One m= line per track
+///   - Better simulcast support
+///   - Simpler transcoding
+///
+/// - **Plan B** - Legacy format (deprecated)
+///   - Multiple tracks per m= line
+///   - Used by older Chrome versions
+///   - Not recommended for new development
+///
+/// # Examples
+///
+/// ```
+/// use rtc::peer_connection::configuration::RTCSdpSemantics;
+///
+/// // This library only supports Unified Plan
+/// let semantics = RTCSdpSemantics::UnifiedPlan;
+/// assert_eq!(semantics.to_string(), "unified-plan");
+/// ```
+///
+/// ## Specifications
+///
+/// * [Unified Plan](https://tools.ietf.org/html/draft-roach-mmusic-unified-plan-00)
+/// * [Plan B (deprecated)](https://tools.ietf.org/html/draft-uberti-rtcweb-plan-00)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum RTCSdpSemantics {
+    /// Unspecified - not a valid semantic
     Unspecified = 0,
 
-    /// UnifiedPlan uses unified-plan offers and answers
-    /// (the default in Chrome since M72)
-    /// <https://tools.ietf.org/html/draft-roach-mmusic-unified-plan-00>
+    /// Unified Plan - modern SDP format (default and recommended).
+    ///
+    /// Uses one m= line per media track, which provides:
+    /// - Better support for simulcast
+    /// - Easier transcoding
+    /// - Clearer SDP structure
+    ///
+    /// This is the default in Chrome 72+, Firefox, and Safari.
     #[serde(rename = "unified-plan")]
     #[default]
     UnifiedPlan = 1,
 
-    /// PlanB uses plan-b offers and answers
-    /// NB: This format should be considered deprecated
-    /// <https://tools.ietf.org/html/draft-uberti-rtcweb-plan-00>
+    /// Plan B - legacy SDP format (deprecated, do not use).
+    ///
+    /// Uses one m= line per media type with multiple SSRCs. This format
+    /// is deprecated and should not be used in new applications.
     #[serde(rename = "plan-b")]
     PlanB = 2,
 
-    /// UnifiedPlanWithFallback prefers unified-plan
-    /// offers and answers, but will respond to a plan-b offer
-    /// with a plan-b answer
+    /// Unified Plan with Plan B fallback (not recommended).
+    ///
+    /// Prefers Unified Plan but will respond to Plan B offers with Plan B answers.
+    /// This is not recommended for new applications.
     #[serde(rename = "unified-plan-with-fallback")]
     UnifiedPlanWithFallback = 3,
 }

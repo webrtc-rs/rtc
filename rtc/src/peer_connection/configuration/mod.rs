@@ -1,21 +1,228 @@
-pub mod bundle_policy;
-pub mod ice_transport_policy;
-pub mod media_engine;
-pub mod offer_answer_options;
-pub mod rtcp_mux_policy;
-pub mod sdp_semantics;
-pub mod setting_engine;
+//! WebRTC peer connection configuration module.
+//!
+//! This module provides comprehensive configuration options for RTCPeerConnection,
+//! including ICE servers, transport policies, bundling strategies, and engine settings.
+//!
+//! # Overview
+//!
+//! WebRTC connections require careful configuration to work across various network
+//! topologies, NAT traversal scenarios, and media requirements. This module provides:
+//!
+//! - **ICE Configuration** - STUN/TURN server setup for NAT traversal
+//! - **Transport Policies** - Control ICE candidate selection and RTCP multiplexing
+//! - **Bundle Policies** - Media track bundling strategies
+//! - **Certificates** - Custom DTLS certificates for peer authentication
+//! - **Media Engine** - Codec and RTP extension configuration
+//! - **Setting Engine** - Low-level transport and timing parameters
+//!
+//! # Quick Start
+//!
+//! ```
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Simple configuration with STUN server
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_ice_servers(vec![
+//!         RTCIceServer {
+//!             urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!             ..Default::default()
+//!         }
+//!     ])
+//!     .build();
+//!
+//! let peer_connection = RTCPeerConnection::new(config)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Configuration Examples
+//!
+//! ## STUN and TURN Servers
+//!
+//! ```
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_ice_servers(vec![
+//!         // Public STUN server
+//!         RTCIceServer {
+//!             urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!             ..Default::default()
+//!         },
+//!         // TURN server with authentication
+//!         RTCIceServer {
+//!             urls: vec!["turn:turn.example.com:3478".to_string()],
+//!             username: "user".to_string(),
+//!             credential: "password".to_string(),
+//!             ..Default::default()
+//!         },
+//!     ])
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Force TURN/Relay Only (Privacy Mode)
+//!
+//! ```
+//! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
+//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Only use TURN relays, hide local IP addresses
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_ice_servers(vec![
+//!         RTCIceServer {
+//!             urls: vec!["turn:turn.example.com:3478".to_string()],
+//!             username: "user".to_string(),
+//!             credential: "password".to_string(),
+//!             ..Default::default()
+//!         },
+//!     ])
+//!     .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Custom Certificate
+//!
+//! ```
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::certificate::RTCCertificate;
+//! use rcgen::KeyPair;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Generate custom certificate for peer identity
+//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//!
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_certificates(vec![certificate])
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Bundle Policy Configuration
+//!
+//! ```
+//! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCBundlePolicy};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Use max-bundle for best performance (single transport)
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## RTCP Multiplexing
+//!
+//! ```
+//! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCRtcpMuxPolicy};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Require RTCP-mux (standard for modern WebRTC)
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Complete Configuration
+//!
+//! ```
+//! use rtc::peer_connection::configuration::{
+//!     RTCConfigurationBuilder,
+//!     RTCBundlePolicy,
+//!     RTCRtcpMuxPolicy,
+//!     RTCIceTransportPolicy,
+//! };
+//! use rtc::peer_connection::transport::ice::server::RTCIceServer;
+//! use rtc::peer_connection::certificate::RTCCertificate;
+//! use rcgen::KeyPair;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//!
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_ice_servers(vec![
+//!         RTCIceServer {
+//!             urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!             ..Default::default()
+//!         },
+//!     ])
+//!     .with_ice_transport_policy(RTCIceTransportPolicy::All)
+//!     .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+//!     .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+//!     .with_certificates(vec![certificate])
+//!     .with_ice_candidate_pool_size(5)
+//!     .build();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Configuration Policies
+//!
+//! ## Bundle Policy
+//!
+//! Controls how media tracks are bundled onto transports:
+//!
+//! - **Balanced** - Bundle audio/video separately if peer doesn't support bundling
+//! - **MaxCompat** - Separate transports for each track (maximum compatibility)
+//! - **MaxBundle** - Single transport for all media (best performance, recommended)
+//!
+//! ## ICE Transport Policy
+//!
+//! Controls which ICE candidates are used:
+//!
+//! - **All** - Use all candidates (host, srflx, relay) - default
+//! - **Relay** - Only use TURN relays (hides IP addresses, privacy mode)
+//!
+//! ## RTCP Mux Policy
+//!
+//! Controls RTCP multiplexing:
+//!
+//! - **Negotiate** - Try to multiplex, fall back to separate ports
+//! - **Require** - Require multiplexing (standard for WebRTC, recommended)
+//!
+//! # Specifications
+//!
+//! * [W3C RTCConfiguration](https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary)
+//! * [RFC 8834 - WebRTC Transports](https://tools.ietf.org/html/rfc8834)
+//! * [RFC 8445 - ICE](https://tools.ietf.org/html/rfc8445)
 
 use crate::peer_connection::certificate::RTCCertificate;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
-use crate::peer_connection::configuration::setting_engine::SettingEngine;
-use crate::peer_connection::transport::ice::server::RTCIceServer;
-use bundle_policy::RTCBundlePolicy;
-use ice_transport_policy::RTCIceTransportPolicy;
+pub use crate::peer_connection::transport::ice::server::RTCIceServer;
 use rcgen::KeyPair;
-use rtcp_mux_policy::RTCRtcpMuxPolicy;
 use shared::error::{Error, Result};
 use std::time::SystemTime;
+
+pub(crate) mod bundle_policy;
+pub(crate) mod ice_transport_policy;
+pub mod media_engine;
+pub(crate) mod offer_answer_options;
+pub(crate) mod rtcp_mux_policy;
+pub(crate) mod sdp_semantics;
+pub mod setting_engine;
+
+pub use bundle_policy::RTCBundlePolicy;
+pub use ice_transport_policy::{ICEGatherPolicy, RTCIceTransportPolicy};
+pub use offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
+pub use rtcp_mux_policy::RTCRtcpMuxPolicy;
+pub use sdp_semantics::RTCSdpSemantics;
+
+use media_engine::MediaEngine;
+use setting_engine::SettingEngine;
 
 pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 

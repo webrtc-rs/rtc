@@ -2,30 +2,97 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// ICETransportPolicy defines the ICE candidate policy surface the
-/// permitted candidates. Only these candidates are used for connectivity checks.
+/// ICE transport policy controlling which candidate types are used for connectivity.
+///
+/// This policy determines which ICE candidates the peer connection will use and gather
+/// during the connection establishment process. It's primarily used for privacy control
+/// and network security requirements.
+///
+/// # Privacy Considerations
+///
+/// - **All** - Exposes local IP addresses (host candidates) and public IPs (srflx)
+/// - **Relay** - Hides all IP addresses, only TURN server address visible (privacy mode)
+///
+/// # Examples
+///
+/// ## Standard Configuration (All Candidates)
+///
+/// ```
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Use all candidates for best connectivity (default)
+/// let config = RTCConfigurationBuilder::new()
+///     .with_ice_transport_policy(RTCIceTransportPolicy::All)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Privacy Mode (Relay Only)
+///
+/// ```
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
+/// use rtc::peer_connection::transport::ice::server::RTCIceServer;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Only use TURN relays to hide IP addresses
+/// let config = RTCConfigurationBuilder::new()
+///     .with_ice_servers(vec![
+///         RTCIceServer {
+///             urls: vec!["turn:turn.example.com:3478".to_string()],
+///             username: "user".to_string(),
+///             credential: "password".to_string(),
+///             ..Default::default()
+///         },
+///     ])
+///     .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// ## Specifications
 ///
-/// * [W3C]
-///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcicetransportpolicy-enum
+/// * [W3C RTCIceTransportPolicy](https://w3c.github.io/webrtc-pc/#rtcicetransportpolicy-enum)
+/// * [RFC 8445 - ICE](https://tools.ietf.org/html/rfc8445)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum RTCIceTransportPolicy {
+    /// Unspecified - not a valid policy, used as default value
     #[default]
     Unspecified = 0,
 
-    /// ICETransportPolicyAll indicates any type of candidate is used.
+    /// Use all types of ICE candidates (recommended for best connectivity).
+    ///
+    /// Gathers and uses:
+    /// - **Host candidates** - Local IP addresses
+    /// - **Server reflexive (srflx)** - Public IP from STUN servers
+    /// - **Relay candidates** - TURN server addresses
+    ///
+    /// This provides the best chance of establishing a connection but may expose
+    /// local and public IP addresses.
+    ///
+    /// **Use when:** Normal operation, prioritizing connectivity over privacy
     #[serde(rename = "all")]
     All = 1,
 
-    /// ICETransportPolicyRelay indicates only media relay candidates such
-    /// as candidates passing through a TURN server are used.
+    /// Only use relay candidates from TURN servers (privacy mode).
+    ///
+    /// Only gathers and uses relay candidates obtained through TURN servers.
+    /// This hides the client's IP addresses from the remote peer but requires
+    /// a TURN server and may reduce connection quality.
+    ///
+    /// **Use when:** Privacy is critical, IP addresses must be hidden
+    ///
+    /// **Requirements:** Must have TURN servers configured
     #[serde(rename = "relay")]
     Relay = 2,
 }
 
-/// ICEGatherPolicy is the ORTC equivalent of ICETransportPolicy
+/// ORTC-compatible alias for ICETransportPolicy.
+///
+/// In ORTC terminology, this is called ICEGatherPolicy, but it serves
+/// the same purpose as ICETransportPolicy in WebRTC.
 pub type ICEGatherPolicy = RTCIceTransportPolicy;
 
 const ICE_TRANSPORT_POLICY_RELAY_STR: &str = "relay";

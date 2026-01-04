@@ -1,3 +1,82 @@
+//! Media engine configuration for codecs and RTP extensions.
+//!
+//! The media engine manages codec registration, RTP header extensions, and media
+//! capabilities negotiation for peer connections. It defines what codecs and features
+//! are available for encoding/decoding media streams.
+//!
+//! # Overview
+//!
+//! - **Codec Registration** - Define supported audio/video codecs
+//! - **Header Extensions** - Configure RTP header extensions
+//! - **Feedback Mechanisms** - Register RTCP feedback types
+//! - **Negotiation** - Codec and extension negotiation with remote peers
+//!
+//! # Examples
+//!
+//! ## Using Default Codecs
+//!
+//! ```
+//! use rtc::peer_connection::configuration::media_engine::MediaEngine;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut media_engine = MediaEngine::default();
+//!
+//! // Register standard WebRTC codecs
+//! media_engine.register_default_codecs()?;
+//! // Now supports: Opus, G722, PCMU, PCMA, VP8, VP9, H264, AV1
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Registering Custom Codec
+//!
+//! ```
+//! use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_OPUS};
+//! use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind, RTCRtpCodecParameters};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut media_engine = MediaEngine::default();
+//!
+//! // Register Opus with custom parameters
+//! let opus_codec = RTCRtpCodecParameters {
+//!     rtp_codec: RTCRtpCodec {
+//!         mime_type: MIME_TYPE_OPUS.to_owned(),
+//!         clock_rate: 48000,
+//!         channels: 2,
+//!         sdp_fmtp_line: "minptime=10;useinbandfec=1;stereo=1".to_owned(),
+//!         rtcp_feedback: vec![],
+//!     },
+//!     payload_type: 111,
+//!     ..Default::default()
+//! };
+//!
+//! media_engine.register_codec(opus_codec, RtpCodecKind::Audio)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Registering RTP Header Extension
+//!
+//! ```
+//! use rtc::peer_connection::configuration::media_engine::MediaEngine;
+//! use rtc::rtp_transceiver::rtp_sender::{RtpCodecKind, RTCRtpHeaderExtensionCapability};
+//! use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut media_engine = MediaEngine::default();
+//!
+//! // Register audio level extension
+//! media_engine.register_header_extension(
+//!     RTCRtpHeaderExtensionCapability {
+//!         uri: "urn:ietf:params:rtp-hdrext:ssrc-audio-level".to_string(),
+//!     },
+//!     RtpCodecKind::Audio,
+//!     Some(RTCRtpTransceiverDirection::Sendrecv),
+//! )?;
+//! # Ok(())
+//! # }
+//! ```
+
 //TODO:#[cfg(test)]
 //mod media_engine_test;
 
@@ -23,47 +102,89 @@ use std::ops::Range;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicase::UniCase;
 
-/// MIME_TYPE_H264 H264 MIME type.
-/// Note: Matching should be case insensitive.
+/// H.264 video codec MIME type.
+///
+/// Used for baseline, main, and high profile H.264 video encoding.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_H264: &str = "video/H264";
-/// MIME_TYPE_HEVC HEVC/H265 MIME type.
-/// Note: Matching should be case insensitive.
+
+/// H.265/HEVC video codec MIME type.
+///
+/// Used for High Efficiency Video Coding (HEVC/H.265) video encoding.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_HEVC: &str = "video/H265";
-/// MIME_TYPE_OPUS Opus MIME type
-/// Note: Matching should be case insensitive.
+
+/// Opus audio codec MIME type.
+///
+/// Modern, versatile audio codec with excellent quality and low latency.
+/// Recommended for most WebRTC applications.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_OPUS: &str = "audio/opus";
-/// MIME_TYPE_VP8 VP8 MIME type
-/// Note: Matching should be case insensitive.
+
+/// VP8 video codec MIME type.
+///
+/// Open-source video codec, widely supported across all browsers.
+/// Good fallback option for video conferencing.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_VP8: &str = "video/VP8";
-/// MIME_TYPE_VP9 VP9 MIME type
-/// Note: Matching should be case insensitive.
+
+/// VP9 video codec MIME type.
+///
+/// Successor to VP8 with better compression efficiency.
+/// Supported by modern browsers.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_VP9: &str = "video/VP9";
-/// MIME_TYPE_AV1 AV1 MIME type
-/// Note: Matching should be case insensitive.
+
+/// AV1 video codec MIME type.
+///
+/// Next-generation open video codec with excellent compression.
+/// Increasing browser support.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_AV1: &str = "video/AV1";
-/// MIME_TYPE_G722 G722 MIME type
-/// Note: Matching should be case insensitive.
+
+/// G.722 audio codec MIME type.
+///
+/// Wideband audio codec (50-7000 Hz).
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_G722: &str = "audio/G722";
-/// MIME_TYPE_PCMU PCMU MIME type
-/// Note: Matching should be case insensitive.
+
+/// PCMU (G.711 μ-law) audio codec MIME type.
+///
+/// Standard telephony codec, primarily used in North America.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_PCMU: &str = "audio/PCMU";
-/// MIME_TYPE_PCMA PCMA MIME type
-/// Note: Matching should be case insensitive.
+
+/// PCMA (G.711 A-law) audio codec MIME type.
+///
+/// Standard telephony codec, primarily used in Europe.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_PCMA: &str = "audio/PCMA";
-/// MIME_TYPE_RTX RTX MIME type
-/// Note: Matching should be case insensitive.
+
+/// RTX (Retransmission) MIME type.
+///
+/// Used for RTP retransmission to improve reliability.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_RTX: &str = "video/rtx";
-/// MIME_TYPE_FLEX_FEC FEC MIME Type
-/// Note: Matching should be case insensitive.
+
+/// FlexFEC forward error correction MIME type.
+///
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_FLEX_FEC: &str = "video/flexfec";
-/// MIME_TYPE_FLEX_FEC03 FlexFEC03 MIME Type
-/// Note: Matching should be case insensitive.
+
+/// FlexFEC-03 forward error correction MIME type.
+///
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_FLEX_FEC03: &str = "video/flexfec-03";
-/// MIME_TYPE_ULP_FEC UlpFEC MIME Type
-/// Note: Matching should be case insensitive.
+
+/// ULP FEC (Uneven Level Protection Forward Error Correction) MIME type.
+///
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_ULP_FEC: &str = "video/ulpfec";
-/// MIME_TYPE_TELEPHONE_EVENT telephone-event MIME type
-/// Note: Matching should be case insensitive.
+
+/// Telephone-event MIME type for DTMF tones.
+///
+/// Used for transmitting DTMF (touch-tone) signals.
+/// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
 
 const VALID_EXT_IDS: Range<u16> = 1..15;
@@ -90,9 +211,78 @@ impl MediaEngineHeaderExtension {
     }
 }
 
-/// A MediaEngine defines the codecs supported by a PeerConnection, and the
-/// configuration of those codecs. A MediaEngine must not be shared between
-/// PeerConnections.
+/// Media engine managing codecs and RTP capabilities for peer connections.
+///
+/// MediaEngine defines which audio/video codecs are supported and how they're
+/// configured. Each peer connection should have its own MediaEngine instance
+/// as codec negotiation state is tracked per-connection.
+///
+/// # Thread Safety
+///
+/// ⚠️ MediaEngine is **not** safe for concurrent use during configuration.
+/// Configure it completely before using in a peer connection.
+///
+/// # Examples
+///
+/// ## Default Configuration
+///
+/// ```
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+/// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+/// media_engine.register_default_codecs()?;
+///
+/// let config = RTCConfigurationBuilder::new()
+///     .with_media_engine(media_engine)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Custom Codec Configuration
+///
+/// ```
+/// use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8};
+/// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind, RTCRtpCodecParameters};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+///
+/// // Register only specific codecs for minimal overhead
+/// media_engine.register_codec(
+///     RTCRtpCodecParameters {
+///         rtp_codec: RTCRtpCodec {
+///             mime_type: MIME_TYPE_OPUS.to_owned(),
+///             clock_rate: 48000,
+///             channels: 2,
+///             sdp_fmtp_line: "minptime=10;useinbandfec=1".to_owned(),
+///             rtcp_feedback: vec![],
+///         },
+///         payload_type: 111,
+///         ..Default::default()
+///     },
+///     RtpCodecKind::Audio,
+/// )?;
+///
+/// media_engine.register_codec(
+///     RTCRtpCodecParameters {
+///         rtp_codec: RTCRtpCodec {
+///             mime_type: MIME_TYPE_VP8.to_owned(),
+///             clock_rate: 90000,
+///             channels: 0,
+///             sdp_fmtp_line: "".to_owned(),
+///             rtcp_feedback: vec![],
+///         },
+///         payload_type: 96,
+///         ..Default::default()
+///     },
+///     RtpCodecKind::Video,
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Default, Clone)]
 pub struct MediaEngine {
     // If we have attempted to negotiate a codec type yet.
@@ -110,8 +300,40 @@ pub struct MediaEngine {
 }
 
 impl MediaEngine {
-    /// register_default_codecs registers the default codecs supported by WebRTC-rs.
-    /// register_default_codecs is not safe for concurrent use.
+    /// Registers standard WebRTC codecs for audio and video.
+    ///
+    /// This convenience method registers all codecs commonly supported by WebRTC implementations:
+    ///
+    /// **Audio Codecs:**
+    /// - Opus (48kHz, stereo, with FEC)
+    /// - G.722 (8kHz wideband)
+    /// - PCMU/G.711 μ-law (8kHz)
+    /// - PCMA/G.711 A-law (8kHz)
+    ///
+    /// **Video Codecs:**
+    /// - VP8 with RTCP feedback
+    /// - VP9 (multiple profiles) with RTCP feedback
+    /// - H.264 (multiple profiles/packetization modes) with RTCP feedback
+    /// - AV1 with RTCP feedback  
+    /// - H.265/HEVC with RTCP feedback
+    /// - ULP FEC (forward error correction)
+    ///
+    /// # Thread Safety
+    ///
+    /// ⚠️ Not safe for concurrent use. Call before using MediaEngine in a peer connection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut media_engine = MediaEngine::default();
+    /// media_engine.register_default_codecs()?;
+    /// // Media engine now supports all standard WebRTC codecs
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn register_default_codecs(&mut self) -> Result<()> {
         // Default Audio Codecs
         for codec in [
@@ -345,9 +567,47 @@ impl MediaEngine {
         codecs.push(codec);
     }
 
-    /// register_codec adds codec to the MediaEngine
-    /// These are the list of codecs supported by this PeerConnection.
-    /// register_codec is not safe for concurrent use.
+    /// Registers a custom codec for use in this peer connection.
+    ///
+    /// Adds a codec to the list of supported codecs. During SDP negotiation, only
+    /// codecs registered here will be offered/accepted.
+    ///
+    /// # Parameters
+    ///
+    /// * `codec` - The codec parameters including MIME type, clock rate, and payload type
+    /// * `typ` - Whether this is an audio or video codec
+    ///
+    /// # Thread Safety
+    ///
+    /// ⚠️ Not safe for concurrent use. Register all codecs before using in a peer connection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_OPUS};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind, RTCRtpCodecParameters};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut media_engine = MediaEngine::default();
+    ///
+    /// // Register Opus with custom fmtp parameters
+    /// media_engine.register_codec(
+    ///     RTCRtpCodecParameters {
+    ///         rtp_codec: RTCRtpCodec {
+    ///             mime_type: MIME_TYPE_OPUS.to_owned(),
+    ///             clock_rate: 48000,
+    ///             channels: 2,
+    ///             sdp_fmtp_line: "minptime=10;useinbandfec=1;stereo=1".to_owned(),
+    ///             rtcp_feedback: vec![],
+    ///         },
+    ///         payload_type: 111,
+    ///         ..Default::default()
+    ///     },
+    ///     RtpCodecKind::Audio,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn register_codec(
         &mut self,
         mut codec: RTCRtpCodecParameters,
