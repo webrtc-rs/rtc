@@ -1,7 +1,7 @@
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
-use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, DTLSRole};
+use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, RTCDtlsRole};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
 use dtls::config::{ClientAuthType, VerifyPeerCertificateFn};
@@ -14,10 +14,10 @@ use shared::{TransportContext, TransportProtocol};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-pub mod fingerprint;
-pub mod parameters;
-pub mod role;
-pub mod state;
+pub(crate) mod fingerprint;
+pub(crate) mod parameters;
+pub(crate) mod role;
+pub(crate) mod state;
 
 pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
     vec![
@@ -33,8 +33,8 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
 /// RTPSender and RTPReceiver, as well other data such as SCTP packets sent
 /// and received by data channels.
 #[derive(Default)]
-pub struct RTCDtlsTransport {
-    pub(crate) dtls_role: DTLSRole,
+pub(crate) struct RTCDtlsTransport {
+    pub(crate) dtls_role: RTCDtlsRole,
     pub(crate) dtls_handshake_config: Option<Arc<::dtls::config::HandshakeConfig>>,
     pub(crate) dtls_endpoint: Option<::dtls::endpoint::Endpoint>,
 
@@ -42,7 +42,7 @@ pub struct RTCDtlsTransport {
     pub(crate) certificates: Vec<RTCCertificate>,
 
     // From SettingEngine
-    pub(crate) answering_dtls_role: DTLSRole,
+    pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) replay_protection: ReplayProtection,
@@ -51,7 +51,7 @@ pub struct RTCDtlsTransport {
 impl RTCDtlsTransport {
     pub(crate) fn new(
         mut certificates: Vec<RTCCertificate>,
-        answering_dtls_role: DTLSRole,
+        answering_dtls_role: RTCDtlsRole,
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
         allow_insecure_verification_algorithm: bool,
         replay_protection: ReplayProtection,
@@ -70,7 +70,7 @@ impl RTCDtlsTransport {
         };
 
         Ok(Self {
-            dtls_role: DTLSRole::Auto,
+            dtls_role: RTCDtlsRole::Auto,
             dtls_handshake_config: None,
             dtls_endpoint: None,
             state: RTCDtlsTransportState::New,
@@ -87,24 +87,24 @@ impl RTCDtlsTransport {
         self.state = state;
     }
 
-    fn derive_role(&self, ice_role: RTCIceRole, remote_dtls_role: DTLSRole) -> DTLSRole {
+    fn derive_role(&self, ice_role: RTCIceRole, remote_dtls_role: RTCDtlsRole) -> RTCDtlsRole {
         // If remote has an explicit role use the inverse
         match remote_dtls_role {
-            DTLSRole::Client => return DTLSRole::Server,
-            DTLSRole::Server => return DTLSRole::Client,
+            RTCDtlsRole::Client => return RTCDtlsRole::Server,
+            RTCDtlsRole::Server => return RTCDtlsRole::Client,
             _ => {}
         };
 
         // If SettingEngine has an explicit role
         match self.answering_dtls_role {
-            DTLSRole::Server => return DTLSRole::Server,
-            DTLSRole::Client => return DTLSRole::Client,
+            RTCDtlsRole::Server => return RTCDtlsRole::Server,
+            RTCDtlsRole::Client => return RTCDtlsRole::Client,
             _ => {}
         };
 
         // Remote was auto and no explicit role was configured via SettingEngine
         if ice_role == RTCIceRole::Controlling {
-            return DTLSRole::Server;
+            return RTCDtlsRole::Server;
         }
 
         DEFAULT_DTLS_ROLE_ANSWER
@@ -169,11 +169,11 @@ impl RTCDtlsTransport {
                 .with_verify_peer_certificate(Some(verify_peer_certificate))
                 .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
                 .with_replay_protection_window(self.replay_protection.dtls)
-                .build(self.dtls_role == DTLSRole::Client, None)?,
+                .build(self.dtls_role == RTCDtlsRole::Client, None)?,
         ))
     }
 
-    pub(crate) fn role(&self) -> DTLSRole {
+    pub(crate) fn role(&self) -> RTCDtlsRole {
         self.dtls_role
     }
 
@@ -185,7 +185,7 @@ impl RTCDtlsTransport {
         let dtls_handshake_config =
             self.prepare_transport(local_ice_role, remote_dtls_parameters)?;
 
-        if self.dtls_role == DTLSRole::Client {
+        if self.dtls_role == RTCDtlsRole::Client {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
                 TransportContext::default().local_addr, // local_addr doesn't matter
                 TransportProtocol::UDP,                 // TransportProtocol doesn't matter

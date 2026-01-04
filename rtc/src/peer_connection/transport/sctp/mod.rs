@@ -1,5 +1,5 @@
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
-use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
 use sctp::{Association, AssociationHandle};
@@ -7,8 +7,8 @@ use shared::error::Result;
 use shared::{TransportContext, TransportProtocol};
 use std::collections::HashMap;
 
-pub mod capabilities;
-pub mod state;
+pub(crate) mod capabilities;
+pub(crate) mod state;
 
 const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
@@ -74,7 +74,7 @@ impl RTCSctpTransport {
     /// a connection over SCTP.
     pub(crate) fn start(
         &mut self,
-        dtls_role: DTLSRole,
+        dtls_role: RTCDtlsRole,
         remote_caps: SCTPTransportCapabilities,
         local_port: u16,
         _remote_port: u16,
@@ -96,7 +96,7 @@ impl RTCSctpTransport {
             .with_sctp_port(local_port);
         //TODO: add remote_port support
 
-        if dtls_role == DTLSRole::Client {
+        if dtls_role == RTCDtlsRole::Client {
             self.sctp_endpoint = Some(sctp::Endpoint::new(
                 TransportContext::default().local_addr, // local_addr doesn't matter
                 TransportProtocol::UDP,                 // TransportProtocol doesn't matter

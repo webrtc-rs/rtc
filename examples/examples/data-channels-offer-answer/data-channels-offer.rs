@@ -16,13 +16,13 @@ use tokio::sync::mpsc;
 
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::sdp::RTCSessionDescription;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCIceCandidateInit;
+use rtc::peer_connection::transport::RTCIceServer;
 use rtc::shared::util::math_rand_alpha;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
@@ -172,9 +172,7 @@ async fn main() -> Result<()> {
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let local_addr = socket.local_addr()?;
 
-    use rtc::peer_connection::transport::ice::candidate::{
-        CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-    };
+    use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),

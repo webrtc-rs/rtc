@@ -17,12 +17,12 @@ use tokio::time::{sleep, timeout};
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
-use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
 
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -147,11 +147,11 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
 
         // Create RTC peer connection
         let mut setting_engine = SettingEngine::default();
-        setting_engine.set_answering_dtls_role(DTLSRole::Server)?;
+        setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
         let config = RTCConfigurationBuilder::default()
             .with_setting_engine(setting_engine)
-            .with_ice_servers(vec![RtcIceServer {
+            .with_ice_servers(vec![RTCIceServer {
                 ..Default::default()
             }])
             .build();
@@ -197,7 +197,11 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
 
                             match candidate_config.new_candidate_host() {
                                 Ok(candidate) => {
-                                    let candidate_init = rtc::peer_connection::transport::ice::candidate::RTCIceCandidate::from(&candidate).to_json()?;
+                                    let candidate_init =
+                                        rtc::peer_connection::transport::RTCIceCandidate::from(
+                                            &candidate,
+                                        )
+                                        .to_json()?;
                                     if let Err(e) = rtc_pc.add_local_candidate(candidate_init) {
                                         resp_tx
                                             .send(Response::Error(format!(
@@ -235,7 +239,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                 }
                 Ok(Command::SetRemoteDescription(sdp)) => {
                     log::info!("RTC: Setting remote description");
-                    let answer = rtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(sdp)?;
+                    let answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(sdp)?;
                     if let Err(e) = rtc_pc.set_remote_description(answer) {
                         resp_tx
                             .send(Response::Error(format!(
@@ -372,7 +376,11 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
 
                             match candidate_config.new_candidate_host() {
                                 Ok(candidate) => {
-                                    let candidate_init = rtc::peer_connection::transport::ice::candidate::RTCIceCandidate::from(&candidate).to_json()?;
+                                    let candidate_init =
+                                        rtc::peer_connection::transport::RTCIceCandidate::from(
+                                            &candidate,
+                                        )
+                                        .to_json()?;
                                     if let Err(e) = rtc_pc.add_local_candidate(candidate_init) {
                                         resp_tx
                                             .send(Response::Error(format!(

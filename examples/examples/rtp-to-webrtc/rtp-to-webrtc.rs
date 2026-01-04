@@ -9,12 +9,10 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::ice::candidate::{
-    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-};
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::sdp::RTCSessionDescription;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::sansio::Protocol;

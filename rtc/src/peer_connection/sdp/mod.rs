@@ -1,13 +1,15 @@
 //TODO: #[cfg(test)]
 //TODO: mod sdp_test;
 
-pub mod sdp_type;
-pub mod session_description;
+pub(crate) mod sdp_type;
+pub(crate) mod session_description;
+
+pub use sdp_type::RTCSdpType;
+pub use session_description::RTCSessionDescription;
 
 use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrackId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
-use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;

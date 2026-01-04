@@ -8,16 +8,14 @@ use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::event::track_event::RTCTrackEvent;
+use rtc::peer_connection::event::RTCTrackEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::{
-    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-};
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::sdp::RTCSessionDescription;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
@@ -171,7 +169,7 @@ async fn run_broadcaster(
     let local_addr = socket.local_addr()?;
 
     let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(DTLSRole::Server)?;
+    setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
@@ -494,7 +492,7 @@ async fn run_viewer(
     let local_addr = socket.local_addr()?;
 
     let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(DTLSRole::Server)?;
+    setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;

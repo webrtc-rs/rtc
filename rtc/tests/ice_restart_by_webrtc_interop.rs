@@ -15,13 +15,13 @@ use tokio::time::timeout;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
-use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
+use rtc::peer_connection::state::RTCIceConnectionState;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
 
 use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
@@ -148,10 +148,10 @@ async fn test_ice_restart_interop() -> Result<()> {
     log::info!("RTC peer bound to {}", rtc_local_addr);
 
     let mut rtc_setting_engine = SettingEngine::default();
-    rtc_setting_engine.set_answering_dtls_role(DTLSRole::Client)?;
+    rtc_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
     let rtc_config = RTCConfigurationBuilder::new()
-        .with_ice_servers(vec![RtcIceServer {
+        .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
@@ -174,14 +174,12 @@ async fn test_ice_restart_interop() -> Result<()> {
     }
     .new_candidate_host()?;
     let rtc_candidate_init =
-        rtc::peer_connection::transport::ice::candidate::RTCIceCandidate::from(&rtc_candidate)
-            .to_json()?;
+        rtc::peer_connection::transport::RTCIceCandidate::from(&rtc_candidate).to_json()?;
     rtc_pc.add_local_candidate(rtc_candidate_init)?;
 
     // Convert webrtc offer to rtc format
-    let rtc_offer = rtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(
-        webrtc_offer.sdp.clone(),
-    )?;
+    let rtc_offer =
+        rtc::peer_connection::sdp::RTCSessionDescription::offer(webrtc_offer.sdp.clone())?;
 
     // Set remote description on rtc peer
     rtc_pc.set_remote_description(rtc_offer)?;
@@ -488,9 +486,7 @@ async fn test_ice_restart_interop() -> Result<()> {
 
     // Convert restart offer to rtc format
     let rtc_restart_offer =
-        rtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(
-            restart_offer.sdp.clone(),
-        )?;
+        rtc::peer_connection::sdp::RTCSessionDescription::offer(restart_offer.sdp.clone())?;
 
     // Process restart on rtc peer
     rtc_pc.set_remote_description(rtc_restart_offer)?;

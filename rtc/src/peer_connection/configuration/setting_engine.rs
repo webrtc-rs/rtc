@@ -132,7 +132,7 @@ use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
 use std::time::Duration;
 
-use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use shared::error::{Error, Result};
 
@@ -324,7 +324,7 @@ pub struct SettingEngine {
     //pub(crate) disable_srtp_replay_protection: bool, // duplicated setting as replay_protection
     //pub(crate) disable_srtcp_replay_protection: bool, // duplicated setting as replay_protection
     pub(crate) sdp_media_level_fingerprints: bool,
-    pub(crate) answering_dtls_role: DTLSRole,
+    pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) allow_insecure_verification_algorithm: bool,
 
@@ -655,13 +655,13 @@ impl SettingEngine {
     ///
     /// ```
     /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-    /// use rtc::peer_connection::transport::dtls::role::DTLSRole;
+    /// use rtc::peer_connection::transport::dtls::role::RTCDtlsRole;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut setting_engine = SettingEngine::default();
     ///
     /// // Force this peer to always act as DTLS client when answering
-    /// setting_engine.set_answering_dtls_role(DTLSRole::Client)?;
+    /// setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -669,8 +669,8 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8842 - DTLS for WebRTC](https://datatracker.ietf.org/doc/html/rfc8842)
-    pub fn set_answering_dtls_role(&mut self, role: DTLSRole) -> Result<()> {
-        if role != DTLSRole::Client && role != DTLSRole::Server {
+    pub fn set_answering_dtls_role(&mut self, role: RTCDtlsRole) -> Result<()> {
+        if role != RTCDtlsRole::Client && role != RTCDtlsRole::Server {
             return Err(Error::ErrSettingEngineSetAnsweringDTLSRole);
         }
 

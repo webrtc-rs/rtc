@@ -36,7 +36,7 @@ use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
 use crate::peer_connection::transport::dtls::role::{
-    DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, DTLSRole,
+    DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, RTCDtlsRole,
 };
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
@@ -360,7 +360,7 @@ impl RTCPeerConnection {
                 && is_lite_set(parsed)
                 && !self.configuration.setting_engine.candidates.ice_lite
             {
-                connection_role = DTLSRole::Server.to_connection_role();
+                connection_role = RTCDtlsRole::Server.to_connection_role();
             }
         }
 
@@ -705,7 +705,7 @@ impl RTCPeerConnection {
                     RTCIceRole::Controlled
                 };
 
-                let remote_dtls_role = DTLSRole::from(parsed_remote_description);
+                let remote_dtls_role = RTCDtlsRole::from(parsed_remote_description);
                 log::trace!(
                     "start_transports: local_ice_role={local_ice_role}, remote_dtls_role={remote_dtls_role}"
                 );

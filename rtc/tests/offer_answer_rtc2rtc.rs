@@ -15,17 +15,15 @@ use tokio::sync::Mutex;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
-use rtc::peer_connection::transport::ice::candidate::{
-    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-};
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::state::RTCIceConnectionState;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceCandidateInit;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const TEST_MESSAGE: &str = "Hello from offer!";
@@ -52,7 +50,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Offer peer bound to {}", offer_local_addr);
 
     let mut offer_setting_engine = SettingEngine::default();
-    offer_setting_engine.set_answering_dtls_role(DTLSRole::Server)?;
+    offer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
     let offer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -99,7 +97,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Answer peer bound to {}", answer_local_addr);
 
     let mut answer_setting_engine = SettingEngine::default();
-    answer_setting_engine.set_answering_dtls_role(DTLSRole::Client)?;
+    answer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
     let answer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

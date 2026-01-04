@@ -547,7 +547,7 @@ impl RTCPeerConnection {
 
     pub(crate) fn generate_data_channel_id(&self) -> Result<RTCDataChannelId> {
         let mut id = 0u16;
-        if self.dtls_transport().role() != DTLSRole::Client {
+        if self.dtls_transport().role() != RTCDtlsRole::Client {
             id += 1;
         }
 

@@ -18,17 +18,15 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::{
-    CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-};
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::sdp::RTCSessionDescription;
+use rtc::peer_connection::state::RTCIceConnectionState;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
@@ -370,7 +368,7 @@ async fn main() -> Result<()> {
                             println!("Bound to {}", local);
 
                             let mut setting_engine = SettingEngine::default();
-                            setting_engine.set_answering_dtls_role(DTLSRole::Client)?;
+                            setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
                             let config = RTCConfigurationBuilder::new()
                                 .with_ice_servers(vec![RTCIceServer {

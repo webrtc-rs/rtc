@@ -3,7 +3,7 @@ use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::{DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal};
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
-use crate::peer_connection::transport::dtls::role::DTLSRole;
+use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use bytes::BytesMut;
 use dtls::endpoint::EndpointEvent;
@@ -195,7 +195,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         if let RTCEventInternal::ICESelectedCandidatePairChange = evt {
-            if self.ctx.dtls_transport.dtls_role == DTLSRole::Client {
+            if self.ctx.dtls_transport.dtls_role == RTCDtlsRole::Client {
                 // dtls_endpoint only connect once when acts as DTLSRole::Client
                 if let Some(dtls_handshake_config) =
                     self.ctx.dtls_transport.dtls_handshake_config.take()

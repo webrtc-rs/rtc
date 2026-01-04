@@ -10,19 +10,19 @@ use ice::{Agent, AgentConfig};
 use shared::error::{Error, Result};
 use std::sync::Arc;
 
-pub mod candidate;
-pub mod candidate_pair;
-pub mod candidate_type;
-pub mod parameters;
-pub mod protocol;
-pub mod role;
-pub mod server;
-pub mod state;
+pub(crate) mod candidate;
+pub(crate) mod candidate_pair;
+pub(crate) mod candidate_type;
+pub(crate) mod parameters;
+pub(crate) mod protocol;
+pub(crate) mod role;
+pub(crate) mod server;
+pub(crate) mod state;
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
 #[derive(Default)]
-pub struct RTCIceTransport {
+pub(crate) struct RTCIceTransport {
     pub(crate) agent: Agent,
 
     pub(crate) ice_gathering_state: RTCIceGatheringState,

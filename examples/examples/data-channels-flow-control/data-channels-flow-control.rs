@@ -15,11 +15,11 @@ use tokio::net::UdpSocket;
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::ice::server::RTCIceServer;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCIceServer;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const BUFFERED_AMOUNT_LOW_THRESHOLD: u32 = 512 * 1024; // 512 KB
@@ -119,9 +119,7 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     println!("Responder listening on {}", resp_local_addr);
 
     // Add ICE candidates
-    use rtc::peer_connection::transport::ice::candidate::{
-        CandidateConfig, CandidateHostConfig, RTCIceCandidate,
-    };
+    use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
     let req_candidate = CandidateHostConfig {
         base_config: CandidateConfig {

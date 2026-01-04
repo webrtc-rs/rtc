@@ -15,13 +15,13 @@ use tokio::time::timeout;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use rtc::peer_connection::state::ice_connection_state::RTCIceConnectionState;
-use rtc::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
-use rtc::peer_connection::transport::dtls::role::DTLSRole;
-use rtc::peer_connection::transport::ice::candidate::{CandidateConfig, CandidateHostConfig};
-use rtc::peer_connection::transport::ice::server::RTCIceServer as RtcIceServer;
+use rtc::peer_connection::state::RTCIceConnectionState;
+use rtc::peer_connection::state::RTCPeerConnectionState;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
 
 use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
@@ -106,9 +106,8 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     log::info!("WebRTC offer with candidates ready");
 
     // Convert webrtc SDP to rtc SDP
-    let rtc_offer = rtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(
-        offer_with_candidates.sdp.clone(),
-    )?;
+    let rtc_offer =
+        rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_with_candidates.sdp.clone())?;
 
     // Create rtc peer (will be the answerer)
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -116,10 +115,10 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     log::info!("RTC peer bound to {}", local_addr);
 
     let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(DTLSRole::Client)?;
+    setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
     let config = RTCConfigurationBuilder::new()
-        .with_ice_servers(vec![RtcIceServer {
+        .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
@@ -146,8 +145,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     }
     .new_candidate_host()?;
     let local_candidate_init =
-        rtc::peer_connection::transport::ice::candidate::RTCIceCandidate::from(&candidate)
-            .to_json()?;
+        rtc::peer_connection::transport::RTCIceCandidate::from(&candidate).to_json()?;
     rtc_pc.add_local_candidate(local_candidate_init)?;
 
     // Create answer from rtc peer

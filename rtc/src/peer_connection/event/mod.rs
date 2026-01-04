@@ -1,7 +1,3 @@
-use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::event::ice_error_event::RTCPeerConnectionIceErrorEvent;
-use crate::peer_connection::event::ice_event::RTCPeerConnectionIceEvent;
-use crate::peer_connection::event::track_event::RTCTrackEvent;
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
@@ -9,10 +5,18 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use srtp::context::Context;
 use std::net::SocketAddr;
 
-pub mod data_channel_event;
-pub mod ice_error_event;
-pub mod ice_event;
-pub mod track_event;
+pub(crate) mod data_channel_event;
+pub(crate) mod ice_error_event;
+pub(crate) mod ice_event;
+pub(crate) mod track_event;
+
+pub use data_channel_event::RTCDataChannelEvent;
+
+pub use ice_error_event::RTCPeerConnectionIceErrorEvent;
+
+pub use ice_event::RTCPeerConnectionIceEvent;
+
+pub use track_event::{RTCTrackEvent, RTCTrackEventInit};
 
 /// Events that can be emitted by an `RTCPeerConnection`.
 ///
