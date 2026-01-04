@@ -14,7 +14,7 @@ const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
 /// SCTPTransport provides details about the SCTP transport.
 #[derive(Default)]
-pub struct RTCSctpTransport {
+pub(crate) struct RTCSctpTransport {
     pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
     pub(crate) sctp_transport_config: Option<::sctp::TransportConfig>,
     pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,

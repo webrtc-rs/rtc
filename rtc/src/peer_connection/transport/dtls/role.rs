@@ -4,23 +4,110 @@ use sdp::description::session::SessionDescription;
 use sdp::util::ConnectionRole;
 use serde::{Deserialize, Serialize};
 
-/// RTCDtlsRole indicates the role of the DTLS transport.
+/// Indicates the role of the DTLS transport in the handshake.
+///
+/// `RTCDtlsRole` determines whether the peer acts as a DTLS client or server
+/// during the DTLS handshake. This role is typically determined automatically
+/// based on the ICE role, but can be explicitly set in certain scenarios.
+///
+/// # Role Selection
+///
+/// - **Offerer**: Should use [`Auto`](Self::Auto) (actpass in SDP), allowing the answerer to choose
+/// - **Answerer**: Should use [`Client`](Self::Client) (active in SDP) for lower latency
+///
+/// The answerer using `Client` allows the DTLS handshake to start immediately
+/// without waiting for the answer to be received by the offerer.
+///
+/// # Relationship with ICE Role
+///
+/// When `Auto` is used, the DTLS role is derived from the ICE role:
+///
+/// - **ICE Controlled** → DTLS Client
+/// - **ICE Controlling** → DTLS Server
+///
+/// # Examples
+///
+/// ## Standard Offer/Answer
+///
+/// ```
+/// use rtc::peer_connection::transport::RTCDtlsRole;
+///
+/// // Offerer uses Auto (actpass)
+/// let offerer_role = RTCDtlsRole::Auto;
+/// println!("Offerer SDP: a=setup:actpass");
+///
+/// // Answerer uses Client (active) - recommended
+/// let answerer_role = RTCDtlsRole::Client;
+/// println!("Answerer SDP: a=setup:active");
+///
+/// // This allows DTLS handshake to begin in parallel with signaling
+/// ```
+///
+/// ## String Conversion
+///
+/// ```
+/// use rtc::peer_connection::transport::RTCDtlsRole;
+///
+/// let role = RTCDtlsRole::Client;
+/// assert_eq!(role.to_string(), "client");
+///
+/// let role = RTCDtlsRole::Server;
+/// assert_eq!(role.to_string(), "server");
+/// ```
+///
+/// ## Checking Role
+///
+/// ```
+/// use rtc::peer_connection::transport::RTCDtlsRole;
+///
+/// fn will_initiate_handshake(role: RTCDtlsRole) -> bool {
+///     matches!(role, RTCDtlsRole::Client)
+/// }
+///
+/// assert!(will_initiate_handshake(RTCDtlsRole::Client));
+/// assert!(!will_initiate_handshake(RTCDtlsRole::Server));
+/// ```
+///
+/// # Specifications
+///
+/// - [RFC 5763] - DTLS-SRTP Setup Attribute
+/// - [RFC 8122] - Connection-Oriented Media Transport over TLS
+///
+/// [RFC 5763]: https://datatracker.ietf.org/doc/html/rfc5763
+/// [RFC 8122]: https://datatracker.ietf.org/doc/html/rfc8122
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCDtlsRole {
+    /// Role not specified. This should not occur in normal operation.
     #[default]
     Unspecified = 0,
 
-    /// DTLSRoleAuto defines the DTLS role is determined based on
-    /// the resolved ICE role: the ICE controlled role acts as the DTLS
-    /// client and the ICE controlling role acts as the DTLS server.
+    /// DTLS role is determined automatically based on ICE role.
+    ///
+    /// The ICE controlled role acts as the DTLS client, and the ICE controlling
+    /// role acts as the DTLS server. This maps to `setup:actpass` in SDP.
+    ///
+    /// The offerer MUST use `Auto` and be prepared to receive a client_hello
+    /// before receiving the answer.
     #[serde(rename = "auto")]
     Auto = 1,
 
-    /// DTLSRoleClient defines the DTLS client role.
+    /// DTLS client role - initiates the handshake.
+    ///
+    /// The client sends the first DTLS ClientHello message to begin the
+    /// handshake. This maps to `setup:active` in SDP.
+    ///
+    /// The answerer SHOULD use `Client` to allow the answer and DTLS handshake
+    /// to occur in parallel, reducing latency.
     #[serde(rename = "client")]
     Client = 2,
 
-    /// DTLSRoleServer defines the DTLS server role.
+    /// DTLS server role - waits for the handshake to be initiated.
+    ///
+    /// The server waits to receive a DTLS ClientHello message before responding.
+    /// This maps to `setup:passive` in SDP.
+    ///
+    /// Note: Using `Server` as the answerer adds latency since the DTLS
+    /// handshake cannot begin until the answerer receives the offer.
     #[serde(rename = "server")]
     Server = 3,
 }
