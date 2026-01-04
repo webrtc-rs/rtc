@@ -47,7 +47,7 @@ you what to send.
 
 ## Sans-I/O Event Loop Pattern
 
-The sans-I/O architecture uses a simple event loop with eight core methods:
+The sans-I/O architecture uses a simple event loop with six core methods:
 
 ### Core API Methods
 
@@ -55,10 +55,13 @@ The sans-I/O architecture uses a simple event loop with eight core methods:
 2. **`poll_event()`** - Process connection state changes and notifications
 3. **`poll_read()`** - Get incoming application messages (RTP, RTCP, data)
 4. **`poll_timeout()`** - Get next timer deadline for retransmissions/keepalives
-5. **`handle_timeout()`** - Handle timeout event
-6. **`handle_write()`** - Handle application messages (RTP, RTCP, data)
-7. **`handle_event()`** - Handle user events
-8. **`handle_read()`** - Handle incoming network packets
+5. **`handle_read()`** - Feed incoming network packets into the connection
+6. **`handle_timeout()`** - Notify about timer expiration
+
+Additional methods for external control:
+
+* handle_write() - Queue application messages (RTP/RTCP/data) for sending
+* handle_event() - Inject external events into the connection
 
 ### Event Loop Example
 
