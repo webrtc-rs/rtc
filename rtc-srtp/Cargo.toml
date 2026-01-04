@@ -8,6 +8,8 @@ license.workspace = true
 documentation = "https://docs.rs/rtc-srtp"
 homepage.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 openssl = ["dep:openssl"]

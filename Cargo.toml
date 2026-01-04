@@ -29,6 +29,8 @@ edition = "2024"
 license = "MIT/Apache-2.0"
 homepage = "https://webrtc.rs"
 repository = "https://github.com/webrtc-rs/rtc"
+keywords = ["sansio", "networking", "protocols"]
+categories = ["network-programming"]
 
 [workspace.dependencies]
 sansio = "1"

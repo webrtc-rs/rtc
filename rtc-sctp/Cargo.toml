@@ -8,6 +8,8 @@ license.workspace = true
 documentation = "https://docs.rs/rtc-sctp"
 homepage.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
