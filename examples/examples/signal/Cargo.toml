@@ -3,9 +3,9 @@ name = "rtc-signal"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "Examples of WebRTC.rs stack"
+description = "Examples of WebRTC.rs stack's signaling"
 license.workspace = true
-documentation = "https://docs.rs/examples"
+documentation = "https://docs.rs/rtc-signal"
 homepage.workspace = true
 repository.workspace = true
 
