@@ -160,6 +160,7 @@ impl RTCPeerConnection {
         EndpointHandler::new(
             &mut self.pipeline_context.endpoint_handler_context,
             &mut self.rtp_transceivers,
+            &self.configuration.media_engine,
         )
     }
 }

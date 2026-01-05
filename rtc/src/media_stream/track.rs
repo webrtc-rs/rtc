@@ -552,4 +552,13 @@ impl MediaStreamTrack {
     pub(crate) fn set_codec(&mut self, codec: RTCRtpCodec) {
         self.codec = codec;
     }
+
+    /// Sets the SSRC for this track (internal use only).
+    ///
+    /// # Parameters
+    ///
+    /// * `ssrc` - The new RTP SSRC
+    pub(crate) fn set_ssrc(&mut self, ssrc: SSRC) {
+        self.ssrc = ssrc;
+    }
 }

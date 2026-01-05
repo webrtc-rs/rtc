@@ -446,6 +446,8 @@ impl RTCPeerConnection {
             vec![]
         };
 
+        let only_one_rtp_transceiver = self.rtp_transceivers.len() == 1;
+
         for incoming_track in incoming_tracks.into_iter() {
             if let Some(transceiver) = self.rtp_transceivers.iter_mut().find(|transceiver| {
                 transceiver.mid().as_ref() == Some(&incoming_track.mid)
@@ -455,15 +457,30 @@ impl RTCPeerConnection {
             {
                 let mut receive_codings = vec![];
                 if !incoming_track.rids.is_empty() {
-                    //TODO: handle simulcast rid without ssrc in RTCPeerConnection's start_rtp for incoming_track handling #8
+                    // for incoming_track with rids, defer adding track until received the first RTP
+                    // packet with rtp header extension with "urn:ietf:params:rtp-hdrext:sdes:mid" and
+                    // "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", so that endpoint handler can
+                    // map the unknown ssrc to m= line. Here, we should add a track but with 0 ssrc.
+                    // The reason is to provide stream_id and track_id information for later usage
+                    // when received the first RTP packet. So, it is placeholder here.
                     for rid in incoming_track.rids {
+                        if receiver.track(&incoming_track.track_id).is_none() {
+                            receiver.add_track(MediaStreamTrack::new(
+                                incoming_track.stream_id.clone(),
+                                incoming_track.track_id.clone(),
+                                format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                                incoming_track.kind,
+                                Some(rid.clone()),
+                                0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
+                                RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                            ));
+                        }
+
                         receive_codings.push(RTCRtpCodingParameters {
                             rid,
-                            ssrc: incoming_track.ssrc,
-                            rtx: incoming_track
-                                .rtx_ssrc
-                                .map(|rtx_ssrc| RTCRtpRtxParameters { ssrc: rtx_ssrc }),
-                            ..Default::default()
+                            ssrc: None, // Defer receiver's track's ssrc until received the first RTP packet with mid/rid header extension in endpoint handler
+                            rtx: None,
+                            fec: None,
                         });
                     }
                 } else if let Some(ssrc) = incoming_track.ssrc {
@@ -488,6 +505,31 @@ impl RTCPeerConnection {
                         fec: incoming_track
                             .fec_ssrc
                             .map(|fec_ssrc| RTCRtpFecParameters { ssrc: fec_ssrc }),
+                    });
+                } else if only_one_rtp_transceiver {
+                    // TODO: Should we consider the case that Sender can change SSRC during one RTP session? #13
+                    if receiver.tracks().count() != 0 {
+                        return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
+                    }
+
+                    // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
+                    // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
+                    // when received the first RTP packet. So, it is placeholder here.
+                    receiver.add_track(MediaStreamTrack::new(
+                        incoming_track.stream_id,
+                        incoming_track.track_id,
+                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                        incoming_track.kind,
+                        None,
+                        0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
+                        RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                    ));
+
+                    receive_codings.push(RTCRtpCodingParameters {
+                        rid: "".to_string(),
+                        ssrc: None, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
+                        rtx: None,
+                        fec: None,
                     });
                 } else {
                     return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);

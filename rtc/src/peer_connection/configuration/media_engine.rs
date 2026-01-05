@@ -645,12 +645,11 @@ impl MediaEngine {
         typ: RtpCodecKind,
         allowed_direction: Option<RTCRtpTransceiverDirection>,
     ) -> Result<()> {
-        if let Some(direction) = &allowed_direction {
-            if direction == &RTCRtpTransceiverDirection::Unspecified
-                || direction == &RTCRtpTransceiverDirection::Inactive
-            {
-                return Err(Error::ErrRegisterHeaderExtensionInvalidDirection);
-            }
+        if let Some(direction) = &allowed_direction
+            && (direction == &RTCRtpTransceiverDirection::Unspecified
+                || direction == &RTCRtpTransceiverDirection::Inactive)
+        {
+            return Err(Error::ErrRegisterHeaderExtensionInvalidDirection);
         }
 
         let ext = {

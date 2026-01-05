@@ -410,18 +410,31 @@ pub(crate) fn track_details_from_sdp(s: &SessionDescription) -> Vec<TrackDetails
         // we will need to override tracks, and remove ssrcs.
         // This is in particular important for Firefox, as it uses both 'rid', 'simulcast'
         // and 'a=ssrc' lines.
-        let rids = get_rids(media);
-        if !rids.is_empty() && !track_id.is_empty() && !stream_id.is_empty() {
-            let simulcast_track = TrackDetails {
-                mid: mid_value.to_string(),
-                kind: codec_type,
-                stream_id: stream_id.to_owned(),
-                track_id: track_id.to_owned(),
-                rids: rids.iter().map(|r| r.id.clone()).collect(),
-                ..Default::default()
-            };
+        if !track_id.is_empty() && !stream_id.is_empty() {
+            let rids = get_rids(media);
+            if !rids.is_empty() {
+                let simulcast_track = TrackDetails {
+                    mid: mid_value.to_string(),
+                    kind: codec_type,
+                    stream_id: stream_id.to_owned(),
+                    track_id: track_id.to_owned(),
+                    rids: rids.iter().map(|r| r.id.clone()).collect(),
+                    ..Default::default()
+                };
 
-            tracks_in_media_section = vec![simulcast_track];
+                tracks_in_media_section = vec![simulcast_track];
+            } else if tracks_in_media_section.is_empty() {
+                // no rids, no ssrc set
+                let implicit_track = TrackDetails {
+                    mid: mid_value.to_string(),
+                    kind: codec_type,
+                    stream_id: stream_id.to_owned(),
+                    track_id: track_id.to_owned(),
+                    ..Default::default()
+                };
+
+                tracks_in_media_section = vec![implicit_track];
+            }
         }
 
         incoming_tracks.extend(tracks_in_media_section);

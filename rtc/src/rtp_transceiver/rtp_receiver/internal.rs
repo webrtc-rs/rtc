@@ -14,7 +14,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpH
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use shared::error::Result;
 use std::collections::HashMap;
-use std::collections::hash_map::Values;
+use std::collections::hash_map::{Values, ValuesMut};
 use std::time::Duration;
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
@@ -158,6 +158,15 @@ impl RTCRtpReceiverInternal {
         &self.receive_codings
     }
 
+    pub(crate) fn get_coding_parameter_mut_by_rid(
+        &mut self,
+        rid: &str,
+    ) -> Option<&mut RTCRtpCodingParameters> {
+        self.receive_codings
+            .iter_mut()
+            .find(|coding| coding.rid.as_str() == rid)
+    }
+
     pub(crate) fn set_coding_parameters(&mut self, receive_codings: Vec<RTCRtpCodingParameters>) {
         self.receive_codings = receive_codings;
     }
@@ -174,8 +183,18 @@ impl RTCRtpReceiverInternal {
         self.tracks.values()
     }
 
+    pub(crate) fn tracks_mut(&mut self) -> ValuesMut<'_, MediaStreamTrackId, MediaStreamTrack> {
+        self.tracks.values_mut()
+    }
+
     pub(crate) fn add_track(&mut self, track: MediaStreamTrack) {
         self.tracks.insert(track.track_id().to_string(), track);
+    }
+
+    pub(crate) fn track_mut_by_rid(&mut self, rid: &str) -> Option<&mut MediaStreamTrack> {
+        self.tracks
+            .values_mut()
+            .find(|track| track.rid().is_some_and(|t_rid| rid == t_rid))
     }
 
     pub(crate) fn stop(&mut self) -> Result<()> {
