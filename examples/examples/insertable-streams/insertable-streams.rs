@@ -17,8 +17,10 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+};
 use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -194,9 +196,13 @@ async fn run(
         "webrtc-rs-track-id".to_string(),
         "webrtc-rs-track-label".to_string(),
         RtpCodecKind::Video,
-        None, // rid
-        ssrc,
-        video_codec.rtp_codec.clone(),
+        vec![RTCRtpDecodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(ssrc),
+                ..Default::default()
+            },
+            codec: video_codec.rtp_codec.clone(),
+        }],
     );
 
     // Add this newly created track to the PeerConnection
@@ -345,11 +351,16 @@ async fn run(
             }
             res = message_rx.recv() => {
                 match res {
-                    Some((rtp_sender_id, packet)) => {
+                    Some((rtp_sender_id, mut packet)) => {
                         let mut rtp_sender = peer_connection
                             .rtp_sender(rtp_sender_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
+                        packet.header.ssrc = rtp_sender
+                            .track()?
+                            .ssrcs()
+                            .last()
+                            .ok_or(Error::ErrSenderWithNoSSRCs)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
                         rtp_sender.write_rtp(packet)?;
                     }

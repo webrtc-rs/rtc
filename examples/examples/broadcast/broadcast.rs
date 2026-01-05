@@ -19,8 +19,10 @@ use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCI
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -264,18 +266,22 @@ async fn run_broadcaster(
                         );
 
                         if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                            if let Some(track) =
-                                receiver.track(&init.track_id, init.rid.as_ref())?
-                            {
-                                let codec = track.codec().clone();
-                                println!(
-                                    "[Receiver] Received track with codec: {}",
-                                    codec.mime_type
-                                );
-                                // Use watch channel to store codec - late viewers can get it
-                                let _ = codec_tx.send(Some(codec));
-                                rtp_receiver_id2ssrcs.insert(init.receiver_id, track.ssrc());
-                            }
+                            let track = receiver.track()?;
+                            let codec = track
+                                .codecs()
+                                .last()
+                                .ok_or(Error::ErrCodecNotFound)?
+                                .clone();
+                            println!("[Receiver] Received track with codec: {}", codec.mime_type);
+                            // Use watch channel to store codec - late viewers can get it
+                            let _ = codec_tx.send(Some(codec));
+                            rtp_receiver_id2ssrcs.insert(
+                                init.receiver_id,
+                                track
+                                    .ssrcs()
+                                    .last()
+                                    .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?,
+                            );
                         }
                     }
                     RTCTrackEvent::OnClose(_track_id) => {}
@@ -548,9 +554,13 @@ async fn run_viewer(
         format!("webrtc-rs-track-{}", viewer_id),
         format!("webrtc-rs-video-{}", viewer_id),
         RtpCodecKind::Video,
-        None, // rid
-        ssrc,
-        rtp_codec,
+        vec![RTCRtpDecodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(ssrc),
+                ..Default::default()
+            },
+            codec: rtp_codec,
+        }],
     );
 
     let _rtp_sender_id = peer_connection.add_track(video_track)?;
@@ -645,12 +655,17 @@ async fn run_viewer(
             }
             res = broadcast_rx.recv() => {
                 match res {
-                    Ok(packet) => {
+                    Ok(mut packet) => {
                          trace!("[Viewer {}] receive rtp packet from broadcaster", viewer_id);
                         // Get all sender IDs and write packet to each
                         let sender_ids: Vec<RTCRtpSenderId> = peer_connection.get_senders().collect();
                         for sender_id in sender_ids {
                             if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
+                                packet.header.ssrc = sender
+                                    .track()?
+                                    .ssrcs()
+                                    .last()
+                                    .ok_or(Error::ErrSenderWithNoSSRCs)?;
                                 if let Err(err) = sender.write_rtp(packet.clone()) {
                                     if err != Error::ErrClosedPipe {
                                         debug!("[Viewer {}] sender {:?} write error: {}", viewer_id, sender_id, err);

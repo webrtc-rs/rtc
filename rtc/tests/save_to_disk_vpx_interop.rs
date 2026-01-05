@@ -32,6 +32,7 @@ use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiverInit};
 
+use shared::error::Error;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
@@ -353,9 +354,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
                         let rtp_receiver = rtc_pc
                             .rtp_receiver(receiver_id)
                             .ok_or_else(|| anyhow::anyhow!("RTP receiver not found"))?;
-                        let track = rtp_receiver
-                            .track(&track_id, None)?
-                            .ok_or_else(|| anyhow::anyhow!("Track not found"))?;
+                        let track = rtp_receiver.track()?;
 
                         // Record the track kind for this receiver on first packet
                         let mut kind_map = receiver_id_to_kind.lock().await;
@@ -363,7 +362,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
                             let kind = track.kind();
                             kind_map.insert(receiver_id, kind);
 
-                            let codec = track.codec();
+                            let codec = track.codecs().last().ok_or(Error::ErrCodecNotFound)?;
                             let mime_type = codec.mime_type.to_lowercase();
 
                             if mime_type == MIME_TYPE_OPUS.to_lowercase() {

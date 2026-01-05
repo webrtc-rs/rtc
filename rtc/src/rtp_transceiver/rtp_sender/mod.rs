@@ -86,15 +86,21 @@
 //! # use rtc::peer_connection::configuration::RTCConfiguration;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # use rtp::packet::Packet;
+//! # use shared::error::Error;
 //! # fn example(
 //! #     sender_id: RTCRtpSenderId,
-//! #     rtp_packet: Packet
+//! #     mut rtp_packet: Packet
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Write RTP packet directly
 //!     // The sender will set the correct payload type and SSRC
+//!     rtp_packet.header.ssrc = sender
+//!         .track()?
+//!         .ssrcs()
+//!         .last()
+//!         .ok_or(Error::ErrSenderWithNoSSRCs)?;
 //!     sender.write_rtp(rtp_packet)?;
 //! }
 //! # Ok(())
@@ -172,6 +178,7 @@ pub(crate) mod rtp_capabilities;
 pub(crate) mod rtp_codec;
 pub(crate) mod rtp_codec_parameters;
 pub(crate) mod rtp_coding_parameters;
+mod rtp_decoding_parameters;
 pub(crate) mod rtp_encoding_parameters;
 pub(crate) mod rtp_header_extension_capability;
 pub(crate) mod rtp_header_extension_parameters;
@@ -194,6 +201,7 @@ pub use rtp_capabilities::RTCRtpCapabilities;
 pub use rtp_codec::{RTCRtpCodec, RtpCodecKind};
 pub use rtp_codec_parameters::RTCRtpCodecParameters;
 pub use rtp_coding_parameters::{RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters};
+pub use rtp_decoding_parameters::RTCRtpDecodingParameters;
 pub use rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 pub use rtp_header_extension_parameters::RTCRtpHeaderExtensionParameters;
@@ -408,9 +416,17 @@ impl RTCRtpSender<'_> {
                 &mut self.peer_connection.configuration.media_engine,
             );
 
-            let (ssrc, parameters) = (sender.track().ssrc(), sender.get_parameters(media_engine));
+            if !sender
+                .track()
+                .ssrcs()
+                .any(|ssrc| ssrc == packet.header.ssrc)
+            {
+                return Err(Error::ErrSenderWithNoSSRCs);
+            }
 
+            let parameters = sender.get_parameters(media_engine);
             let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
+
             //From SSRC, find the encoding
             let encoding = encodings
                 .iter()
@@ -418,7 +434,7 @@ impl RTCRtpSender<'_> {
                     encoding
                         .rtp_coding_parameters
                         .ssrc
-                        .is_some_and(|s| s == ssrc)
+                        .is_some_and(|s| s == packet.header.ssrc)
                 })
                 .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
             // From the encoding, fuzzy_search the codec which contains payload_type
@@ -427,9 +443,8 @@ impl RTCRtpSender<'_> {
                 return Err(Error::ErrRTPTransceiverCodecUnsupported);
             }
 
-            let track_id = "".to_string(); //TODO:
+            let track_id = sender.track().track_id().to_string();
             packet.header.payload_type = codec.payload_type;
-            packet.header.ssrc = ssrc;
             self.peer_connection
                 .handle_write(RTCMessage::RtpPacket(track_id, packet))
         } else {

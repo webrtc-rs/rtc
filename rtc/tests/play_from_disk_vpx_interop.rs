@@ -34,9 +34,12 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+};
 use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
+use rtc::shared::error::Error;
 
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -242,9 +245,13 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
             format!("webrtc-rs-track-id-{}", kind),
             format!("webrtc-rs-track-label-{}", kind),
             kind,
-            None,
-            *ssrc,
-            codec.rtp_codec.clone(),
+            vec![RTCRtpDecodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(*ssrc),
+                    ..Default::default()
+                },
+                codec: codec.rtp_codec.clone(),
+            }],
         );
 
         let rtp_sender_id = rtc_pc.add_track(output_track)?;
@@ -397,11 +404,16 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
         }
 
         // Handle media messages from streaming tasks
-        while let Ok((rtp_sender_id, packet)) = message_rx.try_recv() {
+        while let Ok((rtp_sender_id, mut packet)) = message_rx.try_recv() {
             let mut rtp_sender = rtc_pc
                 .rtp_sender(rtp_sender_id)
                 .ok_or_else(|| anyhow::anyhow!("RTP sender not found"))?;
 
+            packet.header.ssrc = rtp_sender
+                .track()?
+                .ssrcs()
+                .last()
+                .ok_or(Error::ErrSenderWithNoSSRCs)?;
             log::trace!("sending rtp packet with ssrc={}", packet.header.ssrc);
             rtp_sender.write_rtp(packet)?;
         }

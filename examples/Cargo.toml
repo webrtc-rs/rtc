@@ -105,10 +105,10 @@ name = "rtp-to-webrtc"
 path = "examples/rtp-to-webrtc/rtp-to-webrtc.rs"
 bench = false
 
-#[[example]]
-#name = "simulcast"
-#path = "examples/simulcast/simulcast.rs"
-#bench = false
+[[example]]
+name = "simulcast"
+path = "examples/simulcast/simulcast.rs"
+bench = false
 #
 #[[example]]
 #name = "swap-tracks"

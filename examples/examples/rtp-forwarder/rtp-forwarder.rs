@@ -241,14 +241,23 @@ async fn run_peer_connection(
                     );
 
                     if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                        if let Some(track) = receiver.track(&init.track_id, init.rid.as_ref())? {
-                            println!(
-                                "Track kind: {}, codec: {}",
-                                track.kind(),
-                                track.codec().mime_type
-                            );
-                            ssrc2kind.insert(track.ssrc(), track.kind());
-                        }
+                        let track = receiver.track()?;
+                        println!(
+                            "Track kind: {}, codec: {}",
+                            track.kind(),
+                            track
+                                .codecs()
+                                .last()
+                                .ok_or(Error::ErrCodecNotFound)?
+                                .mime_type
+                        );
+                        ssrc2kind.insert(
+                            track
+                                .ssrcs()
+                                .last()
+                                .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?,
+                            track.kind(),
+                        );
                     }
                 }
                 RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnClose(_track_id)) => {}

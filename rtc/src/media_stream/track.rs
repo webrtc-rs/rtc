@@ -14,6 +14,7 @@
 //! ```
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+//! use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
 //! use rtc::peer_connection::configuration::media_engine::MIME_TYPE_VP8;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,9 +31,13 @@
 //!     "track-456".to_string(),
 //!     "Front Camera".to_string(),
 //!     RtpCodecKind::Video,
-//!     None, // rid (for simulcast)
-//!     789012, // SSRC
-//!     codec,
+//!     vec![RTCRtpDecodingParameters {
+//!         rtp_coding_parameters: RTCRtpCodingParameters {
+//!             ssrc: Some(789012),
+//!             ..Default::default()
+//!         },
+//!         codec,
+//!     }],
 //! );
 //!
 //! assert_eq!(video_track.kind(), RtpCodecKind::Video);
@@ -71,7 +76,9 @@ use crate::media_stream::track_capabilities::MediaTrackCapabilities;
 use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpDecodingParameters, RtpCodecKind,
+};
 use crate::rtp_transceiver::{RtpStreamId, SSRC};
 
 /// Unique identifier for a media stream track.
@@ -98,6 +105,7 @@ pub type MediaStreamTrackId = String;
 /// ```
 /// use rtc::media_stream::MediaStreamTrack;
 /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+/// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let track = MediaStreamTrack::new(
@@ -105,9 +113,13 @@ pub type MediaStreamTrackId = String;
 ///     "track-id".to_string(),
 ///     "Microphone".to_string(),
 ///     RtpCodecKind::Audio,
-///     None,
-///     12345,
-///     RTCRtpCodec::default(),
+///     vec![RTCRtpDecodingParameters {
+///         rtp_coding_parameters: RTCRtpCodingParameters {
+///             ssrc: Some(12345),
+///             ..Default::default()
+///         },
+///         codec: RTCRtpCodec::default(),
+///     }],
 /// );
 ///
 /// assert_eq!(track.kind(), RtpCodecKind::Audio);
@@ -123,9 +135,7 @@ pub struct MediaStreamTrack {
     track_id: MediaStreamTrackId,
     label: String,
     kind: RtpCodecKind,
-    rid: Option<RtpStreamId>,
-    ssrc: SSRC,
-    codec: RTCRtpCodec,
+    codings: Vec<RTCRtpDecodingParameters>,
 
     muted: bool,
     enabled: bool,
@@ -163,6 +173,7 @@ impl MediaStreamTrack {
     /// ```
     /// use rtc::media_stream::MediaStreamTrack;
     /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
     /// use rtc::peer_connection::configuration::media_engine::MIME_TYPE_OPUS;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -179,9 +190,13 @@ impl MediaStreamTrack {
     ///     "audio-1".to_string(),
     ///     "Built-in Microphone".to_string(),
     ///     RtpCodecKind::Audio,
-    ///     None,
-    ///     123456,
-    ///     codec,
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             ssrc: Some(123456),
+    ///             ..Default::default()
+    ///         },
+    ///         codec,
+    ///     }],
     /// );
     ///
     /// assert_eq!(audio_track.track_id(), "audio-1");
@@ -194,18 +209,14 @@ impl MediaStreamTrack {
         track_id: MediaStreamTrackId,
         label: String,
         kind: RtpCodecKind,
-        rid: Option<RtpStreamId>,
-        ssrc: SSRC,
-        codec: RTCRtpCodec,
+        codings: Vec<RTCRtpDecodingParameters>,
     ) -> Self {
         Self {
             stream_id,
             track_id,
             label,
-            rid,
-            ssrc,
             kind,
-            codec,
+            codings,
 
             muted: false,
             enabled: true,
@@ -298,8 +309,17 @@ impl MediaStreamTrack {
     /// # Specification
     ///
     /// See [RFC 8851 - RTP Payload Format Restrictions](https://www.rfc-editor.org/rfc/rfc8851.html).
-    pub fn rid(&self) -> Option<&RtpStreamId> {
-        self.rid.as_ref()
+    pub fn rid(&self, ssrc: SSRC) -> Option<&RtpStreamId> {
+        self.codings
+            .iter()
+            .find(|coding| {
+                !coding.rtp_coding_parameters.rid.is_empty()
+                    && coding
+                        .rtp_coding_parameters
+                        .ssrc
+                        .is_some_and(|t_ssrc| t_ssrc == ssrc)
+            })
+            .map(|coding| &coding.rtp_coding_parameters.rid)
     }
 
     /// Returns the Synchronization Source (SSRC) identifier for this track.
@@ -310,16 +330,24 @@ impl MediaStreamTrack {
     /// # Specification
     ///
     /// See [RFC 3550 - RTP: A Transport Protocol for Real-Time Applications](https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1).
-    pub fn ssrc(&self) -> SSRC {
-        self.ssrc
+    pub fn ssrcs(&self) -> impl Iterator<Item = SSRC> {
+        self.codings
+            .iter()
+            .filter(|coding| coding.rtp_coding_parameters.ssrc.is_some())
+            .map(|coding| coding.rtp_coding_parameters.ssrc.unwrap_or_default())
     }
 
     /// Returns the RTP codec configuration for this track.
     ///
     /// The codec defines the media encoding format, clock rate, channels, and
     /// other codec-specific parameters.
-    pub fn codec(&self) -> &RTCRtpCodec {
-        &self.codec
+    pub fn codecs(&self) -> impl Iterator<Item = &RTCRtpCodec> {
+        self.codings
+            .iter()
+            .filter(|coding| {
+                !coding.codec.mime_type.is_empty() && coding.rtp_coding_parameters.ssrc.is_some()
+            })
+            .map(|coding| &coding.codec)
     }
 
     /// Returns whether this track is enabled.
@@ -544,21 +572,83 @@ impl MediaStreamTrack {
         }
     }
 
-    /// Sets the codec for this track (internal use only).
+    /// Sets the codec for this track by ssrc (internal use only).
     ///
     /// # Parameters
     ///
     /// * `codec` - The new RTP codec configuration
-    pub(crate) fn set_codec(&mut self, codec: RTCRtpCodec) {
-        self.codec = codec;
-    }
-
-    /// Sets the SSRC for this track (internal use only).
-    ///
-    /// # Parameters
     ///
     /// * `ssrc` - The new RTP SSRC
-    pub(crate) fn set_ssrc(&mut self, ssrc: SSRC) {
-        self.ssrc = ssrc;
+    ///
+    /// # Return
+    ///
+    /// true: insert new entry if not found
+    ///
+    /// false: update entry when found
+    pub(crate) fn set_codec_by_ssrc(&mut self, codec: RTCRtpCodec, ssrc: SSRC) -> bool {
+        if let Some(coding) = self.codings.iter_mut().find(|coding| {
+            coding
+                .rtp_coding_parameters
+                .ssrc
+                .is_some_and(|t_ssrc| t_ssrc == ssrc)
+        }) {
+            coding.codec = codec;
+            false
+        } else {
+            self.codings.push(RTCRtpDecodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: "".to_string(),
+                    ssrc: Some(ssrc),
+                    rtx: None,
+                    fec: None,
+                },
+                codec,
+            });
+            true
+        }
+    }
+
+    pub(crate) fn set_codec_ssrc_by_rid(
+        &mut self,
+        codec: RTCRtpCodec,
+        ssrc: SSRC,
+        rid: &RtpStreamId,
+    ) -> bool {
+        if let Some(coding) = self
+            .codings
+            .iter_mut()
+            .find(|coding| &coding.rtp_coding_parameters.rid == rid)
+        {
+            coding.codec = codec;
+            coding.rtp_coding_parameters.ssrc = Some(ssrc);
+            true
+        } else {
+            self.codings.push(RTCRtpDecodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: rid.to_string(),
+                    ssrc: Some(ssrc),
+                    rtx: None,
+                    fec: None,
+                },
+                codec,
+            });
+            false
+        }
+    }
+
+    pub(crate) fn get_codec_by_ssrc(&self, ssrc: SSRC) -> Option<&RTCRtpCodec> {
+        self.codings
+            .iter()
+            .find(|coding| {
+                coding
+                    .rtp_coding_parameters
+                    .ssrc
+                    .is_some_and(|t_ssrc| t_ssrc == ssrc)
+            })
+            .map(|coding| &coding.codec)
+    }
+
+    pub(crate) fn codings(&self) -> &[RTCRtpDecodingParameters] {
+        &self.codings
     }
 }

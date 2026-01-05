@@ -8,7 +8,6 @@ use crate::peer_connection::sdp::{
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
@@ -463,33 +462,43 @@ impl RTCPeerConnection {
                     // map the unknown ssrc to m= line. Here, we should add a track but with 0 ssrc.
                     // The reason is to provide stream_id and track_id information for later usage
                     // when received the first RTP packet. So, it is placeholder here.
+                    let mut codings = vec![];
                     for rid in incoming_track.rids {
-                        receiver.add_track(MediaStreamTrack::new(
-                            incoming_track.stream_id.clone(),
-                            incoming_track.track_id.clone(),
-                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                            incoming_track.kind,
-                            Some(rid.clone()),
-                            0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
-                            RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                        ));
-
-                        receive_codings.push(RTCRtpCodingParameters {
+                        let rtp_coding_parameters = RTCRtpCodingParameters {
                             rid,
                             ssrc: None, // Defer receiver's track's ssrc until received the first RTP packet with mid/rid header extension in endpoint handler
                             rtx: None,
                             fec: None,
-                        });
+                        };
+                        receive_codings.push(rtp_coding_parameters.clone());
+                        codings.push(RTCRtpDecodingParameters {
+                            rtp_coding_parameters,
+                            codec: Default::default(),
+                        })
                     }
+
+                    receiver.set_track(MediaStreamTrack::new(
+                        incoming_track.stream_id.clone(),
+                        incoming_track.track_id.clone(),
+                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                        incoming_track.kind,
+                        codings,
+                    ));
                 } else if let Some(ssrc) = incoming_track.ssrc {
-                    receiver.add_track(MediaStreamTrack::new(
+                    receiver.set_track(MediaStreamTrack::new(
                         incoming_track.stream_id,
                         incoming_track.track_id,
                         format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
                         incoming_track.kind,
-                        None,
-                        ssrc,
-                        RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                        vec![RTCRtpDecodingParameters {
+                            rtp_coding_parameters: RTCRtpCodingParameters {
+                                rid: "".to_string(),
+                                ssrc: Some(ssrc),
+                                rtx: None,
+                                fec: None,
+                            },
+                            codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                        }],
                     ));
 
                     receive_codings.push(RTCRtpCodingParameters {
@@ -503,30 +512,16 @@ impl RTCPeerConnection {
                             .map(|fec_ssrc| RTCRtpFecParameters { ssrc: fec_ssrc }),
                     });
                 } else if only_one_rtp_transceiver {
-                    // TODO: Should we consider the case that Sender can change SSRC during one RTP session? #13
-                    if !receiver.tracks().is_empty() {
-                        return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
-                    }
-
                     // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
                     // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
                     // when received the first RTP packet. So, it is placeholder here.
-                    receiver.add_track(MediaStreamTrack::new(
+                    receiver.set_track(MediaStreamTrack::new(
                         incoming_track.stream_id,
                         incoming_track.track_id,
                         format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
                         incoming_track.kind,
-                        None,
-                        0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
-                        RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                        vec![], // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
                     ));
-
-                    receive_codings.push(RTCRtpCodingParameters {
-                        rid: "".to_string(),
-                        ssrc: None, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
-                        rtx: None,
-                        fec: None,
-                    });
                 } else {
                     return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                 }
@@ -792,28 +787,32 @@ impl RTCPeerConnection {
                 .is_fec_enabled(track.kind(), RTCRtpTransceiverDirection::Sendonly),
         );
 
-        vec![RTCRtpEncodingParameters {
-            rtp_coding_parameters: RTCRtpCodingParameters {
-                rid: track.rid().unwrap_or(&"".to_string()).into(),
-                ssrc: Some(track.ssrc()),
-                rtx: if is_rtx_enabled {
-                    Some(RTCRtpRtxParameters {
-                        ssrc: rand::random::<u32>(),
-                    })
-                } else {
-                    None
+        track
+            .codings()
+            .iter()
+            .map(|coding| RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: coding.rtp_coding_parameters.rid.to_owned(),
+                    ssrc: coding.rtp_coding_parameters.ssrc.to_owned(),
+                    rtx: if is_rtx_enabled {
+                        Some(RTCRtpRtxParameters {
+                            ssrc: rand::random::<u32>(),
+                        })
+                    } else {
+                        None
+                    },
+                    fec: if is_fec_enabled {
+                        Some(RTCRtpFecParameters {
+                            ssrc: rand::random::<u32>(),
+                        })
+                    } else {
+                        None
+                    },
                 },
-                fec: if is_fec_enabled {
-                    Some(RTCRtpFecParameters {
-                        ssrc: rand::random::<u32>(),
-                    })
-                } else {
-                    None
-                },
-            },
-            codec: track.codec().clone(),
-            ..Default::default()
-        }]
+                codec: coding.codec.clone(),
+                ..Default::default()
+            })
+            .collect()
     }
 
     pub(super) fn set_rtp_transceiver_current_direction(

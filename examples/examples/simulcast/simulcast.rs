@@ -18,9 +18,11 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpHeaderExtensionCapability, RtpCodecKind,
+};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -190,9 +192,14 @@ async fn run(
             format!("video_{rid}"),
             format!("video_{rid}"),
             RtpCodecKind::Video,
-            Some(rid.to_owned()),
-            rand::random::<u32>(),
-            video_codec.rtp_codec.clone(),
+            vec![RTCRtpDecodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: rid.to_string(),
+                    ssrc: Some(rand::random::<u32>()),
+                    ..Default::default()
+                },
+                codec: video_codec.rtp_codec.clone(),
+            }],
         );
 
         // Add this newly created track to the PeerConnection
@@ -252,7 +259,6 @@ async fn run(
     // Track incoming simulcast layers
     let mut track_id2_receiver_id = HashMap::new();
     let mut receiver_id2ssrcs = HashMap::new();
-    let mut rid2sender_id = HashMap::new();
     let mut pli_last_sent = Instant::now();
 
     let mut buf = vec![0; 2000];
@@ -297,20 +303,8 @@ async fn run(
                     RTCTrackEvent::OnOpen(init) => {
                         track_id2_receiver_id.insert(init.track_id.clone(), init.receiver_id);
 
-                        // Get the track to access its rid
-                        if let Some(rtp_receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                            if let Ok(Some(track)) =
-                                rtp_receiver.track(&init.track_id, init.rid.as_ref())
-                            {
-                                // Map rid to sender_id for forwarding
-                                if let Some(rid) = init.rid.as_ref() {
-                                    println!("Track has started with rid: {}", rid);
-                                    if let Some(&sender_id) = output_track_sender_ids.get(rid) {
-                                        rid2sender_id.insert(rid.to_owned(), sender_id);
-                                        println!("Mapped rid {} to sender_id {:?}", rid, sender_id);
-                                    }
-                                }
-                            }
+                        if let Some(rid) = init.rid.as_ref() {
+                            println!("Track Open with rid: {}", rid);
                         }
                     }
                     RTCTrackEvent::OnClose(track_id) => {
@@ -326,37 +320,44 @@ async fn run(
         // Poll read - receive application messages
         while let Some(message) = peer_connection.poll_read() {
             match message {
-                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     // Get the receiver for this track
                     let receiver_id = track_id2_receiver_id
                         .get(&track_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?
                         .clone();
 
-                    let (media_ssrc, rid) = {
-                        let rtp_receiver = peer_connection
-                            .rtp_receiver(receiver_id)
-                            .ok_or(Error::ErrRTPReceiverNotExisted)?;
+                    let rtp_receiver = peer_connection
+                        .rtp_receiver(receiver_id)
+                        .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
-                        let track = rtp_receiver
-                            .track(&track_id)?
-                            .ok_or(Error::ErrTrackNotExisted)?;
+                    let rid = rtp_receiver
+                        .track()?
+                        .rid(rtp_packet.header.ssrc)
+                        .ok_or(Error::ErrRTPReceiverForRIDTrackStreamNotFound)?
+                        .to_owned();
 
-                        (track.ssrc(), track.rid().unwrap_or("").to_owned())
-                    };
+                    receiver_id2ssrcs.insert(receiver_id, rtp_packet.header.ssrc);
 
-                    receiver_id2ssrcs.insert(receiver_id, media_ssrc);
-
-                    // Forward to corresponding output track
-                    if let Some(&sender_id) = rid2sender_id.get(rid.as_str()) {
+                    if let Some(&sender_id) = output_track_sender_ids.get(&rid) {
+                        // Forward to corresponding output track
                         let mut rtp_sender = peer_connection
                             .rtp_sender(sender_id)
                             .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                        debug!("forwarding rtp packet for rid={}, ssrc={}", rid, media_ssrc);
+                        debug!(
+                            "forwarding rtp packet for rid={}, ssrc={}",
+                            rid, rtp_packet.header.ssrc
+                        );
+
+                        rtp_packet.header.ssrc = rtp_sender
+                            .track()?
+                            .ssrcs()
+                            .last()
+                            .ok_or(Error::ErrSenderWithNoSSRCs)?;
                         rtp_sender.write_rtp(rtp_packet)?;
                     } else {
-                        debug!("no sender found for rid={}", rid);
+                        debug!("output_track not found for rid = {rid}");
                     }
                 }
                 RTCMessage::RtcpPacket(_, _) => {

@@ -289,10 +289,12 @@ use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, RtpCodecKind, encoding_parameters_fuzzy_search,
+};
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodingParameters, RTCRtpDecodingParameters, RTCRtpSender,
 };
 use crate::rtp_transceiver::{
     RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
@@ -1723,17 +1725,19 @@ impl RTCPeerConnection {
                         math_rand_alpha(16), // MediaStreamTrackId
                         math_rand_alpha(16), // Label
                         kind,
-                        if encoding.rtp_coding_parameters.rid.is_empty() {
-                            None
-                        } else {
-                            Some(encoding.rtp_coding_parameters.rid)
-                        },
-                        if let Some(ssrc) = encoding.rtp_coding_parameters.ssrc {
-                            ssrc
-                        } else {
-                            rand::random::<u32>()
-                        },
-                        encoding.codec,
+                        vec![RTCRtpDecodingParameters {
+                            rtp_coding_parameters: RTCRtpCodingParameters {
+                                rid: encoding.rtp_coding_parameters.rid,
+                                ssrc: if let Some(ssrc) = encoding.rtp_coding_parameters.ssrc {
+                                    Some(ssrc)
+                                } else {
+                                    Some(rand::random::<u32>())
+                                },
+                                rtx: None,
+                                fec: None,
+                            },
+                            codec: encoding.codec,
+                        }],
                     );
                     self.new_transceiver_from_track(
                         track,

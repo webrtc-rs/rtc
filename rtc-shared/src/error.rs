@@ -1350,6 +1350,11 @@ pub enum Error {
     #[error("unable to populate media section, RTPSender created with no codecs")]
     ErrSenderWithNoCodecs,
 
+    /// ErrSenderWithNoSSRCs indicates that a RTPSender was created without any SSRRs. To send media the Sender needs at
+    /// least one configured ssrc.
+    #[error("unable to populate media section, RTPSender created with no ssrcs")]
+    ErrSenderWithNoSSRCs,
+
     /// ErrRTPSenderNewTrackHasIncorrectKind indicates that the new track is of a different kind than the previous/original
     #[error("new track must be of the same kind as previous")]
     ErrRTPSenderNewTrackHasIncorrectKind,

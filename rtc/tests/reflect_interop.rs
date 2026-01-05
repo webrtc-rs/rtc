@@ -24,8 +24,10 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+};
 use rtc::shared::error::Error;
 
 use rtc::peer_connection::event::RTCTrackEvent;
@@ -180,9 +182,13 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
         format!("webrtc-rs-track-id-{}", RtpCodecKind::Video),
         format!("webrtc-rs-track-label-{}", RtpCodecKind::Video),
         RtpCodecKind::Video,
-        None,
-        rand::random::<u32>(),
-        video_codec.rtp_codec.clone(),
+        vec![RTCRtpDecodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(rand::random::<u32>()),
+                ..Default::default()
+            },
+            codec: video_codec.rtp_codec.clone(),
+        }],
     );
 
     let rtp_sender_id = rtc_pc.add_track(output_track)?;
@@ -278,7 +284,7 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
 
         while let Some(message) = rtc_pc.poll_read() {
             match message {
-                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     let receiver_id = track_id2_receiver_id
                         .get(&track_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?
@@ -286,10 +292,11 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                     let rtp_receiver = rtc_pc
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                    let track = rtp_receiver
-                        .track(&track_id, None)?
-                        .ok_or(Error::ErrTrackNotExisted)?;
-                    let media_ssrc = track.ssrc();
+                    let track = rtp_receiver.track()?;
+                    let media_ssrc = track
+                        .ssrcs()
+                        .last()
+                        .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?;
                     rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
 
                     let rtp_sender_id = rtp_sender_ids
@@ -300,6 +307,11 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                         .rtp_sender(*rtp_sender_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
+                    rtp_packet.header.ssrc = rtp_sender
+                        .track()?
+                        .ssrcs()
+                        .last()
+                        .ok_or(Error::ErrSenderWithNoSSRCs)?;
                     log::debug!(
                         "RTC reflecting rtp packet (seq: {}, ssrc: {})",
                         rtp_packet.header.sequence_number,

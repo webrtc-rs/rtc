@@ -14,8 +14,11 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
-use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpDecodingParameters, RtpCodecKind,
+};
 use rtc::sansio::Protocol;
+use rtc::shared::error::Error;
 use rtc::shared::marshal::Unmarshal;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use signal;
@@ -135,15 +138,19 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
         format!("webrtc-rs-track-id-{}", rand::random::<u32>()),
         format!("webrtc-rs-track-label-{}", rand::random::<u32>()),
         RtpCodecKind::Video,
-        None, // rid
-        video_ssrc,
-        RTCRtpCodec {
-            mime_type: MIME_TYPE_VP8.to_owned(),
-            clock_rate: 90000,
-            channels: 0,
-            sdp_fmtp_line: "".to_owned(),
-            rtcp_feedback: vec![],
-        },
+        vec![RTCRtpDecodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(video_ssrc),
+                ..Default::default()
+            },
+            codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "".to_owned(),
+                rtcp_feedback: vec![],
+            },
+        }],
     );
 
     let sender_id = peer_connection.add_track(video_track)?;
@@ -292,10 +299,15 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
                     Ok((n, _)) => {
                         // Parse the RTP packet
                         let mut buf = BytesMut::from(&inbound_rtp_buffer[..n]);
-                        if let Ok(rtp_packet) = rtp::packet::Packet::unmarshal(&mut buf) {
+                        if let Ok(mut rtp_packet) = rtp::packet::Packet::unmarshal(&mut buf) {
                             trace!("Received RTP packet from UDP, {} bytes", n);
                             // Write the RTP packet to the sender
                             if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
+                                rtp_packet.header.ssrc = sender
+                                    .track()?
+                                    .ssrcs()
+                                    .last()
+                                    .ok_or(Error::ErrSenderWithNoSSRCs)?;
                                 if let Err(err) = sender.write_rtp(rtp_packet) {
                                     error!("Failed to write RTP packet: {}", err);
                                 }

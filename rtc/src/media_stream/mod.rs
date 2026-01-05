@@ -25,6 +25,7 @@
 //! use rtc::media_stream::{MediaStream, MediaStreamId};
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+//! use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create audio track
@@ -33,9 +34,13 @@
 //!     "audio-track-id".to_string(),
 //!     "Microphone".to_string(),
 //!     RtpCodecKind::Audio,
-//!     None,
-//!     12345, // SSRC
-//!     RTCRtpCodec::default(),
+//!     vec![RTCRtpDecodingParameters {
+//!         rtp_coding_parameters: RTCRtpCodingParameters {
+//!             ssrc: Some(12345),
+//!             ..Default::default()
+//!         },
+//!         codec: RTCRtpCodec::default(),
+//!     }],
 //! );
 //!
 //! // Create video track
@@ -44,9 +49,13 @@
 //!     "video-track-id".to_string(),
 //!     "Camera".to_string(),
 //!     RtpCodecKind::Video,
-//!     None,
-//!     67890, // SSRC
-//!     RTCRtpCodec::default(),
+//!     vec![RTCRtpDecodingParameters {
+//!         rtp_coding_parameters: RTCRtpCodingParameters {
+//!             ssrc: Some(67890),
+//!             ..Default::default()
+//!         },
+//!         codec: RTCRtpCodec::default(),
+//!     }],
 //! );
 //!
 //! // Create stream with both tracks
@@ -86,6 +95,7 @@
 //! # use rtc::media_stream::{MediaStream, MediaStreamId};
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+//! # use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut stream = MediaStream::new("stream-id".to_string(), vec![]);
 //!
@@ -95,9 +105,13 @@
 //!     "track-id".to_string(),
 //!     "My Track".to_string(),
 //!     RtpCodecKind::Audio,
-//!     None,
-//!     12345,
-//!     RTCRtpCodec::default(),
+//!     vec![RTCRtpDecodingParameters {
+//!         rtp_coding_parameters: RTCRtpCodingParameters {
+//!             ssrc: Some(12345),
+//!             ..Default::default()
+//!         },
+//!         codec: RTCRtpCodec::default(),
+//!     }],
 //! );
 //! stream.add_track(track);
 //!
@@ -159,6 +173,7 @@ pub type MediaStreamId = String;
 /// use rtc::media_stream::{MediaStream, MediaStreamId};
 /// use rtc::media_stream::MediaStreamTrack;
 /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+/// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let track = MediaStreamTrack::new(
@@ -166,9 +181,13 @@ pub type MediaStreamId = String;
 ///     "track-id".to_string(),
 ///     "My Track".to_string(),
 ///     RtpCodecKind::Audio,
-///     None,
-///     12345,
-///     RTCRtpCodec::default(),
+///     vec![RTCRtpDecodingParameters {
+///         rtp_coding_parameters: RTCRtpCodingParameters {
+///             ssrc: Some(12345),
+///             ..Default::default()
+///         },
+///         codec: RTCRtpCodec::default(),
+///     }],
 /// );
 ///
 /// let stream = MediaStream::new("my-stream".to_string(), vec![track]);
@@ -201,6 +220,7 @@ impl MediaStream {
     /// use rtc::media_stream::{MediaStream, MediaStreamId};
     /// use rtc::media_stream::MediaStreamTrack;
     /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let track = MediaStreamTrack::new(
@@ -208,9 +228,13 @@ impl MediaStream {
     ///     "track-1".to_string(),
     ///     "Microphone".to_string(),
     ///     RtpCodecKind::Audio,
-    ///     None,
-    ///     12345,
-    ///     RTCRtpCodec::default(),
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             ssrc: Some(12345),
+    ///             ..Default::default()
+    ///         },
+    ///         codec: RTCRtpCodec::default(),
+    ///     }],
     /// );
     ///
     /// let stream = MediaStream::new("stream-1".to_string(), vec![track]);
@@ -422,6 +446,7 @@ impl MediaStream {
     /// # use rtc::media_stream::{MediaStream, MediaStreamId};
     /// # use rtc::media_stream::MediaStreamTrack;
     /// # use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// # use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut stream = MediaStream::new("stream-id".to_string(), vec![]);
     ///
@@ -430,9 +455,13 @@ impl MediaStream {
     ///     "track-id".to_string(),
     ///     "Microphone".to_string(),
     ///     RtpCodecKind::Audio,
-    ///     None,
-    ///     12345,
-    ///     RTCRtpCodec::default(),
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             ssrc: Some(12345),
+    ///             ..Default::default()
+    ///         },
+    ///         codec: RTCRtpCodec::default(),
+    ///     }],
     /// );
     ///
     /// stream.add_track(track);
@@ -465,11 +494,17 @@ impl MediaStream {
     /// # use rtc::media_stream::{MediaStream, MediaStreamId};
     /// # use rtc::media_stream::MediaStreamTrack;
     /// # use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// # use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let mut stream = MediaStream::new("stream-id".to_string(), vec![]);
     /// # let track = MediaStreamTrack::new(
     /// #     "stream-id".to_string(), "track-id".to_string(), "Microphone".to_string(),
-    /// #     RtpCodecKind::Audio, None, 12345, RTCRtpCodec::default(),
+    /// #     RtpCodecKind::Audio, vec![RTCRtpDecodingParameters {
+    /// #         rtp_coding_parameters: RTCRtpCodingParameters {
+    /// #             ssrc: Some(12345), ..Default::default()
+    /// #         },
+    /// #         codec: RTCRtpCodec::default(),
+    /// #     }],
     /// # );
     /// # stream.add_track(track);
     /// let removed_track = stream.remove_track(&"track-id".to_string());

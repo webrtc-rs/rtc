@@ -250,7 +250,7 @@ impl RTCRtpTransceiver {
                 None
             },
             receiver: if init.direction.has_recv() {
-                Some(RTCRtpReceiverInternal::new(kind, vec![], vec![]))
+                Some(RTCRtpReceiverInternal::new(kind, vec![]))
             } else {
                 None
             },

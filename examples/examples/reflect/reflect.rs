@@ -20,8 +20,10 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -223,9 +225,13 @@ async fn run(
             format!("webrtc-rs-track-id-{}", kind),
             format!("webrtc-rs-track-label-{}", kind),
             kind,
-            None,                  // rid
-            rand::random::<u32>(), // ssrc
-            codec.rtp_codec.clone(),
+            vec![RTCRtpDecodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(rand::random::<u32>()),
+                    ..Default::default()
+                },
+                codec: codec.rtp_codec.clone(),
+            }],
         );
 
         // Add this newly created track to the PeerConnection
@@ -335,7 +341,7 @@ async fn run(
 
         while let Some(message) = peer_connection.poll_read() {
             match message {
-                RTCMessage::RtpPacket(track_id, rtp_packet) => {
+                RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     let receiver_id = track_id2_receiver_id
                         .get(&track_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?
@@ -343,10 +349,11 @@ async fn run(
                     let rtp_receiver = peer_connection
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                    let track = rtp_receiver
-                        .track(&track_id, None)?
-                        .ok_or(Error::ErrTrackNotExisted)?;
-                    let media_ssrc = track.ssrc();
+                    let track = rtp_receiver.track()?;
+                    let media_ssrc = track
+                        .ssrcs()
+                        .last()
+                        .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?;
                     rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);
 
                     let rtp_sender_id = rtp_sender_ids
@@ -357,6 +364,11 @@ async fn run(
                         .rtp_sender(*rtp_sender_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
+                    rtp_packet.header.ssrc = rtp_sender
+                        .track()?
+                        .ssrcs()
+                        .last()
+                        .ok_or(Error::ErrSenderWithNoSSRCs)?;
                     debug!("sending rtp packet with media_ssrc={}", media_ssrc);
                     rtp_sender.write_rtp(rtp_packet)?;
                 }

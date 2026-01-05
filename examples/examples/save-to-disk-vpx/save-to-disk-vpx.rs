@@ -377,16 +377,14 @@ async fn run(
                     let rtp_receiver = peer_connection
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                    let track = rtp_receiver
-                        .track(&track_id, None)?
-                        .ok_or(Error::ErrTrackNotExisted)?;
+                    let track = rtp_receiver.track()?;
 
                     // Record the track kind for this receiver on first packet
                     if !receiver_id_to_kind.contains_key(&receiver_id) {
                         let kind = track.kind();
                         receiver_id_to_kind.insert(receiver_id, kind);
 
-                        let codec = track.codec();
+                        let codec = track.codecs().last().ok_or(Error::ErrCodecNotFound)?;
                         let mime_type = codec.mime_type.to_lowercase();
 
                         if mime_type == MIME_TYPE_OPUS.to_lowercase() {

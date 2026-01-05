@@ -1,4 +1,4 @@
-use crate::rtp_transceiver::SSRC;
+use crate::rtp_transceiver::{RtpStreamId, SSRC};
 
 /// RTP coding parameters providing information for encoding and decoding.
 ///
@@ -11,7 +11,7 @@ use crate::rtp_transceiver::SSRC;
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCodingParameters {
     /// RTP stream identifier for simulcast/layered streams
-    pub rid: String,
+    pub rid: RtpStreamId,
 
     /// Synchronization source identifier
     pub ssrc: Option<SSRC>,
