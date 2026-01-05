@@ -378,7 +378,7 @@ async fn run(
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
                     let track = rtp_receiver
-                        .track(&track_id)?
+                        .track(&track_id, None)?
                         .ok_or(Error::ErrTrackNotExisted)?;
 
                     // Record the track kind for this receiver on first packet

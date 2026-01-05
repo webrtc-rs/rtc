@@ -464,17 +464,15 @@ impl RTCPeerConnection {
                     // The reason is to provide stream_id and track_id information for later usage
                     // when received the first RTP packet. So, it is placeholder here.
                     for rid in incoming_track.rids {
-                        if receiver.track(&incoming_track.track_id).is_none() {
-                            receiver.add_track(MediaStreamTrack::new(
-                                incoming_track.stream_id.clone(),
-                                incoming_track.track_id.clone(),
-                                format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                                incoming_track.kind,
-                                Some(rid.clone()),
-                                0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
-                                RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                            ));
-                        }
+                        receiver.add_track(MediaStreamTrack::new(
+                            incoming_track.stream_id.clone(),
+                            incoming_track.track_id.clone(),
+                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                            incoming_track.kind,
+                            Some(rid.clone()),
+                            0, // Defer receiver's track's ssrc until received the first RTP packet with payload_type in endpoint handler
+                            RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                        ));
 
                         receive_codings.push(RTCRtpCodingParameters {
                             rid,
@@ -484,17 +482,15 @@ impl RTCPeerConnection {
                         });
                     }
                 } else if let Some(ssrc) = incoming_track.ssrc {
-                    if receiver.track(&incoming_track.track_id).is_none() {
-                        receiver.add_track(MediaStreamTrack::new(
-                            incoming_track.stream_id,
-                            incoming_track.track_id,
-                            format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                            incoming_track.kind,
-                            None,
-                            ssrc,
-                            RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                        ));
-                    }
+                    receiver.add_track(MediaStreamTrack::new(
+                        incoming_track.stream_id,
+                        incoming_track.track_id,
+                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                        incoming_track.kind,
+                        None,
+                        ssrc,
+                        RTCRtpCodec::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                    ));
 
                     receive_codings.push(RTCRtpCodingParameters {
                         rid: "".to_string(),
@@ -508,7 +504,7 @@ impl RTCPeerConnection {
                     });
                 } else if only_one_rtp_transceiver {
                     // TODO: Should we consider the case that Sender can change SSRC during one RTP session? #13
-                    if receiver.tracks().count() != 0 {
+                    if !receiver.tracks().is_empty() {
                         return Err(Error::ErrRTPReceiverForSSRCTrackStreamNotFound);
                     }
 
@@ -798,7 +794,7 @@ impl RTCPeerConnection {
 
         vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
-                rid: track.rid().unwrap_or_default().into(),
+                rid: track.rid().unwrap_or(&"".to_string()).into(),
                 ssrc: Some(track.ssrc()),
                 rtx: if is_rtx_enabled {
                     Some(RTCRtpRtxParameters {

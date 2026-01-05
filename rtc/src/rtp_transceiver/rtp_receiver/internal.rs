@@ -1,5 +1,6 @@
 use crate::media_stream::track::{MediaStreamTrack, MediaStreamTrackId};
 use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::rtp_transceiver::RtpStreamId;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
     RTCRtpContributingSource, RTCRtpSynchronizationSource,
@@ -13,8 +14,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParam
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use shared::error::Result;
-use std::collections::HashMap;
-use std::collections::hash_map::{Values, ValuesMut};
 use std::time::Duration;
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
@@ -29,7 +28,7 @@ use std::time::Duration;
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpReceiverInternal {
     kind: RtpCodecKind,
-    tracks: HashMap<MediaStreamTrackId, MediaStreamTrack>,
+    tracks: Vec<MediaStreamTrack>,
     contributing_sources: Vec<RTCRtpContributingSource>,
     synchronization_sources: Vec<RTCRtpSynchronizationSource>,
     jitter_buffer_target: Duration,
@@ -48,10 +47,7 @@ impl RTCRtpReceiverInternal {
     ) -> Self {
         Self {
             kind,
-            tracks: tracks
-                .into_iter()
-                .map(|track| (track.track_id().to_string(), track))
-                .collect(),
+            tracks,
             receive_codings,
             ..Default::default()
         }
@@ -61,15 +57,24 @@ impl RTCRtpReceiverInternal {
         self.kind
     }
 
-    pub(crate) fn track(&self, track_id: &MediaStreamTrackId) -> Option<&MediaStreamTrack> {
-        self.tracks.get(track_id)
+    pub(crate) fn track(
+        &self,
+        track_id: &MediaStreamTrackId,
+        rid: Option<&RtpStreamId>,
+    ) -> Option<&MediaStreamTrack> {
+        self.tracks
+            .iter()
+            .find(|track| track.track_id() == track_id && track.rid() == rid)
     }
 
     pub(crate) fn track_mut(
         &mut self,
         track_id: &MediaStreamTrackId,
+        rid: Option<&RtpStreamId>,
     ) -> Option<&mut MediaStreamTrack> {
-        self.tracks.get_mut(track_id)
+        self.tracks
+            .iter_mut()
+            .find(|track| track.track_id() == track_id && track.rid() == rid)
     }
 
     pub(crate) fn get_capabilities(
@@ -179,21 +184,21 @@ impl RTCRtpReceiverInternal {
         self.receive_codecs = codecs;
     }
 
-    pub(crate) fn tracks(&self) -> Values<'_, MediaStreamTrackId, MediaStreamTrack> {
-        self.tracks.values()
+    pub(crate) fn tracks(&self) -> &[MediaStreamTrack] {
+        &self.tracks
     }
 
-    pub(crate) fn tracks_mut(&mut self) -> ValuesMut<'_, MediaStreamTrackId, MediaStreamTrack> {
-        self.tracks.values_mut()
+    pub(crate) fn tracks_mut(&mut self) -> &mut [MediaStreamTrack] {
+        &mut self.tracks
     }
 
     pub(crate) fn add_track(&mut self, track: MediaStreamTrack) {
-        self.tracks.insert(track.track_id().to_string(), track);
+        self.tracks.push(track);
     }
 
     pub(crate) fn track_mut_by_rid(&mut self, rid: &str) -> Option<&mut MediaStreamTrack> {
         self.tracks
-            .values_mut()
+            .iter_mut()
             .find(|track| track.rid().is_some_and(|t_rid| rid == t_rid))
     }
 

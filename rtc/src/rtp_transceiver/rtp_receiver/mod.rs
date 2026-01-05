@@ -28,7 +28,7 @@
 //!
 //! // Get the receiver and access its track
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
-//!     if let Some(track) = receiver.track(&track_id)? {
+//!     if let Some(track) = receiver.track(&track_id, None)? {
 //!         println!("Track ID: {}", track.track_id());
 //!         println!("Track kind: {:?}", track.kind());
 //!         println!("Track enabled: {}", track.enabled());
@@ -164,10 +164,10 @@ pub(crate) mod rtp_contributing_source;
 use crate::media_stream::track::{MediaStreamTrack, MediaStreamTrackId};
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::RTCMessage;
-use crate::rtp_transceiver::RTCRtpReceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
+use crate::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
@@ -206,7 +206,11 @@ impl RTCRtpReceiver<'_> {
     ///
     /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver ID is invalid or
     /// the transceiver doesn't support receiving.
-    pub fn track(&self, track_id: &MediaStreamTrackId) -> Result<Option<&MediaStreamTrack>> {
+    pub fn track(
+        &self,
+        track_id: &MediaStreamTrackId,
+        rid: Option<&RtpStreamId>,
+    ) -> Result<Option<&MediaStreamTrack>> {
         if self.id.0 < self.peer_connection.rtp_transceivers.len()
             && self.peer_connection.rtp_transceivers[self.id.0]
                 .direction()
@@ -216,7 +220,7 @@ impl RTCRtpReceiver<'_> {
                 .receiver
                 .as_ref()
                 .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .track(track_id))
+                .track(track_id, rid))
         } else {
             Err(Error::ErrRTPReceiverNotExisted)
         }

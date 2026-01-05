@@ -4,7 +4,7 @@
 
 use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiverId};
+use crate::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 
 /// Initialization data for a track event.
 ///
@@ -63,10 +63,10 @@ pub struct RTCTrackEventInit {
     /// These correspond to the msid attribute in the SDP.
     pub stream_ids: Vec<MediaStreamId>,
 
-    /// ID of the RTP transceiver managing this track.
+    /// ID of the RTP stream in simulcast.
     ///
-    /// Use this with `peer_connection.rtp_transceiver()` to access the transceiver.
-    pub transceiver_id: RTCRtpTransceiverId,
+    /// This uniquely identifies the stream within the receiver.
+    pub rid: Option<RtpStreamId>,
 }
 
 /// Events related to incoming media tracks.

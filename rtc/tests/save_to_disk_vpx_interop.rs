@@ -354,7 +354,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
                             .rtp_receiver(receiver_id)
                             .ok_or_else(|| anyhow::anyhow!("RTP receiver not found"))?;
                         let track = rtp_receiver
-                            .track(&track_id)?
+                            .track(&track_id, None)?
                             .ok_or_else(|| anyhow::anyhow!("Track not found"))?;
 
                         // Record the track kind for this receiver on first packet

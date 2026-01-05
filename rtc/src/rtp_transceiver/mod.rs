@@ -147,6 +147,24 @@ pub type SSRC = u32;
 /// See [RFC 3550 Section 3](https://tools.ietf.org/html/rfc3550#section-3).
 pub type PayloadType = u8;
 
+/// RTP stream identifier.
+///
+/// Is used for unique identification of RTP stream
+///
+/// # Specification
+///
+/// See [RFC 8852 Section 3.1](https://tools.ietf.org/html/rfc8852#section-3.1).
+pub type RtpStreamId = String;
+
+/// Repaired RTP stream identifier.
+///
+/// Is used to identify which stream is to be repaired using a redundancy RTP stream
+///
+/// # Specification
+///
+/// See [RFC 8852 Section 3.2](https://tools.ietf.org/html/rfc8852#section-3.2).
+pub type RepairedStreamId = String;
+
 /// Internal identifier for an RTP transceiver.
 pub type RTCRtpTransceiverId = usize;
 

@@ -299,12 +299,12 @@ async fn run(
 
                         // Get the track to access its rid
                         if let Some(rtp_receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                            if let Ok(Some(track)) = rtp_receiver.track(&init.track_id) {
-                                let rid = track.rid().unwrap_or("");
-                                println!("Track has started with rid: {}", rid);
-
+                            if let Ok(Some(track)) =
+                                rtp_receiver.track(&init.track_id, init.rid.as_ref())
+                            {
                                 // Map rid to sender_id for forwarding
-                                if !rid.is_empty() {
+                                if let Some(rid) = init.rid.as_ref() {
+                                    println!("Track has started with rid: {}", rid);
                                     if let Some(&sender_id) = output_track_sender_ids.get(rid) {
                                         rid2sender_id.insert(rid.to_owned(), sender_id);
                                         println!("Mapped rid {} to sender_id {:?}", rid, sender_id);

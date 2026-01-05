@@ -344,7 +344,7 @@ async fn run(
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
                     let track = rtp_receiver
-                        .track(&track_id)?
+                        .track(&track_id, None)?
                         .ok_or(Error::ErrTrackNotExisted)?;
                     let media_ssrc = track.ssrc();
                     rtp_receiver_id2ssrcs.insert(receiver_id, media_ssrc);

@@ -507,7 +507,7 @@
 //!         // Access receiver to get track metadata
 //!         if let Some(&receiver_id) = track_to_receiver.get(&track_id) {
 //!             if let Some(receiver) = pc.rtp_receiver(receiver_id) {
-//!                 if let Ok(Some(track)) = receiver.track(&track_id) {
+//!                 if let Ok(Some(track)) = receiver.track(&track_id, None) {
 //!                     println!("  SSRC: {}, Kind: {:?}", track.ssrc(), track.kind());
 //!                 }
 //!             }

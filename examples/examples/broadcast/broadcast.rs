@@ -264,7 +264,9 @@ async fn run_broadcaster(
                         );
 
                         if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                            if let Some(track) = receiver.track(&init.track_id)? {
+                            if let Some(track) =
+                                receiver.track(&init.track_id, init.rid.as_ref())?
+                            {
                                 let codec = track.codec().clone();
                                 println!(
                                     "[Receiver] Received track with codec: {}",

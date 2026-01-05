@@ -71,8 +71,8 @@ use crate::media_stream::track_capabilities::MediaTrackCapabilities;
 use crate::media_stream::track_constraints::MediaTrackConstraints;
 use crate::media_stream::track_settings::MediaTrackSettings;
 use crate::media_stream::track_state::MediaStreamTrackState;
-use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use crate::rtp_transceiver::{RtpStreamId, SSRC};
 
 /// Unique identifier for a media stream track.
 ///
@@ -123,7 +123,7 @@ pub struct MediaStreamTrack {
     track_id: MediaStreamTrackId,
     label: String,
     kind: RtpCodecKind,
-    rid: Option<String>,
+    rid: Option<RtpStreamId>,
     ssrc: SSRC,
     codec: RTCRtpCodec,
 
@@ -194,7 +194,7 @@ impl MediaStreamTrack {
         track_id: MediaStreamTrackId,
         label: String,
         kind: RtpCodecKind,
-        rid: Option<String>,
+        rid: Option<RtpStreamId>,
         ssrc: SSRC,
         codec: RTCRtpCodec,
     ) -> Self {
@@ -298,8 +298,8 @@ impl MediaStreamTrack {
     /// # Specification
     ///
     /// See [RFC 8851 - RTP Payload Format Restrictions](https://www.rfc-editor.org/rfc/rfc8851.html).
-    pub fn rid(&self) -> Option<&str> {
-        self.rid.as_deref()
+    pub fn rid(&self) -> Option<&RtpStreamId> {
+        self.rid.as_ref()
     }
 
     /// Returns the Synchronization Source (SSRC) identifier for this track.
