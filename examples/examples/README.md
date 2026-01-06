@@ -47,7 +47,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   process into your browser.
 - ✅ [Simulcast](simulcast): The simulcast example demonstrates how to accept and demux 1 Track that contains 3
   Simulcast streams. It then returns the media as 3 independent Tracks back to the sender.
-- ⌛ [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
+- ✅ [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
   track.
 - 🚧 [RTCP Processing](TODO) The rtcp-processing example demonstrates RTCP APIs. This allows access to media statistics
   and control information.

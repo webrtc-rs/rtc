@@ -130,8 +130,6 @@ async fn run(
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();
 
-    //media_engine.register_default_codecs()?;
-
     // Enable VP8 codec for video
     let video_codec = RTCRtpCodecParameters {
         rtp_codec: RTCRtpCodec {
@@ -144,6 +142,7 @@ async fn run(
         payload_type: 96,
         ..Default::default()
     };
+
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
     // Enable Extension Headers needed for Simulcast
