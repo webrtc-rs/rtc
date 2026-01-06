@@ -621,7 +621,7 @@ impl MediaStreamTrack {
         {
             coding.codec = codec;
             coding.rtp_coding_parameters.ssrc = Some(ssrc);
-            true
+            false
         } else {
             self.codings.push(RTCRtpDecodingParameters {
                 rtp_coding_parameters: RTCRtpCodingParameters {
@@ -632,7 +632,7 @@ impl MediaStreamTrack {
                 },
                 codec,
             });
-            false
+            true
         }
     }
 
