@@ -916,10 +916,40 @@ impl RTCPeerConnection {
         if we_answer && let Some(parsed_local_description) = &local_description.parsed {
             // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
             // Section 4.4.1.5
-            self.set_rtp_transceiver_current_direction(
-                &parsed_local_description.media_descriptions,
-                false,
-            )?;
+            for media in &parsed_local_description.media_descriptions {
+                let mid_value = match get_mid_value(media) {
+                    Some(mid) if !mid.is_empty() => mid,
+                    _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
+                };
+
+                if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                    continue;
+                }
+
+                let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
+                    Some(i) => i,
+                    None => return Err(Error::ErrPeerConnTransceiverMidNil),
+                };
+
+                let kind = RtpCodecKind::from(media.media_name.media.as_str());
+                let mut direction = get_peer_direction(media);
+                if kind == RtpCodecKind::Unspecified
+                    || direction == RTCRtpTransceiverDirection::Unspecified
+                {
+                    continue;
+                }
+
+                // If a transceiver is created by applying a remote description that has recvonly transceiver,
+                // it will have no sender. In this case, the transceiver's current direction is set to inactive so
+                // that the transceiver can be reused by next AddTrack.
+                if direction == RTCRtpTransceiverDirection::Sendonly
+                    && self.rtp_transceivers[i].sender().is_none()
+                {
+                    direction = RTCRtpTransceiverDirection::Inactive;
+                }
+
+                self.rtp_transceivers[i].set_current_direction(direction);
+            }
 
             if let Some(remote_description) = self.remote_description().cloned()
                 && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
@@ -1031,7 +1061,7 @@ impl RTCPeerConnection {
                 if !we_offer {
                     for media in &media_descriptions {
                         let mid_value = match get_mid_value(media) {
-                            Some(m) if !m.is_empty() => m,
+                            Some(mid) if !mid.is_empty() => mid,
                             _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
                         };
 
@@ -1124,7 +1154,39 @@ impl RTCPeerConnection {
                     // WebRTC Spec 1.0 https://www.w3.org/TR/webrtc/
                     // 4.5.9.2
                     // This is an answer from the remote.
-                    self.set_rtp_transceiver_current_direction(&media_descriptions, true)?;
+                    for media in &media_descriptions {
+                        let mid_value = match get_mid_value(media) {
+                            Some(mid) if !mid.is_empty() => mid,
+                            _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
+                        };
+
+                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                            continue;
+                        }
+
+                        let kind = RtpCodecKind::from(media.media_name.media.as_str());
+                        let mut direction = get_peer_direction(media);
+                        if kind == RtpCodecKind::Unspecified
+                            || direction == RTCRtpTransceiverDirection::Unspecified
+                        {
+                            continue;
+                        }
+
+                        let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
+                            Some(i) => i,
+                            None => return Err(Error::ErrPeerConnTransceiverMidNil),
+                        };
+
+                        // reverse direction if it was a remote answer
+
+                        if direction == RTCRtpTransceiverDirection::Sendonly {
+                            direction = RTCRtpTransceiverDirection::Recvonly;
+                        } else if direction == RTCRtpTransceiverDirection::Recvonly {
+                            direction = RTCRtpTransceiverDirection::Sendonly;
+                        }
+
+                        self.rtp_transceivers[i].set_current_direction(direction);
+                    }
                 }
             }
 
