@@ -130,7 +130,7 @@ async fn run(
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();
 
-    media_engine.register_default_codecs()?;
+    //media_engine.register_default_codecs()?;
 
     // Enable VP8 codec for video
     let video_codec = RTCRtpCodecParameters {
@@ -144,6 +144,7 @@ async fn run(
         payload_type: 96,
         ..Default::default()
     };
+    media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
     // Enable Extension Headers needed for Simulcast
     for extension in [
@@ -258,7 +259,7 @@ async fn run(
 
     // Track incoming simulcast layers
     let mut track_id2_receiver_id = HashMap::new();
-    let mut receiver_id2ssrcs = HashMap::new();
+    let mut ssrc2rid = HashMap::new();
     let mut pli_last_sent = Instant::now();
 
     let mut buf = vec![0; 2000];
@@ -337,7 +338,7 @@ async fn run(
                         .ok_or(Error::ErrRTPReceiverForRIDTrackStreamNotFound)?
                         .to_owned();
 
-                    receiver_id2ssrcs.insert(receiver_id, rtp_packet.header.ssrc);
+                    ssrc2rid.insert(rtp_packet.header.ssrc, (rid.clone(), receiver_id));
 
                     if let Some(&sender_id) = output_track_sender_ids.get(&rid) {
                         // Forward to corresponding output track
@@ -346,7 +347,7 @@ async fn run(
                             .ok_or(Error::ErrRTPSenderNotExisted)?;
 
                         debug!(
-                            "forwarding rtp packet for rid={}, ssrc={}",
+                            "forwarding rtp packet for rid={}, media_ssrc={}",
                             rid, rtp_packet.header.ssrc
                         );
 
@@ -355,6 +356,10 @@ async fn run(
                             .ssrcs()
                             .last()
                             .ok_or(Error::ErrSenderWithNoSSRCs)?;
+                        debug!(
+                            "forwarding rtp packet for rid={}, sender_ssrc={}",
+                            rid, rtp_packet.header.ssrc
+                        );
                         rtp_sender.write_rtp(rtp_packet)?;
                     } else {
                         debug!("output_track not found for rid = {rid}");
@@ -397,16 +402,16 @@ async fn run(
                 peer_connection.handle_timeout(now)?;
 
                 // Send PLI periodically for each incoming stream
-                if now > pli_last_sent + Duration::from_secs(2) {
+                if now > pli_last_sent + Duration::from_secs(3) {
                     // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
                     // This is a temporary fix until we implement incoming RTCP events,
                     // then we would push a PLI only when a viewer requests it
-                    for (&receiver_id, &media_ssrc) in &receiver_id2ssrcs {
+                    for (&media_ssrc, (rid, receiver_id)) in &ssrc2rid {
                         let mut rtp_receiver = peer_connection
-                            .rtp_receiver(receiver_id)
+                            .rtp_receiver(*receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
-                        debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
+                        println!("sending PLI rtcp packet with rid: {}, media_ssrc: {}", rid, media_ssrc);
                         rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
                             sender_ssrc: 0,
                             media_ssrc,
