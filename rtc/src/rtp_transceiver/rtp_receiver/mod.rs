@@ -192,14 +192,9 @@ impl RTCRtpReceiver<'_> {
     /// The [`track`](RTCRtpReceiver::track) method returns the [`MediaStreamTrack`] that is
     /// associated with this receiver as specified in the [W3C WebRTC specification](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-track).
     ///
-    /// # Parameters
-    ///
-    /// * `track_id` - The unique identifier of the track to retrieve
-    ///
     /// # Returns
     ///
-    /// Returns `Ok(Some(&MediaStreamTrack))` if the track exists and the receiver is valid,
-    /// `Ok(None)` if the track doesn't exist, or `Err` if the receiver is invalid.
+    /// Returns a reference to the [`MediaStreamTrack`] associated with this receiver.
     ///
     /// # Errors
     ///

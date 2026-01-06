@@ -297,18 +297,57 @@ impl MediaStreamTrack {
         self.kind
     }
 
-    /// Returns the RTP stream ID (rid) if this track is part of a simulcast or SVC configuration.
+    /// Returns the RTP stream ID (rid) for a given SSRC if this track is part of a simulcast or SVC configuration.
     ///
     /// The rid (restriction identifier) is used to identify different encodings of the
-    /// same media source in simulcast scenarios.
+    /// same media source in simulcast scenarios. This method finds the rid associated with
+    /// a specific SSRC.
+    ///
+    /// # Parameters
+    ///
+    /// * `ssrc` - The Synchronization Source identifier to look up
     ///
     /// # Returns
     ///
-    /// Returns `Some(&str)` if a rid is set, or `None` for non-simulcast tracks.
+    /// Returns `Some(&RtpStreamId)` if a rid is found for the given SSRC, or `None` if:
+    /// - No encoding with the given SSRC exists
+    /// - The encoding has no rid configured
+    /// - This is a non-simulcast track
     ///
     /// # Specification
     ///
     /// See [RFC 8851 - RTP Payload Format Restrictions](https://www.rfc-editor.org/rfc/rfc8851.html).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::media_stream::MediaStreamTrack;
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let track = MediaStreamTrack::new(
+    ///     "stream-id".to_string(),
+    ///     "track-id".to_string(),
+    ///     "Video Track".to_string(),
+    ///     RtpCodecKind::Video,
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             rid: "q".to_string(), // quarter resolution
+    ///             ssrc: Some(12345),
+    ///             ..Default::default()
+    ///         },
+    ///         codec: RTCRtpCodec::default(),
+    ///     }],
+    /// );
+    ///
+    /// // Get the rid for a specific SSRC
+    /// if let Some(rid) = track.rid(12345) {
+    ///     println!("RID for SSRC 12345: {}", rid);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn rid(&self, ssrc: SSRC) -> Option<&RtpStreamId> {
         self.codings
             .iter()
@@ -322,14 +361,47 @@ impl MediaStreamTrack {
             .map(|coding| &coding.rtp_coding_parameters.rid)
     }
 
-    /// Returns the Synchronization Source (SSRC) identifier for this track.
+    /// Returns an iterator over the Synchronization Source (SSRC) identifiers for this track.
     ///
     /// The SSRC is a 32-bit identifier used in RTP to distinguish different
-    /// media sources within a session.
+    /// media sources within a session. For simulcast tracks, this returns multiple SSRCs.
+    ///
+    /// # Returns
+    ///
+    /// An iterator that yields SSRC values (u32).
     ///
     /// # Specification
     ///
     /// See [RFC 3550 - RTP: A Transport Protocol for Real-Time Applications](https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::media_stream::MediaStreamTrack;
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let track = MediaStreamTrack::new(
+    ///     "stream-id".to_string(),
+    ///     "track-id".to_string(),
+    ///     "Video Track".to_string(),
+    ///     RtpCodecKind::Video,
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             ssrc: Some(12345),
+    ///             ..Default::default()
+    ///         },
+    ///         codec: RTCRtpCodec::default(),
+    ///     }],
+    /// );
+    ///
+    /// // Get all SSRCs
+    /// let ssrcs: Vec<u32> = track.ssrcs().collect();
+    /// println!("Track SSRCs: {:?}", ssrcs);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn ssrcs(&self) -> impl Iterator<Item = SSRC> {
         self.codings
             .iter()
@@ -337,10 +409,54 @@ impl MediaStreamTrack {
             .map(|coding| coding.rtp_coding_parameters.ssrc.unwrap_or_default())
     }
 
-    /// Returns the RTP codec configuration for this track.
+    /// Returns an iterator over the RTP codec configurations for this track.
     ///
     /// The codec defines the media encoding format, clock rate, channels, and
-    /// other codec-specific parameters.
+    /// other codec-specific parameters. For simulcast tracks, this may return
+    /// multiple codecs.
+    ///
+    /// # Returns
+    ///
+    /// An iterator that yields references to [`RTCRtpCodec`] objects.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpCodec](https://www.w3.org/TR/webrtc/#dom-rtcrtpcodecparameters).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::media_stream::MediaStreamTrack;
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+    /// use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let track = MediaStreamTrack::new(
+    ///     "stream-id".to_string(),
+    ///     "track-id".to_string(),
+    ///     "Audio Track".to_string(),
+    ///     RtpCodecKind::Audio,
+    ///     vec![RTCRtpDecodingParameters {
+    ///         rtp_coding_parameters: RTCRtpCodingParameters {
+    ///             ssrc: Some(12345),
+    ///             ..Default::default()
+    ///         },
+    ///         codec: RTCRtpCodec {
+    ///             mime_type: "audio/opus".to_string(),
+    ///             clock_rate: 48000,
+    ///             channels: 2,
+    ///             ..Default::default()
+    ///         },
+    ///     }],
+    /// );
+    ///
+    /// // Iterate over codecs
+    /// for codec in track.codecs() {
+    ///     println!("Codec: {} @ {} Hz", codec.mime_type, codec.clock_rate);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn codecs(&self) -> impl Iterator<Item = &RTCRtpCodec> {
         self.codings
             .iter()
