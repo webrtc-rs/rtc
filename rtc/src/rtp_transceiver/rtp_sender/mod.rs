@@ -178,7 +178,7 @@ pub(crate) mod rtp_capabilities;
 pub(crate) mod rtp_codec;
 pub(crate) mod rtp_codec_parameters;
 pub(crate) mod rtp_coding_parameters;
-mod rtp_decoding_parameters;
+pub(crate) mod rtp_decoding_parameters;
 pub(crate) mod rtp_encoding_parameters;
 pub(crate) mod rtp_header_extension_capability;
 pub(crate) mod rtp_header_extension_parameters;

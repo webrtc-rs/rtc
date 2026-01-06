@@ -246,8 +246,12 @@ async fn run_peer_connection(
                             "Track kind: {}, codec: {}",
                             track.kind(),
                             track
-                                .codecs()
-                                .last()
+                                .codec(
+                                    track
+                                        .ssrcs()
+                                        .next()
+                                        .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?,
+                                )
                                 .ok_or(Error::ErrCodecNotFound)?
                                 .mime_type
                         );

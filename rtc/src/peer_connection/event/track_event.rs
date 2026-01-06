@@ -16,7 +16,7 @@ use crate::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 /// - `receiver_id` - ID of the RTP receiver handling this track
 /// - `track_id` - ID of the media stream track
 /// - `stream_ids` - IDs of media streams this track belongs to
-/// - `transceiver_id` - ID of the transceiver managing this track
+/// - `rid` - RTP Stream ID for simulcast/SVC (if applicable)
 ///
 /// # Examples
 ///
@@ -39,6 +39,11 @@ use crate::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 ///             
 ///             // Print associated stream IDs
 ///             println!("Stream IDs: {:?}", init.stream_ids);
+///             
+///             // Check if this is a simulcast stream
+///             if let Some(rid) = &init.rid {
+///                 println!("Simulcast RID: {}", rid);
+///             }
 ///         }
 ///         _ => {}
 ///     }
@@ -63,9 +68,17 @@ pub struct RTCTrackEventInit {
     /// These correspond to the msid attribute in the SDP.
     pub stream_ids: Vec<MediaStreamId>,
 
-    /// ID of the RTP stream in simulcast.
+    /// RTP Stream ID (RID) for simulcast/SVC streams.
     ///
-    /// This uniquely identifies the stream within the receiver.
+    /// In simulcast scenarios, this identifies which spatial/temporal layer this stream represents.
+    /// The value comes from the RTP header extension (urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id)
+    /// in the first received RTP packet.
+    ///
+    /// - `None` - Non-simulcast track, or simulcast track before first RTP packet received
+    /// - `Some(rid)` - Simulcast stream identifier (e.g., "q", "h", "f" for quality levels)
+    ///
+    /// For tracks that support simulcast, use `MediaStreamTrack::rid(ssrc)` to query the RID
+    /// for a specific SSRC after the track is established.
     pub rid: Option<RtpStreamId>,
 }
 

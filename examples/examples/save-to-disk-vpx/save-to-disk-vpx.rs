@@ -384,7 +384,14 @@ async fn run(
                         let kind = track.kind();
                         receiver_id_to_kind.insert(receiver_id, kind);
 
-                        let codec = track.codecs().last().ok_or(Error::ErrCodecNotFound)?;
+                        let codec = track
+                            .codec(
+                                track
+                                    .ssrcs()
+                                    .next()
+                                    .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?,
+                            )
+                            .ok_or(Error::ErrCodecNotFound)?;
                         let mime_type = codec.mime_type.to_lowercase();
 
                         if mime_type == MIME_TYPE_OPUS.to_lowercase() {

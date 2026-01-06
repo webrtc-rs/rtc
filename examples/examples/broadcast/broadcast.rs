@@ -268,8 +268,12 @@ async fn run_broadcaster(
                         if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
                             let track = receiver.track()?;
                             let codec = track
-                                .codecs()
-                                .last()
+                                .codec(
+                                    track
+                                        .ssrcs()
+                                        .next()
+                                        .ok_or(Error::ErrRTPReceiverForSSRCTrackStreamNotFound)?,
+                                )
                                 .ok_or(Error::ErrCodecNotFound)?
                                 .clone();
                             println!("[Receiver] Received track with codec: {}", codec.mime_type);
