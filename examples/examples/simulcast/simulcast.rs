@@ -22,7 +22,7 @@ use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpHeaderExtensionCapability, RtpCodecKind,
 };
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -192,13 +192,14 @@ async fn run(
             format!("video_{rid}"),
             format!("video_{rid}"),
             RtpCodecKind::Video,
-            vec![RTCRtpDecodingParameters {
+            vec![RTCRtpEncodingParameters {
                 rtp_coding_parameters: RTCRtpCodingParameters {
                     rid: rid.to_string(),
                     ssrc: Some(rand::random::<u32>()),
                     ..Default::default()
                 },
                 codec: video_codec.rtp_codec.clone(),
+                ..Default::default()
             }],
         );
 

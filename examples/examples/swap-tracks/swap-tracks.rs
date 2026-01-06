@@ -21,7 +21,7 @@ use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication
 use rtc::rtp_transceiver::RTCRtpReceiverId;
 use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpDecodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -165,12 +165,13 @@ async fn run(
         "video".to_string(),
         "video".to_string(),
         RtpCodecKind::Video,
-        vec![RTCRtpDecodingParameters {
+        vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 ssrc: Some(rand::random::<u32>()),
                 ..Default::default()
             },
             codec: video_codec.rtp_codec.clone(),
+            ..Default::default()
         }],
     );
 

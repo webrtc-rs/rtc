@@ -21,7 +21,7 @@ use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -558,12 +558,13 @@ async fn run_viewer(
         format!("webrtc-rs-track-{}", viewer_id),
         format!("webrtc-rs-video-{}", viewer_id),
         RtpCodecKind::Video,
-        vec![RTCRtpDecodingParameters {
+        vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 ssrc: Some(ssrc),
                 ..Default::default()
             },
             codec: rtp_codec,
+            ..Default::default()
         }],
     );
 

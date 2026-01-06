@@ -15,7 +15,7 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpDecodingParameters, RtpCodecKind,
+    RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -138,7 +138,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
         format!("webrtc-rs-track-id-{}", rand::random::<u32>()),
         format!("webrtc-rs-track-label-{}", rand::random::<u32>()),
         RtpCodecKind::Video,
-        vec![RTCRtpDecodingParameters {
+        vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 ssrc: Some(video_ssrc),
                 ..Default::default()
@@ -150,6 +150,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
                 sdp_fmtp_line: "".to_owned(),
                 rtcp_feedback: vec![],
             },
+            ..Default::default()
         }],
     );
 

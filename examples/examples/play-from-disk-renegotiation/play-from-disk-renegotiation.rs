@@ -22,7 +22,7 @@ use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
 use rtc::sansio::Protocol;
@@ -613,12 +613,13 @@ async fn run(
                             format!("webrtc-rs-track-id-{}", rand::random::<u32>()),
                             format!("webrtc-rs-track-label-{}", rand::random::<u32>()),
                             RtpCodecKind::Video,
-                            vec![RTCRtpDecodingParameters {
+                            vec![RTCRtpEncodingParameters {
                                 rtp_coding_parameters: RTCRtpCodingParameters {
                                     ssrc: Some(ssrc),
                                     ..Default::default()
                                 },
                                 codec: app_state.codec.rtp_codec.clone(),
+                                ..Default::default()
                             }],
                         );
 

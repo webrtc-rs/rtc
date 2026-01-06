@@ -429,7 +429,7 @@
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
-//! use rtc::rtp_transceiver::rtp_sender::{RTCRtpDecodingParameters, RTCRtpCodingParameters};
+//! use rtc::rtp_transceiver::rtp_sender::{RTCRtpEncodingParameters, RTCRtpCodingParameters};
 //! use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MIME_TYPE_OPUS};
 //!
 //! # fn example(mut pc: RTCPeerConnection) -> Result<(), Box<dyn std::error::Error>> {
@@ -448,12 +448,13 @@
 //!     "video-track-id".to_string(),
 //!     "video-label".to_string(),
 //!     RtpCodecKind::Video,
-//!     vec![RTCRtpDecodingParameters {
+//!     vec![RTCRtpEncodingParameters {
 //!         rtp_coding_parameters: RTCRtpCodingParameters {
 //!             ssrc: Some(rand::random::<u32>()),
 //!             ..Default::default()
 //!         },
 //!         codec: video_codec.clone(),
+//!         ..Default::default()
 //!     }],
 //! );
 //!

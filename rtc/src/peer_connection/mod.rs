@@ -294,7 +294,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, RtpCodecKind, encoding_parameters_fuzzy_search,
 };
 use crate::rtp_transceiver::rtp_sender::{
-    RTCRtpCodingParameters, RTCRtpDecodingParameters, RTCRtpSender,
+    RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpSender,
 };
 use crate::rtp_transceiver::{
     RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
@@ -1725,7 +1725,7 @@ impl RTCPeerConnection {
                         math_rand_alpha(16), // MediaStreamTrackId
                         math_rand_alpha(16), // Label
                         kind,
-                        vec![RTCRtpDecodingParameters {
+                        vec![RTCRtpEncodingParameters {
                             rtp_coding_parameters: RTCRtpCodingParameters {
                                 rid: encoding.rtp_coding_parameters.rid,
                                 ssrc: if let Some(ssrc) = encoding.rtp_coding_parameters.ssrc {
@@ -1737,6 +1737,7 @@ impl RTCPeerConnection {
                                 fec: None,
                             },
                             codec: encoding.codec,
+                            ..Default::default()
                         }],
                     );
                     self.new_transceiver_from_track(

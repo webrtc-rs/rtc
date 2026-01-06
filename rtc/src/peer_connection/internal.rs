@@ -471,9 +471,10 @@ impl RTCPeerConnection {
                             fec: None,
                         };
                         receive_codings.push(rtp_coding_parameters.clone());
-                        codings.push(RTCRtpDecodingParameters {
+                        codings.push(RTCRtpEncodingParameters {
                             rtp_coding_parameters,
                             codec: Default::default(),
+                            ..Default::default()
                         })
                     }
 
@@ -490,7 +491,7 @@ impl RTCPeerConnection {
                         incoming_track.track_id,
                         format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
                         incoming_track.kind,
-                        vec![RTCRtpDecodingParameters {
+                        vec![RTCRtpEncodingParameters {
                             rtp_coding_parameters: RTCRtpCodingParameters {
                                 rid: "".to_string(),
                                 ssrc: Some(ssrc),
@@ -498,6 +499,7 @@ impl RTCPeerConnection {
                                 fec: None,
                             },
                             codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                            ..Default::default()
                         }],
                     ));
 

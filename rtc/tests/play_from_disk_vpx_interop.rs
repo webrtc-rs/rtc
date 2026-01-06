@@ -36,7 +36,7 @@ use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::rtp_transceiver::{RTCRtpSenderId, SSRC};
 use rtc::shared::error::Error;
@@ -245,12 +245,13 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
             format!("webrtc-rs-track-id-{}", kind),
             format!("webrtc-rs-track-label-{}", kind),
             kind,
-            vec![RTCRtpDecodingParameters {
+            vec![RTCRtpEncodingParameters {
                 rtp_coding_parameters: RTCRtpCodingParameters {
                     ssrc: Some(*ssrc),
                     ..Default::default()
                 },
                 codec: codec.rtp_codec.clone(),
+                ..Default::default()
             }],
         );
 

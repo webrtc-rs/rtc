@@ -26,7 +26,7 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpDecodingParameters,
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::shared::error::Error;
 
@@ -182,12 +182,13 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
         format!("webrtc-rs-track-id-{}", RtpCodecKind::Video),
         format!("webrtc-rs-track-label-{}", RtpCodecKind::Video),
         RtpCodecKind::Video,
-        vec![RTCRtpDecodingParameters {
+        vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters {
                 ssrc: Some(rand::random::<u32>()),
                 ..Default::default()
             },
             codec: video_codec.rtp_codec.clone(),
+            ..Default::default()
         }],
     );
 
