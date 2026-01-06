@@ -1172,20 +1172,26 @@ impl RTCPeerConnection {
                             continue;
                         }
 
-                        let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
-                            Some(i) => i,
-                            None => return Err(Error::ErrPeerConnTransceiverMidNil),
-                        };
+                        let transceiver =
+                            if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
+                                &mut self.rtp_transceivers[i]
+                            } else {
+                                return Err(Error::ErrPeerConnTransceiverMidNil);
+                            };
 
                         // reverse direction if it was a remote answer
-
                         if direction == RTCRtpTransceiverDirection::Sendonly {
                             direction = RTCRtpTransceiverDirection::Recvonly;
                         } else if direction == RTCRtpTransceiverDirection::Recvonly {
                             direction = RTCRtpTransceiverDirection::Sendonly;
                         }
 
-                        self.rtp_transceivers[i].set_current_direction(direction);
+                        transceiver.set_current_direction(direction);
+
+                        transceiver.set_codec_preferences_from_remote_description(
+                            media,
+                            &self.configuration.media_engine,
+                        )?;
                     }
                 }
             }

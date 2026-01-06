@@ -305,6 +305,7 @@ impl RTCRtpSenderInternal {
     /// * `codecs` - Vector of codec parameters in preference order
     pub(crate) fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) {
         self.send_codecs = codecs;
+        self.last_returned_parameters = None;
     }
 
     /// Configures RTX (retransmission) and FEC (forward error correction) for all encodings.

@@ -55,7 +55,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test reflect functionality: rtc sends RTP -> webrtc reflects -> rtc receives
 #[tokio::test]
-#[ignore]
 async fn test_reflect_rtc_to_webrtc() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -371,7 +370,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                     extension: false,
                     marker: packets_sent == 0,
                     payload_type: 96,
-                    sequence_number: 0, // Will be set by packetizer
+                    sequence_number: packets_sent as u16,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc,
                     ..Default::default()
