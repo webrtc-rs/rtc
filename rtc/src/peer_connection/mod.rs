@@ -549,19 +549,17 @@ impl RTCPeerConnection {
                     }
                 }
             }
-            for transceiver in &mut self.rtp_transceivers {
-                if let Some(mid) = transceiver.mid()
-                    && !mid.is_empty()
+        }
+        for transceiver in &mut self.rtp_transceivers {
+            if let Some(mid) = transceiver.mid()
+                && !mid.is_empty()
+            {
+                if let Ok(numeric_mid) = mid.parse::<isize>()
+                    && numeric_mid > self.greater_mid
                 {
-                    if let Ok(numeric_mid) = mid.parse::<isize>()
-                        && numeric_mid > self.greater_mid
-                    {
-                        self.greater_mid = numeric_mid;
-                    }
-
-                    continue;
+                    self.greater_mid = numeric_mid;
                 }
-
+            } else {
                 self.greater_mid += 1;
                 transceiver.set_mid(format!("{}", self.greater_mid))?;
             }
