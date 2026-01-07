@@ -72,6 +72,10 @@ impl RTCPeerConnection {
                 .sctp_max_message_size
                 .as_usize(),
             ignore_rid_pause_for_recv: false,
+            write_ssrc_attributes_for_simulcast: self
+                .configuration
+                .setting_engine
+                .write_ssrc_attributes_for_simulcast,
         };
         populate_sdp(
             d,
@@ -212,6 +216,10 @@ impl RTCPeerConnection {
                 .sctp_max_message_size
                 .as_usize(),
             ignore_rid_pause_for_recv,
+            write_ssrc_attributes_for_simulcast: self
+                .configuration
+                .setting_engine
+                .write_ssrc_attributes_for_simulcast,
         };
         populate_sdp(
             d,

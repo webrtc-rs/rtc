@@ -340,6 +340,7 @@ pub struct SettingEngine {
     /// Determines the max size of any message that may be sent through an SCTP transport.
     pub(crate) sctp_max_message_size: SctpMaxMessageSize,
     pub(crate) ignore_rid_pause_for_recv: bool,
+    pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
 
 impl SettingEngine {
@@ -1109,5 +1110,17 @@ impl SettingEngine {
     /// * `ignore_rid_pause_for_recv` - `true` to ignore pause signals, `false` to honor them
     pub fn set_ignore_rid_pause_for_recv(&mut self, ignore_rid_pause_for_recv: bool) {
         self.ignore_rid_pause_for_recv = ignore_rid_pause_for_recv;
+    }
+
+    /// Controls whether to ignore SSRC attribute in SDP's sendonly or sendrecv for simulcast
+    ///
+    /// # Parameters
+    ///
+    /// * `write_ssrc_attributes_for_simulcast` - `true` to write, `false` to ignore
+    pub fn set_write_ssrc_attributes_for_simulcast(
+        &mut self,
+        write_ssrc_attributes_for_simulcast: bool,
+    ) {
+        self.write_ssrc_attributes_for_simulcast = write_ssrc_attributes_for_simulcast;
     }
 }

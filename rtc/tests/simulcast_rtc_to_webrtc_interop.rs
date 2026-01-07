@@ -21,7 +21,9 @@ use bytes::BytesMut;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use rtc::peer_connection::configuration::media_engine::{
+    MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
+};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
@@ -29,6 +31,8 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp;
+use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
+use rtc::rtp_transceiver::RTCRtpTransceiverInit;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
@@ -53,21 +57,18 @@ use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
-use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::track::track_remote::TrackRemote;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test simulcast: rtc sends 3 layers with RIDs -> webrtc receives all 3 layers
-/// TODO: make it TRUE simulcast with RID
 #[tokio::test]
-#[ignore]
 async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
-        .is_test(true)
+        //.is_test(true)
         .try_init()
         .ok();
 
@@ -82,7 +83,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
     log::info!("Created webrtc peer connection");
 
     // Add transceiver to receive video
-    webrtc_pc
+    /*webrtc_pc
         .add_transceiver_from_kind(
             RTPCodecType::Video,
             Some(RTCRtpTransceiverInit {
@@ -91,7 +92,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
             }),
         )
         .await?;
-    log::info!("Added video transceiver to webrtc");
+    log::info!("Added video transceiver to webrtc");*/
 
     // Set up handler for receiving media on all tracks
     webrtc_pc.on_track(Box::new(
@@ -152,7 +153,20 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
         ..Default::default()
     };
 
+    let audio_codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 120,
+        ..Default::default()
+    };
+
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
+    media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
 
     // Enable Extension Headers needed for Simulcast
     for extension in [
@@ -182,29 +196,40 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
     log::info!("Created RTC peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs
-    let mut rtp_sender_ids = HashMap::new();
-
+    let mid = "0".to_owned();
+    let mut rid2ssrc = HashMap::new();
+    let mut codings = vec![];
     for rid in ["low", "mid", "high"] {
-        let output_track = MediaStreamTrack::new(
-            format!("webrtc-rs_{}", rid),
-            format!("video_{}", rid),
-            format!("video_{}", rid),
-            RtpCodecKind::Video,
-            vec![RTCRtpEncodingParameters {
-                rtp_coding_parameters: RTCRtpCodingParameters {
-                    rid: rid.to_string(),
-                    ssrc: Some(rand::random::<u32>()),
-                    ..Default::default()
-                },
-                codec: video_codec.rtp_codec.clone(),
+        let ssrc = rand::random::<u32>();
+        rid2ssrc.insert(rid, ssrc);
+        codings.push(RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                rid: rid.to_string(),
+                ssrc: Some(ssrc),
                 ..Default::default()
-            }],
-        );
-
-        let sender_id = rtc_pc.add_track(output_track)?;
-        rtp_sender_ids.insert(rid, sender_id);
-        log::info!("✅ RTC added track with RID: {}", rid);
+            },
+            codec: video_codec.rtp_codec.clone(),
+            ..Default::default()
+        });
+        log::info!("✅ RTC added track with RID: {} vs SSRC: {}", rid, ssrc);
     }
+
+    let output_track = MediaStreamTrack::new(
+        format!("webrtc-rs_simulcast"),
+        format!("video_simulcast"),
+        format!("video_simulcast"),
+        RtpCodecKind::Video,
+        codings,
+    );
+    let sender_id = rtc_pc.add_track(output_track)?;
+    let _ = rtc_pc.add_transceiver_from_kind(
+        RtpCodecKind::Audio,
+        Some(RTCRtpTransceiverInit {
+            direction: RTCRtpTransceiverDirection::Recvonly,
+            streams: vec![],
+            send_encodings: vec![],
+        }),
+    );
 
     // Add local candidate for rtc
     let candidate = CandidateHostConfig {
@@ -224,7 +249,6 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
     // Create offer from rtc
     let offer = rtc_pc.create_offer(None)?;
     log::info!("RTC created offer {}", offer);
-    log::info!("Offer SDP (length: {}):\n{}", offer.sdp.len(), offer.sdp);
 
     // Set local description on rtc
     rtc_pc.set_local_description(offer.clone())?;
@@ -260,8 +284,8 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
         rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp)?;
 
     // Set remote description on rtc
+    log::info!("RTC set remote description {}", rtc_answer);
     rtc_pc.set_remote_description(rtc_answer)?;
-    log::info!("RTC set remote description");
 
     // Run event loops
     let rtc_socket = Arc::new(socket);
@@ -276,6 +300,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
+    let mut sequence_number = 0;
 
     while start_time.elapsed() < test_timeout {
         // Process rtc writes
@@ -330,37 +355,69 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
 
         // Send RTP packets from rtc on all 3 simulcast layers
         if streaming_started {
-            for (rid, sender_id) in &rtp_sender_ids {
+            for (rid, ssrc) in &rid2ssrc {
                 let mut rtp_sender = rtc_pc
-                    .rtp_sender(*sender_id)
+                    .rtp_sender(sender_id)
                     .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                let ssrc = rtp_sender
-                    .track()?
-                    .ssrcs()
-                    .last()
-                    .ok_or(Error::ErrSenderWithNoSSRCs)?;
+                // Get negotiated header extension IDs
+                let params = rtp_sender.get_parameters()?;
+                let mut mid_id = None;
+                let mut rid_id = None;
 
-                // Create RTP packet
+                for ext in &params.rtp_parameters.header_extensions {
+                    if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
+                        mid_id = Some(ext.id as u8);
+                        log::debug!("Found MID extension with ID: {}", ext.id);
+                    } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
+                        rid_id = Some(ext.id as u8);
+                        log::debug!("Found RID extension with ID: {}", ext.id);
+                    }
+                }
+
+                if mid_id.is_none() {
+                    log::warn!("MID extension ID not found in negotiated parameters!");
+                }
+                if rid_id.is_none() {
+                    log::warn!("RID extension ID not found in negotiated parameters!");
+                }
+
+                // Create RTP packet header
+                let mut header = rtp::header::Header {
+                    version: 2,
+                    padding: false,
+                    marker: false,
+                    payload_type: 96,
+                    sequence_number,
+                    timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
+                    ssrc: *ssrc,
+                    ..Default::default()
+                };
+
+                // Add MID extension using set_extension
+                if let Some(id) = mid_id {
+                    header
+                        .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
+                        .expect("Failed to set MID extension");
+                }
+
+                // Add RID extension using set_extension
+                if let Some(id) = rid_id {
+                    header
+                        .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
+                        .expect("Failed to set RID extension");
+                }
+
+                // Create RTP packet with extensions
                 let packet = rtp::packet::Packet {
-                    header: rtp::header::Header {
-                        version: 2,
-                        padding: false,
-                        extension: false,
-                        marker: false,
-                        payload_type: 96,
-                        sequence_number: 0, // Will be set by packetizer
-                        timestamp: (Instant::now().duration_since(start_time).as_millis() * 90)
-                            as u32,
-                        ssrc,
-                        ..Default::default()
-                    },
+                    header,
                     payload: bytes::Bytes::from(dummy_frame.clone()),
                 };
 
                 if let Err(e) = rtp_sender.write_rtp(packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
+                sequence_number += 1;
             }
 
             // Send at ~30fps
@@ -458,6 +515,24 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
 async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
     let mut media_engine = WebrtcMediaEngine::default();
     media_engine.register_default_codecs()?;
+
+    // Register header extensions for simulcast support
+    // These must match the extensions registered on the RTC (sender) side
+    use webrtc::rtp_transceiver::rtp_codec::RTCRtpHeaderExtensionCapability as WebrtcHeaderExtCap;
+
+    for extension_uri in [
+        "urn:ietf:params:rtp-hdrext:sdes:mid",
+        "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+        "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+    ] {
+        media_engine.register_header_extension(
+            WebrtcHeaderExtCap {
+                uri: extension_uri.to_owned(),
+            },
+            RTPCodecType::Video,
+            None,
+        )?;
+    }
 
     let mut registry = Registry::new();
     registry = register_default_interceptors(registry, &mut media_engine)?;

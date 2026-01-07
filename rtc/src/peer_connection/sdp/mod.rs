@@ -602,6 +602,7 @@ pub(crate) struct AddTransceiverSdpParams {
     dtls_role: ConnectionRole,
     ice_gathering_state: RTCIceGatheringState,
     ignore_rid_pause_for_recv: bool,
+    write_ssrc_attributes_for_simulcast: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -621,12 +622,14 @@ pub(crate) fn add_transceiver_sdp(
         dtls_role,
         ice_gathering_state,
         ignore_rid_pause_for_recv,
+        write_ssrc_attributes_for_simulcast,
     ) = (
         params.should_add_candidates,
         params.mid_value,
         params.dtls_role,
         params.ice_gathering_state,
         params.ignore_rid_pause_for_recv,
+        params.write_ssrc_attributes_for_simulcast,
     );
 
     let transceiver = &mut transceivers[media_section.transceiver_index];
@@ -772,7 +775,12 @@ pub(crate) fn add_transceiver_sdp(
         media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
     }
 
-    media = add_sender_sdp(media, media_engine, transceiver);
+    media = add_sender_sdp(
+        media,
+        media_engine,
+        transceiver,
+        write_ssrc_attributes_for_simulcast,
+    );
 
     media = media.with_property_attribute(transceiver.direction().to_string());
 
@@ -794,68 +802,74 @@ fn add_sender_sdp(
     mut media: MediaDescription,
     media_engine: &MediaEngine,
     transceiver: &mut RTCRtpTransceiver,
+    write_ssrc_attributes_for_simulcast: bool,
 ) -> MediaDescription {
     if let Some(sender) = transceiver.sender_mut() {
         let (encodings, track) = (
             sender.get_parameters(media_engine).encodings.clone(),
             sender.track(),
         );
-        for encoding in &encodings {
-            if let Some(&ssrc) = encoding.rtp_coding_parameters.ssrc.as_ref() {
-                if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
-                    media = media.with_value_attribute(
-                        ATTR_KEY_SSRC_GROUP.to_owned(),
-                        format!(
-                            "{} {} {}",
-                            SEMANTIC_TOKEN_FLOW_IDENTIFICATION, ssrc, rtx.ssrc
-                        ),
-                    );
-                }
 
-                if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
-                    media = media.with_value_attribute(
-                        ATTR_KEY_SSRC_GROUP.to_owned(),
-                        format!(
-                            "{} {} {}",
-                            SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION, ssrc, fec.ssrc
-                        ),
-                    );
-                }
+        let is_simulcast = encodings.len() > 1;
 
-                media = media.with_media_source(
-                    ssrc,
-                    track.stream_id().clone(), /* cname */
-                    track.label().to_owned(),  /* streamLabel */
-                    track.track_id().to_owned(),
-                );
+        media = media.with_property_attribute(format!(
+            "msid:{} {}",
+            track.stream_id(),
+            track.track_id()
+        ));
 
-                if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
+        if write_ssrc_attributes_for_simulcast || !is_simulcast {
+            for encoding in &encodings {
+                if let Some(&ssrc) = encoding.rtp_coding_parameters.ssrc.as_ref() {
+                    if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
+                        media = media.with_value_attribute(
+                            ATTR_KEY_SSRC_GROUP.to_owned(),
+                            format!(
+                                "{} {} {}",
+                                SEMANTIC_TOKEN_FLOW_IDENTIFICATION, ssrc, rtx.ssrc
+                            ),
+                        );
+                    }
+
+                    if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
+                        media = media.with_value_attribute(
+                            ATTR_KEY_SSRC_GROUP.to_owned(),
+                            format!(
+                                "{} {} {}",
+                                SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION, ssrc, fec.ssrc
+                            ),
+                        );
+                    }
+
                     media = media.with_media_source(
-                        rtx.ssrc,
+                        ssrc,
                         track.stream_id().clone(), /* cname */
                         track.label().to_owned(),  /* streamLabel */
                         track.track_id().to_owned(),
                     );
-                }
 
-                if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
-                    media = media.with_media_source(
-                        fec.ssrc,
-                        track.stream_id().clone(), /* cname */
-                        track.label().to_owned(),  /* streamLabel */
-                        track.track_id().to_owned(),
-                    );
+                    if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
+                        media = media.with_media_source(
+                            rtx.ssrc,
+                            track.stream_id().clone(), /* cname */
+                            track.label().to_owned(),  /* streamLabel */
+                            track.track_id().to_owned(),
+                        );
+                    }
+
+                    if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
+                        media = media.with_media_source(
+                            fec.ssrc,
+                            track.stream_id().clone(), /* cname */
+                            track.label().to_owned(),  /* streamLabel */
+                            track.track_id().to_owned(),
+                        );
+                    }
                 }
             }
-
-            media = media.with_property_attribute(format!(
-                "msid:{} {}",
-                track.stream_id(),
-                track.track_id()
-            ));
         }
 
-        if encodings.len() > 1 {
+        if is_simulcast {
             let mut send_rids = Vec::with_capacity(encodings.len());
 
             for encoding in &encodings {
@@ -950,6 +964,7 @@ pub(crate) struct PopulateSdpParams {
     pub(crate) match_bundle_group: Option<String>,
     pub(crate) sctp_max_message_size: usize,
     pub(crate) ignore_rid_pause_for_recv: bool,
+    pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
 
 /// populate_sdp serializes a PeerConnections state into an SDP
@@ -1004,6 +1019,7 @@ pub(crate) fn populate_sdp(
                 dtls_role: params.connection_role,
                 ice_gathering_state: params.ice_gathering_state,
                 ignore_rid_pause_for_recv: params.ignore_rid_pause_for_recv,
+                write_ssrc_attributes_for_simulcast: params.write_ssrc_attributes_for_simulcast,
             };
             let (d1, should_add_id) = add_transceiver_sdp(
                 d,
