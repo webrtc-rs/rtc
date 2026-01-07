@@ -252,11 +252,7 @@ async fn main() -> Result<()> {
                     RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
                         RTCDataChannelEvent::OnOpen(channel_id) => {
                             if let Some(dc) = pc.data_channel(channel_id) {
-                                println!(
-                                    "Data channel '{}'-'{}' open",
-                                    dc.label().unwrap_or_default(),
-                                    dc.id()
-                                );
+                                println!("Data channel '{}'-'{}' open", dc.label(), dc.id());
                                 data_channel_opened = Some(channel_id);
                                 last_send = Instant::now();
                             }

@@ -366,7 +366,7 @@ async fn run(
                     let rtp_receiver = peer_connection
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                    let track = rtp_receiver.track()?;
+                    let track = rtp_receiver.track();
 
                     // Record the track kind for this receiver on first packet
                     if !receiver_id_to_kind.contains_key(&receiver_id) {

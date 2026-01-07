@@ -354,7 +354,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
                         let rtp_receiver = rtc_pc
                             .rtp_receiver(receiver_id)
                             .ok_or_else(|| anyhow::anyhow!("RTP receiver not found"))?;
-                        let track = rtp_receiver.track()?;
+                        let track = rtp_receiver.track();
 
                         // Record the track kind for this receiver on first packet
                         let mut kind_map = receiver_id_to_kind.lock().await;

@@ -241,7 +241,7 @@ async fn test_data_channel_close_by_webrtc_interop() -> Result<()> {
                                 .expect("data channel should exist");
                             log::info!(
                                 "RTC data channel opened: {} (id: {})",
-                                dc.label()?,
+                                dc.label(),
                                 channel_id
                             );
                             rtc_data_channel_opened = true;

@@ -331,7 +331,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                 .ok_or(Error::ErrRTPSenderNotExisted)?;
 
             // Debug: check sender parameters
-            let params = rtp_sender.get_parameters()?;
+            let params = rtp_sender.get_parameters();
             if packets_sent == 0 {
                 log::info!(
                     "Sender parameters: {} codecs, {} encodings",
@@ -357,7 +357,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
             }
 
             let ssrc = rtp_sender
-                .track()?
+                .track()
                 .ssrcs()
                 .last()
                 .ok_or(Error::ErrSenderWithNoSSRCs)?;

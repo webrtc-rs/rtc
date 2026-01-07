@@ -266,7 +266,7 @@ async fn run_broadcaster(
                         );
 
                         if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                            let track = receiver.track()?;
+                            let track = receiver.track();
                             let codec = track
                                 .codec(
                                     track
@@ -667,7 +667,7 @@ async fn run_viewer(
                         for sender_id in sender_ids {
                             if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
                                 packet.header.ssrc = sender
-                                    .track()?
+                                    .track()
                                     .ssrcs()
                                     .last()
                                     .ok_or(Error::ErrSenderWithNoSSRCs)?;

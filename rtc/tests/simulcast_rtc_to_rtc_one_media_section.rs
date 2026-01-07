@@ -367,7 +367,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
 
                     // Get RID from the track
                     let rid = rtp_receiver
-                        .track()?
+                        .track()
                         .rid(rtp_packet.header.ssrc)
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("ssrc_{}", rtp_packet.header.ssrc));
@@ -407,7 +407,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                     .ok_or(Error::ErrRTPSenderNotExisted)?;
 
                 // Get negotiated header extension IDs
-                let params = rtp_sender.get_parameters()?;
+                let params = rtp_sender.get_parameters();
                 let mut mid_id = None;
                 let mut rid_id = None;
 

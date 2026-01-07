@@ -361,7 +361,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
                     .ok_or(Error::ErrRTPSenderNotExisted)?;
 
                 // Get negotiated header extension IDs
-                let params = rtp_sender.get_parameters()?;
+                let params = rtp_sender.get_parameters();
                 let mut mid_id = None;
                 let mut rid_id = None;
 

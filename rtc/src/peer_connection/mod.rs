@@ -1847,7 +1847,8 @@ impl RTCPeerConnection {
 
     /// rtp_sender provides the access to RTCRtpSender object with the given id
     pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_>> {
-        if id.0 < self.rtp_transceivers.len() {
+        if id.0 < self.rtp_transceivers.len() && self.rtp_transceivers[id.0].direction().has_send()
+        {
             Some(RTCRtpSender {
                 id,
                 peer_connection: self,
@@ -1859,7 +1860,8 @@ impl RTCPeerConnection {
 
     /// rtp_receiver provides the access to RTCRtpReceiver object with the given id
     pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_>> {
-        if id.0 < self.rtp_transceivers.len() {
+        if id.0 < self.rtp_transceivers.len() && self.rtp_transceivers[id.0].direction().has_recv()
+        {
             Some(RTCRtpReceiver {
                 id,
                 peer_connection: self,

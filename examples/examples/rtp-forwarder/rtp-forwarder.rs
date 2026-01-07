@@ -241,7 +241,7 @@ async fn run_peer_connection(
                     );
 
                     if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-                        let track = receiver.track()?;
+                        let track = receiver.track();
                         println!(
                             "Track kind: {}, codec: {}",
                             track.kind(),

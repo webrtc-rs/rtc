@@ -244,7 +244,7 @@ async fn run(
                             let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
-                            println!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
+                            println!("Data channel '{}'-'{}' open", dc.label(), dc.id());
                             data_channel_opened = Some(dc.id());
                         }
                         RTCDataChannelEvent::OnClose(channel_id) => {
@@ -267,7 +267,7 @@ async fn run(
                         .data_channel(channel_id)
                         .ok_or(Error::ErrDataChannelClosed)?;
                     let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
-                    println!("Message from DataChannel '{}': '{}'", dc.label()?, msg_str);
+                    println!("Message from DataChannel '{}': '{}'", dc.label(), msg_str);
                 }
             }
         }

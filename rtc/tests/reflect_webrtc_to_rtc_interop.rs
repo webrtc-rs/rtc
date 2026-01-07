@@ -293,7 +293,7 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                     let rtp_receiver = rtc_pc
                         .rtp_receiver(receiver_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
-                    let track = rtp_receiver.track()?;
+                    let track = rtp_receiver.track();
                     let media_ssrc = track
                         .ssrcs()
                         .last()
@@ -309,7 +309,7 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                     rtp_packet.header.ssrc = rtp_sender
-                        .track()?
+                        .track()
                         .ssrcs()
                         .last()
                         .ok_or(Error::ErrSenderWithNoSSRCs)?;

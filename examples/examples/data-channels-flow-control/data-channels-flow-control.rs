@@ -103,8 +103,8 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
         ..Default::default()
     });
     let mut dc = requester.create_data_channel("data", options)?;
-    dc.set_buffered_amount_low_threshold(BUFFERED_AMOUNT_LOW_THRESHOLD)?;
-    dc.set_buffered_amount_high_threshold(BUFFERED_AMOUNT_HIGH_THRESHOLD)?;
+    dc.set_buffered_amount_low_threshold(BUFFERED_AMOUNT_LOW_THRESHOLD);
+    dc.set_buffered_amount_high_threshold(BUFFERED_AMOUNT_HIGH_THRESHOLD);
 
     // Create responder (receiver) peer connection
     let mut responder = RTCPeerConnection::new(config)?;

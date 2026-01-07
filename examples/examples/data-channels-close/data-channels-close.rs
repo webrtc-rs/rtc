@@ -249,7 +249,7 @@ async fn run(
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             println!(
                                 "Data channel '{}'-'{}' open. Random messages will now be sent every {} seconds",
-                                dc.label()?,
+                                dc.label(),
                                 dc.id(),
                                 send_interval.as_secs()
                             );
@@ -276,7 +276,7 @@ async fn run(
                         .data_channel(channel_id)
                         .ok_or(Error::ErrDataChannelClosed)?;
                     let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
-                    println!("Message from DataChannel '{}': '{}'", dc.label()?, msg_str);
+                    println!("Message from DataChannel '{}': '{}'", dc.label(), msg_str);
                 }
             }
         }
@@ -343,7 +343,7 @@ async fn run(
 
                         close_after -= 1;
                         if close_after <=  0 {
-                            println!("Sent times out. Closing data channel '{}'-'{}'.", dc.label()?, dc.id());
+                            println!("Sent times out. Closing data channel '{}'-'{}'.", dc.label(), dc.id());
                             let _ = dc.close();
                         }
                     }

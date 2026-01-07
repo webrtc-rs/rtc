@@ -464,7 +464,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
 
                     // Get RID from the track (webrtc automatically adds RID header extensions)
                     let rid = rtp_receiver
-                        .track()?
+                        .track()
                         .rid(rtp_packet.header.ssrc)
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("ssrc_{}", rtp_packet.header.ssrc));

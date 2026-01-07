@@ -333,7 +333,7 @@ async fn run(
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                     let rid = rtp_receiver
-                        .track()?
+                        .track()
                         .rid(rtp_packet.header.ssrc)
                         .ok_or(Error::ErrRTPReceiverForRIDTrackStreamNotFound)?
                         .to_owned();
@@ -352,7 +352,7 @@ async fn run(
                         );
 
                         rtp_packet.header.ssrc = rtp_sender
-                            .track()?
+                            .track()
                             .ssrcs()
                             .last()
                             .ok_or(Error::ErrSenderWithNoSSRCs)?;

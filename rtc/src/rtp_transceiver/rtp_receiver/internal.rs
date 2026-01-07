@@ -156,6 +156,8 @@ impl RTCRtpReceiverInternal {
 
     pub(crate) fn set_coding_parameters(&mut self, receive_codings: Vec<RTCRtpCodingParameters>) {
         self.receive_codings = receive_codings;
+        //TODO: if get_parameters is changed to use receive_codings to return it in RTCRtpReceiveParameters
+        // self.last_returned_parameters = None;
     }
 
     pub(crate) fn get_codec_preferences(&self) -> &[RTCRtpCodecParameters] {
@@ -164,6 +166,7 @@ impl RTCRtpReceiverInternal {
 
     pub(crate) fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) {
         self.receive_codecs = codecs;
+        self.last_returned_parameters = None;
     }
 
     pub(crate) fn set_track(&mut self, track: MediaStreamTrack) {

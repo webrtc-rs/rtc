@@ -509,7 +509,7 @@
 //!         // Access receiver to get track metadata
 //!         if let Some(&receiver_id) = track_to_receiver.get(&track_id) {
 //!             if let Some(receiver) = pc.rtp_receiver(receiver_id) {
-//!                 let track = receiver.track()?;
+//!                 let track = receiver.track();
 //!                 let ssrcs: Vec<u32> = track.ssrcs().collect();
 //!                 println!("  SSRCs: {:?}, Kind: {:?}", ssrcs, track.kind());
 //!             }

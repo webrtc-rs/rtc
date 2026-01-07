@@ -236,7 +236,7 @@ async fn run(
                             let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
-                            println!("Data channel '{}'-'{}' open", dc.label()?, dc.id());
+                            println!("Data channel '{}'-'{}' open", dc.label(), dc.id());
                         }
                         _ => {}
                     }
@@ -256,7 +256,7 @@ async fn run(
                     let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                     println!(
                         "Message from DataChannel '{}': '{}', Echoing back",
-                        dc.label()?,
+                        dc.label(),
                         msg_str
                     );
                     dc.send_text(msg_str)?;

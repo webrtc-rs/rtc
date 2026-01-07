@@ -24,7 +24,7 @@
 //!
 //! // Get sender and access its track
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
-//!     let track = sender.track()?;
+//!     let track = sender.track();
 //!     println!("Track ID: {}", track.track_id());
 //!     println!("Track kind: {:?}", track.kind());
 //! }
@@ -43,7 +43,7 @@
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Get current parameters
-//!     let mut params = sender.get_parameters()?.clone();
+//!     let mut params = sender.get_parameters().clone();
 //!     
 //!     // Modify encoding parameters
 //!     for encoding in &mut params.encodings {
@@ -97,7 +97,7 @@
 //!     // Write RTP packet directly
 //!     // The sender will set the correct payload type and SSRC
 //!     rtp_packet.header.ssrc = sender
-//!         .track()?
+//!         .track()
 //!         .ssrcs()
 //!         .last()
 //!         .ok_or(Error::ErrSenderWithNoSSRCs)?;
@@ -227,24 +227,14 @@ pub struct RTCRtpSender<'a> {
 
 impl RTCRtpSender<'_> {
     /// Returns the media track being sent by this sender.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::ErrRTPSenderNotExisted` if the sender does not exist or is not configured for sending.
-    pub fn track(&self) -> Result<&MediaStreamTrack> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_ref()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .track())
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+    pub fn track(&self) -> &MediaStreamTrack {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_ref()
+            .unwrap()
+            .track()
     }
 
     /// Returns the RTP capabilities for the specified codec kind.
@@ -252,24 +242,14 @@ impl RTCRtpSender<'_> {
     /// # Parameters
     ///
     /// * `kind` - The codec type (audio or video) to query capabilities for
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::ErrRTPSenderNotExisted` if the sender does not exist or is not configured for sending.
-    pub fn get_capabilities(&self, kind: RtpCodecKind) -> Result<Option<RTCRtpCapabilities>> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_ref()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .get_capabilities(kind, &self.peer_connection.configuration.media_engine))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+    pub fn get_capabilities(&self, kind: RtpCodecKind) -> Option<RTCRtpCapabilities> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_ref()
+            .unwrap()
+            .get_capabilities(kind, &self.peer_connection.configuration.media_engine)
     }
     /// Updates the RTP send parameters for this sender.
     ///
@@ -283,49 +263,33 @@ impl RTCRtpSender<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the sender does not exist or if the parameters are invalid.
+    /// Returns an error if the parameters are invalid.
     pub fn set_parameters(
         &mut self,
         parameters: RTCRtpSendParameters,
         set_parameter_options: Option<RTCSetParameterOptions>,
     ) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_mut()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .set_parameters(parameters, set_parameter_options)
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_mut()
+            .unwrap()
+            .set_parameters(parameters, set_parameter_options)
     }
 
     /// Returns the sender's current RTP send parameters.
     ///
     /// The returned parameters describe how the track is encoded and transmitted,
     /// including codecs, encodings, and header extensions.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::ErrRTPSenderNotExisted` if the sender does not exist or is not configured for sending.
-    pub fn get_parameters(&mut self) -> Result<&RTCRtpSendParameters> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_mut()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .get_parameters(&self.peer_connection.configuration.media_engine))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+    pub fn get_parameters(&mut self) -> &RTCRtpSendParameters {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_mut()
+            .unwrap()
+            .get_parameters(&self.peer_connection.configuration.media_engine)
     }
 
     /// Replaces the currently sent track with a new media track.
@@ -339,25 +303,19 @@ impl RTCRtpSender<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the sender does not exist or if the track kinds do not match.
+    /// Returns an error if the track kinds do not match.
     ///
     /// ## Specifications
     ///
     /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-replacetrack)
     pub fn replace_track(&mut self, track: MediaStreamTrack) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_mut()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .replace_track(track)
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_mut()
+            .unwrap()
+            .replace_track(track)
     }
 
     /// Sets the media stream IDs associated with this sender's track.
@@ -365,25 +323,14 @@ impl RTCRtpSender<'_> {
     /// # Parameters
     ///
     /// * `streams` - Vector of stream IDs to associate with the track
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::ErrRTPSenderNotExisted` if the sender does not exist or is not configured for sending.
-    pub fn set_streams(&mut self, streams: Vec<MediaStreamId>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
-                .as_mut()
-                .ok_or(Error::ErrRTPSenderNotExisted)?
-                .set_streams(streams);
-            Ok(())
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+    pub fn set_streams(&mut self, streams: Vec<MediaStreamId>) {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_mut()
+            .unwrap()
+            .set_streams(streams);
     }
 
     /// Writes an RTP packet to the network.
@@ -397,57 +344,52 @@ impl RTCRtpSender<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the sender does not exist, no matching encoding is found,
-    /// or the codec is unsupported.
+    /// Returns an error if no matching encoding is found, or the codec is unsupported,
+    /// or internal handle_write returns error
     pub fn write_rtp(&mut self, mut packet: rtp::Packet) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+
+        //TODO: handle rtp header extension, etc.
+        let (sender, media_engine) = (
+            self.peer_connection.rtp_transceivers[self.id.0]
+                .sender
+                .as_mut()
+                .unwrap(),
+            &mut self.peer_connection.configuration.media_engine,
+        );
+
+        if !sender
+            .track()
+            .ssrcs()
+            .any(|ssrc| ssrc == packet.header.ssrc)
         {
-            //TODO: handle rtp header extension, etc.
-            let (sender, media_engine) = (
-                &mut self.peer_connection.rtp_transceivers[self.id.0]
-                    .sender
-                    .as_mut()
-                    .ok_or(Error::ErrRTPSenderNotExisted)?,
-                &mut self.peer_connection.configuration.media_engine,
-            );
-
-            if !sender
-                .track()
-                .ssrcs()
-                .any(|ssrc| ssrc == packet.header.ssrc)
-            {
-                return Err(Error::ErrSenderWithNoSSRCs);
-            }
-
-            let parameters = sender.get_parameters(media_engine);
-            let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
-
-            //From SSRC, find the encoding
-            let encoding = encodings
-                .iter()
-                .find(|encoding| {
-                    encoding
-                        .rtp_coding_parameters
-                        .ssrc
-                        .is_some_and(|s| s == packet.header.ssrc)
-                })
-                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
-            // From the encoding, fuzzy_search the codec which contains payload_type
-            let (codec, match_type) = codec_parameters_fuzzy_search(&encoding.codec, codecs);
-            if match_type == CodecMatch::None {
-                return Err(Error::ErrRTPTransceiverCodecUnsupported);
-            }
-
-            let track_id = sender.track().track_id().to_string();
-            packet.header.payload_type = codec.payload_type;
-            self.peer_connection
-                .handle_write(RTCMessage::RtpPacket(track_id, packet))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
+            return Err(Error::ErrSenderWithNoSSRCs);
         }
+
+        let parameters = sender.get_parameters(media_engine);
+        let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
+
+        //From SSRC, find the encoding
+        let encoding = encodings
+            .iter()
+            .find(|encoding| {
+                encoding
+                    .rtp_coding_parameters
+                    .ssrc
+                    .is_some_and(|s| s == packet.header.ssrc)
+            })
+            .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+        // From the encoding, fuzzy_search the codec which contains payload_type
+        let (codec, match_type) = codec_parameters_fuzzy_search(&encoding.codec, codecs);
+        if match_type == CodecMatch::None {
+            return Err(Error::ErrRTPTransceiverCodecUnsupported);
+        }
+
+        let track_id = sender.track().track_id().to_string();
+        packet.header.payload_type = codec.payload_type;
+        self.peer_connection
+            .handle_write(RTCMessage::RtpPacket(track_id, packet))
     }
 
     /// Writes RTCP packets to the network.
@@ -461,19 +403,19 @@ impl RTCRtpSender<'_> {
     ///
     /// # Errors
     ///
-    /// Returns `Error::ErrRTPSenderNotExisted` if the sender does not exist or is not configured for sending.
+    /// Returns an error if internal handle_write returns error
     pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_send()
-        {
-            //TODO: handle rtcp sender ssrc, header extension, etc.
-            let track_id = "".to_string(); //TODO:
-            self.peer_connection
-                .handle_write(RTCMessage::RtcpPacket(track_id, packets))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+
+        //TODO: handle rtcp sender ssrc, header extension, etc.
+        let sender = self.peer_connection.rtp_transceivers[self.id.0]
+            .sender
+            .as_mut()
+            .unwrap();
+
+        let track_id = sender.track().track_id().to_string();
+        self.peer_connection
+            .handle_write(RTCMessage::RtcpPacket(track_id, packets))
     }
 }

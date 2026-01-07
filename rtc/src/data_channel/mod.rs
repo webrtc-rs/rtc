@@ -78,62 +78,76 @@ impl RTCDataChannel<'_> {
     /// label represents a label that can be used to distinguish this
     /// DataChannel object from other DataChannel objects. Scripts are
     /// allowed to create multiple DataChannel objects with the same label.
-    pub fn label(&self) -> Result<String> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.label.clone())
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn label(&self) -> &str {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .label
+            .as_str()
     }
 
     /// Ordered returns true if the DataChannel is ordered, and false if
     /// out-of-order delivery is allowed.
-    pub fn ordered(&self) -> Result<bool> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.ordered)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn ordered(&self) -> bool {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .ordered
     }
 
     /// max_packet_lifetime represents the length of the time window (msec) during
     /// which transmissions and retransmissions may occur in unreliable mode.
-    pub fn max_packet_life_time(&self) -> Result<Option<u16>> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.max_packet_life_time)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn max_packet_life_time(&self) -> Option<u16> {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .max_packet_life_time
     }
 
     /// max_retransmits represents the maximum number of retransmissions that are
     /// attempted in unreliable mode.
-    pub fn max_retransmits(&self) -> Result<Option<u16>> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.max_retransmits)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn max_retransmits(&self) -> Option<u16> {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .max_retransmits
     }
 
     /// protocol represents the name of the sub-protocol used with this
     /// DataChannel.
-    pub fn protocol(&self) -> Result<String> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.protocol.clone())
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn protocol(&self) -> &str {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .protocol
+            .as_str()
     }
 
     /// negotiated represents whether this DataChannel was negotiated by the
     /// application (true), or not (false).
-    pub fn negotiated(&self) -> Result<bool> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.negotiated)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn negotiated(&self) -> bool {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .negotiated
     }
 
     /// ID represents the ID for this DataChannel. The value is initially
@@ -147,12 +161,14 @@ impl RTCDataChannel<'_> {
     }
 
     /// ready_state represents the state of the DataChannel object.
-    pub fn ready_state(&self) -> Result<RTCDataChannelState> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.ready_state)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn ready_state(&self) -> RTCDataChannelState {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .ready_state
     }
 
     /// buffered_amount_high_threshold represents the threshold at which the
@@ -161,26 +177,29 @@ impl RTCDataChannel<'_> {
     /// event fires. buffered_amount_high_threshold is initially u32::MAX on each new
     /// DataChannel, but the application may change its value at any time.
     /// The threshold is set to u32::MAX by default.
-    pub fn buffered_amount_high_threshold(&self) -> Result<u32> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.buffered_amount_high_threshold)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn buffered_amount_high_threshold(&self) -> u32 {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .buffered_amount_high_threshold
     }
 
     /// set_buffered_amount_high_threshold sets the threshold at which the
     /// bufferedAmount is considered to be high.
-    pub fn set_buffered_amount_high_threshold(&mut self, threshold: u32) -> Result<()> {
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
-            dc.buffered_amount_high_threshold = threshold;
-            if let Some(data_channel) = dc.data_channel.as_mut() {
-                data_channel.set_buffered_amount_high_threshold(threshold)
-            } else {
-                Ok(())
-            }
-        } else {
-            Err(Error::ErrDataChannelClosed)
+    pub fn set_buffered_amount_high_threshold(&mut self, threshold: u32) {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        let dc = self
+            .peer_connection
+            .data_channels
+            .get_mut(&self.id)
+            .unwrap();
+        dc.buffered_amount_high_threshold = threshold;
+        if let Some(data_channel) = dc.data_channel.as_mut() {
+            let _ = data_channel.set_buffered_amount_high_threshold(threshold);
         }
     }
 
@@ -190,26 +209,29 @@ impl RTCDataChannel<'_> {
     /// event fires. buffered_amount_low_threshold is initially zero on each new
     /// DataChannel, but the application may change its value at any time.
     /// The threshold is set to 0 by default.
-    pub fn buffered_amount_low_threshold(&self) -> Result<u32> {
-        if let Some(dc) = self.peer_connection.data_channels.get(&self.id) {
-            Ok(dc.buffered_amount_low_threshold)
-        } else {
-            Err(Error::ErrDataChannelClosed)
-        }
+    pub fn buffered_amount_low_threshold(&self) -> u32 {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .buffered_amount_low_threshold
     }
 
     /// set_buffered_amount_low_threshold sets the threshold at which the
     /// bufferedAmount is considered to be low.
-    pub fn set_buffered_amount_low_threshold(&mut self, threshold: u32) -> Result<()> {
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
-            dc.buffered_amount_low_threshold = threshold;
-            if let Some(data_channel) = dc.data_channel.as_mut() {
-                data_channel.set_buffered_amount_low_threshold(threshold)
-            } else {
-                Ok(())
-            }
-        } else {
-            Err(Error::ErrDataChannelClosed)
+    pub fn set_buffered_amount_low_threshold(&mut self, threshold: u32) {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        let dc = self
+            .peer_connection
+            .data_channels
+            .get_mut(&self.id)
+            .unwrap();
+        dc.buffered_amount_low_threshold = threshold;
+        if let Some(data_channel) = dc.data_channel.as_mut() {
+            let _ = data_channel.set_buffered_amount_low_threshold(threshold);
         }
     }
 

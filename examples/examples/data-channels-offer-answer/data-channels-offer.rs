@@ -260,7 +260,7 @@ async fn main() -> Result<()> {
                         if let Some(dc) = peer_connection.data_channel(channel_id) {
                             println!(
                                 "Data channel '{}'-'{}' open. Random messages will now be sent every 5 seconds",
-                                dc.label().unwrap_or_default(),
+                                dc.label(),
                                 dc.id()
                             );
                             data_channel_opened = Some(channel_id);

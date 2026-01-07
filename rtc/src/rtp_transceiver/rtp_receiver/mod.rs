@@ -28,7 +28,7 @@
 //!
 //! // Get the receiver and access its track
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
-//!     let track = receiver.track()?;
+//!     let track = receiver.track();
 //!     println!("Track ID: {}", track.track_id());
 //!     println!("Track kind: {:?}", track.kind());
 //!     println!("Track enabled: {}", track.enabled());
@@ -48,7 +48,7 @@
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get current receive parameters
-//!     let params = receiver.get_parameters()?;
+//!     let params = receiver.get_parameters();
 //!     
 //!     println!("Codecs: {:?}", params.rtp_parameters.codecs);
 //!     println!("Header extensions: {:?}", params.rtp_parameters.header_extensions);
@@ -70,16 +70,16 @@
 //!
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Check video capabilities
-//!     let capabilities = receiver.get_capabilities(RtpCodecKind::Video)?;
+//!     if let Some(capabilities) = receiver.get_capabilities(RtpCodecKind::Video) {
+//!         println!("Supported video codecs:");
+//!         for codec in capabilities.codecs {
+//!             println!("  - {} @ {} Hz", codec.mime_type, codec.clock_rate);
+//!         }
 //!     
-//!     println!("Supported video codecs:");
-//!     for codec in capabilities.codecs {
-//!         println!("  - {} @ {} Hz", codec.mime_type, codec.clock_rate);
-//!     }
-//!     
-//!     println!("Supported header extensions:");
-//!     for ext in capabilities.header_extensions {
-//!         println!("  - {}", ext.uri);
+//!         println!("Supported header extensions:");
+//!         for ext in capabilities.header_extensions {
+//!             println!("  - {}", ext.uri);
+//!         }
 //!     }
 //! }
 //! # Ok(())
@@ -97,7 +97,7 @@
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get CSRC information for mixed audio
-//!     for csrc in receiver.get_contributing_sources()? {
+//!     for csrc in receiver.get_contributing_sources() {
 //!         println!("CSRC: {}, timestamp: {:?}", csrc.source, csrc.timestamp);
 //!         println!("  Audio level: {}", csrc.audio_level);
 //!         println!("  RTP timestamp: {}", csrc.rtp_timestamp);
@@ -118,7 +118,7 @@
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get SSRC information
-//!     for ssrc in receiver.get_synchronization_sources()? {
+//!     for ssrc in receiver.get_synchronization_sources() {
 //!         println!("SSRC: {}, timestamp: {:?}", ssrc.source, ssrc.timestamp);
 //!         println!("  RTP timestamp: {}", ssrc.rtp_timestamp);
 //!     }
@@ -168,7 +168,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use sansio::Protocol;
-use shared::error::{Error, Result};
+use shared::error::Result;
 
 pub use rtp_contributing_source::{RTCRtpContributingSource, RTCRtpSynchronizationSource};
 
@@ -195,25 +195,14 @@ impl RTCRtpReceiver<'_> {
     /// # Returns
     ///
     /// Returns a reference to the [`MediaStreamTrack`] associated with this receiver.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver ID is invalid or
-    /// the transceiver doesn't support receiving.
-    pub fn track(&self) -> Result<&MediaStreamTrack> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .receiver
-                .as_ref()
-                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .track())
-        } else {
-            Err(Error::ErrRTPReceiverNotExisted)
-        }
+    pub fn track(&self) -> &MediaStreamTrack {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_ref()
+            .unwrap()
+            .track()
     }
 
     /// Returns the RTP capabilities for the specified codec kind.
@@ -229,25 +218,14 @@ impl RTCRtpReceiver<'_> {
     /// # Returns
     ///
     /// Returns the RTP capabilities supported by this receiver for the specified codec kind.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver is invalid.
-    pub fn get_capabilities(&self, kind: RtpCodecKind) -> Result<RTCRtpCapabilities> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            self.peer_connection.rtp_transceivers[self.id.0]
-                .receiver
-                .as_ref()
-                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .get_capabilities(kind, &self.peer_connection.configuration.media_engine)
-                .ok_or(Error::ErrRTPReceiverNotExisted)
-        } else {
-            Err(Error::ErrRTPReceiverNotExisted)
-        }
+    pub fn get_capabilities(&self, kind: RtpCodecKind) -> Option<RTCRtpCapabilities> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_ref()
+            .unwrap()
+            .get_capabilities(kind, &self.peer_connection.configuration.media_engine)
     }
 
     /// Returns the RTP receive parameters for this receiver.
@@ -259,24 +237,14 @@ impl RTCRtpReceiver<'_> {
     /// # Returns
     ///
     /// Returns a reference to the RTP receive parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver is invalid.
-    pub fn get_parameters(&mut self) -> Result<&RTCRtpReceiveParameters> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .receiver
-                .as_mut()
-                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .get_parameters(&self.peer_connection.configuration.media_engine))
-        } else {
-            Err(Error::ErrRTPReceiverNotExisted)
-        }
+    pub fn get_parameters(&mut self) -> &RTCRtpReceiveParameters {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_mut()
+            .unwrap()
+            .get_parameters(&self.peer_connection.configuration.media_engine)
     }
 
     /// Returns an iterator over the contributing sources for this receiver.
@@ -292,26 +260,14 @@ impl RTCRtpReceiver<'_> {
     /// # Returns
     ///
     /// Returns an iterator over [`RTCRtpContributingSource`] objects.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver is invalid.
-    pub fn get_contributing_sources(
-        &self,
-    ) -> Result<impl Iterator<Item = &RTCRtpContributingSource>> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .receiver
-                .as_ref()
-                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .get_contributing_sources())
-        } else {
-            Err(Error::ErrRTPReceiverNotExisted)
-        }
+    pub fn get_contributing_sources(&self) -> impl Iterator<Item = &RTCRtpContributingSource> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_ref()
+            .unwrap()
+            .get_contributing_sources()
     }
 
     /// Returns an iterator over the synchronization sources for this receiver.
@@ -326,26 +282,16 @@ impl RTCRtpReceiver<'_> {
     /// # Returns
     ///
     /// Returns an iterator over [`RTCRtpSynchronizationSource`] objects.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ErrRTPReceiverNotExisted`] if the receiver is invalid.
     pub fn get_synchronization_sources(
         &self,
-    ) -> Result<impl Iterator<Item = &RTCRtpSynchronizationSource>> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            Ok(self.peer_connection.rtp_transceivers[self.id.0]
-                .receiver
-                .as_ref()
-                .ok_or(Error::ErrRTPReceiverNotExisted)?
-                .get_synchronization_sources())
-        } else {
-            Err(Error::ErrRTPReceiverNotExisted)
-        }
+    ) -> impl Iterator<Item = &RTCRtpSynchronizationSource> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_ref()
+            .unwrap()
+            .get_synchronization_sources()
     }
 
     /// Writes RTCP feedback packets for this receiver.
@@ -366,7 +312,7 @@ impl RTCRtpReceiver<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ErrRTPSenderNotExisted`] if the receiver is invalid.
+    /// Returns an error if internal handle_write returns error
     ///
     /// # Example
     ///
@@ -381,17 +327,17 @@ impl RTCRtpReceiver<'_> {
     /// receiver.write_rtcp(vec![Box::new(pli)])?;
     /// ```
     pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
-        if self.id.0 < self.peer_connection.rtp_transceivers.len()
-            && self.peer_connection.rtp_transceivers[self.id.0]
-                .direction()
-                .has_recv()
-        {
-            //TODO: handle rtcp media ssrc, header extension, etc.
-            let track_id = "".to_string(); //TODO:
-            self.peer_connection
-                .handle_write(RTCMessage::RtcpPacket(track_id, packets))
-        } else {
-            Err(Error::ErrRTPSenderNotExisted)
-        }
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
+        // the direction won't be changed too, so, unwrap() here is safe.
+
+        //TODO: handle rtcp media ssrc, header extension, etc.
+        let receiver = self.peer_connection.rtp_transceivers[self.id.0]
+            .receiver
+            .as_mut()
+            .unwrap();
+
+        let track_id = receiver.track().track_id().to_string();
+        self.peer_connection
+            .handle_write(RTCMessage::RtcpPacket(track_id, packets))
     }
 }

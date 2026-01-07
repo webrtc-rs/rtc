@@ -338,7 +338,7 @@ async fn run(
                             .rtp_receiver(receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
-                        let track = rtp_receiver.track()?;
+                        let track = rtp_receiver.track();
                         track.ssrcs().next().unwrap_or(0)
                     };
 
@@ -384,7 +384,7 @@ async fn run(
                                 .rtp_sender(output_sender_id)
                                 .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                            output_sender.track()?.ssrcs().next().unwrap_or(0)
+                            output_sender.track().ssrcs().next().unwrap_or(0)
                         };
 
                         rtp_packet.header.ssrc = output_ssrc;
