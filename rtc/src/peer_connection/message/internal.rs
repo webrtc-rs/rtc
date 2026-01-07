@@ -3,6 +3,7 @@ use crate::data_channel::message::RTCDataChannelMessage;
 use crate::media_stream::track::MediaStreamTrackId;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
+use interceptor::Packet;
 use shared::TransportContext;
 use std::time::Instant;
 
@@ -19,16 +20,10 @@ pub(crate) struct ApplicationMessage {
     pub(crate) data_channel_event: DataChannelEvent,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum TrackPacket {
-    Rtp(rtp::Packet),
-    Rtcp(Vec<Box<dyn rtcp::Packet>>),
-}
-
 #[derive(Debug, Clone)]
-pub(crate) struct TrackMessage {
+pub(crate) struct TrackPacket {
     pub(crate) track_id: MediaStreamTrackId,
-    pub(crate) track_packet: TrackPacket,
+    pub(crate) packet: Packet,
 }
 
 #[derive(Debug, Clone)]
@@ -46,9 +41,8 @@ pub(crate) enum DTLSMessage {
 #[derive(Debug, Clone)]
 pub(crate) enum RTPMessage {
     Raw(BytesMut),
-    Rtp(rtp::Packet),
-    Rtcp(Vec<Box<dyn rtcp::Packet>>),
-    Track(TrackMessage),
+    Packet(Packet),
+    TrackPacket(TrackPacket),
 }
 
 #[derive(Debug, Clone)]

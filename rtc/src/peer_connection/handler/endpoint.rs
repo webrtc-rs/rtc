@@ -4,7 +4,7 @@ use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
-    TaggedRTCMessageInternal, TrackMessage, TrackPacket,
+    TaggedRTCMessageInternal, TrackPacket,
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
@@ -12,6 +12,7 @@ use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
+use interceptor::Packet;
 use log::{debug, trace, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
@@ -66,10 +67,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             RTCMessageInternal::Dtls(DTLSMessage::DataChannel(message)) => {
                 self.handle_dtls_message(msg.now, msg.transport, message)
             }
-            RTCMessageInternal::Rtp(RTPMessage::Rtp(message)) => {
+            RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(message))) => {
                 self.handle_rtp_message(msg.now, msg.transport, message)
             }
-            RTCMessageInternal::Rtp(RTPMessage::Rtcp(message)) => {
+            RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(message))) => {
                 self.handle_rtcp_message(msg.now, msg.transport, message)
             }
             _ => {
@@ -150,9 +151,9 @@ impl<'a> EndpointHandler<'a> {
             self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                 now,
                 transport: transport_context,
-                message: RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                message: RTCMessageInternal::Rtp(RTPMessage::TrackPacket(TrackPacket {
                     track_id,
-                    track_packet: TrackPacket::Rtp(rtp_packet),
+                    packet: Packet::Rtp(rtp_packet),
                 })),
             });
         } else {
@@ -180,9 +181,9 @@ impl<'a> EndpointHandler<'a> {
                 self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now,
                     transport: transport_context,
-                    message: RTCMessageInternal::Rtp(RTPMessage::Track(TrackMessage {
+                    message: RTCMessageInternal::Rtp(RTPMessage::TrackPacket(TrackPacket {
                         track_id,
-                        track_packet: TrackPacket::Rtcp(rtcp_packets),
+                        packet: Packet::Rtcp(rtcp_packets),
                     })),
                 });
             } else {

@@ -3,6 +3,7 @@ use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 
+use interceptor::Packet;
 use log::debug;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
@@ -40,9 +41,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Rtp(RTPMessage::Rtp(_))
-        | RTCMessageInternal::Rtp(RTPMessage::Rtcp(_)) = &msg.message
-        {
+        if let RTCMessageInternal::Rtp(RTPMessage::Packet(_)) = &msg.message {
             /*TODO
             let mut try_read = || -> Result<Vec<InterceptorEvent>> {
                 let mut server_states = self.server_states.borrow_mut();
@@ -76,7 +75,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 }
             };
             */
-            if let RTCMessageInternal::Rtp(RTPMessage::Rtcp(_)) = &msg.message {
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
                 // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
                 // just add a new interceptor to forward it.
                 debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
@@ -94,9 +93,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Rtp(RTPMessage::Rtp(_))
-        | RTCMessageInternal::Rtp(RTPMessage::Rtcp(_)) = &msg.message
-        {
+        if let RTCMessageInternal::Rtp(RTPMessage::Packet(_)) = &msg.message {
             /*TODO:
             let mut try_write = || -> Result<Vec<InterceptorEvent>> {
                 let mut server_states = self.server_states.borrow_mut();

@@ -4,6 +4,7 @@ use crate::peer_connection::message::internal::{
 };
 
 use bytes::BytesMut;
+use interceptor::Packet;
 use log::{debug, error};
 use shared::error::{Error, Result};
 use shared::marshal::{Marshal, Unmarshal};
@@ -60,7 +61,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             return Err(Error::Other("empty rtcp_packets".to_string()));
                         }
 
-                        Ok(RTCMessageInternal::Rtp(RTPMessage::Rtcp(rtcp_packets)))
+                        Ok(RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(
+                            rtcp_packets,
+                        ))))
                     } else {
                         Err(Error::Other(format!(
                             "remote_srtp_context is not set yet for {:?}",
@@ -72,7 +75,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         let mut decrypted = context.decrypt_rtp(&message)?;
                         let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
 
-                        Ok(RTCMessageInternal::Rtp(RTPMessage::Rtp(rtp_packet)))
+                        Ok(RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(
+                            rtp_packet,
+                        ))))
                     } else {
                         Err(Error::Other(format!(
                             "remote_srtp_context is not set yet for {:?}",
@@ -112,7 +117,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
             let try_write = || -> Result<BytesMut> {
                 match message {
-                    RTPMessage::Rtcp(rtcp_packets) => {
+                    RTPMessage::Packet(Packet::Rtcp(rtcp_packets)) => {
                         if rtcp_packets.is_empty() {
                             return Err(Error::Other("empty rtcp_packets".to_string()));
                         };
@@ -127,7 +132,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             )))
                         }
                     }
-                    RTPMessage::Rtp(rtp_message) => {
+                    RTPMessage::Packet(Packet::Rtp(rtp_message)) => {
                         if let Some(context) = self.ctx.local_srtp_context.as_mut() {
                             let packet = rtp_message.marshal()?;
                             context.encrypt_rtp(&packet)
@@ -143,7 +148,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         debug!("Bypass srtp write {:?}", msg.transport.peer_addr);
                         Ok(raw_packet)
                     }
-                    RTPMessage::Track(_) => Err(Error::Other(
+                    RTPMessage::TrackPacket(_) => Err(Error::Other(
                         "application level track message should never reach here".to_string(),
                     )),
                 }

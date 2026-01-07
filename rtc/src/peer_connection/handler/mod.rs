@@ -22,11 +22,12 @@ use crate::peer_connection::message::{
     RTCMessage,
     internal::{
         ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
-        TaggedRTCMessageInternal, TrackPacket,
+        TaggedRTCMessageInternal,
     },
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
+use ::interceptor::Packet;
 use log::warn;
 use shared::TaggedBytesMut;
 use shared::error::{Error, flatten_errs};
@@ -206,13 +207,13 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
                         None
                     }
                 }
-                RTCMessageInternal::Rtp(RTPMessage::Track(track_message)) => {
-                    match track_message.track_packet {
-                        TrackPacket::Rtp(packet) => {
-                            Some(RTCMessage::RtpPacket(track_message.track_id, packet))
+                RTCMessageInternal::Rtp(RTPMessage::TrackPacket(track_packet)) => {
+                    match track_packet.packet {
+                        Packet::Rtp(packet) => {
+                            Some(RTCMessage::RtpPacket(track_packet.track_id, packet))
                         }
-                        TrackPacket::Rtcp(packet) => {
-                            Some(RTCMessage::RtcpPacket(track_message.track_id, packet))
+                        Packet::Rtcp(packet) => {
+                            Some(RTCMessage::RtcpPacket(track_packet.track_id, packet))
                         }
                     }
                 }
@@ -240,10 +241,10 @@ impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnectio
                 }))
             }
             RTCMessage::RtpPacket(_track_id, rtp_packet) => {
-                RTCMessageInternal::Rtp(RTPMessage::Rtp(rtp_packet))
+                RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet)))
             }
             RTCMessage::RtcpPacket(_track_id, rtcp_packet) => {
-                RTCMessageInternal::Rtp(RTPMessage::Rtcp(rtcp_packet))
+                RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packet)))
             }
         };
 
