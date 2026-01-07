@@ -23,7 +23,7 @@ resolver = "2"
 opt-level = 0
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2024"
 license = "MIT/Apache-2.0"
@@ -34,19 +34,19 @@ categories = ["network-programming"]
 
 [workspace.dependencies]
 sansio = "1"
-rtc = { version = "0.5.1", path = "rtc" }
-signal = { version = "0.5.1", path = "examples/examples/signal", package = "rtc-signal" }
-datachannel = { version = "0.5.1", path = "rtc-datachannel", package = "rtc-datachannel" }
-dtls = { version = "0.5.1", path = "rtc-dtls", package = "rtc-dtls" }
-ice = { version = "0.5.1", path = "rtc-ice", package = "rtc-ice" }
-interceptor = { version = "0.5.1", path = "rtc-interceptor", package = "rtc-interceptor" }
-mdns = { version = "0.5.1", path = "rtc-mdns", package = "rtc-mdns" }
-media = { version = "0.5.1", path = "rtc-media", package = "rtc-media" }
-rtcp = { version = "0.5.1", path = "rtc-rtcp", package = "rtc-rtcp" }
-rtp = { version = "0.5.1", path = "rtc-rtp", package = "rtc-rtp" }
-sctp = { version = "0.5.1", path = "rtc-sctp", package = "rtc-sctp" }
-sdp = { version = "0.5.1", path = "rtc-sdp", package = "rtc-sdp" }
-shared = { version = "0.5.1", path = "rtc-shared", package = "rtc-shared", default-features = false }
-srtp = { version = "0.5.1", path = "rtc-srtp", package = "rtc-srtp" }
-stun = { version = "0.5.1", path = "rtc-stun", package = "rtc-stun" }
-turn = { version = "0.5.1", path = "rtc-turn", package = "rtc-turn" }
+rtc = { version = "0.5.2", path = "rtc" }
+signal = { version = "0.5.2", path = "examples/examples/signal", package = "rtc-signal" }
+datachannel = { version = "0.5.2", path = "rtc-datachannel", package = "rtc-datachannel" }
+dtls = { version = "0.5.2", path = "rtc-dtls", package = "rtc-dtls" }
+ice = { version = "0.5.2", path = "rtc-ice", package = "rtc-ice" }
+interceptor = { version = "0.5.2", path = "rtc-interceptor", package = "rtc-interceptor" }
+mdns = { version = "0.5.2", path = "rtc-mdns", package = "rtc-mdns" }
+media = { version = "0.5.2", path = "rtc-media", package = "rtc-media" }
+rtcp = { version = "0.5.2", path = "rtc-rtcp", package = "rtc-rtcp" }
+rtp = { version = "0.5.2", path = "rtc-rtp", package = "rtc-rtp" }
+sctp = { version = "0.5.2", path = "rtc-sctp", package = "rtc-sctp" }
+sdp = { version = "0.5.2", path = "rtc-sdp", package = "rtc-sdp" }
+shared = { version = "0.5.2", path = "rtc-shared", package = "rtc-shared", default-features = false }
+srtp = { version = "0.5.2", path = "rtc-srtp", package = "rtc-srtp" }
+stun = { version = "0.5.2", path = "rtc-stun", package = "rtc-stun" }
+turn = { version = "0.5.2", path = "rtc-turn", package = "rtc-turn" }
