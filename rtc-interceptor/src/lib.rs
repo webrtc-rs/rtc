@@ -6,7 +6,7 @@
 //!
 //! # Design
 //!
-//! Each interceptor wraps an inner `Protocol` and can:
+//! Each interceptor wraps an inner `Interceptor` and can:
 //! - Process incoming/outgoing messages
 //! - Transform message types
 //! - Generate new messages (e.g., RTCP reports)
@@ -65,10 +65,10 @@ mod registry;
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 
-/// Interceptor extends [`Protocol`] for composable message processing.
+/// Interceptor extends [`Protocol`] with composable chaining via [`with()`](Interceptor::with).
 ///
-/// Any type implementing `Protocol` can be used as an interceptor.
-/// Chain interceptors by wrapping inner protocols.
+/// Any type implementing `Protocol` automatically implements `Interceptor`
+/// via the blanket impl. Chain interceptors by wrapping inner protocols.
 ///
 /// # Example
 ///
@@ -82,10 +82,9 @@ pub use registry::Registry;
 ///     // ... implement Protocol methods
 /// }
 ///
-/// // Use with the builder
+/// // Use with the builder - Interceptor is automatically implemented
 /// let chain = Registry::new()
-///     .with(MyInterceptor::new)
-///     .build();
+///     .with(MyInterceptor::new);
 /// ```
 pub trait Interceptor<Rin, Win, Ein>: Protocol<Rin, Win, Ein> + Sized {
     /// Wrap this interceptor with another layer.
@@ -96,11 +95,11 @@ pub trait Interceptor<Rin, Win, Ein>: Protocol<Rin, Win, Ein> + Sized {
     /// # Example
     ///
     /// ```ignore
-    /// let chain = NoopProtocol::new()
-    ///     .wrap(SenderReportInterceptor::new)
-    ///     .wrap(ReceiverReportInterceptor::new);
+    /// let chain = NoopInterceptor::new()
+    ///     .with(SenderReportInterceptor::new)
+    ///     .with(ReceiverReportInterceptor::new);
     /// ```
-    fn wrap<O, F>(self, f: F) -> O
+    fn with<O, F>(self, f: F) -> O
     where
         F: FnOnce(Self) -> O,
         O: Interceptor<Rin, Win, Ein>,

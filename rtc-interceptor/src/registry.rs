@@ -4,67 +4,78 @@ use crate::noop::NoopInterceptor;
 
 /// Registry for constructing interceptor chains.
 ///
-/// `Registry` uses a type-state pattern where each call to `.with()`
-/// transforms the registry's type parameter, creating a new registry that wraps
-/// the current chain with another interceptor.
+/// `Registry` wraps an interceptor chain and allows adding more interceptors
+/// via the [`with`](Registry::with) method. The chain can be extracted with [`build`](Registry::build).
 ///
 /// # Example
 ///
 /// ```ignore
 /// use rtc_interceptor::Registry;
 ///
-/// // Build a chain of interceptors
-/// let chain = Registry::new()
-///     .with(SenderReportInterceptor::new)
-///     .with(ReceiverReportInterceptor::new)
-///     .with(|p| NackInterceptor::with_config(p, config))
-///     .build();
+/// // Create a new registry
+/// let mut registry = Registry::new();
 ///
-/// // The resulting type is fully known at compile time:
-/// // NackInterceptor<ReceiverReportInterceptor<SenderReportInterceptor<NoopInterceptor<...>>>>
+/// // Add interceptors (can be done in helper functions)
+/// registry = registry
+///     .with(SenderReportInterceptor::new)
+///     .with(ReceiverReportInterceptor::new);
+///
+/// // Build the final chain
+/// let chain = registry.build();
 /// ```
 ///
-/// # Type Safety
+/// # Helper Function Pattern
 ///
-/// The builder pattern ensures that interceptor chains are type-safe.
-/// Each `.with()` call changes the return type, so the compiler can verify
-/// that the chain is properly constructed.
+/// ```ignore
+/// fn register_default_interceptors<P: Interceptor<Msg, Msg, Evt>>(
+///     registry: Registry<P>,
+/// ) -> Registry<impl Interceptor<Msg, Msg, Evt>> {
+///     registry
+///         .with(SenderReportInterceptor::new)
+///         .with(ReceiverReportInterceptor::new)
+/// }
+///
+/// let registry = Registry::new();
+/// let registry = register_default_interceptors(registry);
+/// let chain = registry.build();
+/// ```
 pub struct Registry<P> {
     inner: P,
 }
 
-impl Registry<()> {
-    /// Start building a new interceptor chain.
+impl<Rin, Win, Ein> Registry<NoopInterceptor<Rin, Win, Ein>> {
+    /// Create a new empty registry.
     ///
-    /// This creates a registry with a `NoopInterceptor` as the innermost layer.
-    /// The `NoopInterceptor` serves as a simple pass-through terminal.
+    /// This creates a `NoopInterceptor` as the innermost layer.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let chain = Registry::new()
-    ///     .with(MyInterceptor::new)
-    ///     .build();
+    /// use rtc_interceptor::Registry;
+    ///
+    /// let registry: Registry<_> = Registry::new();
     /// ```
-    pub fn new<Rin, Win, Ein>() -> Registry<NoopInterceptor<Rin, Win, Ein>> {
+    pub fn new() -> Self {
         Registry {
             inner: NoopInterceptor::new(),
         }
     }
 }
 
+impl<Rin, Win, Ein> Default for Registry<NoopInterceptor<Rin, Win, Ein>> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<P> Registry<P> {
-    /// Start building from an existing protocol.
-    ///
-    /// This allows using a custom innermost layer instead of `NoopInterceptor`.
+    /// Create a registry from an existing interceptor.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let custom_inner = MyCustomProtocol::new();
-    /// let chain = Registry::from(custom_inner)
-    ///     .with(MyInterceptor::new)
-    ///     .build();
+    /// let custom = MyCustomInterceptor::new();
+    /// let registry = Registry::from(custom);
     /// ```
     pub fn from(inner: P) -> Self {
         Registry { inner }
@@ -72,17 +83,14 @@ impl<P> Registry<P> {
 
     /// Wrap the current chain with another interceptor.
     ///
-    /// The wrapper function receives the current chain and returns a new
-    /// interceptor that wraps it. This changes the registry's type parameter
-    /// to reflect the new outer layer.
+    /// Returns a new `Registry` with the updated chain type.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let chain = Registry::new()
-    ///     .with(SenderReportInterceptor::new)  // Returns Registry<SenderReportInterceptor<...>>
-    ///     .with(ReceiverReportInterceptor::new)  // Returns Registry<ReceiverReportInterceptor<...>>
-    ///     .build();
+    /// let registry = Registry::new()
+    ///     .with(SenderReportInterceptor::new)
+    ///     .with(ReceiverReportInterceptor::new);
     /// ```
     pub fn with<O, F>(self, f: F) -> Registry<O>
     where
@@ -93,9 +101,16 @@ impl<P> Registry<P> {
         }
     }
 
-    /// Finish building and return the interceptor chain.
+    /// Build and return the interceptor chain.
     ///
-    /// This consumes the registry and returns the constructed chain.
+    /// Consumes the registry and returns the inner interceptor chain.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let registry = Registry::new().with(MyInterceptor::new);
+    /// let chain = registry.build();
+    /// ```
     pub fn build(self) -> P {
         self.inner
     }
@@ -151,15 +166,16 @@ mod tests {
 
     #[test]
     fn test_registry_new() {
-        let chain: NoopInterceptor<i32, i32, ()> = Registry::new().build();
-        let mut chain = chain;
+        let registry: Registry<NoopInterceptor<i32, i32, ()>> = Registry::new();
+        let mut chain = registry.build();
         chain.handle_read(42).unwrap();
         assert_eq!(chain.poll_read(), Some(42));
     }
 
     #[test]
     fn test_registry_with_single_interceptor() {
-        let mut chain = Registry::new().with(TestInterceptor::new).build();
+        let registry = Registry::new().with(TestInterceptor::new);
+        let mut chain = registry.build();
 
         chain.handle_read(42).unwrap();
         assert_eq!(chain.poll_read(), Some(42));
@@ -168,10 +184,10 @@ mod tests {
 
     #[test]
     fn test_registry_with_multiple_interceptors() {
-        let mut chain = Registry::new()
+        let registry = Registry::new()
             .with(TestInterceptor::with_name("inner"))
-            .with(TestInterceptor::with_name("outer"))
-            .build();
+            .with(TestInterceptor::with_name("outer"));
+        let mut chain = registry.build();
 
         chain.handle_read(42).unwrap();
         assert_eq!(chain.poll_read(), Some(42));
@@ -180,11 +196,33 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_from_custom_inner() {
+    fn test_registry_from_inner() {
         let custom = NoopInterceptor::<i32, i32, ()>::new();
-        let mut chain = Registry::from(custom).with(TestInterceptor::new).build();
+        let registry = Registry::from(custom).with(TestInterceptor::new);
+        let mut chain = registry.build();
 
         chain.handle_write(100).unwrap();
         assert_eq!(chain.poll_write(), Some(100));
+    }
+
+    // Test the helper function pattern
+    fn register_test_interceptors<P: Protocol<i32, i32, ()>>(
+        registry: Registry<P>,
+    ) -> Registry<TestInterceptor<TestInterceptor<P>>> {
+        registry
+            .with(TestInterceptor::with_name("first"))
+            .with(TestInterceptor::with_name("second"))
+    }
+
+    #[test]
+    fn test_helper_function_pattern() {
+        let registry = Registry::new();
+        let registry = register_test_interceptors(registry);
+        let mut chain = registry.build();
+
+        chain.handle_read(42).unwrap();
+        assert_eq!(chain.poll_read(), Some(42));
+        assert_eq!(chain.name, "second");
+        assert_eq!(chain.inner.name, "first");
     }
 }
