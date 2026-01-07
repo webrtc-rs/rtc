@@ -335,10 +335,14 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
                         track_id2_receiver_id.insert(init.track_id.clone(), init.receiver_id);
 
                         if let Some(rid) = init.rid.as_ref() {
-                            log::info!("✅ Answerer Track Open with RID: {}", rid);
+                            log::info!(
+                                "✅ Answerer Track (track_id: {}) Open with RID: {}",
+                                init.track_id,
+                                rid
+                            );
                         } else {
                             log::info!(
-                                "✅ Answerer Track Open without RID (track_id: {})",
+                                "✅ Answerer Track (track_id: {}) Open without RID ",
                                 init.track_id
                             );
                         }
