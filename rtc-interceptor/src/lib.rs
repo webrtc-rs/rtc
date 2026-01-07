@@ -78,12 +78,12 @@ pub type TaggedPacket = TransportMessage<Packet>;
 /// Interceptor extends [`Protocol`] with composable chaining via [`with()`](Interceptor::with).
 ///
 /// This trait fixes the Protocol type parameters for RTP/RTCP interceptor chains:
-/// - `Rin`, `Win`, `Rout`, `Wout` = [`Packet`]
+/// - `Rin`, `Win`, `Rout`, `Wout` = [`TaggedPacket`]
 /// - `Ein`, `Eout` = `()`
 /// - `Time` = [`Instant`]
 /// - `Error` = [`shared::error::Error`]
 ///
-/// Any type implementing `Protocol<Packet, Packet, ()>` with the correct associated types
+/// Any type implementing `Protocol<TaggedPacket, TaggedPacket, ()>` with the correct associated types
 /// automatically implements `Interceptor` via the blanket impl.
 ///
 /// # Example
@@ -94,9 +94,9 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///     inner: P,
 /// }
 ///
-/// impl<P: Interceptor> Protocol<Packet, Packet, ()> for MyInterceptor<P> {
-///     type Rout = Packet;
-///     type Wout = Packet;
+/// impl<P: Interceptor> Protocol<TaggedPacket, TaggedPacket, ()> for MyInterceptor<P> {
+///     type Rout = TaggedPacket;
+///     type Wout = TaggedPacket;
 ///     type Eout = ();
 ///     type Time = Instant;
 ///     type Error = shared::error::Error;
@@ -109,11 +109,11 @@ pub type TaggedPacket = TransportMessage<Packet>;
 /// ```
 pub trait Interceptor:
     sansio::Protocol<
-        Packet,
-        Packet,
+        TaggedPacket,
+        TaggedPacket,
         (),
-        Rout = Packet,
-        Wout = Packet,
+        Rout = TaggedPacket,
+        Wout = TaggedPacket,
         Eout = (),
         Time = Instant,
         Error = shared::error::Error,
@@ -140,14 +140,14 @@ pub trait Interceptor:
     }
 }
 
-// Blanket impl: any Protocol<Packet, Packet, ()> with correct associated types is an Interceptor
+// Blanket impl: any Protocol<TaggedPacket, TaggedPacket, ()> with correct associated types is an Interceptor
 impl<P> Interceptor for P where
     P: sansio::Protocol<
-            Packet,
-            Packet,
+            TaggedPacket,
+            TaggedPacket,
             (),
-            Rout = Packet,
-            Wout = Packet,
+            Rout = TaggedPacket,
+            Wout = TaggedPacket,
             Eout = (),
             Time = Instant,
             Error = shared::error::Error,

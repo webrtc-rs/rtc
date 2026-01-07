@@ -1,7 +1,7 @@
 //! Interceptor Registry - Type-safe builder for constructing interceptor chains.
 
-use crate::noop::NoopInterceptor;
 use crate::Interceptor;
+use crate::noop::NoopInterceptor;
 
 /// Registry for constructing interceptor chains.
 ///
@@ -121,13 +121,17 @@ impl<P: Interceptor> Registry<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Packet;
+    use crate::TaggedPacket;
     use sansio::Protocol;
     use shared::error::Error;
     use std::time::Instant;
 
-    fn dummy_rtp_packet() -> Packet {
-        Packet::Rtp(rtp::Packet::default())
+    fn dummy_rtp_packet() -> TaggedPacket {
+        TaggedPacket {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: crate::Packet::Rtp(rtp::Packet::default()),
+        }
     }
 
     // A simple test interceptor that wraps an inner protocol
@@ -149,14 +153,14 @@ mod tests {
         }
     }
 
-    impl<P: Interceptor> Protocol<Packet, Packet, ()> for TestInterceptor<P> {
-        type Rout = Packet;
-        type Wout = Packet;
+    impl<P: Interceptor> Protocol<TaggedPacket, TaggedPacket, ()> for TestInterceptor<P> {
+        type Rout = TaggedPacket;
+        type Wout = TaggedPacket;
         type Eout = ();
         type Error = Error;
         type Time = Instant;
 
-        fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
+        fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
             self.inner.handle_read(msg)
         }
 
@@ -164,7 +168,7 @@ mod tests {
             self.inner.poll_read()
         }
 
-        fn handle_write(&mut self, msg: Packet) -> Result<(), Self::Error> {
+        fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
             self.inner.handle_write(msg)
         }
 
@@ -178,8 +182,9 @@ mod tests {
         let registry = Registry::new();
         let mut chain = registry.build();
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
     }
 
     #[test]
@@ -188,8 +193,9 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
         assert_eq!(chain.name, "test");
     }
 
@@ -201,8 +207,9 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
         assert_eq!(chain.name, "outer");
         assert_eq!(chain.inner.name, "inner");
     }
@@ -214,8 +221,9 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        chain.handle_write(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_write(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_write(pkt).unwrap();
+        assert_eq!(chain.poll_write().unwrap().message, pkt_message);
     }
 
     // Test the helper function pattern
@@ -234,8 +242,9 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
         assert_eq!(chain.name, "second");
         assert_eq!(chain.inner.name, "first");
     }

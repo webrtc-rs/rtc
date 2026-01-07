@@ -1,7 +1,8 @@
 //! Receiver Report Interceptor - Generates RTCP Receiver Reports.
 
 use crate::report::receiver_stream::ReceiverStream;
-use crate::{Interceptor, Packet};
+use crate::{Interceptor, Packet, TaggedPacket};
+use shared::TransportContext;
 use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -66,8 +67,8 @@ pub struct ReceiverReportInterceptor<P> {
 
     streams: HashMap<u32, ReceiverStream>,
 
-    read_queue: VecDeque<Packet>,
-    write_queue: VecDeque<Packet>,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
 impl<P> ReceiverReportInterceptor<P> {
@@ -131,14 +132,16 @@ impl<P> ReceiverReportInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for ReceiverReportInterceptor<P> {
-    type Rout = Packet;
-    type Wout = Packet;
+impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
+    for ReceiverReportInterceptor<P>
+{
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
     type Eout = ();
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         /*if let Packet::Rtcp(rtcp_packets) = &msg {
             for rtcp_packet in rtcp_packets {
                 if let Some(sr) = rtcp_packet
@@ -163,7 +166,7 @@ impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for ReceiverReportInte
         self.inner.poll_read()
     }
 
-    fn handle_write(&mut self, msg: Packet) -> Result<(), Self::Error> {
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         self.inner.handle_write(msg)
     }
 
@@ -177,7 +180,11 @@ impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for ReceiverReportInte
 
             for stream in self.streams.values_mut() {
                 let rr = stream.generate_report(now);
-                self.write_queue.push_back(Packet::Rtcp(vec![Box::new(rr)]));
+                self.write_queue.push_back(TaggedPacket {
+                    now,
+                    transport: TransportContext::default(),
+                    message: Packet::Rtcp(vec![Box::new(rr)]),
+                });
             }
         }
 
@@ -201,8 +208,12 @@ mod tests {
     use crate::Registry;
     use sansio::Protocol;
 
-    fn dummy_rtp_packet() -> Packet {
-        Packet::Rtp(rtp::Packet::default())
+    fn dummy_rtp_packet() -> TaggedPacket {
+        TaggedPacket {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: crate::Packet::Rtp(rtp::Packet::default()),
+        }
     }
 
     #[test]
@@ -239,13 +250,15 @@ mod tests {
 
         // Test read path
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
 
         // Test write path
         let pkt2 = dummy_rtp_packet();
-        chain.handle_write(pkt2.clone()).unwrap();
-        assert_eq!(chain.poll_write(), Some(pkt2));
+        let pkt2_message = pkt2.message.clone();
+        chain.handle_write(pkt2).unwrap();
+        assert_eq!(chain.poll_write().unwrap().message, pkt2_message);
     }
 
     #[test]
@@ -300,11 +313,13 @@ mod tests {
 
         // Test packet flow through the chain
         let pkt = dummy_rtp_packet();
-        chain.handle_read(pkt.clone()).unwrap();
-        assert_eq!(chain.poll_read(), Some(pkt));
+        let pkt_message = pkt.message.clone();
+        chain.handle_read(pkt).unwrap();
+        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
 
         let pkt2 = dummy_rtp_packet();
-        chain.handle_write(pkt2.clone()).unwrap();
-        assert_eq!(chain.poll_write(), Some(pkt2));
+        let pkt2_message = pkt2.message.clone();
+        chain.handle_write(pkt2).unwrap();
+        assert_eq!(chain.poll_write().unwrap().message, pkt2_message);
     }
 }

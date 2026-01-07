@@ -1,6 +1,6 @@
 //! NoOp Interceptor - A pass-through terminal for interceptor chains.
 
-use crate::Packet;
+use crate::TaggedPacket;
 use shared::error::Error;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -18,12 +18,12 @@ use std::time::Instant;
 /// use sansio::Protocol;
 ///
 /// let mut noop = NoopInterceptor::new();
-/// noop.handle_read(Packet::Rtp(...)).unwrap();
+/// noop.handle_read(TaggedPacket::Rtp(...)).unwrap();
 /// assert!(noop.poll_read().is_some());
 /// ```
 pub struct NoopInterceptor {
-    read_queue: VecDeque<Packet>,
-    write_queue: VecDeque<Packet>,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
 impl NoopInterceptor {
@@ -42,14 +42,14 @@ impl Default for NoopInterceptor {
     }
 }
 
-impl sansio::Protocol<Packet, Packet, ()> for NoopInterceptor {
-    type Rout = Packet;
-    type Wout = Packet;
+impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
     type Eout = ();
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         self.read_queue.push_back(msg);
         Ok(())
     }
@@ -58,7 +58,7 @@ impl sansio::Protocol<Packet, Packet, ()> for NoopInterceptor {
         self.read_queue.pop_front()
     }
 
-    fn handle_write(&mut self, msg: Packet) -> Result<(), Self::Error> {
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         self.write_queue.push_back(msg);
         Ok(())
     }
@@ -95,8 +95,12 @@ mod tests {
     use super::*;
     use sansio::Protocol;
 
-    fn dummy_rtp_packet() -> Packet {
-        Packet::Rtp(rtp::Packet::default())
+    fn dummy_rtp_packet() -> TaggedPacket {
+        TaggedPacket {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: crate::Packet::Rtp(rtp::Packet::default()),
+        }
     }
 
     #[test]
@@ -106,20 +110,24 @@ mod tests {
         // Test read
         let pkt1 = dummy_rtp_packet();
         let pkt2 = dummy_rtp_packet();
-        noop.handle_read(pkt1.clone()).unwrap();
-        noop.handle_read(pkt2.clone()).unwrap();
-        assert_eq!(noop.poll_read(), Some(pkt1));
-        assert_eq!(noop.poll_read(), Some(pkt2));
-        assert_eq!(noop.poll_read(), None);
+        let pkt1_message = pkt1.message.clone();
+        let pkt2_message = pkt2.message.clone();
+        noop.handle_read(pkt1).unwrap();
+        noop.handle_read(pkt2).unwrap();
+        assert_eq!(noop.poll_read().unwrap().message, pkt1_message);
+        assert_eq!(noop.poll_read().unwrap().message, pkt2_message);
+        assert!(noop.poll_read().is_none());
 
         // Test write
         let pkt3 = dummy_rtp_packet();
         let pkt4 = dummy_rtp_packet();
-        noop.handle_write(pkt3.clone()).unwrap();
-        noop.handle_write(pkt4.clone()).unwrap();
-        assert_eq!(noop.poll_write(), Some(pkt3));
-        assert_eq!(noop.poll_write(), Some(pkt4));
-        assert_eq!(noop.poll_write(), None);
+        let pkt3_message = pkt3.message.clone();
+        let pkt4_message = pkt4.message.clone();
+        noop.handle_write(pkt3).unwrap();
+        noop.handle_write(pkt4).unwrap();
+        assert_eq!(noop.poll_write().unwrap().message, pkt3_message);
+        assert_eq!(noop.poll_write().unwrap().message, pkt4_message);
+        assert!(noop.poll_write().is_none());
     }
 
     #[test]
@@ -131,7 +139,7 @@ mod tests {
 
         noop.close().unwrap();
 
-        assert_eq!(noop.poll_read(), None);
-        assert_eq!(noop.poll_write(), None);
+        assert!(noop.poll_read().is_none());
+        assert!(noop.poll_write().is_none());
     }
 }
