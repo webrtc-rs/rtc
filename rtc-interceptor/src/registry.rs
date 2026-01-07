@@ -1,6 +1,7 @@
 //! Interceptor Registry - Type-safe builder for constructing interceptor chains.
 
 use crate::noop::NoopInterceptor;
+use crate::Interceptor;
 
 /// Registry for constructing interceptor chains.
 ///
@@ -27,9 +28,9 @@ use crate::noop::NoopInterceptor;
 /// # Helper Function Pattern
 ///
 /// ```ignore
-/// fn register_default_interceptors<P: Interceptor<Msg, Msg, Evt>>(
+/// fn register_default_interceptors<P: Interceptor>(
 ///     registry: Registry<P>,
-/// ) -> Registry<impl Interceptor<Msg, Msg, Evt>> {
+/// ) -> Registry<impl Interceptor> {
 ///     registry
 ///         .with(SenderReportInterceptor::new)
 ///         .with(ReceiverReportInterceptor::new)
@@ -43,7 +44,7 @@ pub struct Registry<P> {
     inner: P,
 }
 
-impl<Rin, Win, Ein> Registry<NoopInterceptor<Rin, Win, Ein>> {
+impl Registry<NoopInterceptor> {
     /// Create a new empty registry.
     ///
     /// This creates a `NoopInterceptor` as the innermost layer.
@@ -53,7 +54,7 @@ impl<Rin, Win, Ein> Registry<NoopInterceptor<Rin, Win, Ein>> {
     /// ```ignore
     /// use rtc_interceptor::Registry;
     ///
-    /// let registry: Registry<_> = Registry::new();
+    /// let registry = Registry::new();
     /// ```
     pub fn new() -> Self {
         Registry {
@@ -62,13 +63,13 @@ impl<Rin, Win, Ein> Registry<NoopInterceptor<Rin, Win, Ein>> {
     }
 }
 
-impl<Rin, Win, Ein> Default for Registry<NoopInterceptor<Rin, Win, Ein>> {
+impl Default for Registry<NoopInterceptor> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P> Registry<P> {
+impl<P: Interceptor> Registry<P> {
     /// Create a registry from an existing interceptor.
     ///
     /// # Example
@@ -95,6 +96,7 @@ impl<P> Registry<P> {
     pub fn with<O, F>(self, f: F) -> Registry<O>
     where
         F: FnOnce(P) -> O,
+        O: Interceptor,
     {
         Registry {
             inner: f(self.inner),
@@ -119,7 +121,14 @@ impl<P> Registry<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Packet;
     use sansio::Protocol;
+    use shared::error::Error;
+    use std::time::Instant;
+
+    fn dummy_rtp_packet() -> Packet {
+        Packet::Rtp(rtp::Packet::default())
+    }
 
     // A simple test interceptor that wraps an inner protocol
     struct TestInterceptor<P> {
@@ -140,14 +149,14 @@ mod tests {
         }
     }
 
-    impl<P: Protocol<i32, i32, ()>> Protocol<i32, i32, ()> for TestInterceptor<P> {
-        type Rout = P::Rout;
-        type Wout = P::Wout;
-        type Eout = P::Eout;
-        type Error = P::Error;
-        type Time = P::Time;
+    impl<P: Interceptor> Protocol<Packet, Packet, ()> for TestInterceptor<P> {
+        type Rout = Packet;
+        type Wout = Packet;
+        type Eout = ();
+        type Error = Error;
+        type Time = Instant;
 
-        fn handle_read(&mut self, msg: i32) -> Result<(), Self::Error> {
+        fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
             self.inner.handle_read(msg)
         }
 
@@ -155,7 +164,7 @@ mod tests {
             self.inner.poll_read()
         }
 
-        fn handle_write(&mut self, msg: i32) -> Result<(), Self::Error> {
+        fn handle_write(&mut self, msg: Packet) -> Result<(), Self::Error> {
             self.inner.handle_write(msg)
         }
 
@@ -166,10 +175,11 @@ mod tests {
 
     #[test]
     fn test_registry_new() {
-        let registry: Registry<NoopInterceptor<i32, i32, ()>> = Registry::new();
+        let registry = Registry::new();
         let mut chain = registry.build();
-        chain.handle_read(42).unwrap();
-        assert_eq!(chain.poll_read(), Some(42));
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
     }
 
     #[test]
@@ -177,8 +187,9 @@ mod tests {
         let registry = Registry::new().with(TestInterceptor::new);
         let mut chain = registry.build();
 
-        chain.handle_read(42).unwrap();
-        assert_eq!(chain.poll_read(), Some(42));
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
         assert_eq!(chain.name, "test");
     }
 
@@ -189,24 +200,26 @@ mod tests {
             .with(TestInterceptor::with_name("outer"));
         let mut chain = registry.build();
 
-        chain.handle_read(42).unwrap();
-        assert_eq!(chain.poll_read(), Some(42));
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
         assert_eq!(chain.name, "outer");
         assert_eq!(chain.inner.name, "inner");
     }
 
     #[test]
     fn test_registry_from_inner() {
-        let custom = NoopInterceptor::<i32, i32, ()>::new();
+        let custom = NoopInterceptor::new();
         let registry = Registry::from(custom).with(TestInterceptor::new);
         let mut chain = registry.build();
 
-        chain.handle_write(100).unwrap();
-        assert_eq!(chain.poll_write(), Some(100));
+        let pkt = dummy_rtp_packet();
+        chain.handle_write(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_write(), Some(pkt));
     }
 
     // Test the helper function pattern
-    fn register_test_interceptors<P: Protocol<i32, i32, ()>>(
+    fn register_test_interceptors<P: Interceptor>(
         registry: Registry<P>,
     ) -> Registry<TestInterceptor<TestInterceptor<P>>> {
         registry
@@ -220,8 +233,9 @@ mod tests {
         let registry = register_test_interceptors(registry);
         let mut chain = registry.build();
 
-        chain.handle_read(42).unwrap();
-        assert_eq!(chain.poll_read(), Some(42));
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
         assert_eq!(chain.name, "second");
         assert_eq!(chain.inner.name, "first");
     }

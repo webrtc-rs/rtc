@@ -55,20 +55,33 @@
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 
-use sansio::Protocol;
+use std::time::Instant;
 
 mod noop;
 mod registry;
 
-//TODO: mod report;
+mod report;
 
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 
+/// RTP/RTCP Packet
+#[derive(Debug, Clone, PartialEq)]
+pub enum Packet {
+    Rtp(rtp::Packet),
+    Rtcp(Vec<Box<dyn rtcp::Packet>>),
+}
+
 /// Interceptor extends [`Protocol`] with composable chaining via [`with()`](Interceptor::with).
 ///
-/// Any type implementing `Protocol` automatically implements `Interceptor`
-/// via the blanket impl. Chain interceptors by wrapping inner protocols.
+/// This trait fixes the Protocol type parameters for RTP/RTCP interceptor chains:
+/// - `Rin`, `Win`, `Rout`, `Wout` = [`Packet`]
+/// - `Ein`, `Eout` = `()`
+/// - `Time` = [`Instant`]
+/// - `Error` = [`shared::error::Error`]
+///
+/// Any type implementing `Protocol<Packet, Packet, ()>` with the correct associated types
+/// automatically implements `Interceptor` via the blanket impl.
 ///
 /// # Example
 ///
@@ -78,7 +91,12 @@ pub use registry::Registry;
 ///     inner: P,
 /// }
 ///
-/// impl<P: Protocol<Msg, Msg, Evt>> Protocol<Msg, Msg, Evt> for MyInterceptor<P> {
+/// impl<P: Interceptor> Protocol<Packet, Packet, ()> for MyInterceptor<P> {
+///     type Rout = Packet;
+///     type Wout = Packet;
+///     type Eout = ();
+///     type Time = Instant;
+///     type Error = shared::error::Error;
 ///     // ... implement Protocol methods
 /// }
 ///
@@ -86,7 +104,18 @@ pub use registry::Registry;
 /// let chain = Registry::new()
 ///     .with(MyInterceptor::new);
 /// ```
-pub trait Interceptor<Rin, Win, Ein>: Protocol<Rin, Win, Ein> + Sized {
+pub trait Interceptor:
+    sansio::Protocol<
+        Packet,
+        Packet,
+        (),
+        Rout = Packet,
+        Wout = Packet,
+        Eout = (),
+        Time = Instant,
+        Error = shared::error::Error,
+    > + Sized
+{
     /// Wrap this interceptor with another layer.
     ///
     /// The wrapper function receives `self` and returns a new interceptor
@@ -102,18 +131,23 @@ pub trait Interceptor<Rin, Win, Ein>: Protocol<Rin, Win, Ein> + Sized {
     fn with<O, F>(self, f: F) -> O
     where
         F: FnOnce(Self) -> O,
-        O: Interceptor<Rin, Win, Ein>,
+        O: Interceptor,
     {
         f(self)
     }
 }
 
-// Blanket impl: any Protocol + Sized is an Interceptor
-impl<P, Rin, Win, Ein> Interceptor<Rin, Win, Ein> for P where P: Protocol<Rin, Win, Ein> + Sized {}
-
-/// RTP/RTCP Packet
-#[derive(Debug, Clone, PartialEq)]
-pub enum Packet {
-    Rtp(rtp::Packet),
-    Rtcp(Vec<Box<dyn rtcp::Packet>>),
+// Blanket impl: any Protocol<Packet, Packet, ()> with correct associated types is an Interceptor
+impl<P> Interceptor for P where
+    P: sansio::Protocol<
+            Packet,
+            Packet,
+            (),
+            Rout = Packet,
+            Wout = Packet,
+            Eout = (),
+            Time = Instant,
+            Error = shared::error::Error,
+        > + Sized
+{
 }

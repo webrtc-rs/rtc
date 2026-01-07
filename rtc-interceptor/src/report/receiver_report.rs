@@ -236,14 +236,14 @@ mod tests {
 
     #[test]
     fn test_receiver_report_interceptor_creation() {
-        let inner: NoopInterceptor<(), (), ()> = NoopInterceptor::new();
+        let inner = NoopInterceptor::new();
         let interceptor = ReceiverReportInterceptor::new(inner);
         assert!(interceptor.streams.is_empty());
     }
 
     #[test]
     fn test_receiver_report_with_config() {
-        let inner: NoopInterceptor<(), (), ()> = NoopInterceptor::new();
+        let inner = NoopInterceptor::new();
         let config = ReceiverReportConfig {
             interval: Duration::from_millis(500),
         };
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_register_stream() {
-        let inner: NoopInterceptor<(), (), ()> = NoopInterceptor::new();
+        let inner = NoopInterceptor::new();
         let mut interceptor = ReceiverReportInterceptor::new(inner);
 
         interceptor.register_stream(12345, 48000);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_process_rtp() {
-        let inner: NoopInterceptor<(), (), ()> = NoopInterceptor::new();
+        let inner = NoopInterceptor::new();
         let mut interceptor = ReceiverReportInterceptor::new(inner);
 
         let now = Instant::now();
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_generate_reports() {
-        let inner: NoopInterceptor<(), (), ()> = NoopInterceptor::new();
+        let inner = NoopInterceptor::new();
         let mut interceptor = ReceiverReportInterceptor::new(inner);
 
         let now = Instant::now();
