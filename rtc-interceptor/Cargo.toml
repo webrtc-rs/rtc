@@ -12,5 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+shared = { workspace = true, default-features = false, features = [] }
+sansio.workspace = true
 
 [dev-dependencies]
