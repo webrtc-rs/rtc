@@ -110,3 +110,10 @@ pub trait Interceptor<Rin, Win, Ein>: Protocol<Rin, Win, Ein> + Sized {
 
 // Blanket impl: any Protocol + Sized is an Interceptor
 impl<P, Rin, Win, Ein> Interceptor<Rin, Win, Ein> for P where P: Protocol<Rin, Win, Ein> + Sized {}
+
+/// RTP/RTCP Packet
+#[derive(Debug, Clone, PartialEq)]
+pub enum Packet {
+    Rtp(rtp::Packet),
+    Rtcp(Vec<Box<dyn rtcp::Packet>>),
+}
