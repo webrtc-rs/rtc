@@ -197,16 +197,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The repository includes comprehensive examples demonstrating various use cases:
 
-- **[data-channels-offer-answer](examples/examples/data-channels-offer-answer/)** - Complete data channel setup with
+- [data-channels-offer-answer](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/data-channels-offer-answer/) -
+  Complete data channel setup with
   signaling
-- **[reflect](examples/examples/reflect/)** - Echo server that reflects media back to sender
-- **[save-to-disk-vpx](examples/examples/save-to-disk-vpx/)** - Receive and save VP8/VP9 video
-- **[play-from-disk-vpx](examples/examples/play-from-disk-vpx/)** - Send VP8/VP9 video from disk
+- [reflect](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/reflect/) - Echo server that reflects
+  media back to sender
+- [save-to-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/save-to-disk-vpx/) - Receive and
+  save VP8/VP9 video
+- [play-from-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/play-from-disk-vpx/) - Send
+  VP8/VP9 video from disk
+- [simulcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/simulcast) - Receive 3
+  simulcast encodings in one track
 
 Run an example:
 
 ```bash
-cargo run --example data-channels-offer --features examples
+cargo run --example data-channels-offer-answer --features examples
 ```
 
 ## Architecture
@@ -329,7 +335,7 @@ This implementation follows these specifications:
 ## Documentation
 
 - [API Documentation](https://docs.rs/rtc) - Complete API reference
-- [Examples](examples/) - Working code examples
+- [Examples](https://github.com/webrtc-rs/rtc/tree/master/examples/examples) - Working code examples
 - [Sans-I/O Pattern](https://sans-io.readthedocs.io/) - Detailed explanation of the sans-I/O design
 - [WebRTC for the Curious](https://webrtcforthecurious.com/) - Comprehensive WebRTC guide
 
