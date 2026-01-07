@@ -3,7 +3,42 @@
 use crate::{Interceptor, Packet};
 use rtcp::header::PacketType;
 use shared::error::Error;
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::marker::PhantomData;
+use std::time::{Duration, Instant};
+
+/// Builder for the SenderReportInterceptor.
+pub struct SenderReportBuilder<P> {
+    /// Interval between sender reports.
+    interval: Duration,
+    _phantom: PhantomData<P>,
+}
+
+impl<P> Default for SenderReportBuilder<P> {
+    fn default() -> Self {
+        Self {
+            interval: Duration::from_secs(1),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<P> SenderReportBuilder<P> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// with customized interval
+    pub fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Create a builder function for use with Registry.
+    pub fn build(self) -> impl FnOnce(P) -> SenderReportInterceptor<P> {
+        move |inner| SenderReportInterceptor::new(inner, self.interval)
+    }
+}
 
 /// Interceptor that filters hop-by-hop RTCP reports.
 ///
@@ -26,12 +61,26 @@ use std::time::Instant;
 /// ```
 pub struct SenderReportInterceptor<P> {
     inner: P,
+
+    interval: Duration,
+    eto: Instant,
+
+    read_queue: VecDeque<Packet>,
+    write_queue: VecDeque<Packet>,
 }
 
 impl<P> SenderReportInterceptor<P> {
     /// Create a new SenderReportInterceptor.
-    pub fn new(inner: P) -> Self {
-        Self { inner }
+    fn new(inner: P, interval: Duration) -> Self {
+        Self {
+            inner,
+
+            interval,
+            eto: Instant::now(),
+
+            read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
+        }
     }
 
     /// Check if an RTCP packet type should be filtered.
@@ -39,18 +88,18 @@ impl<P> SenderReportInterceptor<P> {
     /// Returns `true` for hop-by-hop report types that should not be forwarded:
     /// - Receiver Report (201)
     /// - Transport-Specific Feedback (205)
-    pub fn should_filter(packet_type: PacketType) -> bool {
+    fn should_filter(packet_type: PacketType) -> bool {
         packet_type == PacketType::ReceiverReport
             || (packet_type == PacketType::TransportSpecificFeedback)
     }
 
     /// Get a reference to the inner protocol.
-    pub fn inner(&self) -> &P {
+    fn inner(&self) -> &P {
         &self.inner
     }
 
     /// Get a mutable reference to the inner protocol.
-    pub fn inner_mut(&mut self) -> &mut P {
+    fn inner_mut(&mut self) -> &mut P {
         &mut self.inner
     }
 }
@@ -63,12 +112,6 @@ impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for SenderReportInterc
     type Time = Instant;
 
     fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
-        // Filter out hop-by-hop RTCP reports
-        /*if let Some(rtcp) = msg.as_rtcp() {
-            if Self::should_filter(rtcp.packet_type()) {
-                return Ok(()); // Don't forward
-            }
-        }*/
         self.inner.handle_read(msg)
     }
 
@@ -89,23 +132,66 @@ impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for SenderReportInterc
     }
 
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        self.inner.poll_timeout()
+        if let Some(eto) = self.inner.poll_timeout()
+            && eto < self.eto
+        {
+            Some(eto)
+        } else {
+            Some(self.eto)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NoopInterceptor;
+    use crate::{NoopInterceptor, Registry};
+    use sansio::Protocol;
 
     fn dummy_rtp_packet() -> Packet {
         Packet::Rtp(rtp::Packet::default())
     }
 
     #[test]
-    fn test_sender_report_interceptor_creation() {
-        let inner = NoopInterceptor::new();
-        let _interceptor = SenderReportInterceptor::new(inner);
+    fn test_sender_report_builder_default() {
+        // Build with default interval (1 second)
+        let chain = Registry::new()
+            .with(SenderReportBuilder::default().build())
+            .build();
+
+        assert_eq!(chain.interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_sender_report_builder_with_custom_interval() {
+        // Build with custom interval
+        let chain = Registry::new()
+            .with(
+                SenderReportBuilder::default()
+                    .with_interval(Duration::from_millis(500))
+                    .build(),
+            )
+            .build();
+
+        assert_eq!(chain.interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_sender_report_chain_handle_read_write() {
+        // Build a chain and test packet flow
+        let mut chain = Registry::new()
+            .with(SenderReportBuilder::default().build())
+            .build();
+
+        // Test read path
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
+
+        // Test write path
+        let pkt2 = dummy_rtp_packet();
+        chain.handle_write(pkt2.clone()).unwrap();
+        assert_eq!(chain.poll_write(), Some(pkt2));
     }
 
     #[test]
@@ -138,16 +224,16 @@ mod tests {
 
     #[test]
     fn test_inner_access() {
-        let inner = NoopInterceptor::new();
-        let mut interceptor = SenderReportInterceptor::new(inner);
+        let mut chain = Registry::new()
+            .with(SenderReportBuilder::default().build())
+            .build();
 
         // Test immutable access
-        let _ = interceptor.inner();
+        let _ = chain.inner();
 
         // Test mutable access - can modify inner
-        use sansio::Protocol;
         let pkt = dummy_rtp_packet();
-        interceptor.inner_mut().handle_write(pkt.clone()).unwrap();
-        assert_eq!(interceptor.inner_mut().poll_write(), Some(pkt));
+        chain.inner_mut().handle_write(pkt.clone()).unwrap();
+        assert_eq!(chain.inner_mut().poll_write(), Some(pkt));
     }
 }

@@ -64,6 +64,7 @@ mod report;
 
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
+use shared::TransportMessage;
 
 /// RTP/RTCP Packet
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +72,8 @@ pub enum Packet {
     Rtp(rtp::Packet),
     Rtcp(Vec<Box<dyn rtcp::Packet>>),
 }
+
+pub type TaggedPacket = TransportMessage<Packet>;
 
 /// Interceptor extends [`Protocol`] with composable chaining via [`with()`](Interceptor::with).
 ///

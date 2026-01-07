@@ -1,21 +1,42 @@
 //! Receiver Report Interceptor - Generates RTCP Receiver Reports.
 
 use crate::report::receiver_stream::ReceiverStream;
-use std::collections::HashMap;
+use crate::{Interceptor, Packet};
+use shared::error::Error;
+use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
-/// Configuration for the ReceiverReportInterceptor.
-#[derive(Debug, Clone)]
-pub struct ReceiverReportConfig {
+/// Builder for the ReceiverReportInterceptor.
+pub struct ReceiverReportBuilder<P> {
     /// Interval between receiver reports.
-    pub interval: Duration,
+    interval: Duration,
+    _phantom: PhantomData<P>,
 }
 
-impl Default for ReceiverReportConfig {
+impl<P> Default for ReceiverReportBuilder<P> {
     fn default() -> Self {
         Self {
             interval: Duration::from_secs(1),
+            _phantom: PhantomData,
         }
+    }
+}
+
+impl<P> ReceiverReportBuilder<P> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// with customized interval
+    pub fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Create a builder function for use with Registry.
+    pub fn build(self) -> impl FnOnce(P) -> ReceiverReportInterceptor<P> {
+        move |inner| ReceiverReportInterceptor::new(inner, self.interval)
     }
 }
 
@@ -39,34 +60,34 @@ impl Default for ReceiverReportConfig {
 /// ```
 pub struct ReceiverReportInterceptor<P> {
     inner: P,
-    config: ReceiverReportConfig,
+
+    interval: Duration,
+    eto: Instant,
+
     streams: HashMap<u32, ReceiverStream>,
-    next_report_time: Option<Instant>,
+
+    read_queue: VecDeque<Packet>,
+    write_queue: VecDeque<Packet>,
 }
 
 impl<P> ReceiverReportInterceptor<P> {
     /// Create a new ReceiverReportInterceptor with default configuration.
-    pub fn new(inner: P) -> Self {
-        Self::with_config(inner, ReceiverReportConfig::default())
-    }
-
-    /// Create a new ReceiverReportInterceptor with custom configuration.
-    pub fn with_config(inner: P, config: ReceiverReportConfig) -> Self {
+    fn new(inner: P, interval: Duration) -> Self {
         Self {
             inner,
-            config,
+
+            interval,
+            eto: Instant::now(),
+
             streams: HashMap::new(),
-            next_report_time: None,
+
+            read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
         }
     }
 
-    /// Create a builder function for use with InterceptorBuilder.
-    pub fn builder(config: ReceiverReportConfig) -> impl FnOnce(P) -> Self {
-        move |inner| Self::with_config(inner, config)
-    }
-
     /// Process an incoming RTP packet for statistics.
-    pub fn process_rtp(&mut self, now: Instant, ssrc: u32, seq: u16, timestamp: u32) {
+    fn process_rtp(&mut self, now: Instant, ssrc: u32, seq: u16, timestamp: u32) {
         // Create stream if it doesn't exist
         let stream = self.streams.entry(ssrc).or_insert_with(|| {
             // Default clock rate, should be configured per stream in real usage
@@ -88,14 +109,14 @@ impl<P> ReceiverReportInterceptor<P> {
     }
 
     /// Process an incoming RTCP Sender Report.
-    pub fn process_sender_report(&mut self, now: Instant, sr: &rtcp::sender_report::SenderReport) {
+    fn process_sender_report(&mut self, now: Instant, sr: &rtcp::sender_report::SenderReport) {
         if let Some(stream) = self.streams.get_mut(&sr.ssrc) {
             stream.process_sender_report(now, sr);
         }
     }
 
     /// Generate receiver reports for all tracked streams.
-    pub fn generate_reports(&mut self, now: Instant) -> Vec<rtcp::receiver_report::ReceiverReport> {
+    fn generate_reports(&mut self, now: Instant) -> Vec<rtcp::receiver_report::ReceiverReport> {
         self.streams
             .values_mut()
             .map(|stream| stream.generate_report(now))
@@ -103,184 +124,187 @@ impl<P> ReceiverReportInterceptor<P> {
     }
 
     /// Register a new stream with its clock rate.
-    pub fn register_stream(&mut self, ssrc: u32, clock_rate: u32) {
+    fn register_stream(&mut self, ssrc: u32, clock_rate: u32) {
         self.streams
             .entry(ssrc)
             .or_insert_with(|| ReceiverStream::new(ssrc, clock_rate));
     }
 }
 
-// Note: The Protocol implementation below is a template.
-// In practice, you would implement this for specific message types
-// used in your application (e.g., TaggedRtpMessage, etc.)
-//
-// Example implementation for a generic message type:
-//
-// impl<P, Msg, Evt> Protocol<Msg, Msg, Evt> for ReceiverReportInterceptor<P>
-// where
-//     P: Protocol<Msg, Msg, Evt>,
-//     Msg: RtpMessage,  // Trait that provides access to RTP packet data
-// {
-//     type Rout = P::Rout;
-//     type Wout = P::Wout;
-//     type Eout = P::Eout;
-//     type Error = P::Error;
-//     type Time = Instant;
-//
-//     fn handle_read(&mut self, msg: Msg) -> Result<(), Self::Error> {
-//         // Extract RTP/RTCP data and process
-//         if let Some(rtp) = msg.as_rtp() {
-//             self.process_rtp(Instant::now(), rtp.ssrc, rtp.seq, rtp.timestamp);
-//         }
-//         self.inner.handle_read(msg)
-//     }
-//
-//     fn poll_read(&mut self) -> Option<Self::Rout> {
-//         self.inner.poll_read()
-//     }
-//
-//     fn handle_write(&mut self, msg: Msg) -> Result<(), Self::Error> {
-//         self.inner.handle_write(msg)
-//     }
-//
-//     fn poll_write(&mut self) -> Option<Self::Wout> {
-//         self.inner.poll_write()
-//     }
-//
-//     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
-//         if self.next_report_time.map_or(true, |t| now >= t) {
-//             let _reports = self.generate_reports(now);
-//             // Queue reports for sending via poll_write
-//             self.next_report_time = Some(now + self.config.interval);
-//         }
-//         self.inner.handle_timeout(now)
-//     }
-//
-//     fn poll_timeout(&mut self) -> Option<Instant> {
-//         match (self.next_report_time, self.inner.poll_timeout()) {
-//             (Some(a), Some(b)) => Some(a.min(b)),
-//             (a, b) => a.or(b),
-//         }
-//     }
-// }
+impl<P: Interceptor> sansio::Protocol<Packet, Packet, ()> for ReceiverReportInterceptor<P> {
+    type Rout = Packet;
+    type Wout = Packet;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
 
-/*
-    /// An interceptor that wraps an inner protocol and can transform messages.
-    ///
-    /// - `Rin`: Input read message type (from network)
-    /// - `Win`: Input write message type (from application)
-    /// - `Ein`: Input event type
-    /// - `P`: The inner protocol being wrapped
-    pub struct ReceiverReportInterceptor<P> {
-        inner: P,
-        interval: Duration,
-        eto: Option<Instant>,
-        streams: HashMap<u32, ReceiverStream>,
-        outbound_queue: VecDeque<P::Wout>,  // Generated RTCP reports
+    fn handle_read(&mut self, msg: Packet) -> Result<(), Self::Error> {
+        /*if let Packet::Rtcp(rtcp_packets) = &msg {
+            for rtcp_packet in rtcp_packets {
+                if let Some(sr) = rtcp_packet
+                    .as_any()
+                    .downcast_ref::<rtcp::sender_report::SenderReport>()
+                {
+                    if let Some(stream) = self.streams.get_mut(&sr.ssrc) {
+                        stream.process_sender_report(msg.now, sr);
+                    }
+                }
+            }
+        } else if let MessageEvent::Rtp(RTPMessageEvent::Rtp(rtp_packet)) = &msg.message {
+            if let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc) {
+                stream.process_rtp(msg.now, rtp_packet);
+            }
+        }*/
+
+        self.inner.handle_read(msg)
     }
 
-    impl<P, Rin, Win, Ein> Protocol<Rin, Win, Ein> for ReceiverReportInterceptor<P>
-    where
-        P: Protocol<Rin, Win, Ein>,  // Inner protocol
-        Rin: AsRef<RtpPacket>,       // Can extract RTP from input
-    {
-        type Rout = P::Rout;         // Pass through read output
-        type Wout = P::Wout;         // May inject additional writes
-        type Eout = P::Eout;
-        type Error = P::Error;
-        type Time = Instant;
-
-        fn handle_read(&mut self, msg: Rin) -> Result<(), Self::Error> {
-            // Process RTP/RTCP for stats
-            self.process_incoming(&msg);
-            // Forward to inner
-            self.inner.handle_read(msg)
-        }
-
-        fn poll_read(&mut self) -> Option<Self::Rout> {
-            self.inner.poll_read()
-        }
-
-        fn poll_write(&mut self) -> Option<Self::Wout> {
-            // Return generated RTCP reports first, then inner's writes
-            if let Some(report) = self.outbound_queue.pop_front() {
-                return Some(report);
-            }
-            self.inner.poll_write()
-        }
-
-        fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
-            // Generate periodic receiver reports
-            if self.eto.map_or(false, |t| t <= now) {
-                self.generate_reports(now);
-                self.eto = Some(now + self.interval);
-            }
-            self.inner.handle_timeout(now)
-        }
-
-        fn poll_timeout(&mut self) -> Option<Instant> {
-            // Return earliest timeout between self and inner
-            match (self.eto, self.inner.poll_timeout()) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            }
-        }
-        // ... other methods delegate to inner
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.inner.poll_read()
     }
-*/
+
+    fn handle_write(&mut self, msg: Packet) -> Result<(), Self::Error> {
+        self.inner.handle_write(msg)
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.inner.poll_write()
+    }
+
+    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
+        if self.eto <= now {
+            self.eto = now + self.interval;
+
+            for stream in self.streams.values_mut() {
+                let rr = stream.generate_report(now);
+                self.write_queue.push_back(Packet::Rtcp(vec![Box::new(rr)]));
+            }
+        }
+
+        self.inner.handle_timeout(now)
+    }
+
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
+        if let Some(eto) = self.inner.poll_timeout()
+            && eto < self.eto
+        {
+            Some(eto)
+        } else {
+            Some(self.eto)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NoopInterceptor;
+    use crate::Registry;
+    use sansio::Protocol;
 
-    #[test]
-    fn test_receiver_report_interceptor_creation() {
-        let inner = NoopInterceptor::new();
-        let interceptor = ReceiverReportInterceptor::new(inner);
-        assert!(interceptor.streams.is_empty());
+    fn dummy_rtp_packet() -> Packet {
+        Packet::Rtp(rtp::Packet::default())
     }
 
     #[test]
-    fn test_receiver_report_with_config() {
-        let inner = NoopInterceptor::new();
-        let config = ReceiverReportConfig {
-            interval: Duration::from_millis(500),
-        };
-        let interceptor = ReceiverReportInterceptor::with_config(inner, config);
-        assert_eq!(interceptor.config.interval, Duration::from_millis(500));
+    fn test_receiver_report_builder_default() {
+        // Build with default interval (1 second)
+        let chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .build();
+
+        assert_eq!(chain.interval, Duration::from_secs(1));
+        assert!(chain.streams.is_empty());
+    }
+
+    #[test]
+    fn test_receiver_report_builder_with_custom_interval() {
+        // Build with custom interval
+        let chain = Registry::new()
+            .with(
+                ReceiverReportBuilder::default()
+                    .with_interval(Duration::from_millis(500))
+                    .build(),
+            )
+            .build();
+
+        assert_eq!(chain.interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_receiver_report_chain_handle_read_write() {
+        // Build a chain and test packet flow
+        let mut chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .build();
+
+        // Test read path
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
+
+        // Test write path
+        let pkt2 = dummy_rtp_packet();
+        chain.handle_write(pkt2.clone()).unwrap();
+        assert_eq!(chain.poll_write(), Some(pkt2));
     }
 
     #[test]
     fn test_register_stream() {
-        let inner = NoopInterceptor::new();
-        let mut interceptor = ReceiverReportInterceptor::new(inner);
+        let mut chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .build();
 
-        interceptor.register_stream(12345, 48000);
-        assert!(interceptor.streams.contains_key(&12345));
+        chain.register_stream(12345, 48000);
+        assert!(chain.streams.contains_key(&12345));
     }
 
     #[test]
     fn test_process_rtp() {
-        let inner = NoopInterceptor::new();
-        let mut interceptor = ReceiverReportInterceptor::new(inner);
+        let mut chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .build();
 
         let now = Instant::now();
-        interceptor.process_rtp(now, 12345, 1, 1000);
+        chain.process_rtp(now, 12345, 1, 1000);
 
-        assert!(interceptor.streams.contains_key(&12345));
+        assert!(chain.streams.contains_key(&12345));
     }
 
     #[test]
     fn test_generate_reports() {
-        let inner = NoopInterceptor::new();
-        let mut interceptor = ReceiverReportInterceptor::new(inner);
+        let mut chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .build();
 
         let now = Instant::now();
-        interceptor.process_rtp(now, 12345, 1, 1000);
-        interceptor.process_rtp(now, 12345, 2, 2000);
+        chain.process_rtp(now, 12345, 1, 1000);
+        chain.process_rtp(now, 12345, 2, 2000);
 
-        let reports = interceptor.generate_reports(now);
+        let reports = chain.generate_reports(now);
         assert_eq!(reports.len(), 1);
+    }
+
+    #[test]
+    fn test_chained_interceptors() {
+        use crate::report::sender_report::SenderReportBuilder;
+
+        // Demonstrate chaining multiple interceptors
+        let mut chain = Registry::new()
+            .with(ReceiverReportBuilder::default().build())
+            .with(
+                SenderReportBuilder::default()
+                    .with_interval(Duration::from_millis(250))
+                    .build(),
+            )
+            .build();
+
+        // Test packet flow through the chain
+        let pkt = dummy_rtp_packet();
+        chain.handle_read(pkt.clone()).unwrap();
+        assert_eq!(chain.poll_read(), Some(pkt));
+
+        let pkt2 = dummy_rtp_packet();
+        chain.handle_write(pkt2.clone()).unwrap();
+        assert_eq!(chain.poll_write(), Some(pkt2));
     }
 }
