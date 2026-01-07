@@ -15,4 +15,8 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 sansio.workspace = true
 
+rtp.workspace = true
+rtcp.workspace = true
+rand = "0.8"
+
 [dev-dependencies]
