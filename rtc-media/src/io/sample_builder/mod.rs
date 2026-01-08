@@ -5,14 +5,13 @@ mod sample_sequence_location_test;
 
 pub mod sample_sequence_location;
 
-use std::time::{Duration, SystemTime};
-
+use self::sample_sequence_location::{Comparison, SampleSequenceLocation};
+use crate::Sample;
 use bytes::Bytes;
 use rtp::Packet;
 use rtp::packetizer::Depacketizer;
-
-use self::sample_sequence_location::{Comparison, SampleSequenceLocation};
-use crate::Sample;
+use shared::time::SystemInstant;
+use std::time::Duration;
 
 /// SampleBuilder buffers packets until media frames are complete.
 pub struct SampleBuilder<T: Depacketizer> {
@@ -344,7 +343,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         let sample = Sample {
             data: Bytes::copy_from_slice(&data),
-            timestamp: SystemTime::now(), //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
+            timestamp: SystemInstant::now(),
             duration: Duration::from_secs_f64((samples as f64) / (self.sample_rate as f64)),
             packet_timestamp: sample_timestamp,
             prev_dropped_packets: self.dropped_packets,

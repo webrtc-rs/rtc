@@ -1,8 +1,10 @@
 use super::*;
 use shared::error::Result;
+use std::ops::Sub;
 
 use bytes::BytesMut;
 use chrono::prelude::*;
+use shared::time::SystemInstant;
 use std::time::Duration;
 
 const ABS_SEND_TIME_RESOLUTION: i128 = 1000;
@@ -34,10 +36,8 @@ fn test_ntp_conversion() -> Result<()> {
     ];
 
     for (t, n) in &tests {
-        let st = UNIX_EPOCH
-            .checked_add(Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64))
-            .unwrap_or(UNIX_EPOCH);
-        let ntp = unix2ntp(st);
+        let st = Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64);
+        let ntp = SystemInstant::unix2ntp(st);
 
         if cfg!(target_os = "windows") {
             let actual = ntp as i128;
@@ -52,11 +52,9 @@ fn test_ntp_conversion() -> Result<()> {
     }
 
     for (t, n) in &tests {
-        let output = ntp2unix(*n);
-        let input = UNIX_EPOCH
-            .checked_add(Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64))
-            .unwrap_or(UNIX_EPOCH);
-        let diff = input.duration_since(output).unwrap().as_nanos() as i128;
+        let output = SystemInstant::ntp2unix(*n);
+        let input = Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64);
+        let diff = input.sub(output).as_nanos() as i128;
         if !(-ABS_SEND_TIME_RESOLUTION..=ABS_SEND_TIME_RESOLUTION).contains(&diff) {
             panic!(
                 "Converted time.Time from NTP time differs, expected: {input:?}, got: {output:?}",
@@ -96,7 +94,7 @@ fn test_abs_send_time_extension_estimate() -> Result<()> {
     ];
 
     for (send_ntp, receive_ntp) in tests {
-        let in_time = ntp2unix(send_ntp);
+        let in_time = SystemInstant::ntp2unix(send_ntp);
         let send = AbsSendTimeExtension {
             timestamp: send_ntp >> 14,
         };
@@ -107,8 +105,8 @@ fn test_abs_send_time_extension_estimate() -> Result<()> {
         let buf = &mut raw.clone();
         let receive = AbsSendTimeExtension::unmarshal(buf)?;
 
-        let estimated = receive.estimate(ntp2unix(receive_ntp));
-        let diff = estimated.duration_since(in_time).unwrap().as_nanos() as i128;
+        let estimated = receive.estimate(receive_ntp);
+        let diff = (estimated - send_ntp) as i128;
         if !(-ABS_SEND_TIME_RESOLUTION..=ABS_SEND_TIME_RESOLUTION).contains(&diff) {
             panic!(
                 "Converted time.Time from NTP time differs, expected: {in_time:?}, got: {estimated:?}",

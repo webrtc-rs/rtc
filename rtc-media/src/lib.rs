@@ -5,9 +5,9 @@ pub mod audio;
 pub mod io;
 pub mod video;
 
-use std::time::{Duration, SystemTime};
-
 use bytes::Bytes;
+use shared::time::SystemInstant;
+use std::time::Duration;
 
 /// A Sample contains encoded media and timing information
 #[derive(Debug)]
@@ -21,7 +21,7 @@ pub struct Sample {
     pub data: Bytes,
 
     /// The wallclock time when this sample was generated.
-    pub timestamp: SystemTime,
+    pub timestamp: SystemInstant,
 
     /// The duration of this sample
     pub duration: Duration,
@@ -51,9 +51,10 @@ pub struct Sample {
     /// # use bytes::Bytes;
     /// # use std::time::{SystemTime, Duration};
     /// # use rtc_media::Sample;
+    /// use shared::time::SystemInstant;
     /// # let sample = Sample {
     /// #   data: Bytes::new(),
-    /// #   timestamp: SystemTime::now(),
+    /// #   timestamp: SystemInstant::now(),
     /// #   duration: Duration::from_secs(0),
     /// #   packet_timestamp: 0,
     /// #   prev_dropped_packets: 10,
@@ -70,7 +71,7 @@ impl Default for Sample {
     fn default() -> Self {
         Sample {
             data: Bytes::new(),
-            timestamp: SystemTime::now(), //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
+            timestamp: SystemInstant::now(),
             duration: Duration::from_secs(0),
             packet_timestamp: 0,
             prev_dropped_packets: 0,
@@ -85,8 +86,8 @@ impl PartialEq for Sample {
         if self.data != other.data {
             equal = false;
         }
-        if self.timestamp.elapsed().unwrap().as_secs()
-            != other.timestamp.elapsed().unwrap().as_secs()
+        if self.timestamp.duration_since_unix_epoch().as_secs()
+            != other.timestamp.duration_since_unix_epoch().as_secs()
         {
             equal = false;
         }

@@ -1,6 +1,6 @@
 use log::warn;
-use rtp::extension::abs_send_time_extension::unix2ntp;
-use std::time::{Instant, SystemTime};
+use shared::time::SystemInstant;
+use std::time::Instant;
 
 pub(crate) struct SenderStream {
     ssrc: u32,
@@ -9,6 +9,8 @@ pub(crate) struct SenderStream {
     /// data from rtp packets
     last_rtp_time_rtp: u32,
     last_rtp_time_time: Instant,
+    time_baseline: SystemInstant,
+
     counters: Counters,
 }
 
@@ -17,8 +19,11 @@ impl SenderStream {
         SenderStream {
             ssrc,
             clock_rate: clock_rate as f64,
+
             last_rtp_time_rtp: 0,
             last_rtp_time_time: Instant::now(),
+            time_baseline: SystemInstant::now(),
+
             counters: Default::default(),
         }
     }
@@ -35,7 +40,7 @@ impl SenderStream {
     pub(crate) fn generate_report(&mut self, now: Instant) -> rtcp::sender_report::SenderReport {
         rtcp::sender_report::SenderReport {
             ssrc: self.ssrc,
-            ntp_time: unix2ntp(SystemTime::now()), //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
+            ntp_time: self.time_baseline.ntp(now),
             rtp_time: self.last_rtp_time_rtp.wrapping_add(
                 (now.duration_since(self.last_rtp_time_time).as_secs_f64() * self.clock_rate)
                     as u32,

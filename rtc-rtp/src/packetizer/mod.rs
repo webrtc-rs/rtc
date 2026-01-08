@@ -5,12 +5,13 @@ use crate::{extension::abs_send_time_extension::*, header::*, packet::*, sequenc
 use shared::{
     error::Result,
     marshal::{Marshal, MarshalSize},
+    time::SystemInstant,
 };
 
 use bytes::{Bytes, BytesMut};
 use std::fmt;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::Instant;
 
 /// Payloader payloads a byte array for use as rtp.Packet payloads
 pub trait Payloader: Send + Sync + fmt::Debug {
@@ -52,10 +53,8 @@ pub trait Depacketizer {
     fn is_partition_tail(&self, marker: bool, payload: &Bytes) -> bool;
 }
 
-//TODO: SystemTime vs Instant?
-// non-monotonic clock vs monotonically non-decreasing clock
-/// FnTimeGen provides current SystemTime
-pub type FnTimeGen = Arc<dyn (Fn() -> SystemTime) + Send + Sync>;
+/// FnTimeGen provides current time (Instant)
+pub type FnTimeGen = Arc<dyn (Fn() -> Instant) + Send + Sync>;
 
 #[derive(Clone)]
 pub(crate) struct PacketizerImpl {
@@ -68,6 +67,7 @@ pub(crate) struct PacketizerImpl {
     pub(crate) clock_rate: u32,
     pub(crate) abs_send_time_ext_id: u8, //http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     pub(crate) time_gen: Option<FnTimeGen>,
+    time_baseline: SystemInstant,
 }
 
 impl fmt::Debug for PacketizerImpl {
@@ -101,6 +101,7 @@ pub fn new_packetizer(
         clock_rate,
         abs_send_time_ext_id: 0,
         time_gen: None,
+        time_baseline: SystemInstant::now(),
     }
 }
 
@@ -133,12 +134,12 @@ impl Packetizer for PacketizerImpl {
         self.timestamp = self.timestamp.wrapping_add(samples);
 
         if payloads_len != 0 && self.abs_send_time_ext_id != 0 {
-            let st = if let Some(fn_time_gen) = &self.time_gen {
+            let now = if let Some(fn_time_gen) = &self.time_gen {
                 fn_time_gen()
             } else {
-                SystemTime::now() //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
+                Instant::now()
             };
-            let send_time = AbsSendTimeExtension::new(st);
+            let send_time = AbsSendTimeExtension::new(self.time_baseline.ntp(now));
             //apply http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
             let mut raw = BytesMut::with_capacity(send_time.marshal_size());
             raw.resize(send_time.marshal_size(), 0);

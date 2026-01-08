@@ -3,7 +3,7 @@ use crate::codec::*;
 use shared::error::Result;
 
 use chrono::prelude::*;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 #[test]
 fn test_packetizer() -> Result<()> {
@@ -35,13 +35,15 @@ fn test_packetizer() -> Result<()> {
 fn test_packetizer_abs_send_time() -> Result<()> {
     let g722 = Box::new(g7xx::G722Payloader {});
     let sequencer = Box::new(new_fixed_sequencer(1234));
+    let time_baseline = SystemInstant::now();
 
-    let time_gen: Option<FnTimeGen> = Some(Arc::new(|| -> SystemTime {
+    let time_baseline_clone = time_baseline.clone();
+    let time_gen: Option<FnTimeGen> = Some(Arc::new(move || -> Instant {
         let loc = FixedOffset::west_opt(5 * 60 * 60).unwrap(); // UTC-5
-        let t = loc.with_ymd_and_hms(1985, 6, 23, 4, 0, 0).unwrap();
-        UNIX_EPOCH
-            .checked_add(Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64))
-            .unwrap_or(UNIX_EPOCH)
+        let t = loc.with_ymd_and_hms(2199, 6, 23, 4, 0, 0).unwrap();
+        let duration_since_unix_epoch =
+            Duration::from_nanos(t.timestamp_nanos_opt().unwrap() as u64);
+        time_baseline_clone.instant(duration_since_unix_epoch)
     }));
 
     //use the G722 payloader here, because it's very simple and all 0s is valid G722 data.
@@ -55,6 +57,7 @@ fn test_packetizer_abs_send_time() -> Result<()> {
         clock_rate: 90000,
         abs_send_time_ext_id: 0,
         time_gen,
+        time_baseline,
     };
     pktizer.enable_abs_send_time(1);
 
