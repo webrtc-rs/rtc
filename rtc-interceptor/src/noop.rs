@@ -1,5 +1,6 @@
 //! NoOp Interceptor - A pass-through terminal for interceptor chains.
 
+use crate::stream_info::StreamInfo;
 use crate::{Interceptor, TaggedPacket};
 use shared::error::Error;
 use std::collections::VecDeque;
@@ -91,10 +92,10 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
 }
 
 impl Interceptor for NoopInterceptor {
-    fn bind_local_stream(&mut self, _info: &crate::StreamInfo) {}
-    fn unbind_local_stream(&mut self, _info: &crate::StreamInfo) {}
-    fn bind_remote_stream(&mut self, _info: &crate::StreamInfo) {}
-    fn unbind_remote_stream(&mut self, _info: &crate::StreamInfo) {}
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 #[cfg(test)]

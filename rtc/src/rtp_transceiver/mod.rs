@@ -108,10 +108,15 @@ use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::sdp::codecs_from_media_description;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
+use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
+use crate::rtp_transceiver::rtp_sender::RTCRtpHeaderExtensionParameters;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+pub use direction::RTCRtpTransceiverDirection;
+use interceptor::stream_info::AssociatedStreamInfo;
+use interceptor::stream_info::*;
 use log::trace;
 use sdp::MediaDescription;
 use shared::error::{Error, Result};
@@ -123,8 +128,6 @@ pub(crate) mod direction;
 pub(crate) mod fmtp;
 pub mod rtp_receiver;
 pub mod rtp_sender;
-
-pub use direction::RTCRtpTransceiverDirection;
 
 /// SSRC (Synchronization Source) identifier.
 ///
@@ -563,4 +566,44 @@ pub(crate) fn satisfy_type_and_direction(
     }
 
     None
+}
+
+pub(crate) fn create_stream_info(
+    id: String,
+    ssrc: SSRC,
+    payload_type: PayloadType,
+    codec: RTCRtpCodec,
+    webrtc_header_extensions: &[RTCRtpHeaderExtensionParameters],
+    associated_stream: Option<AssociatedStreamInfo>,
+) -> StreamInfo {
+    let header_extensions: Vec<RTPHeaderExtension> = webrtc_header_extensions
+        .iter()
+        .map(|h| RTPHeaderExtension {
+            id: h.id,
+            uri: h.uri.clone(),
+        })
+        .collect();
+
+    let feedbacks: Vec<_> = codec
+        .rtcp_feedback
+        .iter()
+        .map(|f| interceptor::stream_info::RTCPFeedback {
+            typ: f.typ.clone(),
+            parameter: f.parameter.clone(),
+        })
+        .collect();
+
+    StreamInfo {
+        id,
+        attributes: Attributes::new(),
+        ssrc,
+        payload_type,
+        rtp_header_extensions: header_extensions,
+        mime_type: codec.mime_type,
+        clock_rate: codec.clock_rate,
+        channels: codec.channels,
+        sdp_fmtp_line: codec.sdp_fmtp_line,
+        rtcp_feedback: feedbacks,
+        associated_stream,
+    }
 }

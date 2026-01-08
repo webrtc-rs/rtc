@@ -7,23 +7,7 @@ pub type Attributes = HashMap<usize, usize>;
 #[derive(Default, Debug, Clone)]
 pub struct RTPHeaderExtension {
     pub uri: String,
-    pub id: isize,
-}
-
-/// StreamInfo is the Context passed when a StreamLocal or StreamRemote has been Binded or Unbinded
-#[derive(Default, Debug, Clone)]
-pub struct StreamInfo {
-    pub id: String,
-    pub attributes: Attributes,
-    pub ssrc: u32,
-    pub payload_type: u8,
-    pub rtp_header_extensions: Vec<RTPHeaderExtension>,
-    pub mime_type: String,
-    pub clock_rate: u32,
-    pub channels: u16,
-    pub sdp_fmtp_line: String,
-    pub rtcp_feedback: Vec<RTCPFeedback>,
-    pub associated_stream: Option<AssociatedStreamInfo>,
+    pub id: u16,
 }
 
 /// AssociatedStreamInfo provides a mapping from an auxiliary stream (RTX, FEC,
@@ -46,4 +30,20 @@ pub struct RTCPFeedback {
     /// The parameter value depends on the type.
     /// For example, type="nack" parameter="pli" will send Picture Loss Indicator packets.
     pub parameter: String,
+}
+
+/// StreamInfo is the Context passed when a StreamLocal or StreamRemote has been Binded or Unbinded
+#[derive(Default, Debug, Clone)]
+pub struct StreamInfo {
+    pub id: String,
+    pub attributes: Attributes,
+    pub ssrc: u32,
+    pub payload_type: u8,
+    pub rtp_header_extensions: Vec<RTPHeaderExtension>,
+    pub mime_type: String,
+    pub clock_rate: u32,
+    pub channels: u16,
+    pub sdp_fmtp_line: String,
+    pub rtcp_feedback: Vec<RTCPFeedback>,
+    pub associated_stream: Option<AssociatedStreamInfo>,
 }

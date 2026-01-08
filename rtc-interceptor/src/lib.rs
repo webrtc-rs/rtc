@@ -62,9 +62,9 @@ mod noop;
 mod registry;
 
 pub(crate) mod report;
-pub(crate) mod stream_info;
+pub mod stream_info;
 
-pub use crate::stream_info::StreamInfo;
+use crate::stream_info::StreamInfo;
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 pub use report::{
