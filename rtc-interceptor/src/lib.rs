@@ -81,7 +81,7 @@ pub enum Packet {
 
 pub type TaggedPacket = TransportMessage<Packet>;
 
-/// Interceptor extends [`Protocol`] with composable chaining via [`with()`](Interceptor::with).
+/// Interceptor extends [`sansio::Protocol`] with composable chaining via [`with()`](Interceptor::with).
 ///
 /// This trait fixes the Protocol type parameters for RTP/RTCP interceptor chains:
 /// - `Rin`, `Win`, `Rout`, `Wout` = [`TaggedPacket`]
