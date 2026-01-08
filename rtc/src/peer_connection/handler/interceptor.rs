@@ -56,7 +56,7 @@ where
                 message: packet.clone(),
                 // RTP packet use Bytes which is zero-copy,
                 // RTCP packet may have clone overhead.
-                // TODO: revisit RTCP packet clone's potential performance issue
+                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
             })?;
 
             if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
@@ -92,7 +92,7 @@ where
                 message: packet.clone(),
                 // RTP packet use Bytes which is zero-copy,
                 // RTCP packet may have clone overhead.
-                // TODO: revisit RTCP packet clone's potential performance issue
+                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
             })?;
         }
 
