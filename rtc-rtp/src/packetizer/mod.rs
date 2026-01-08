@@ -136,7 +136,7 @@ impl Packetizer for PacketizerImpl {
             let st = if let Some(fn_time_gen) = &self.time_gen {
                 fn_time_gen()
             } else {
-                SystemTime::now()
+                SystemTime::now() //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
             };
             let send_time = AbsSendTimeExtension::new(st);
             //apply http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time

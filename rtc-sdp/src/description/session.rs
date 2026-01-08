@@ -305,7 +305,7 @@ impl SessionDescription {
             origin: Origin {
                 username: "-".to_string(),
                 session_id: new_session_id(),
-                session_version: SystemTime::now()
+                session_version: SystemTime::now() //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .subsec_nanos() as u64,

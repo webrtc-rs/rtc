@@ -35,7 +35,7 @@ impl SenderStream {
     pub(crate) fn generate_report(&mut self, now: Instant) -> rtcp::sender_report::SenderReport {
         rtcp::sender_report::SenderReport {
             ssrc: self.ssrc,
-            ntp_time: unix2ntp(SystemTime::now()),
+            ntp_time: unix2ntp(SystemTime::now()), //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
             rtp_time: self.last_rtp_time_rtp.wrapping_add(
                 (now.duration_since(self.last_rtp_time_time).as_secs_f64() * self.clock_rate)
                     as u32,

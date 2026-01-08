@@ -70,7 +70,7 @@ impl Default for Sample {
     fn default() -> Self {
         Sample {
             data: Bytes::new(),
-            timestamp: SystemTime::now(),
+            timestamp: SystemTime::now(), //TODO: Get rid of SystemTime::now() during sansio::Protocol handle/poll_read/write/time/event #16
             duration: Duration::from_secs(0),
             packet_timestamp: 0,
             prev_dropped_packets: 0,
