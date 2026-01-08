@@ -1,6 +1,6 @@
 use log::warn;
 use rtp::extension::abs_send_time_extension::unix2ntp;
-use std::time::{Duration, SystemTime};
+use std::time::{Instant, SystemTime};
 
 pub(crate) struct SenderStream {
     ssrc: u32,
@@ -8,7 +8,7 @@ pub(crate) struct SenderStream {
 
     /// data from rtp packets
     last_rtp_time_rtp: u32,
-    last_rtp_time_time: SystemTime,
+    last_rtp_time_time: Instant,
     counters: Counters,
 }
 
@@ -18,12 +18,12 @@ impl SenderStream {
             ssrc,
             clock_rate: clock_rate as f64,
             last_rtp_time_rtp: 0,
-            last_rtp_time_time: SystemTime::UNIX_EPOCH,
+            last_rtp_time_time: Instant::now(),
             counters: Default::default(),
         }
     }
 
-    pub(crate) fn process_rtp(&mut self, now: SystemTime, pkt: &rtp::packet::Packet) {
+    pub(crate) fn process_rtp(&mut self, now: Instant, pkt: &rtp::packet::Packet) {
         // always update time to minimize errors
         self.last_rtp_time_rtp = pkt.header.timestamp;
         self.last_rtp_time_time = now;
@@ -32,15 +32,13 @@ impl SenderStream {
         self.counters.count_octets(pkt.payload.len());
     }
 
-    pub(crate) fn generate_report(&mut self, now: SystemTime) -> rtcp::sender_report::SenderReport {
+    pub(crate) fn generate_report(&mut self, now: Instant) -> rtcp::sender_report::SenderReport {
         rtcp::sender_report::SenderReport {
             ssrc: self.ssrc,
-            ntp_time: unix2ntp(now),
+            ntp_time: unix2ntp(SystemTime::now()),
             rtp_time: self.last_rtp_time_rtp.wrapping_add(
-                (now.duration_since(self.last_rtp_time_time)
-                    .unwrap_or_else(|_| Duration::from_secs(0))
-                    .as_secs_f64()
-                    * self.clock_rate) as u32,
+                (now.duration_since(self.last_rtp_time_time).as_secs_f64() * self.clock_rate)
+                    as u32,
             ),
             packet_count: self.counters.packet_count(),
             octet_count: self.counters.octet_count(),

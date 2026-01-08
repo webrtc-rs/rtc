@@ -1,8 +1,9 @@
 //! Sender Report Interceptor - Filters hop-by-hop RTCP feedback.
 
 use super::sender_stream::SenderStream;
-use crate::{Interceptor, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket};
 use rtcp::header::PacketType;
+use shared::TransportContext;
 use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -127,6 +128,12 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        if let Packet::Rtp(rtp_packet) = &msg.message
+            && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
+        {
+            stream.process_rtp(msg.now, rtp_packet);
+        }
+
         self.inner.handle_write(msg)
     }
 
@@ -135,6 +142,19 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
+        if self.eto <= now {
+            self.eto = now + self.interval;
+
+            for stream in self.streams.values_mut() {
+                let rr = stream.generate_report(now);
+                self.write_queue.push_back(TaggedPacket {
+                    now,
+                    transport: TransportContext::default(),
+                    message: Packet::Rtcp(vec![Box::new(rr)]),
+                });
+            }
+        }
+
         self.inner.handle_timeout(now)
     }
 

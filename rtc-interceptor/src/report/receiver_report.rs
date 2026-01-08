@@ -142,22 +142,21 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        /*if let Packet::Rtcp(rtcp_packets) = &msg {
+        if let Packet::Rtcp(rtcp_packets) = &msg.message {
             for rtcp_packet in rtcp_packets {
                 if let Some(sr) = rtcp_packet
                     .as_any()
                     .downcast_ref::<rtcp::sender_report::SenderReport>()
+                    && let Some(stream) = self.streams.get_mut(&sr.ssrc)
                 {
-                    if let Some(stream) = self.streams.get_mut(&sr.ssrc) {
-                        stream.process_sender_report(msg.now, sr);
-                    }
+                    stream.process_sender_report(msg.now, sr);
                 }
             }
-        } else if let MessageEvent::Rtp(RTPMessageEvent::Rtp(rtp_packet)) = &msg.message {
-            if let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc) {
-                stream.process_rtp(msg.now, rtp_packet);
-            }
-        }*/
+        } else if let Packet::Rtp(rtp_packet) = &msg.message
+            && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
+        {
+            stream.process_rtp(msg.now, rtp_packet);
+        }
 
         self.inner.handle_read(msg)
     }
