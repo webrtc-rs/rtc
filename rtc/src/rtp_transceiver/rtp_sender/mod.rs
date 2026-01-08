@@ -17,10 +17,10 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(sender_id: RTCRtpSenderId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Get sender and access its track
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
@@ -36,10 +36,10 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(sender_id: RTCRtpSenderId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Get current parameters
@@ -62,14 +62,14 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(
 //! #     sender_id: RTCRtpSenderId,
 //! #     new_track: MediaStreamTrack
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Replace with new track (same kind required)
@@ -83,7 +83,7 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # use rtp::packet::Packet;
 //! # use shared::error::Error;
@@ -91,7 +91,7 @@
 //! #     sender_id: RTCRtpSenderId,
 //! #     mut rtp_packet: Packet
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Write RTP packet directly
@@ -111,14 +111,14 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # use rtc::rtp_transceiver::rtp_sender::{
 //! #     RTCRtpEncodingParameters, RTCRtpCodingParameters
 //! # };
 //! # fn example(video_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Configure simulcast with three layers
 //! let mut init = RTCRtpTransceiverInit {
@@ -192,6 +192,7 @@ use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::RTCMessage;
 use crate::rtp_transceiver::RTCRtpSenderId;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{CodecMatch, codec_parameters_fuzzy_search};
+use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
@@ -220,12 +221,18 @@ pub use set_parameter_options::RTCSetParameterOptions;
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
-pub struct RTCRtpSender<'a> {
+pub struct RTCRtpSender<'a, I = NoopInterceptor>
+where
+    I: Interceptor,
+{
     pub(crate) id: RTCRtpSenderId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
 }
 
-impl RTCRtpSender<'_> {
+impl<I> RTCRtpSender<'_, I>
+where
+    I: Interceptor,
+{
     /// Returns the media track being sent by this sender.
     pub fn track(&self) -> &MediaStreamTrack {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and

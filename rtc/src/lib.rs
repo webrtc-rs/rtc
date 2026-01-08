@@ -251,14 +251,14 @@
 //! # fn receive_from_remote_peer() -> String { String::new() }
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Offerer side - creates the offer
-//! let config = RTCConfigurationBuilder::new()
+//! let offerer_config = RTCConfigurationBuilder::new()
 //!     .with_ice_servers(vec![RTCIceServer {
 //!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
 //!         ..Default::default()
 //!     }])
 //!     .build();
 //!
-//! let mut offerer = RTCPeerConnection::new(config.clone())?;
+//! let mut offerer = RTCPeerConnection::new(offerer_config)?;
 //!
 //! // 1. Create offer
 //! let offer = offerer.create_offer(None)?;
@@ -284,7 +284,14 @@
 //! send_to_remote_peer(&serde_json::to_string(&offer)?);
 //!
 //! // --- On answerer side ---
-//! let mut answerer = RTCPeerConnection::new(config)?;
+//! let answerer_config = RTCConfigurationBuilder::new()
+//!     .with_ice_servers(vec![RTCIceServer {
+//!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!         ..Default::default()
+//!     }])
+//!     .build();
+//!
+//! let mut answerer = RTCPeerConnection::new(answerer_config)?;
 //!
 //! // 5. Receive and set remote description
 //! let offer_json = receive_from_remote_peer();

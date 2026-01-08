@@ -16,7 +16,10 @@ use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
 
-impl RTCPeerConnection {
+impl<I> RTCPeerConnection<I>
+where
+    I: Interceptor,
+{
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
     /// This is used for the initial call for CreateOffer
     pub(super) fn generate_unmatched_sdp(&mut self) -> Result<SessionDescription> {

@@ -27,6 +27,7 @@ use crate::peer_connection::message::{
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
+use ::interceptor::Interceptor;
 use ::interceptor::Packet;
 use log::warn;
 use shared::TaggedBytesMut;
@@ -117,7 +118,10 @@ pub(crate) struct PipelineContext {
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
 }
 
-impl RTCPeerConnection {
+impl<I> RTCPeerConnection<I>
+where
+    I: Interceptor,
+{
     /*
      Pipeline Flow (Read Path):
      Raw Bytes -> Demuxer -> ICE -> DTLS -> SCTP -> DataChannel -> SRTP -> Interceptor -> Endpoint -> Application
@@ -166,7 +170,10 @@ impl RTCPeerConnection {
     }
 }
 
-impl sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnection {
+impl<I> sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnection<I>
+where
+    I: Interceptor,
+{
     type Rout = RTCMessage;
     type Wout = TaggedBytesMut;
     type Eout = RTCPeerConnectionEvent;

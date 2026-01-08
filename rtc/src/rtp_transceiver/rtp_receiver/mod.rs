@@ -17,14 +17,14 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::media_stream::MediaStreamTrackId;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(
 //! #     receiver_id: RTCRtpReceiverId,
 //! #     track_id: MediaStreamTrackId
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Get the receiver and access its track
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
@@ -41,10 +41,10 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get current receive parameters
@@ -62,11 +62,11 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Check video capabilities
@@ -90,10 +90,10 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get CSRC information for mixed audio
@@ -111,10 +111,10 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get SSRC information
@@ -131,9 +131,9 @@
 //!
 //! ```no_run
 //! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfiguration;
+//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // After remote description is set, collect receiver IDs first
 //! let receiver_ids: Vec<_> = peer_connection.get_receivers().collect();
@@ -167,6 +167,7 @@ use crate::rtp_transceiver::RTCRtpReceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
+use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::Result;
 
@@ -181,12 +182,18 @@ pub use rtp_contributing_source::{RTCRtpContributingSource, RTCRtpSynchronizatio
 ///
 /// This struct borrows the [`RTCPeerConnection`] mutably, ensuring exclusive access
 /// during RTP receiver operations.
-pub struct RTCRtpReceiver<'a> {
+pub struct RTCRtpReceiver<'a, I = NoopInterceptor>
+where
+    I: Interceptor,
+{
     pub(crate) id: RTCRtpReceiverId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
 }
 
-impl RTCRtpReceiver<'_> {
+impl<I> RTCRtpReceiver<'_, I>
+where
+    I: Interceptor,
+{
     /// Returns the track associated with this receiver.
     ///
     /// The [`track`](RTCRtpReceiver::track) method returns the [`MediaStreamTrack`] that is

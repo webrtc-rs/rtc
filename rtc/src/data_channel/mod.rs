@@ -11,11 +11,11 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! let init = RTCDataChannelInit {
 //!     ordered: true,
@@ -38,6 +38,7 @@
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::RTCMessage;
 use bytes::BytesMut;
+use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
@@ -69,12 +70,18 @@ pub use state::RTCDataChannelState;
 ///
 /// * [W3C WebRTC - RTCDataChannel](https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel)
 /// * [MDN - RTCDataChannel](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel)
-pub struct RTCDataChannel<'a> {
+pub struct RTCDataChannel<'a, I = NoopInterceptor>
+where
+    I: Interceptor,
+{
     pub(crate) id: RTCDataChannelId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
 }
 
-impl RTCDataChannel<'_> {
+impl<I> RTCDataChannel<'_, I>
+where
+    I: Interceptor,
+{
     /// label represents a label that can be used to distinguish this
     /// DataChannel object from other DataChannel objects. Scripts are
     /// allowed to create multiple DataChannel objects with the same label.

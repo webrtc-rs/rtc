@@ -87,11 +87,11 @@
 //!
 //! ```
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create with default configuration
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -100,10 +100,10 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Add media track or data channel first
 //! // pc.add_track(audio_track)?;
@@ -124,11 +124,11 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::sdp::RTCSessionDescription;
 //!
 //! # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Receive offer from remote peer
 //! let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -152,12 +152,12 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //!
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Add an audio track
 //! let sender_id = pc.add_track(audio_track)?;
@@ -172,11 +172,11 @@
 //!
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
 //!
 //! // Create a reliable, ordered data channel
 //! let init = RTCDataChannelInit {
@@ -303,6 +303,7 @@ use crate::rtp_transceiver::{
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::candidate::{Candidate, unmarshal_candidate};
+use interceptor::{Interceptor, NoopInterceptor};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
@@ -318,18 +319,20 @@ use std::collections::HashMap;
 ///
 /// ```no_run
 /// use rtc::peer_connection::RTCPeerConnection;
-/// use rtc::peer_connection::configuration::RTCConfiguration;
+/// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 ///
-/// let config = RTCConfiguration::default();
+/// let config = RTCConfigurationBuilder::new().build();
 /// let mut pc = RTCPeerConnection::new(config)?;
 /// # Ok::<(), rtc::shared::error::Error>(())
 /// ```
-#[derive(Default)]
-pub struct RTCPeerConnection {
+pub struct RTCPeerConnection<I = NoopInterceptor>
+where
+    I: Interceptor,
+{
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
     //////////////////////////////////////////////////
-    pub(crate) configuration: RTCConfiguration,
+    pub(crate) configuration: RTCConfiguration<I>,
 
     local_description: Option<RTCSessionDescription>,
     current_local_description: Option<RTCSessionDescription>,
@@ -359,7 +362,10 @@ pub struct RTCPeerConnection {
     is_negotiation_ongoing: bool,
 }
 
-impl RTCPeerConnection {
+impl<I> RTCPeerConnection<I>
+where
+    I: Interceptor,
+{
     /// Creates a new `RTCPeerConnection` with the specified configuration.
     ///
     /// This constructor creates the necessary transport layers (ICE, DTLS, SCTP) and
@@ -404,10 +410,10 @@ impl RTCPeerConnection {
     ///
     /// ```
     /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = RTCConfiguration::default();
+    /// let config = RTCConfigurationBuilder::new().build();
     /// let pc = RTCPeerConnection::new(config)?;
     /// # Ok(())
     /// # }
@@ -418,7 +424,7 @@ impl RTCPeerConnection {
     /// - [W3C RTCPeerConnection constructor]
     ///
     /// [W3C RTCPeerConnection constructor]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-constructor
-    pub fn new(mut configuration: RTCConfiguration) -> Result<Self> {
+    pub fn new(mut configuration: RTCConfiguration<I>) -> Result<Self> {
         configuration.validate()?;
 
         // Create the ICE transport
@@ -465,9 +471,25 @@ impl RTCPeerConnection {
 
         Ok(Self {
             configuration,
+            local_description: None,
+            current_local_description: None,
+            pending_local_description: None,
+            remote_description: None,
+            current_remote_description: None,
+            pending_remote_description: None,
+            signaling_state: RTCSignalingState::Stable,
+            peer_connection_state: RTCPeerConnectionState::New,
+            can_trickle_ice_candidates: false,
             pipeline_context,
+            data_channels: HashMap::new(),
+            rtp_transceivers: Vec::new(),
             greater_mid: -1,
-            ..Default::default()
+            sdp_origin: Origin::default(),
+            last_offer: String::new(),
+            last_answer: String::new(),
+            ice_restart_requested: None,
+            negotiation_needed_state: NegotiationNeededState::Empty,
+            is_negotiation_ongoing: false,
         })
     }
 
@@ -649,11 +671,11 @@ impl RTCPeerConnection {
     ///
     /// ```no_run
     /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
     /// // 1. Receive and set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -675,7 +697,7 @@ impl RTCPeerConnection {
     ///
     /// ```no_run
     /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     /// use rtc::media_stream::MediaStreamTrack;
     ///
@@ -683,7 +705,7 @@ impl RTCPeerConnection {
     /// #     remote_offer_sdp: String,
     /// #     audio_track: MediaStreamTrack,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
     /// // Set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -825,10 +847,10 @@ impl RTCPeerConnection {
     ///
     /// ```no_run
     /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
     /// // Create offer
     /// let offer = pc.create_offer(None)?;
@@ -846,11 +868,11 @@ impl RTCPeerConnection {
     ///
     /// ```no_run
     /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfiguration;
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfiguration::default())?;
+    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
     /// // Set remote offer first
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -1420,12 +1442,12 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [getConfiguration](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getconfiguration)
-    pub fn get_configuration(&self) -> &RTCConfiguration {
+    pub fn get_configuration(&self) -> &RTCConfiguration<I> {
         &self.configuration
     }
 
     /// set_configuration updates the configuration of this PeerConnection object.
-    pub fn set_configuration(&mut self, configuration: RTCConfiguration) -> Result<()> {
+    pub fn set_configuration(&mut self, configuration: RTCConfiguration<I>) -> Result<()> {
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
@@ -1494,7 +1516,10 @@ impl RTCPeerConnection {
         &mut self,
         label: &str,
         options: Option<RTCDataChannelInit>,
-    ) -> Result<RTCDataChannel<'_>> {
+    ) -> Result<RTCDataChannel<'_, I>>
+    where
+        I: Interceptor,
+    {
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
@@ -1561,7 +1586,7 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [getSenders](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getsenders)
-    pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_> {
+    pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_, I> {
         self.rtp_transceivers
             .iter()
             .enumerate()
@@ -1577,7 +1602,7 @@ impl RTCPeerConnection {
     /// # Specification
     ///
     /// See [getReceivers](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getreceivers)
-    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_> {
+    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_, I> {
         self.rtp_transceivers
             .iter()
             .enumerate()
@@ -1834,7 +1859,10 @@ impl RTCPeerConnection {
     }
 
     /// data_channel provides the access to RTCDataChannel object with the given id
-    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
+    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_, I>>
+    where
+        I: Interceptor,
+    {
         if self.data_channels.contains_key(&id) {
             Some(RTCDataChannel {
                 id,
@@ -1846,7 +1874,10 @@ impl RTCPeerConnection {
     }
 
     /// rtp_sender provides the access to RTCRtpSender object with the given id
-    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_>> {
+    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_, I>>
+    where
+        I: Interceptor,
+    {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_send()
             && self.rtp_transceivers[id.0].sender().is_some()
@@ -1861,7 +1892,10 @@ impl RTCPeerConnection {
     }
 
     /// rtp_receiver provides the access to RTCRtpReceiver object with the given id
-    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_>> {
+    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_, I>>
+    where
+        I: Interceptor,
+    {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_recv()
             && self.rtp_transceivers[id.0].receiver().is_some()

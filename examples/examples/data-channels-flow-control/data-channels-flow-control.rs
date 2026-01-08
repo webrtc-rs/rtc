@@ -89,14 +89,14 @@ async fn main() -> Result<()> {
 }
 
 async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
-    let config = RTCConfigurationBuilder::new()
+    let requester_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             ..Default::default()
         }])
         .build();
 
     // Create requester (sender) peer connection
-    let mut requester = RTCPeerConnection::new(config.clone())?;
+    let mut requester = RTCPeerConnection::new(requester_config)?;
     let options = Some(RTCDataChannelInit {
         ordered: false,
         max_retransmits: Some(0u16),
@@ -106,8 +106,14 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     dc.set_buffered_amount_low_threshold(BUFFERED_AMOUNT_LOW_THRESHOLD);
     dc.set_buffered_amount_high_threshold(BUFFERED_AMOUNT_HIGH_THRESHOLD);
 
+    let responder_config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![RTCIceServer {
+            ..Default::default()
+        }])
+        .build();
+
     // Create responder (receiver) peer connection
-    let mut responder = RTCPeerConnection::new(config)?;
+    let mut responder = RTCPeerConnection::new(responder_config)?;
 
     // Create sockets first
     let req_socket = UdpSocket::bind("127.0.0.1:0").await?;

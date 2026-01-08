@@ -55,18 +55,22 @@
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 
+use shared::TransportMessage;
 use std::time::Instant;
 
 mod noop;
 mod registry;
 
-mod report;
-mod stream_info;
+pub(crate) mod report;
+pub(crate) mod stream_info;
 
-use crate::stream_info::StreamInfo;
+pub use crate::stream_info::StreamInfo;
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
-use shared::TransportMessage;
+pub use report::{
+    receiver_report::{ReceiverReportBuilder, ReceiverReportInterceptor},
+    sender_report::{SenderReportBuilder, SenderReportInterceptor},
+};
 
 /// RTP/RTCP Packet
 #[derive(Debug, Clone, PartialEq)]

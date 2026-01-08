@@ -40,6 +40,7 @@ use crate::noop::NoopInterceptor;
 /// let registry = register_default_interceptors(registry);
 /// let chain = registry.build();
 /// ```
+#[derive(Clone)]
 pub struct Registry<P> {
     inner: P,
 }
