@@ -1,6 +1,6 @@
 //! NoOp Interceptor - A pass-through terminal for interceptor chains.
 
-use crate::TaggedPacket;
+use crate::{Interceptor, TaggedPacket};
 use shared::error::Error;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -88,6 +88,13 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
         self.write_queue.clear();
         Ok(())
     }
+}
+
+impl Interceptor for NoopInterceptor {
+    fn bind_local_stream(&self, _info: &crate::StreamInfo) {}
+    fn unbind_local_stream(&self, _info: &crate::StreamInfo) {}
+    fn bind_remote_stream(&self, _info: &crate::StreamInfo) {}
+    fn unbind_remote_stream(&self, _info: &crate::StreamInfo) {}
 }
 
 #[cfg(test)]

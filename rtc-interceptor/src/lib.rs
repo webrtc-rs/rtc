@@ -61,7 +61,9 @@ mod noop;
 mod registry;
 
 mod report;
+mod stream_info;
 
+use crate::stream_info::StreamInfo;
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 use shared::TransportMessage;
@@ -83,8 +85,7 @@ pub type TaggedPacket = TransportMessage<Packet>;
 /// - `Time` = [`Instant`]
 /// - `Error` = [`shared::error::Error`]
 ///
-/// Any type implementing `Protocol<TaggedPacket, TaggedPacket, ()>` with the correct associated types
-/// automatically implements `Interceptor` via the blanket impl.
+/// Each interceptor must explicitly implement both `Protocol` and `Interceptor` traits.
 ///
 /// # Example
 ///
@@ -103,7 +104,14 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///     // ... implement Protocol methods
 /// }
 ///
-/// // Use with the builder - Interceptor is automatically implemented
+/// impl<P: Interceptor> Interceptor for MyInterceptor<P> {
+///     fn bind_local_stream(&self, _info: &StreamInfo) {}
+///     fn unbind_local_stream(&self, _info: &StreamInfo) {}
+///     fn bind_remote_stream(&self, _info: &StreamInfo) {}
+///     fn unbind_remote_stream(&self, _info: &StreamInfo) {}
+/// }
+///
+/// // Use with the builder
 /// let chain = Registry::new()
 ///     .with(MyInterceptor::new);
 /// ```
@@ -138,19 +146,18 @@ pub trait Interceptor:
     {
         f(self)
     }
-}
 
-// Blanket impl: any Protocol<TaggedPacket, TaggedPacket, ()> with correct associated types is an Interceptor
-impl<P> Interceptor for P where
-    P: sansio::Protocol<
-            TaggedPacket,
-            TaggedPacket,
-            (),
-            Rout = TaggedPacket,
-            Wout = TaggedPacket,
-            Eout = (),
-            Time = Instant,
-            Error = shared::error::Error,
-        > + Sized
-{
+    /// bind_local_stream lets you modify any outgoing RTP packets. It is called once for per LocalStream. The returned method
+    /// will be called once per rtp packet.
+    fn bind_local_stream(&self, info: &StreamInfo);
+
+    /// unbind_local_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
+    fn unbind_local_stream(&self, info: &StreamInfo);
+
+    /// bind_remote_stream lets you modify any incoming RTP packets. It is called once for per RemoteStream. The returned method
+    /// will be called once per rtp packet.
+    fn bind_remote_stream(&self, info: &StreamInfo);
+
+    /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
+    fn unbind_remote_stream(&self, info: &StreamInfo);
 }

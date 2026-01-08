@@ -202,6 +202,21 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     }
 }
 
+impl<P: Interceptor> Interceptor for ReceiverReportInterceptor<P> {
+    fn bind_local_stream(&self, info: &crate::StreamInfo) {
+        self.inner.bind_local_stream(info);
+    }
+    fn unbind_local_stream(&self, info: &crate::StreamInfo) {
+        self.inner.unbind_local_stream(info);
+    }
+    fn bind_remote_stream(&self, info: &crate::StreamInfo) {
+        self.inner.bind_remote_stream(info);
+    }
+    fn unbind_remote_stream(&self, info: &crate::StreamInfo) {
+        self.inner.unbind_remote_stream(info);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
