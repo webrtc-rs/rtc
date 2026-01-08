@@ -149,15 +149,15 @@ pub trait Interceptor:
 
     /// bind_local_stream lets you modify any outgoing RTP packets. It is called once for per LocalStream. The returned method
     /// will be called once per rtp packet.
-    fn bind_local_stream(&self, info: &StreamInfo);
+    fn bind_local_stream(&mut self, info: &StreamInfo);
 
     /// unbind_local_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
-    fn unbind_local_stream(&self, info: &StreamInfo);
+    fn unbind_local_stream(&mut self, info: &StreamInfo);
 
     /// bind_remote_stream lets you modify any incoming RTP packets. It is called once for per RemoteStream. The returned method
     /// will be called once per rtp packet.
-    fn bind_remote_stream(&self, info: &StreamInfo);
+    fn bind_remote_stream(&mut self, info: &StreamInfo);
 
     /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
-    fn unbind_remote_stream(&self, info: &StreamInfo);
+    fn unbind_remote_stream(&mut self, info: &StreamInfo);
 }

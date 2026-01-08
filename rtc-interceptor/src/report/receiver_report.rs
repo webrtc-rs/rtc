@@ -203,16 +203,21 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 }
 
 impl<P: Interceptor> Interceptor for ReceiverReportInterceptor<P> {
-    fn bind_local_stream(&self, info: &crate::StreamInfo) {
+    fn bind_local_stream(&mut self, info: &crate::StreamInfo) {
         self.inner.bind_local_stream(info);
     }
-    fn unbind_local_stream(&self, info: &crate::StreamInfo) {
+    fn unbind_local_stream(&mut self, info: &crate::StreamInfo) {
         self.inner.unbind_local_stream(info);
     }
-    fn bind_remote_stream(&self, info: &crate::StreamInfo) {
+    fn bind_remote_stream(&mut self, info: &crate::StreamInfo) {
+        let stream = ReceiverStream::new(info.ssrc, info.clock_rate);
+        self.streams.insert(info.ssrc, stream);
+
         self.inner.bind_remote_stream(info);
     }
-    fn unbind_remote_stream(&self, info: &crate::StreamInfo) {
+    fn unbind_remote_stream(&mut self, info: &crate::StreamInfo) {
+        self.streams.remove(&info.ssrc);
+
         self.inner.unbind_remote_stream(info);
     }
 }

@@ -91,10 +91,10 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
 }
 
 impl Interceptor for NoopInterceptor {
-    fn bind_local_stream(&self, _info: &crate::StreamInfo) {}
-    fn unbind_local_stream(&self, _info: &crate::StreamInfo) {}
-    fn bind_remote_stream(&self, _info: &crate::StreamInfo) {}
-    fn unbind_remote_stream(&self, _info: &crate::StreamInfo) {}
+    fn bind_local_stream(&mut self, _info: &crate::StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &crate::StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &crate::StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &crate::StreamInfo) {}
 }
 
 #[cfg(test)]

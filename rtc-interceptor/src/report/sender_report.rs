@@ -1,9 +1,10 @@
 //! Sender Report Interceptor - Filters hop-by-hop RTCP feedback.
 
+use super::sender_stream::SenderStream;
 use crate::{Interceptor, TaggedPacket};
 use rtcp::header::PacketType;
 use shared::error::Error;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
@@ -65,6 +66,8 @@ pub struct SenderReportInterceptor<P> {
     interval: Duration,
     eto: Instant,
 
+    streams: HashMap<u32, SenderStream>,
+
     read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
 }
@@ -77,6 +80,8 @@ impl<P> SenderReportInterceptor<P> {
 
             interval,
             eto: Instant::now(),
+
+            streams: HashMap::new(),
 
             read_queue: VecDeque::new(),
             write_queue: VecDeque::new(),
@@ -145,16 +150,21 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 }
 
 impl<P: Interceptor> Interceptor for SenderReportInterceptor<P> {
-    fn bind_local_stream(&self, info: &crate::StreamInfo) {
+    fn bind_local_stream(&mut self, info: &crate::StreamInfo) {
+        let stream = SenderStream::new(info.ssrc, info.clock_rate);
+        self.streams.insert(info.ssrc, stream);
+
         self.inner.bind_local_stream(info);
     }
-    fn unbind_local_stream(&self, info: &crate::StreamInfo) {
+    fn unbind_local_stream(&mut self, info: &crate::StreamInfo) {
+        self.streams.remove(&info.ssrc);
+
         self.inner.unbind_local_stream(info);
     }
-    fn bind_remote_stream(&self, info: &crate::StreamInfo) {
+    fn bind_remote_stream(&mut self, info: &crate::StreamInfo) {
         self.inner.bind_remote_stream(info);
     }
-    fn unbind_remote_stream(&self, info: &crate::StreamInfo) {
+    fn unbind_remote_stream(&mut self, info: &crate::StreamInfo) {
         self.inner.unbind_remote_stream(info);
     }
 }

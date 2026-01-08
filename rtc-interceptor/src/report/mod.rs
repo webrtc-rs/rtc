@@ -21,6 +21,7 @@
 mod receiver_report;
 pub(crate) mod receiver_stream;
 mod sender_report;
+pub(crate) mod sender_stream;
 
 //TODO: pub use receiver_report::{ReceiverReportConfig, ReceiverReportInterceptor};
 //TODO: pub use sender_report::SenderReportInterceptor;
