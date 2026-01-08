@@ -11,6 +11,23 @@ use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 /// Builder for the SenderReportInterceptor.
+///
+/// # Example
+///
+/// ```ignore
+/// use rtc_interceptor::{Registry, SenderReportBuilder};
+/// use std::time::Duration;
+///
+/// // With default interval (1 second)
+/// let chain = Registry::new()
+///     .with(SenderReportBuilder::new().build())
+///     .build();
+///
+/// // With custom interval
+/// let chain = Registry::new()
+///     .with(SenderReportBuilder::new().with_interval(Duration::from_millis(500)).build())
+///     .build();
+/// ```
 pub struct SenderReportBuilder<P> {
     /// Interval between sender reports.
     interval: Duration,
@@ -27,17 +44,41 @@ impl<P> Default for SenderReportBuilder<P> {
 }
 
 impl<P> SenderReportBuilder<P> {
+    /// Create a new builder with default settings.
+    ///
+    /// Default interval is 1 second.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// with customized interval
+    /// Set a custom interval between sender reports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use rtc_interceptor::SenderReportBuilder;
+    ///
+    /// let builder = SenderReportBuilder::new()
+    ///     .with_interval(Duration::from_millis(500));
+    /// ```
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
         self
     }
 
     /// Create a builder function for use with Registry.
+    ///
+    /// This returns a closure that can be passed to `Registry::with()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rtc_interceptor::{Registry, SenderReportBuilder};
+    ///
+    /// let registry = Registry::new()
+    ///     .with(SenderReportBuilder::new().build());
+    /// ```
     pub fn build(self) -> impl FnOnce(P) -> SenderReportInterceptor<P> {
         move |inner| SenderReportInterceptor::new(inner, self.interval)
     }
@@ -56,10 +97,10 @@ impl<P> SenderReportBuilder<P> {
 /// # Example
 ///
 /// ```ignore
-/// use rtc_interceptor::{Registry, report::SenderReportInterceptor};
+/// use rtc_interceptor::{Registry, SenderReportBuilder};
 ///
 /// let chain = Registry::new()
-///     .with(SenderReportInterceptor::new)
+///     .with(SenderReportBuilder::new().build())
 ///     .build();
 /// ```
 pub struct SenderReportInterceptor<P> {

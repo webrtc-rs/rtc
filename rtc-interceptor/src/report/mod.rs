@@ -10,11 +10,11 @@
 //! # Example
 //!
 //! ```ignore
-//! use rtc_interceptor::{Registry, report::{ReceiverReportInterceptor, SenderReportInterceptor}};
+//! use rtc_interceptor::{Registry, SenderReportBuilder, ReceiverReportBuilder};
 //!
 //! let chain = Registry::new()
-//!     .with(SenderReportInterceptor::new)
-//!     .with(ReceiverReportInterceptor::new)
+//!     .with(SenderReportBuilder::new().build())
+//!     .with(ReceiverReportBuilder::new().build())
 //!     .build();
 //! ```
 

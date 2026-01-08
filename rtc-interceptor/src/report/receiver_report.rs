@@ -10,6 +10,23 @@ use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 /// Builder for the ReceiverReportInterceptor.
+///
+/// # Example
+///
+/// ```ignore
+/// use rtc_interceptor::{Registry, ReceiverReportBuilder};
+/// use std::time::Duration;
+///
+/// // With default interval (1 second)
+/// let chain = Registry::new()
+///     .with(ReceiverReportBuilder::new().build())
+///     .build();
+///
+/// // With custom interval
+/// let chain = Registry::new()
+///     .with(ReceiverReportBuilder::new().with_interval(Duration::from_millis(500)).build())
+///     .build();
+/// ```
 pub struct ReceiverReportBuilder<P> {
     /// Interval between receiver reports.
     interval: Duration,
@@ -26,17 +43,41 @@ impl<P> Default for ReceiverReportBuilder<P> {
 }
 
 impl<P> ReceiverReportBuilder<P> {
+    /// Create a new builder with default settings.
+    ///
+    /// Default interval is 1 second.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// with customized interval
+    /// Set a custom interval between receiver reports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use rtc_interceptor::ReceiverReportBuilder;
+    ///
+    /// let builder = ReceiverReportBuilder::new()
+    ///     .with_interval(Duration::from_millis(500));
+    /// ```
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
         self
     }
 
     /// Create a builder function for use with Registry.
+    ///
+    /// This returns a closure that can be passed to `Registry::with()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rtc_interceptor::{Registry, ReceiverReportBuilder};
+    ///
+    /// let registry = Registry::new()
+    ///     .with(ReceiverReportBuilder::new().build());
+    /// ```
     pub fn build(self) -> impl FnOnce(P) -> ReceiverReportInterceptor<P> {
         move |inner| ReceiverReportInterceptor::new(inner, self.interval)
     }
@@ -54,10 +95,10 @@ impl<P> ReceiverReportBuilder<P> {
 /// # Example
 ///
 /// ```ignore
-/// use rtc_interceptor::{Registry, report::ReceiverReportInterceptor};
+/// use rtc_interceptor::{Registry, ReceiverReportBuilder};
 ///
 /// let chain = Registry::new()
-///     .with(ReceiverReportInterceptor::new)
+///     .with(ReceiverReportBuilder::new().build())
 ///     .build();
 /// ```
 pub struct ReceiverReportInterceptor<P> {

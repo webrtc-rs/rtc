@@ -7,10 +7,14 @@
 //! # Design
 //!
 //! Each interceptor wraps an inner `Interceptor` and can:
-//! - Process incoming/outgoing messages
-//! - Transform message types
-//! - Generate new messages (e.g., RTCP reports)
-//! - Handle timeouts for periodic tasks
+//! - Process incoming/outgoing RTP/RTCP packets
+//! - Modify packet contents (headers, payloads)
+//! - Generate new packets (e.g., RTCP Sender/Receiver Reports)
+//! - Handle timeouts for periodic tasks (e.g., report generation)
+//! - Track stream statistics and state
+//!
+//! All interceptors work with [`TaggedPacket`] (RTP or RTCP packets with transport metadata).
+//! The innermost interceptor is typically [`NoopInterceptor`], which serves as the terminal.
 //!
 //! # No Direction Concept
 //!
@@ -44,11 +48,11 @@
 //! # Example
 //!
 //! ```ignore
-//! use rtc_interceptor::{Registry, Interceptor};
+//! use rtc_interceptor::{Registry, SenderReportBuilder, ReceiverReportBuilder};
 //!
 //! let chain = Registry::new()
-//!     .with(SenderReportInterceptor::new)
-//!     .with(ReceiverReportInterceptor::new)
+//!     .with(SenderReportBuilder::new().build())
+//!     .with(ReceiverReportBuilder::new().build())
 //!     .build();
 //! ```
 
@@ -73,21 +77,35 @@ pub use report::{
 };
 
 /// RTP/RTCP Packet
+///
+/// An enum representing either an RTP or RTCP packet that can be processed
+/// by interceptors in the chain.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
+    /// RTP (Real-time Transport Protocol) packet containing media data
     Rtp(rtp::Packet),
+    /// RTCP (RTP Control Protocol) packets for feedback and statistics
     Rtcp(Vec<Box<dyn rtcp::Packet>>),
 }
 
+/// Tagged packet with transport metadata.
+///
+/// A [`TransportMessage`] wrapping a [`Packet`], which includes transport-level
+/// context such as source/destination addresses and protocol information.
+/// This is the primary message type passed through interceptor chains.
 pub type TaggedPacket = TransportMessage<Packet>;
 
-/// Interceptor extends [`sansio::Protocol`] with composable chaining via [`with()`](Interceptor::with).
+/// Trait for RTP/RTCP interceptors with fixed Protocol type parameters.
 ///
-/// This trait fixes the Protocol type parameters for RTP/RTCP interceptor chains:
+/// `Interceptor` is a marker trait that requires implementors to also implement
+/// [`sansio::Protocol`] with specific fixed type parameters for RTP/RTCP processing:
 /// - `Rin`, `Win`, `Rout`, `Wout` = [`TaggedPacket`]
 /// - `Ein`, `Eout` = `()`
 /// - `Time` = [`Instant`]
 /// - `Error` = [`shared::error::Error`]
+///
+/// This trait adds stream binding methods and provides a [`with()`](Interceptor::with)
+/// method for composable chaining of interceptors.
 ///
 /// Each interceptor must explicitly implement both `Protocol` and `Interceptor` traits.
 ///
@@ -109,10 +127,10 @@ pub type TaggedPacket = TransportMessage<Packet>;
 /// }
 ///
 /// impl<P: Interceptor> Interceptor for MyInterceptor<P> {
-///     fn bind_local_stream(&self, _info: &StreamInfo) {}
-///     fn unbind_local_stream(&self, _info: &StreamInfo) {}
-///     fn bind_remote_stream(&self, _info: &StreamInfo) {}
-///     fn unbind_remote_stream(&self, _info: &StreamInfo) {}
+///     fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+///     fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+///     fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+///     fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 /// }
 ///
 /// // Use with the builder
@@ -139,9 +157,12 @@ pub trait Interceptor:
     /// # Example
     ///
     /// ```ignore
+    /// use std::time::Duration;
+    /// use rtc_interceptor::{NoopInterceptor, SenderReportBuilder};
+    ///
+    /// // Using the builder pattern (recommended)
     /// let chain = NoopInterceptor::new()
-    ///     .with(SenderReportInterceptor::new)
-    ///     .with(ReceiverReportInterceptor::new);
+    ///     .with(SenderReportBuilder::new().with_interval(Duration::from_secs(1)).build());
     /// ```
     fn with<O, F>(self, f: F) -> O
     where

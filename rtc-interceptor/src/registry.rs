@@ -18,8 +18,8 @@ use crate::noop::NoopInterceptor;
 ///
 /// // Add interceptors (can be done in helper functions)
 /// registry = registry
-///     .with(SenderReportInterceptor::new)
-///     .with(ReceiverReportInterceptor::new);
+///     .with(SenderReportBuilder::new().build())
+///     .with(ReceiverReportBuilder::new().build());
 ///
 /// // Build the final chain
 /// let chain = registry.build();
@@ -32,8 +32,8 @@ use crate::noop::NoopInterceptor;
 ///     registry: Registry<P>,
 /// ) -> Registry<impl Interceptor> {
 ///     registry
-///         .with(SenderReportInterceptor::new)
-///         .with(ReceiverReportInterceptor::new)
+///         .with(SenderReportBuilder::new().build())
+///         .with(ReceiverReportBuilder::new().build())
 /// }
 ///
 /// let registry = Registry::new();
@@ -91,8 +91,8 @@ impl<P: Interceptor> Registry<P> {
     ///
     /// ```ignore
     /// let registry = Registry::new()
-    ///     .with(SenderReportInterceptor::new)
-    ///     .with(ReceiverReportInterceptor::new);
+    ///     .with(SenderReportBuilder::new().build())
+    ///     .with(ReceiverReportBuilder::new().build());
     /// ```
     pub fn with<O, F>(self, f: F) -> Registry<O>
     where

@@ -18,11 +18,12 @@
 //! // Note: poll_event() and related methods are part of the sans-I/O design
 //! // but may not be fully exposed in the current public API
 //! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfiguration;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::event::RTCPeerConnectionEvent;
 //! use std::time::Instant;
 //!
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfiguration::default())?;
+//! let config = RTCConfigurationBuilder::new().build();
+//! let mut peer_connection = RTCPeerConnection::new(config)?;
 //!
 //! loop {
 //!     // Poll and handle events
