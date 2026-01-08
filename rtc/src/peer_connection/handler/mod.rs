@@ -157,8 +157,11 @@ where
         SrtpHandler::new(&mut self.pipeline_context.srtp_handler_context)
     }
 
-    pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
-        InterceptorHandler::new(&mut self.pipeline_context.interceptor_handler_context)
+    pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_, I> {
+        InterceptorHandler::new(
+            &mut self.pipeline_context.interceptor_handler_context,
+            &mut self.configuration.interceptor,
+        )
     }
 
     pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
