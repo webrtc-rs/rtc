@@ -448,7 +448,13 @@ where
         self.rtp_transceivers.len() - 1
     }
 
+    fn start_rtp_senders(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     pub(super) fn start_rtp(&mut self, remote_desc: RTCSessionDescription) -> Result<()> {
+        self.start_rtp_senders()?;
+
         let incoming_tracks = if let Some(parsed) = &remote_desc.parsed {
             track_details_from_sdp(parsed)
         } else {

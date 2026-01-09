@@ -976,24 +976,30 @@ where
             if let Some(remote_description) = self.remote_description().cloned()
                 && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
             {
-                if let Some(remote_port) =
+                let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
+                    self.dtls_transport().role(),
+                    SCTPTransportCapabilities {
+                        max_message_size: get_application_media_section_max_message_size(
+                            parsed_remote_description,
+                        )
+                        .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
+                    },
+                    get_application_media_section_sctp_port(parsed_local_description)
+                        .unwrap_or(5000),
                     get_application_media_section_sctp_port(parsed_remote_description)
-                    && let Some(local_port) =
-                        get_application_media_section_sctp_port(parsed_local_description)
-                {
-                    let max_message_size =
-                        get_application_media_section_max_message_size(parsed_remote_description)
-                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
-                    let dtls_role = self.dtls_transport().role();
+                        .unwrap_or(5000),
+                );
 
-                    self.sctp_transport_mut().start(
-                        dtls_role,
-                        SCTPTransportCapabilities { max_message_size },
-                        local_port,
-                        remote_port,
-                    )?;
-                }
-
+                // we_answer: we first call set_remote_description,
+                // then, we create_answer() and set_local_description() here
+                // Now we should have done SDP negotiation.
+                // Therefore, it is ready to start sctp and rtp.
+                self.sctp_transport_mut().start(
+                    dtls_role,
+                    remote_caps,
+                    local_sctp_port,
+                    remote_sctp_port,
+                )?;
                 self.start_rtp(remote_description)?;
             }
         }
@@ -1314,24 +1320,30 @@ where
                     .as_ref()
                     .and_then(|desc| desc.parsed.as_ref())
             {
-                if let Some(remote_port) =
+                let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
+                    self.dtls_transport().role(),
+                    SCTPTransportCapabilities {
+                        max_message_size: get_application_media_section_max_message_size(
+                            parsed_remote_description,
+                        )
+                        .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
+                    },
+                    get_application_media_section_sctp_port(parsed_local_description)
+                        .unwrap_or(5000),
                     get_application_media_section_sctp_port(parsed_remote_description)
-                    && let Some(local_port) =
-                        get_application_media_section_sctp_port(parsed_local_description)
-                {
-                    let max_message_size =
-                        get_application_media_section_max_message_size(parsed_remote_description)
-                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE);
-                    let dtls_role = self.dtls_transport().role();
+                        .unwrap_or(5000),
+                );
 
-                    self.sctp_transport_mut().start(
-                        dtls_role,
-                        SCTPTransportCapabilities { max_message_size },
-                        local_port,
-                        remote_port,
-                    )?;
-                }
-
+                // we_offer: we create_offer() and set_local_description() first
+                // then, after call set_remote_description here,
+                // Now we should have done SDP negotiation.
+                // Therefore, it is ready to start sctp and rtp.
+                self.sctp_transport_mut().start(
+                    dtls_role,
+                    remote_caps,
+                    local_sctp_port,
+                    remote_sctp_port,
+                )?;
                 self.start_rtp(remote_description)?;
             }
         }
