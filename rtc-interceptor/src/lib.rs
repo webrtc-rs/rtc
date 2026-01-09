@@ -65,11 +65,16 @@ use std::time::Instant;
 mod noop;
 mod registry;
 
+pub(crate) mod nack;
 pub(crate) mod report;
 pub mod stream_info;
 
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
+pub use nack::{
+    generator::{NackGeneratorBuilder, NackGeneratorInterceptor},
+    responder::{NackResponderBuilder, NackResponderInterceptor},
+};
 pub use report::{
     receiver_report::{ReceiverReportBuilder, ReceiverReportInterceptor},
     sender_report::{SenderReportBuilder, SenderReportInterceptor},
