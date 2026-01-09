@@ -181,3 +181,299 @@ impl ReceiverStream {
         r
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_rtp_packet(seq: u16, timestamp: u32) -> rtp::packet::Packet {
+        rtp::packet::Packet {
+            header: rtp::header::Header {
+                sequence_number: seq,
+                timestamp,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_can_use_entire_history_size() {
+        // Port of pion's TestReceiverStream/can use entire history size
+        let mut stream = ReceiverStream::new(12345, 90000);
+        let max_packets = stream.size * PACKETS_PER_ENTRY;
+
+        // We shouldn't wrap around so long as we only try max_packets worth
+        for seq in 0..max_packets as u16 {
+            assert!(
+                !stream.get_received(seq),
+                "packet with SN {} shouldn't be received yet",
+                seq
+            );
+            stream.set_received(seq);
+            assert!(
+                stream.get_received(seq),
+                "packet with SN {} should now be received",
+                seq
+            );
+        }
+
+        // Delete should also work
+        for seq in 0..max_packets as u16 {
+            assert!(
+                stream.get_received(seq),
+                "packet with SN {} should still be marked as received",
+                seq
+            );
+            stream.del_received(seq);
+            assert!(
+                !stream.get_received(seq),
+                "packet with SN {} should no longer be received",
+                seq
+            );
+        }
+    }
+
+    #[test]
+    fn test_receiver_stream_before_any_packet() {
+        // Port of pion's TestReceiverInterceptor/before any packet
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        assert_eq!(rr.reports[0].last_sequence_number, 0);
+        assert_eq!(rr.reports[0].last_sender_report, 0);
+        assert_eq!(rr.reports[0].fraction_lost, 0);
+        assert_eq!(rr.reports[0].total_lost, 0);
+        assert_eq!(rr.reports[0].delay, 0);
+        assert_eq!(rr.reports[0].jitter, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_after_rtp_packets() {
+        // Port of pion's TestReceiverInterceptor/after RTP packets
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        for i in 0..10u16 {
+            let pkt = make_rtp_packet(i, 0);
+            stream.process_rtp(now, &pkt);
+        }
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        assert_eq!(rr.reports[0].last_sequence_number, 9);
+        assert_eq!(rr.reports[0].last_sender_report, 0);
+        assert_eq!(rr.reports[0].fraction_lost, 0);
+        assert_eq!(rr.reports[0].total_lost, 0);
+        assert_eq!(rr.reports[0].delay, 0);
+        assert_eq!(rr.reports[0].jitter, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_overflow() {
+        // Port of pion's TestReceiverInterceptor/overflow
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // Receive packet at 0xffff
+        stream.process_rtp(now, &make_rtp_packet(0xffff, 0));
+
+        // Wrap to 0x00
+        stream.process_rtp(now, &make_rtp_packet(0x00, 0));
+
+        // Out-of-order packet 0xfffe (should not update last_seq_num)
+        stream.process_rtp(now, &make_rtp_packet(0xfffe, 0));
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        // Extended sequence number should show 1 cycle (1 << 16)
+        assert_eq!(rr.reports[0].last_sequence_number, 1 << 16);
+        assert_eq!(rr.reports[0].fraction_lost, 0);
+        assert_eq!(rr.reports[0].total_lost, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_packet_loss() {
+        // Port of pion's TestReceiverInterceptor/packet loss
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // Receive packet 1
+        stream.process_rtp(now, &make_rtp_packet(0x01, 0));
+
+        // Skip packet 2, receive packet 3
+        stream.process_rtp(now, &make_rtp_packet(0x03, 0));
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        assert_eq!(rr.reports[0].last_sequence_number, 0x03);
+        // fraction_lost = 256 * 1 / 3 = 85
+        assert_eq!(rr.reports[0].fraction_lost, (256u32 * 1 / 3) as u8);
+        assert_eq!(rr.reports[0].total_lost, 1);
+    }
+
+    #[test]
+    fn test_receiver_stream_overflow_and_packet_loss() {
+        // Port of pion's TestReceiverInterceptor/overflow and packet loss
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // Receive packet 0xffff
+        stream.process_rtp(now, &make_rtp_packet(0xffff, 0));
+
+        // Skip 0x00, receive 0x01
+        stream.process_rtp(now, &make_rtp_packet(0x01, 0));
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        // Extended sequence number: 1 cycle + 0x01
+        assert_eq!(rr.reports[0].last_sequence_number, (1 << 16) | 0x01);
+        // fraction_lost = 256 * 1 / 3 = 85
+        assert_eq!(rr.reports[0].fraction_lost, (256u32 * 1 / 3) as u8);
+        assert_eq!(rr.reports[0].total_lost, 1);
+    }
+
+    #[test]
+    fn test_receiver_stream_reordered_packets() {
+        // Port of pion's TestReceiverInterceptor/reordered packets
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // Receive packets in order: 1, 3, 2, 4
+        for seq in [0x01u16, 0x03, 0x02, 0x04] {
+            stream.process_rtp(now, &make_rtp_packet(seq, 0));
+        }
+
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        assert_eq!(rr.reports[0].last_sequence_number, 0x04);
+        // No loss because packet 2 arrived (just out of order)
+        assert_eq!(rr.reports[0].fraction_lost, 0);
+        assert_eq!(rr.reports[0].total_lost, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_jitter() {
+        // Port of pion's TestReceiverInterceptor/jitter
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let base_time = Instant::now();
+
+        // First packet
+        stream.process_rtp(base_time, &make_rtp_packet(0x01, 42378934));
+
+        // Second packet arrives 1 second later, but RTP timestamp only advances by 60000
+        // (should be 90000 for 1 second at 90kHz clock rate)
+        // D = |arrival_diff * clock_rate - rtp_diff| = |1 * 90000 - 60000| = 30000
+        let later_time = base_time + Duration::from_secs(1);
+        stream.process_rtp(later_time, &make_rtp_packet(0x02, 42378934 + 60000));
+
+        let rr = stream.generate_report(later_time);
+
+        assert_eq!(rr.reports.len(), 1);
+        assert_eq!(rr.reports[0].ssrc, 123456);
+        assert_eq!(rr.reports[0].last_sequence_number, 0x02);
+        // jitter = D / 16 = 30000 / 16 = 1875
+        assert_eq!(rr.reports[0].jitter, 30000 / 16);
+    }
+
+    #[test]
+    fn test_receiver_stream_delay() {
+        // Port of pion's TestReceiverInterceptor/delay
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let base_time = Instant::now();
+
+        // Receive a sender report
+        let sr = rtcp::sender_report::SenderReport {
+            ssrc: 123456,
+            ntp_time: 0x1234_5678_0000_0000, // Some NTP time
+            rtp_time: 987654321,
+            packet_count: 0,
+            octet_count: 0,
+            ..Default::default()
+        };
+        stream.process_sender_report(base_time, &sr);
+
+        // Generate receiver report 1 second later
+        let later_time = base_time + Duration::from_secs(1);
+        let rr = stream.generate_report(later_time);
+
+        assert_eq!(rr.reports.len(), 1);
+        // DLSR in 1/65536 seconds units: 1 second = 65536
+        assert_eq!(rr.reports[0].delay, 65536);
+        // LSR is middle 32 bits of NTP time
+        assert_eq!(rr.reports[0].last_sender_report, 0x5678_0000);
+    }
+
+    #[test]
+    fn test_receiver_stream_delay_before_sender_report() {
+        // Test that delay is 0 before receiving any sender report
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // Receive some RTP packets
+        for i in 0..5u16 {
+            stream.process_rtp(now, &make_rtp_packet(i, 0));
+        }
+
+        // Generate report without having received any SR
+        let rr = stream.generate_report(now);
+
+        assert_eq!(rr.reports[0].delay, 0);
+        assert_eq!(rr.reports[0].last_sender_report, 0);
+    }
+
+    #[test]
+    fn test_receiver_stream_cumulative_loss() {
+        // Test that total_lost accumulates across reports
+        let mut stream = ReceiverStream::new(123456, 90000);
+        let now = Instant::now();
+
+        // First batch: receive 1, skip 2, receive 3
+        stream.process_rtp(now, &make_rtp_packet(1, 0));
+        stream.process_rtp(now, &make_rtp_packet(3, 0));
+
+        let rr1 = stream.generate_report(now);
+        assert_eq!(rr1.reports[0].total_lost, 1);
+
+        // Second batch: receive 4, skip 5, receive 6
+        stream.process_rtp(now, &make_rtp_packet(4, 0));
+        stream.process_rtp(now, &make_rtp_packet(6, 0));
+
+        let rr2 = stream.generate_report(now);
+        // Total lost should now be 2 (1 from first batch + 1 from second)
+        assert_eq!(rr2.reports[0].total_lost, 2);
+    }
+
+    #[test]
+    fn test_receiver_stream_24bit_loss_clamping() {
+        // Test that total_lost is clamped to 24 bits (0xFFFFFF)
+        let mut stream = ReceiverStream::new(123456, 90000);
+        stream.total_lost = 0xFFFFFE; // Almost at max
+
+        let now = Instant::now();
+
+        // Receive packets with a gap
+        stream.process_rtp(now, &make_rtp_packet(1, 0));
+        stream.process_rtp(now, &make_rtp_packet(10, 0)); // 8 packets lost
+
+        let rr = stream.generate_report(now);
+
+        // Should be clamped to 0xFFFFFF
+        assert_eq!(rr.reports[0].total_lost, 0xFFFFFF);
+    }
+}
