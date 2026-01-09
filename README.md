@@ -193,7 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - ✅ **Trickle ICE** - Progressive candidate gathering
 - ✅ **Simulcast & SVC** - Scalable video coding
 
-## More Examples
+## Examples
 
 The repository includes comprehensive examples demonstrating various use cases:
 
@@ -208,6 +208,8 @@ The repository includes comprehensive examples demonstrating various use cases:
   VP8/VP9 video from disk
 - [simulcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/simulcast) - Receive 3
   simulcast encodings in one track
+- [broadcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/broadcast) - Broadcast a video to multiple
+  peers
 
 Run an example:
 
@@ -329,8 +331,10 @@ This implementation follows these specifications:
 - [RFC 8866](https://datatracker.ietf.org/doc/html/rfc8866) - SDP: Session Description Protocol
 - [RFC 8445](https://datatracker.ietf.org/doc/html/rfc8445) - ICE: Interactive Connectivity Establishment
 - [RFC 6347](https://datatracker.ietf.org/doc/html/rfc6347) - DTLS: Datagram Transport Layer Security
+- [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260) - SCTP: Stream Control Transmission Protocol
 - [RFC 8831](https://datatracker.ietf.org/doc/html/rfc8831) - WebRTC Data Channels
 - [RFC 3550](https://datatracker.ietf.org/doc/html/rfc3550) - RTP: Real-time Transport Protocol
+- [RFC 3711](https://datatracker.ietf.org/doc/html/rfc3711) - SRTP: Secure Real-time Transport Protocol
 
 ## Documentation
 
