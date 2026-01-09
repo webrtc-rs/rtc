@@ -26,9 +26,9 @@ let chain = Registry::new()
 .build();
 ```
 
-## File Mapping (Pion to webrtc-rs)
+## File Mapping (Pion to RTC)
 
-| Pion (Go)                         | webrtc-rs (Rust) | Description                                        |
+| Pion (Go)                         | RTC (Rust)       | Description                                        |
 |-----------------------------------|------------------|----------------------------------------------------|
 | `nack.go`                         | `mod.rs`         | Module definition, `stream_supports_nack()` helper |
 | `receive_log.go`                  | `receive_log.rs` | Bitmap for tracking received packets               |
@@ -41,26 +41,26 @@ let chain = Registry::new()
 
 ## Feature Comparison
 
-| Feature                       | Pion | webrtc-rs | Notes                                             |
-|-------------------------------|------|-----------|---------------------------------------------------|
-| **Generator**                 |      |           |                                                   |
-| Configurable size             | ✅    | ✅         | 64-32768, power of 2                              |
-| Configurable interval         | ✅    | ✅         | Duration between NACK cycles                      |
-| skip_last_n                   | ✅    | ✅         | Skip recent packets                               |
-| max_nacks_per_packet          | ✅    | ✅         | Limit retransmission requests                     |
-| Stream filter                 | ✅    | ✅         | Via `stream_supports_nack()`                      |
-| Custom logger                 | ✅    | ➖         | Skipped                                           |
-| Custom ticker                 | ✅    | ➖         | Sans-I/O uses `handle_timeout()`                  |
-| **Responder**                 |      |           |                                                   |
-| Configurable size             | ✅    | ✅         | 1-32768, power of 2                               |
-| Stream filter                 | ✅    | ✅         | Via `stream_supports_nack()`                      |
-| Packet factory (copy/no-copy) | ✅    | ➖         | Always clone packets                              |
-| RFC4588 RTX support           | ✅    | ✅         | Retransmit on separate SSRC with modified payload |
-| Custom logger                 | ✅    | ➖         | Skipped                                           |
+| Feature                       | Pion | RTC | Notes                                             |
+|-------------------------------|------|-----|---------------------------------------------------|
+| **Generator**                 |      |     |                                                   |
+| Configurable size             | ✅    | ✅   | 64-32768, power of 2                              |
+| Configurable interval         | ✅    | ✅   | Duration between NACK cycles                      |
+| skip_last_n                   | ✅    | ✅   | Skip recent packets                               |
+| max_nacks_per_packet          | ✅    | ✅   | Limit retransmission requests                     |
+| Stream filter                 | ✅    | ✅   | Via `stream_supports_nack()`                      |
+| Custom logger                 | ✅    | ➖   | Skipped                                           |
+| Custom ticker                 | ✅    | ➖   | Sans-I/O uses `handle_timeout()`                  |
+| **Responder**                 |      |     |                                                   |
+| Configurable size             | ✅    | ✅   | 1-32768, power of 2                               |
+| Stream filter                 | ✅    | ✅   | Via `stream_supports_nack()`                      |
+| Packet factory (copy/no-copy) | ✅    | ➖   | Always clone packets                              |
+| RFC4588 RTX support           | ✅    | ✅   | Retransmit on separate SSRC with modified payload |
+| Custom logger                 | ✅    | ➖   | Skipped                                           |
 
 ## Architecture Differences
 
-| Aspect          | Pion                                         | webrtc-rs                           |
+| Aspect          | Pion                                         | RTC                                 |
 |-----------------|----------------------------------------------|-------------------------------------|
 | Options pattern | Functional options in separate files         | Builder pattern in same file        |
 | Error handling  | `ErrInvalidSize` error                       | `Option<T>` return type             |
@@ -74,7 +74,7 @@ let chain = Registry::new()
 
 ### receive_log_test.go vs receive_log.rs
 
-| Pion Test                                    | webrtc-rs Equivalent            | Status    |
+| Pion Test                                    | RTC Equivalent                  | Status    |
 |----------------------------------------------|---------------------------------|-----------|
 | `TestReceivedBuffer` (multiple start points) | `test_receive_log_pion_compat`  | ✅         |
 | *(implicit)*                                 | `test_receive_log_basic`        | ✅ (extra) |
@@ -87,7 +87,7 @@ let chain = Registry::new()
 
 ### generator_interceptor_test.go vs generator.rs
 
-| Pion Test                                                    | webrtc-rs Equivalent                          | Status    |
+| Pion Test                                                    | RTC Equivalent                                | Status    |
 |--------------------------------------------------------------|-----------------------------------------------|-----------|
 | `TestGeneratorInterceptor`                                   | `test_nack_generator_generates_nack`          | ✅         |
 | `TestGeneratorInterceptor_InvalidSize`                       | *(handled by Option return)*                  | ✅         |
@@ -101,7 +101,7 @@ let chain = Registry::new()
 
 ### responder_interceptor_test.go vs responder.rs
 
-| Pion Test                                                   | webrtc-rs Equivalent                                | Status    |
+| Pion Test                                                   | RTC Equivalent                                      | Status    |
 |-------------------------------------------------------------|-----------------------------------------------------|-----------|
 | `TestResponderInterceptor` (with copy)                      | `test_nack_responder_retransmits_packet`            | ✅         |
 | `TestResponderInterceptor` (without copy)                   | *(not needed - always clone)*                       | N/A       |
@@ -122,7 +122,7 @@ let chain = Registry::new()
 
 ### send_buffer.rs (no pion equivalent tests)
 
-| Pion Test | webrtc-rs Equivalent                  | Status    |
+| Pion Test | RTC Equivalent                        | Status    |
 |-----------|---------------------------------------|-----------|
 | *(none)*  | `test_send_buffer_basic`              | ✅ (extra) |
 | *(none)*  | `test_send_buffer_invalid_size`       | ✅ (extra) |
@@ -135,14 +135,14 @@ let chain = Registry::new()
 
 ### Test Summary
 
-| Category    | Pion   | webrtc-rs | Notes                                                          |
-|-------------|--------|-----------|----------------------------------------------------------------|
-| receive_log | 1      | 8         | Pion's single test covers many cases; split into focused tests |
-| generator   | 4      | 7         | +3 extra, -1 deadlock test (not needed in sans-I/O)            |
-| responder   | 8      | 9         | -3 race/deadlock, +4 extra, +1 RFC4588                         |
-| send_buffer | 0      | 8         | All extra (pion tests rtpbuffer indirectly)                    |
-| mod.rs      | 0      | 1         | `test_stream_supports_nack`                                    |
-| **Total**   | **13** | **33**    |                                                                |
+| Category    | Pion   | RTC    | Notes                                                          |
+|-------------|--------|--------|----------------------------------------------------------------|
+| receive_log | 1      | 8      | Pion's single test covers many cases; split into focused tests |
+| generator   | 4      | 7      | +3 extra, -1 deadlock test (not needed in sans-I/O)            |
+| responder   | 8      | 9      | -3 race/deadlock, +4 extra, +1 RFC4588                         |
+| send_buffer | 0      | 8      | All extra (pion tests rtpbuffer indirectly)                    |
+| mod.rs      | 0      | 1      | `test_stream_supports_nack`                                    |
+| **Total**   | **13** | **33** |                                                                |
 
 ### Tests Not Ported
 
@@ -150,3 +150,94 @@ let chain = Registry::new()
 |---------------------|-------------------------------------------------|
 | Race/deadlock tests | Sans-I/O architecture has no concurrency issues |
 | `DisableCopy` test  | No packet factory - always clone                |
+
+---
+
+## Compare with Async WebRTC Rust Implementation
+
+This section compares this sans-I/O implementation with the async-based webrtc crate.
+
+### Architecture Comparison
+
+| Aspect          | Async WebRTC                               | Sans-I/O RTC                          |
+|-----------------|--------------------------------------------|---------------------------------------|
+| **Pattern**     | Async/await with Tokio runtime             | Sans-I/O with explicit time/polling   |
+| **Concurrency** | `tokio::spawn`, channels, `Arc<Mutex<>>`   | No async, no locks, explicit state    |
+| **Timer**       | `tokio::time::interval`                    | `handle_timeout()` / `poll_timeout()` |
+| **NACK Loop**   | Background goroutine with `tokio::select!` | Triggered by `handle_timeout()`       |
+
+### NACK Generator Comparison
+
+| Feature              | Async WebRTC                                      | Sans-I/O RTC                                   |
+|----------------------|---------------------------------------------------|------------------------------------------------|
+| **Receive Log Size** | `log2_size_minus_6` param (default 13-6=7 → 8192) | `size` param (default 512, power of 2)         |
+| **Data Structure**   | `Vec<u64>` bitmap                                 | `Vec<u64>` bitmap                              |
+| **Bit Indexing**     | `(seq % size) / 64`, `(seq % size) % 64`          | Same approach                                  |
+| **Skip Last N**      | ✅ Supported                                       | ✅ Supported                                    |
+| **Max NACKs/Packet** | ❌ Not implemented                                 | ✅ `max_nacks_per_packet` option                |
+| **Interval**         | Default 100ms (async timer)                       | Default 100ms (poll_timeout)                   |
+| **NACK Generation**  | Background `tokio::spawn` loop                    | `handle_timeout()` triggers `generate_nacks()` |
+
+**Key Difference**: This sans-I/O implementation adds `max_nacks_per_packet` to limit
+retransmission attempts per missing sequence number. This prevents infinite NACK loops
+for permanently lost packets.
+
+### NACK Responder Comparison
+
+| Feature            | Async WebRTC                          | Sans-I/O RTC                            |
+|--------------------|---------------------------------------|-----------------------------------------|
+| **Buffer Size**    | `log2_size` param (default 13 → 8192) | `size` param (default 1024, power of 2) |
+| **Data Structure** | `Vec<Option<rtp::Packet>>`            | `Vec<Option<rtp::Packet>>`              |
+| **RTX Support**    | ❌ Not implemented                     | ✅ RFC 4588 RTX format                   |
+| **Retransmit**     | `tokio::spawn` async task             | Queue to `write_queue`                  |
+
+**Key Difference**: This sans-I/O implementation has full RFC 4588 RTX support:
+
+- Uses separate RTX SSRC and payload type for retransmissions
+- Prepends original sequence number (2 bytes, big-endian) to payload
+- Maintains separate RTX sequence number counter
+
+### Receive Log / Bitmap Implementation
+
+Both implementations use identical algorithms for the bitmap-based receive log:
+
+```
+Bit Position Calculation:
+  array_index = (seq % size) / 64
+  bit_position = (seq % size) % 64
+
+Wraparound Detection:
+  UINT16_SIZE_HALF = 32768
+  diff = seq.wrapping_sub(other_seq)
+  if diff < UINT16_SIZE_HALF { /* seq > other_seq */ }
+```
+
+### Send Buffer Implementation
+
+Both implementations use circular buffers with the same structure:
+
+```
+Storage: Vec<Option<rtp::Packet>>
+Index:   seq % buffer_size
+```
+
+The sans-I/O version clears intermediate positions when gaps are detected,
+matching the async version's behavior.
+
+### Feature Completeness Summary
+
+| Feature                        | Async WebRTC | Sans-I/O RTC |
+|--------------------------------|:------------:|:------------:|
+| NACK Generator basic           |      ✅       |      ✅       |
+| Generator skip_last_n          |      ✅       |      ✅       |
+| Generator max_nacks_per_packet |      ❌       |      ✅       |
+| NACK Responder basic           |      ✅       |      ✅       |
+| Responder RTX (RFC 4588)       |      ❌       |      ✅       |
+| Stream filtering               |      ✅       |      ✅       |
+
+### Recommendations
+
+**Features to potentially backport to Async WebRTC**:
+
+1. `max_nacks_per_packet` - Prevents infinite retransmission loops
+2. RFC 4588 RTX support - Industry standard for retransmission
