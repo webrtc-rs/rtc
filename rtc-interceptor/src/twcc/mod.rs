@@ -1,11 +1,35 @@
-//! TWCC (Transport Wide Congestion Control) Interceptors
+//! TWCC (Transport Wide Congestion Control) Interceptors.
 //!
-//! This module provides interceptors for Transport Wide Congestion Control
-//! as specified in:
-//! <https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01>
+//! This module provides interceptors for Transport Wide Congestion Control,
+//! a bandwidth estimation mechanism that provides detailed per-packet feedback.
+//!
+//! # Interceptors
 //!
 //! - [`TwccSenderInterceptor`]: Adds transport-wide sequence numbers to outgoing RTP packets.
-//! - [`TwccReceiverInterceptor`]: Tracks incoming RTP packets and generates TWCC feedback.
+//! - [`TwccReceiverInterceptor`]: Tracks incoming RTP packets and generates TransportLayerCC feedback.
+//!
+//! # How TWCC Works
+//!
+//! 1. **Sender**: Adds a transport-wide sequence number to each RTP packet via header extension
+//! 2. **Receiver**: Records arrival time of each packet by sequence number
+//! 3. **Feedback**: Receiver periodically sends TransportLayerCC RTCP packets with arrival info
+//! 4. **Estimation**: Sender uses feedback to estimate available bandwidth
+//!
+//! # Sequence Number Sharing
+//!
+//! Unlike per-stream RTP sequence numbers, TWCC sequence numbers are shared across
+//! all streams in a session. This allows the sender to correlate feedback across
+//! multiple media tracks for more accurate bandwidth estimation.
+//!
+//! # TWCC Support Detection
+//!
+//! Interceptors detect TWCC support by checking [`StreamInfo::rtp_header_extensions`](crate::StreamInfo::rtp_header_extensions)
+//! for the TWCC header extension URI. Streams without the extension are passed through
+//! without modification.
+//!
+//! # References
+//!
+//! - [draft-holmer-rmcat-transport-wide-cc-extensions-01](https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01) - RTP Extensions for Transport-wide Congestion Control
 //!
 //! # Example
 //!
@@ -14,17 +38,36 @@
 //! use std::time::Duration;
 //!
 //! let chain = Registry::new()
+//!     // Sender: adds TWCC sequence numbers to outgoing packets
 //!     .with(TwccSenderBuilder::new().build())
+//!     // Receiver: generates TWCC feedback for incoming packets
 //!     .with(TwccReceiverBuilder::new()
-//!         .with_interval(Duration::from_millis(100))
+//!         .with_interval(Duration::from_millis(100))  // Feedback interval
 //!         .build())
 //!     .build();
 //! ```
+//!
+//! # Stream Configuration
+//!
+//! To enable TWCC for a stream, include the header extension in [`StreamInfo`](crate::StreamInfo):
+//!
+//! ```ignore
+//! use rtc_interceptor::{StreamInfo, RTPHeaderExtension};
+//!
+//! let stream_info = StreamInfo {
+//!     ssrc: 0x12345678,
+//!     rtp_header_extensions: vec![RTPHeaderExtension {
+//!         uri: "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01".to_string(),
+//!         id: 5,  // Extension ID negotiated via SDP
+//!     }],
+//!     ..Default::default()
+//! };
+//! ```
 
-mod arrival_time_map;
-pub mod receiver;
-mod recorder;
-pub mod sender;
+pub(crate) mod arrival_time_map;
+pub(crate) mod receiver;
+pub(crate) mod recorder;
+pub(crate) mod sender;
 
 use crate::stream_info::StreamInfo;
 

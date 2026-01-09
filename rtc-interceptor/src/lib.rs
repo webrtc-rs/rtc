@@ -1,8 +1,37 @@
-//! RTC Interceptor - Sans-IO interceptor framework for RTP/RTCP processing
+//! RTC Interceptor - Sans-IO interceptor framework for RTP/RTCP processing.
 //!
 //! This crate provides a composable interceptor framework built on top of the
 //! [`sansio::Protocol`] trait. Interceptors can process, modify, or generate
 //! RTP/RTCP packets as they flow through the pipeline.
+//!
+//! # Available Interceptors
+//!
+//! ## RTCP Reports
+//!
+//! | Interceptor | Description |
+//! |-------------|-------------|
+//! | [`SenderReportInterceptor`] | Generates RTCP Sender Reports (SR) for local streams and filters hop-by-hop RTCP feedback |
+//! | [`ReceiverReportInterceptor`] | Generates RTCP Receiver Reports (RR) based on incoming RTP statistics |
+//!
+//! ## NACK (Negative Acknowledgement)
+//!
+//! | Interceptor | Description |
+//! |-------------|-------------|
+//! | [`NackGeneratorInterceptor`] | Detects missing RTP packets and generates NACK requests (RFC 4585) |
+//! | [`NackResponderInterceptor`] | Buffers sent packets and retransmits on NACK, with optional RTX support (RFC 4588) |
+//!
+//! ## TWCC (Transport Wide Congestion Control)
+//!
+//! | Interceptor | Description |
+//! |-------------|-------------|
+//! | [`TwccSenderInterceptor`] | Adds transport-wide sequence numbers to outgoing RTP packets |
+//! | [`TwccReceiverInterceptor`] | Tracks incoming packets and generates TransportLayerCC feedback |
+//!
+//! ## Utility
+//!
+//! | Interceptor | Description |
+//! |-------------|-------------|
+//! | [`NoopInterceptor`] | Pass-through terminal for interceptor chains |
 //!
 //! # Design
 //!
@@ -45,15 +74,70 @@
 //! in the same structural order. The distinction between "inbound" and "outbound"
 //! is semantic (based on message content), not structural (based on call order).
 //!
-//! # Example
+//! # Quick Start
 //!
 //! ```ignore
-//! use rtc_interceptor::{Registry, SenderReportBuilder, ReceiverReportBuilder};
+//! use rtc_interceptor::{
+//!     Registry, SenderReportBuilder, ReceiverReportBuilder,
+//!     NackGeneratorBuilder, NackResponderBuilder,
+//!     TwccSenderBuilder, TwccReceiverBuilder,
+//! };
+//! use std::time::Duration;
 //!
+//! // Build a full-featured interceptor chain
 //! let chain = Registry::new()
-//!     .with(SenderReportBuilder::new().build())
-//!     .with(ReceiverReportBuilder::new().build())
+//!     // RTCP reports
+//!     .with(SenderReportBuilder::new()
+//!         .with_interval(Duration::from_secs(1))
+//!         .build())
+//!     .with(ReceiverReportBuilder::new()
+//!         .with_interval(Duration::from_secs(1))
+//!         .build())
+//!     // NACK for packet loss recovery
+//!     .with(NackGeneratorBuilder::new()
+//!         .with_size(512)
+//!         .with_interval(Duration::from_millis(100))
+//!         .build())
+//!     .with(NackResponderBuilder::new()
+//!         .with_size(1024)
+//!         .build())
+//!     // TWCC for congestion control
+//!     .with(TwccSenderBuilder::new().build())
+//!     .with(TwccReceiverBuilder::new()
+//!         .with_interval(Duration::from_millis(100))
+//!         .build())
 //!     .build();
+//! ```
+//!
+//! # Stream Binding
+//!
+//! Before interceptors can process packets for a stream, the stream must be bound:
+//!
+//! ```ignore
+//! use rtc_interceptor::{StreamInfo, RTCPFeedback, RTPHeaderExtension};
+//!
+//! // Create stream info with NACK and TWCC support
+//! let stream_info = StreamInfo {
+//!     ssrc: 0x12345678,
+//!     clock_rate: 90000,
+//!     mime_type: "video/VP8".to_string(),
+//!     payload_type: 96,
+//!     rtcp_feedback: vec![RTCPFeedback {
+//!         typ: "nack".to_string(),
+//!         parameter: String::new(),
+//!     }],
+//!     rtp_header_extensions: vec![RTPHeaderExtension {
+//!         uri: "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01".to_string(),
+//!         id: 5,
+//!     }],
+//!     ..Default::default()
+//! };
+//!
+//! // Bind for outgoing streams (sender side)
+//! chain.bind_local_stream(&stream_info);
+//!
+//! // Bind for incoming streams (receiver side)
+//! chain.bind_remote_stream(&stream_info);
 //! ```
 
 #![warn(rust_2018_idioms)]
@@ -77,8 +161,8 @@ pub use nack::{
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 pub use report::{
-    receiver_report::{ReceiverReportBuilder, ReceiverReportInterceptor},
-    sender_report::{SenderReportBuilder, SenderReportInterceptor},
+    receiver::{ReceiverReportBuilder, ReceiverReportInterceptor},
+    sender::{SenderReportBuilder, SenderReportInterceptor},
 };
 pub use stream_info::{RTCPFeedback, RTPHeaderExtension, StreamInfo};
 pub use twcc::{

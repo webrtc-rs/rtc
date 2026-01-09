@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_chained_interceptors() {
-        use crate::report::sender_report::SenderReportBuilder;
+        use crate::report::sender::SenderReportBuilder;
 
         // Demonstrate chaining multiple interceptors
         let mut chain = Registry::new()

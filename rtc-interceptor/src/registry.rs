@@ -1,4 +1,23 @@
 //! Interceptor Registry - Type-safe builder for constructing interceptor chains.
+//!
+//! The [`Registry`] provides a fluent API for composing interceptor chains. Each call
+//! to [`with()`](Registry::with) wraps the current chain with a new interceptor layer.
+//!
+//! # Chain Construction
+//!
+//! Interceptors are added from innermost to outermost. The first interceptor added
+//! becomes the innermost (closest to [`NoopInterceptor`](crate::NoopInterceptor)),
+//! and the last becomes the outermost (processes packets first).
+//!
+//! ```text
+//! Registry::new()
+//!     .with(InterceptorA)  // Innermost
+//!     .with(InterceptorB)  // Middle
+//!     .with(InterceptorC)  // Outermost
+//!     .build()
+//!
+//! Results in: C wraps B wraps A wraps NoopInterceptor
+//! ```
 
 use crate::Interceptor;
 use crate::noop::NoopInterceptor;
