@@ -14,6 +14,7 @@
 //! - **Certificates** - Custom DTLS certificates for peer authentication
 //! - **Media Engine** - Codec and RTP extension configuration
 //! - **Setting Engine** - Low-level transport and timing parameters
+//! - **Interceptor Registry** - RTP/RTCP interceptor chain configuration (NACK, TWCC, Reports)
 //!
 //! # Quick Start
 //!

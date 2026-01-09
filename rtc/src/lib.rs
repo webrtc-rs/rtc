@@ -327,6 +327,9 @@
 //! - **[`RTCPeerConnection`](peer_connection::RTCPeerConnection)** - Peer connection interface
 //! - **[`certificate`](peer_connection::certificate)** - Peer connection certficiate
 //! - **[`configuration`](peer_connection::configuration)** - Peer connection configuration
+//!   - **[`interceptor_registry`](peer_connection::configuration::interceptor_registry)** - NACK, TWCC, RTCP Reports configuration
+//!   - **[`media_engine`](peer_connection::configuration::media_engine)** - Codec and RTP extension configuration
+//!   - **[`setting_engine`](peer_connection::configuration::setting_engine)** - Low-level transport settings
 //! - **[`event`](peer_connection::event)** - Peer connection events
 //! - **[`message`](peer_connection::message)** - RTP/RTCP Packets and Application messages
 //! - **[`sdp`](peer_connection::sdp)** - SDP offer/answer types
@@ -381,6 +384,73 @@
 //! See the `examples/` directory for complete, runnable code.
 //!
 //! ## Common Patterns
+//!
+//! ### Configuring Interceptors (NACK, TWCC, RTCP Reports)
+//!
+//! Interceptors process RTP/RTCP packets as they flow through the media pipeline.
+//! Use the [`interceptor_registry`](peer_connection::configuration::interceptor_registry) module
+//! to configure packet loss recovery, congestion control, and quality monitoring:
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::configuration::media_engine::MediaEngine;
+//! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+//! use rtc::interceptor::Registry;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create media engine with default codecs
+//! let mut media_engine = MediaEngine::default();
+//!
+//! // Create interceptor registry with default interceptors:
+//! // - NACK: Packet loss recovery for video
+//! // - RTCP Reports: Sender/Receiver quality statistics
+//! // - TWCC Receiver: Congestion control feedback
+//! let registry = Registry::new();
+//! let registry = register_default_interceptors(registry, &mut media_engine)?;
+//!
+//! // Build configuration with interceptors
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_media_engine(media_engine)
+//!     .with_interceptor_registry(registry)
+//!     .build();
+//!
+//! let mut pc = RTCPeerConnection::new(config)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For custom interceptor configuration:
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::configuration::media_engine::MediaEngine;
+//! use rtc::peer_connection::configuration::interceptor_registry::{
+//!     configure_nack,
+//!     configure_rtcp_reports,
+//!     configure_twcc,
+//! };
+//! use rtc::interceptor::Registry;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut media_engine = MediaEngine::default();
+//! let registry = Registry::new();
+//!
+//! // Configure individual interceptors as needed
+//! let registry = configure_nack(registry, &mut media_engine);      // Packet loss recovery
+//! let registry = configure_rtcp_reports(registry);                   // SR/RR statistics
+//! let registry = configure_twcc(registry, &mut media_engine)?;       // Full TWCC (sender + receiver)
+//!
+//! let config = RTCConfigurationBuilder::new()
+//!     .with_media_engine(media_engine)
+//!     .with_interceptor_registry(registry)
+//!     .build();
+//!
+//! let mut pc = RTCPeerConnection::new(config)?;
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ### Creating and Using Data Channels
 //!

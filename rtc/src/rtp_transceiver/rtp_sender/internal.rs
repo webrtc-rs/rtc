@@ -1,5 +1,6 @@
 use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrack;
+use crate::peer_connection::configuration::interceptor_registry::create_stream_info;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
@@ -13,11 +14,9 @@ use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpH
 use crate::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
 use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
 use interceptor::Interceptor;
-use std::marker::PhantomData;
-
-use crate::rtp_transceiver::create_stream_info;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
+use std::marker::PhantomData;
 
 /// Internal RTP sender implementation.
 ///

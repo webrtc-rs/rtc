@@ -109,8 +109,6 @@ use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::sdp::codecs_from_media_description;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
-use crate::rtp_transceiver::rtp_sender::RTCRtpHeaderExtensionParameters;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
@@ -592,49 +590,5 @@ where
         }
 
         None
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn create_stream_info(
-    ssrc: SSRC,
-    ssrc_rtx: Option<SSRC>,
-    ssrc_fec: Option<SSRC>,
-    payload_type: PayloadType,
-    payload_type_rtx: Option<PayloadType>,
-    payload_type_fec: Option<PayloadType>,
-    codec: &RTCRtpCodec,
-    header_extensions: &[RTCRtpHeaderExtensionParameters],
-) -> interceptor::StreamInfo {
-    let rtp_header_extensions: Vec<interceptor::RTPHeaderExtension> = header_extensions
-        .iter()
-        .map(|h| interceptor::RTPHeaderExtension {
-            id: h.id,
-            uri: h.uri.clone(),
-        })
-        .collect();
-
-    let feedbacks: Vec<_> = codec
-        .rtcp_feedback
-        .iter()
-        .map(|f| interceptor::RTCPFeedback {
-            typ: f.typ.clone(),
-            parameter: f.parameter.clone(),
-        })
-        .collect();
-
-    interceptor::StreamInfo {
-        ssrc,
-        ssrc_rtx,
-        ssrc_fec,
-        payload_type,
-        payload_type_rtx,
-        payload_type_fec,
-        rtp_header_extensions,
-        mime_type: codec.mime_type.clone(),
-        clock_rate: codec.clock_rate,
-        channels: codec.channels,
-        sdp_fmtp_line: codec.sdp_fmtp_line.clone(),
-        rtcp_feedback: feedbacks,
     }
 }

@@ -197,6 +197,10 @@ use sansio::Protocol;
 use shared::error::{Error, Result};
 
 pub use rtcp_parameters::{RTCPFeedback, RTCRtcpParameters};
+pub use rtcp_parameters::{
+    TYPE_RTCP_FB_ACK, TYPE_RTCP_FB_CCM, TYPE_RTCP_FB_GOOG_REMB, TYPE_RTCP_FB_NACK,
+    TYPE_RTCP_FB_TRANSPORT_CC,
+};
 pub use rtp_capabilities::RTCRtpCapabilities;
 pub use rtp_codec::{RTCRtpCodec, RtpCodecKind};
 pub use rtp_codec_parameters::RTCRtpCodecParameters;

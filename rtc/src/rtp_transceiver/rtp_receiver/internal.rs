@@ -1,4 +1,5 @@
 use crate::media_stream::track::MediaStreamTrack;
+use crate::peer_connection::configuration::interceptor_registry::create_stream_info;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
@@ -14,7 +15,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParam
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParameters};
-use crate::rtp_transceiver::{PayloadType, SSRC, create_stream_info};
+use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::Interceptor;
 use shared::error::Result;
 use std::marker::PhantomData;
