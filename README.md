@@ -237,7 +237,7 @@ RTC is built from composable crates, each implementing a specific protocol:
     <br>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">DTLS<a href="https://crates.io/crates/rtc-dtls"><img src="https://img.shields.io/crates/v/rtc-dtls.svg"></a>
     <br>
-    <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/uncheck.png">mDNS<a href="https://crates.io/crates/rtc-mdns"><img src="https://img.shields.io/crates/v/rtc-mdns.svg"></a>
+    <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">mDNS<a href="https://crates.io/crates/rtc-mdns"><img src="https://img.shields.io/crates/v/rtc-mdns.svg"></a>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">STUN<a href="https://crates.io/crates/rtc-stun"><img src="https://img.shields.io/crates/v/rtc-stun.svg"></a>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">TURN<a href="https://crates.io/crates/rtc-turn"><img src="https://img.shields.io/crates/v/rtc-turn.svg"></a>
     <img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/check.png">ICE<a href="https://crates.io/crates/rtc-ice"><img src="https://img.shields.io/crates/v/rtc-ice.svg"></a>

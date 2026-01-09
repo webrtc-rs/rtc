@@ -1162,6 +1162,54 @@ pub enum Error {
     #[error("Io EOF")]
     ErrIoEOF,
 
+    // mDNS
+    #[error("mDNS: connection is closed")]
+    ErrMDNSConnectionClosed,
+    #[error("mDNS: query not found")]
+    ErrMDNSQueryNotFound,
+    #[error("mDNS: parsing/packing of this type isn't available yet")]
+    ErrNotStarted,
+    #[error("mDNS: parsing/packing of this section has completed")]
+    ErrSectionDone,
+    #[error("mDNS: parsing/packing of this section is header")]
+    ErrSectionHeader,
+    #[error("mDNS: insufficient data for base length type")]
+    ErrBaseLen,
+    #[error("mDNS: insufficient data for calculated length type")]
+    ErrCalcLen,
+    #[error("mDNS: segment prefix is reserved")]
+    ErrReserved,
+    #[error("mDNS: too many pointers (>10)")]
+    ErrTooManyPtr,
+    #[error("mDNS: invalid pointer")]
+    ErrInvalidPtr,
+    #[error("mDNS: nil resource body")]
+    ErrNilResourceBody,
+    #[error("mDNS: insufficient data for resource body length")]
+    ErrResourceLen,
+    #[error("mDNS: segment length too long")]
+    ErrSegTooLong,
+    #[error("mDNS: zero length segment")]
+    ErrZeroSegLen,
+    #[error("mDNS: resource length too long")]
+    ErrResTooLong,
+    #[error("mDNS: too many Questions to pack (>65535)")]
+    ErrTooManyQuestions,
+    #[error("mDNS: too many Answers to pack (>65535)")]
+    ErrTooManyAnswers,
+    #[error("mDNS: too many Authorities to pack (>65535)")]
+    ErrTooManyAuthorities,
+    #[error("mDNS: too many Additionals to pack (>65535)")]
+    ErrTooManyAdditionals,
+    #[error("mDNS: name is not in canonical format (it must end with a .)")]
+    ErrNonCanonicalName,
+    #[error("mDNS: character string exceeds maximum length (255)")]
+    ErrStringTooLong,
+    #[error("mDNS: compressed name in SRV resource data")]
+    ErrCompressedSrv,
+    #[error("mDNS: empty builder msg")]
+    ErrEmptyBuilderMsg,
+
     //RTC
     /// ErrConnectionClosed indicates an operation executed after connection
     /// has already been closed.

@@ -4,6 +4,9 @@
 #[cfg(feature = "crypto")]
 pub mod crypto;
 
+#[cfg(feature = "ifaces")]
+pub mod ifaces;
+
 #[cfg(feature = "marshal")]
 pub mod marshal;
 

@@ -3,7 +3,7 @@ name = "rtc-mdns"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "RTC mDNS in Rust"
+description = "RTC mDNS in Rust (sans-I/O)"
 license.workspace = true
 documentation = "https://docs.rs/rtc-mdns"
 homepage.workspace = true
@@ -12,5 +12,26 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+shared = { workspace = true, default-features = false, features = ["ifaces"] }
+sansio.workspace = true
+
+bytes = "1.5.0"
+log = "0.4.21"
+socket2 = { version = "0.5", features = ["all"] }
 
 [dev-dependencies]
+env_logger = "0.11.3"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+
+[[example]]
+name = "mdns_query"
+path = "examples/mdns_query.rs"
+
+[[example]]
+name = "mdns_server"
+path = "examples/mdns_server.rs"
+
+[[example]]
+name = "mdns_server_query"
+path = "examples/mdns_server_query.rs"
