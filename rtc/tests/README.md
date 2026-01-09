@@ -6,25 +6,64 @@ This directory contains integration tests for the `rtc` library:
 
 - **Interoperability tests** with the `webrtc` library (Tests 1-5)
 - **Pure rtc-to-rtc tests** using only the sansio API (Test 6)
+- **Interceptor integration tests** for RTCP report generation (Test 15)
+
+---
+
+## Dependencies
+
+The tests require:
+
+- `webrtc = "0.14.0"` - WebRTC async implementation
+- `interceptor = "0.15.0"` - For webrtc interceptor registry
+- `tokio` - Async runtime
+- `anyhow` - Error handling
+
+---
+
+## Architecture
+
+The integration tests demonstrate how to use both APIs together:
+
+- **RTC API** (sansio): Poll-based, no async/await, uses `poll_write()`, `poll_event()`, and `handle_read()`
+- **WebRTC API** (async): Fully async with tokio, uses `async/await` and event handlers
+
+The tests successfully bridge these two different programming models in a single test function.
+
+---
+
+## Future Tests
+
+Consider adding tests for:
+
+- Multiple data channels
+- RTP transceiver interop (audio/video)
+- Reconnection scenarios
+- Error handling and edge cases
+- Different ICE transport policies
+- DTLS role negotiation variations
+
+---
 
 ## Test Summary
 
-| Test | File                                                        | Description                              |
-|------|-------------------------------------------------------------|------------------------------------------|
-| 1    | `data_channels_interop.rs`                                  | rtc ↔ webrtc (webrtc offers)             |
-| 2    | `data_channels_create_interop.rs`                           | rtc ↔ webrtc (rtc offers)                |
-| 3    | `data_channels_close_by_rtc_interop.rs`                     | Close initiated by rtc                   |
-| 4    | `data_channels_close_by_webrtc_interop.rs`                  | Close initiated by webrtc                |
-| 5    | `ice_restart_by_webrtc_interop.rs`                          | ICE restart initiated by webrtc          |
-| 6    | `ice_restart_by_rtc_interop.rs`                             | ICE restart initiated by rtc             |
-| 7    | `play_from_disk_vpx_interop.rs`                             | Media streaming: rtc→webrtc              |
-| 8    | `play_from_disk_rtc_set_remote_before_add_track_interop.rs` | Media with track order variation         |
-| 9    | `reflect_webrtc_to_rtc_interop.rs`                          | Media reflection: webrtc→rtc→webrtc      |
-| 10   | `reflect_rtc_to_webrtc_interop.rs`                          | Media reflection: rtc→webrtc→rtc (BUGGY) |
-| 11   | `save_to_disk_vpx_interop.rs`                               | Media capture: webrtc→rtc→disk           |
-| 12   | `simulcast_webrtc_to_rtc_interop.rs`                        | simulcast: webrtc→rtc (IGNORED)          |
-| 13   | `simulcast_rtc_to_webrtc_interop.rs`                        | Simulcast: rtc→webrtc (IGNORED)          |
-| 14   | `offer_answer_rtc2rtc.rs`                                   | **Pure rtc ↔ rtc (no webrtc)**           |
+| Test | File                                                        | Description                             |
+|------|-------------------------------------------------------------|-----------------------------------------|
+| 1    | `data_channels_interop.rs`                                  | rtc ↔ webrtc (webrtc offers)            |
+| 2    | `data_channels_create_interop.rs`                           | rtc ↔ webrtc (rtc offers)               |
+| 3    | `data_channels_close_by_rtc_interop.rs`                     | Close initiated by rtc                  |
+| 4    | `data_channels_close_by_webrtc_interop.rs`                  | Close initiated by webrtc               |
+| 5    | `ice_restart_by_webrtc_interop.rs`                          | ICE restart initiated by webrtc         |
+| 6    | `ice_restart_by_rtc_interop.rs`                             | ICE restart initiated by rtc            |
+| 7    | `play_from_disk_vpx_interop.rs`                             | Media streaming: rtc→webrtc             |
+| 8    | `play_from_disk_rtc_set_remote_before_add_track_interop.rs` | Media with track order variation        |
+| 9    | `reflect_webrtc_to_rtc_interop.rs`                          | Media reflection: webrtc→rtc→webrtc     |
+| 10   | `reflect_rtc_to_webrtc_interop.rs`                          | Media reflection: rtc→webrtc→rtc        |
+| 11   | `save_to_disk_vpx_interop.rs`                               | Media capture: webrtc→rtc→disk          |
+| 12   | `simulcast_webrtc_to_rtc_interop.rs`                        | simulcast: webrtc→rtc (IGNORED)         |
+| 13   | `simulcast_rtc_to_webrtc_interop.rs`                        | Simulcast: rtc→webrtc (IGNORED)         |
+| 14   | `offer_answer_rtc2rtc.rs`                                   | **Pure rtc ↔ rtc (no webrtc)**          |
+| 15   | `interceptor_rtcp_reports_interop.rs`                       | **RTCP report interceptor integration** |
 
 ---
 
@@ -249,38 +288,274 @@ RUST_LOG=info cargo test --test data_channels_close_by_webrtc_interop -- --nocap
 
 ---
 
-## Dependencies
+## Test 5: ICE Restart by WebRTC
 
-The tests require:
+**File:** `ice_restart_by_webrtc_interop.rs`
 
-- `webrtc = "0.14.0"` - WebRTC async implementation
-- `interceptor = "0.15.0"` - For webrtc interceptor registry
-- `tokio` - Async runtime
-- `anyhow` - Error handling
+**Description:**
+Tests ICE restart functionality when initiated by the WebRTC peer (offerer), with RTC as answerer using the sansio API.
 
-## Architecture
+### Test Flow
 
-The integration tests demonstrate how to use both APIs together:
+1. WebRTC peer creates offer and data channel
+2. RTC peer receives offer and creates answer
+3. Connection establishes and peers exchange messages before restart
+4. WebRTC initiates ICE restart with new offer (ice_restart: true)
+5. RTC processes restart offer and creates restart answer
+6. Connection re-establishes
+7. Peers can communicate again (RTC → WebRTC verified)
 
-- **RTC API** (sansio): Poll-based, no async/await, uses `poll_write()`, `poll_event()`, and `handle_read()`
-- **WebRTC API** (async): Fully async with tokio, uses `async/await` and event handlers
+### Key Features Tested
 
-The tests successfully bridge these two different programming models in a single test function.
+- ✅ ICE restart initiated by WebRTC using `RTCOfferOptions { ice_restart: true }`
+- ✅ RTC handles restart as answerer
+- ✅ Connection successfully re-establishes
+- ✅ Pre-restart bidirectional communication works
+- ✅ RTC → WebRTC data channel works after restart
+- ⚠️ WebRTC → RTC data channel after restart may have issues (known limitation)
 
-## Future Tests
+### Running the Test
 
-Consider adding tests for:
-
-- Multiple data channels
-- RTP transceiver interop (audio/video)
-- Reconnection scenarios
-- Error handling and edge cases
-- Different ICE transport policies
-- DTLS role negotiation variations
+```bash
+cargo test --test ice_restart_by_webrtc_interop -- --nocapture
+```
 
 ---
 
-## Test 5: Offer-Answer RTC-to-RTC
+## Test 6: ICE Restart by RTC
+
+**File:** `ice_restart_by_rtc_interop.rs`
+
+**Description:**
+Tests ICE restart functionality when initiated by the RTC peer (offerer) using the sansio `restart_ice()` API, with
+WebRTC as answerer.
+
+### Test Flow
+
+1. WebRTC peer creates offer and data channel
+2. RTC peer receives offer and creates answer
+3. Connection establishes and peers exchange messages before restart
+4. RTC initiates ICE restart using `restart_ice()` method
+5. RTC creates new offer with ICE restart
+6. WebRTC processes restart offer and creates restart answer
+7. RTC sets restart answer as remote description
+8. Connection re-establishes via ICE
+9. Data channel continues working after restart
+
+### Key Features Tested
+
+- ✅ ICE restart initiated by RTC using sansio `restart_ice()` API
+- ✅ WebRTC handles restart as answerer
+- ✅ Connection successfully re-establishes
+- ✅ Pre-restart bidirectional communication works
+- ✅ Data channel continues working after restart
+- ✅ ICE connection state transitions properly (checking → connected/completed)
+
+### Running the Test
+
+```bash
+cargo test --test ice_restart_by_rtc_interop -- --nocapture
+```
+
+---
+
+## Test 7: Play from Disk VPX
+
+**File:** `play_from_disk_vpx_interop.rs`
+
+**Description:**
+Tests media streaming from RTC to WebRTC by playing VP8/VP9 encoded video from disk.
+
+### Key Features Tested
+
+- ✅ RTC creates offer with video track
+- ✅ WebRTC answers and receives video
+- ✅ VP8/VP9 media streaming from rtc to webrtc
+
+### Running the Test
+
+```bash
+cargo test --test play_from_disk_vpx_interop -- --nocapture
+```
+
+---
+
+## Test 8: Play from Disk with Track Order Variation
+
+**File:** `play_from_disk_rtc_set_remote_before_add_track_interop.rs`
+
+**Description:**
+Tests media streaming with a specific track order variation where RTC sets remote description before adding tracks.
+
+### Key Features Tested
+
+- ✅ Set remote description before add_track
+- ✅ Track negotiation with non-standard order
+- ✅ Media streaming works with alternate setup order
+
+### Running the Test
+
+```bash
+cargo test --test play_from_disk_rtc_set_remote_before_add_track_interop -- --nocapture
+```
+
+---
+
+## Test 9: Media Reflection (WebRTC to RTC)
+
+**File:** `reflect_webrtc_to_rtc_interop.rs`
+
+**Purpose:** Verifies that RTP packets can be sent from webrtc, received and reflected by rtc, and received back at
+webrtc.
+
+### Test Flow
+
+1. **WebRTC Peer (Offerer)**:
+    - Creates a video track using `TrackLocalStaticRTP`
+    - Creates offer with video track
+    - Sets up `on_track` handler to receive reflected packets
+
+2. **RTC Peer (Answerer)**:
+    - Receives offer from webrtc
+    - Adds video track for reflecting packets
+    - Creates answer
+
+3. **Connection Establishment**:
+    - Both peers exchange SDP and establish connection
+    - Event loops run concurrently
+
+4. **Packet Flow**:
+    - WebRTC sends 10 RTP packets with VP8 codec
+    - RTC receives packets via `poll_read()` → `RTCMessage::RtpPacket`
+    - RTC reflects packets back via `write_rtp()`
+    - WebRTC receives reflected packets
+    - Test succeeds when ≥5 reflected packets received
+
+### Running the Test
+
+```bash
+cargo test --test reflect_webrtc_to_rtc_interop -- --nocapture
+```
+
+### Key Features Tested
+
+- ✅ WebRTC creates offer with video track
+- ✅ RTC answers and adds video track
+- ✅ RTP packet sending from webrtc
+- ✅ RTP packet reception on rtc
+- ✅ RTP packet reflection via `write_rtp()`
+- ✅ Bidirectional media flow
+
+---
+
+## Test 10: Media Reflection (RTC to WebRTC)
+
+**File:** `reflect_rtc_to_webrtc_interop.rs`
+
+**Purpose:** Verifies that RTP packets can be sent from rtc, received and reflected by webrtc, and received back at rtc.
+
+### Test Flow
+
+1. **RTC Peer (Offerer)**:
+    - Creates video track
+    - Creates offer
+    - Sends RTP packets to webrtc
+
+2. **WebRTC Peer (Answerer)**:
+    - Creates video track for reflecting
+    - Receives offer and creates answer
+    - Reflects packets back to rtc
+
+3. **Expected Result**:
+    - RTC sends → webrtc reflects → RTC receives
+
+### Running the Test
+
+```bash
+cargo test --test reflect_rtc_to_webrtc_interop -- --nocapture
+```
+
+### Key Features Tested
+
+- ✅ RTC creates offer with video track
+- ✅ WebRTC answers and adds video track
+- ✅ RTP packet sending from rtc
+- ✅ RTP packet reflection by webrtc
+- ✅ RTP packet reception on rtc
+
+---
+
+## Test 11: Save to Disk VPX
+
+**File:** `save_to_disk_vpx_interop.rs`
+
+**Description:**
+Tests media capture from WebRTC to RTC, saving VP8/VP9 encoded video to disk.
+
+### Key Features Tested
+
+- ✅ WebRTC creates offer with video track
+- ✅ RTC answers and receives video
+- ✅ RTP packet capture from webrtc
+- ✅ Media saving to disk
+
+### Running the Test
+
+```bash
+cargo test --test save_to_disk_vpx_interop -- --nocapture
+```
+
+---
+
+## Test 12: Simulcast (WebRTC to RTC)
+
+**File:** `simulcast_webrtc_to_rtc_interop.rs`
+
+**Status:** ⚠️ **IGNORED**
+
+**Description:**
+Tests simulcast functionality where WebRTC sends multiple quality layers to RTC.
+
+### Running the Test
+
+```bash
+# Currently ignored, run with:
+cargo test --test simulcast_webrtc_to_rtc_interop -- --ignored --nocapture
+```
+
+---
+
+## Test 13: Simulcast (RTC to WebRTC)
+
+**File:** `simulcast_rtc_to_webrtc_interop.rs`
+
+**Status:** ⚠️ **IGNORED** - RID header extensions not implemented
+
+**Description:**
+Tests TRUE simulcast with RID (Restriction Identifier) support where rtc sends 3 layers and webrtc receives them.
+
+### Current Issue
+
+The RTC library does not automatically add RID (rtp-stream-id) header extensions to outgoing RTP packets. The
+`write_rtp()` method has a TODO comment:
+
+```rust
+pub fn write_rtp(&mut self, mut packet: rtp::Packet) -> Result<()> {
+    //TODO: handle rtp header extension, etc.
+```
+
+Without RID extensions in the RTP headers, webrtc cannot properly demultiplex the simulcast layers.
+
+### Running the Test
+
+```bash
+# Currently ignored, run with:
+cargo test --test simulcast_rtc_to_webrtc_interop -- --ignored --nocapture
+```
+
+---
+
+## Test 14: Offer-Answer RTC-to-RTC
 
 **File:** `offer_answer_rtc2rtc.rs`
 
@@ -348,352 +623,121 @@ This test demonstrates the pure sansio architecture:
 - **No async/await in peer connection code**
 - **Direct UDP socket management**
 
-### Comparison with Other Tests
-
-| Aspect           | Tests 1-4               | Test 5 (offer_answer_rtc2rtc) |
-|------------------|-------------------------|-------------------------------|
-| **Peers**        | rtc + webrtc            | **rtc + rtc**                 |
-| **Dependencies** | Requires webrtc crate   | **Only rtc crate**            |
-| **Event Loops**  | Mixed (polling + async) | **Pure polling for both**     |
-| **API Style**    | Mixed sansio + async    | **Pure sansio**               |
-| **Complexity**   | Bridge two APIs         | **Single consistent API**     |
-
-This test proves that the rtc sansio API is fully self-sufficient and can establish peer-to-peer connections without the
-webrtc library.
-
-### Test 6: ICE Restart by WebRTC (`ice_restart_by_webrtc_interop.rs`)
-
-**Description**
-Tests ICE restart functionality when initiated by the WebRTC peer (offerer), with RTC as answerer using the sansio API.
-
-**Test Flow**
-
-1. WebRTC peer creates offer and data channel
-2. RTC peer receives offer and creates answer
-3. Connection establishes and peers exchange messages before restart
-4. WebRTC initiates ICE restart with new offer (ice_restart: true)
-5. RTC processes restart offer and creates restart answer
-6. Connection re-establishes
-7. Peers can communicate again (RTC → WebRTC verified)
-
-**Key Points**
-
-- ✅ ICE restart initiated by WebRTC using `RTCOfferOptions { ice_restart: true }`
-- ✅ RTC handles restart as answerer
-- ✅ Connection successfully re-establishes
-- ✅ Pre-restart bidirectional communication works
-- ✅ RTC → WebRTC data channel works after restart
-- ⚠️ WebRTC → RTC data channel after restart may have issues (known limitation)
-
-**Architecture Notes**
-The test demonstrates that the rtc sansio library correctly:
-
-- Processes ICE restart offers from webrtc
-- Creates valid restart answers
-- Re-establishes the peer connection
-- Maintains some data channel functionality post-restart
-
-**Run:**
-
-```bash
-cargo test --test ice_restart_by_webrtc_interop
-```
-
 ---
 
-### Test 7: ICE Restart by RTC (`ice_restart_by_rtc_interop.rs`)
+## Test 15: RTCP Report Interceptor Integration
 
-**Description**
-Tests ICE restart functionality when initiated by the RTC peer (offerer) using the sansio `restart_ice()` API, with
-WebRTC as answerer.
+**File:** `interceptor_rtcp_reports_interop.rs`
 
-**Test Flow**
+**Purpose:** Verifies that the `rtc-interceptor` crate's RTCP report interceptors work correctly when integrated at the
+peer connection level with `Registry` and `RTCConfigurationBuilder.with_interceptor_registry()`.
 
-1. WebRTC peer creates offer and data channel
-2. RTC peer receives offer and creates answer
-3. Connection establishes and peers exchange messages before restart
-4. RTC initiates ICE restart using `restart_ice()` method
-5. RTC creates new offer with ICE restart
-6. WebRTC processes restart offer and creates restart answer
-7. RTC sets restart answer as remote description
-8. Connection re-establishes via ICE
-9. Data channel continues working after restart
+### Overview
 
-**Key Points**
+This test file contains 3 integration tests that verify:
 
-- ✅ ICE restart initiated by RTC using sansio `restart_ice()` API
-- ✅ WebRTC handles restart as answerer
-- ✅ Connection successfully re-establishes
-- ✅ Pre-restart bidirectional communication works
-- ✅ Data channel continues working after restart
-- ✅ ICE connection state transitions properly (checking → connected/completed)
+1. Custom interceptor registry configuration with configurable report intervals
+2. RTCP Sender Report generation when sending RTP packets
+3. The `register_default_interceptors()` helper function
 
-**Architecture Notes**
-The test demonstrates that the rtc sansio library can:
+### Test 15a: Custom Interceptor Registry
 
-- Initiate ICE restart via `restart_ice()` method
-- Generate valid restart offers
-- Process restart answers from webrtc
-- Re-establish peer connection successfully
-- Maintain data channel functionality post-restart
+**Function:** `test_custom_interceptor_registry_with_rtcp_reports`
 
-**Run:**
-
-```bash
-cargo test --test ice_restart_by_rtc_interop
-```
-
----
-
-## Test 9: Media Reflection (WebRTC to RTC)
-
-**File:** `reflect_webrtc_to_rtc_interop.rs`
-
-**Purpose:** Verifies that RTP packets can be sent from webrtc, received and reflected by rtc, and received back at
-webrtc.
-
-### Test Flow
-
-1. **WebRTC Peer (Offerer)**:
-    - Creates a video track using `TrackLocalStaticRTP`
-    - Creates offer with video track
-    - Sets up `on_track` handler to receive reflected packets
-
-2. **RTC Peer (Answerer)**:
-    - Receives offer from webrtc
-    - Adds video track for reflecting packets
-    - Creates answer
-
-3. **Connection Establishment**:
-    - Both peers exchange SDP and establish connection
-    - Event loops run concurrently
-
-4. **Packet Flow**:
-    - WebRTC sends 10 RTP packets with VP8 codec
-    - RTC receives packets via `poll_read()` → `RTCMessage::RtpPacket`
-    - RTC reflects packets back via `write_rtp()`
-    - WebRTC receives reflected packets
-    - Test succeeds when ≥5 reflected packets received
-
-### Running the Test
-
-```bash
-cargo test --test reflect_webrtc_to_rtc_interop -- --nocapture
-```
-
-### Key Features Tested
-
-- ✅ WebRTC creates offer with video track
-- ✅ RTC answers and adds video track
-- ✅ RTP packet sending from webrtc
-- ✅ RTP packet reception on rtc
-- ✅ RTP packet reflection via `write_rtp()`
-- ✅ Bidirectional media flow
-
----
-
-## Test 10: Media Reflection (RTC to WebRTC) - KNOWN ISSUE
-
-**File:** `reflect_rtc_to_webrtc_interop.rs`
-
-**Status:** ⚠️ **IGNORED** - Exposes codec negotiation bug
-
-**Purpose:** Verifies that RTP packets can be sent from rtc, received and reflected by webrtc, and received back at rtc.
-
-### Current Issue
-
-When RTC creates an offer and webrtc answers, the RTC sender's `rtp_parameters.codecs` list is **empty** after SDP
-negotiation completes:
-
-```
-Sender parameters: 0 codecs, 1 encodings
-  Encoding 0: ssrc=Some(2776494054), codec=video/VP8
-```
-
-This causes the error `"unsupported codec type by this transceiver"` when trying to send RTP packets via `write_rtp()`.
-The codec matching logic requires at least one negotiated codec in the parameters list.
-
-### Expected Flow (when bug is fixed)
-
-1. **RTC Peer (Offerer)**:
-    - Creates video track
-    - Creates offer
-    - Should send RTP packets to webrtc
-
-2. **WebRTC Peer (Answerer)**:
-    - Creates video track for reflecting
-    - Receives offer and creates answer
-    - Should reflect packets back to rtc
-
-3. **Expected Result**:
-    - RTC sends → webrtc reflects → RTC receives
-
-### Root Cause
-
-The bug is in the SDP answer processing when RTC is the offerer. The negotiated codecs from the answer are not being
-properly populated into the sender's parameters. This only affects the direction where RTC creates the offer; the
-reverse direction (webrtc offers, rtc answers) works correctly.
-
-### Running the Test
-
-```bash
-# Currently ignored, run with:
-cargo test --test reflect_rtc_to_webrtc_interop -- --ignored --nocapture
-```
-
----
-
-## Test 12: Simulcast (RTC to WebRTC) - KNOWN ISSUE
-
-**File:** `simulcast_rtc_to_webrtc_interop.rs`
-
-**Status:** ⚠️ **IGNORED** - RID header extensions not implemented
-
-**Purpose:** Verifies TRUE simulcast with RID (Restriction Identifier) support where rtc sends 3 layers and webrtc
-receives them.
-
-### Current Issue
-
-The RTC library does not automatically add RID (rtp-stream-id) header extensions to outgoing RTP packets. The
-`write_rtp()` method has a TODO comment:
+Creates an rtc peer with a custom interceptor registry using `SenderReportBuilder` and `ReceiverReportBuilder` with
+100ms intervals:
 
 ```rust
-pub fn write_rtp(&mut self, mut packet: rtp::Packet) -> Result<()> {
-    //TODO: handle rtp header extension, etc.
+let registry = Registry::new()
+.with(
+ReceiverReportBuilder::new()
+.with_interval(Duration::from_millis(100))
+.build(),
+)
+.with(
+SenderReportBuilder::new()
+.with_interval(Duration::from_millis(100))
+.build(),
+);
+
+let config = RTCConfigurationBuilder::new()
+.with_interceptor_registry(registry)
+.build();
 ```
 
-Without RID extensions in the RTP headers, webrtc cannot properly demultiplex the simulcast layers.
+**Test Flow:**
 
-### What the Test Tries to Do
+1. RTC peer creates offer with video track and custom interceptor registry
+2. WebRTC peer creates answer with reflect track
+3. Peers exchange SDP and establish connection
+4. RTC sends RTP packets, webrtc reflects them back
+5. Test verifies RTC receives reflected packets (proving interceptor chain works)
 
-1. RTC creates 3 tracks with RIDs ("low", "mid", "high")
-2. RTC creates offer with 3 m-lines (one per layer)
-3. WebRTC receives offer and creates answer
-4. RTC sends RTP packets on all 3 tracks
-5. WebRTC should receive packets and identify them by RID
+### Test 15b: Sender Report Generation
 
-### Why It Fails
+**Function:** `test_sender_report_generation_on_rtp_send`
 
-- RTC adds tracks with RID configuration in SDP
-- But RTP packets sent via `write_rtp()` lack RID header extensions
-- WebRTC expects RID extensions to demultiplex streams
-- No packets are received on webrtc side
+Uses shorter report intervals (50ms) and monitors outgoing packets to detect RTCP Sender Report generation.
 
-### To Fix
+**Key Points:**
 
-Implement RID header extension addition in `RTCRtpSender::write_rtp()`:
+- Monitors `poll_write()` output for RTCP packets
+- Detects Sender Reports by checking payload type (PT=200)
+- Verifies that sending RTP triggers periodic Sender Report generation
 
-- Get RID extension ID from negotiated parameters
-- Get RID value from encoding configuration
-- Call `packet.header.set_extension(rid_extension_id, rid_value)`
+### Test 15c: Default Interceptors Helper
 
-### Running the Test
+**Function:** `test_register_default_interceptors_helper`
 
-```bash
-# Currently ignored, run with:
-cargo test --test simulcast_rtc_to_webrtc_interop -- --ignored --nocapture
+Tests the `register_default_interceptors()` helper function:
+
+```rust
+let registry = Registry::new();
+let registry = rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+registry,
+& mut media_engine,
+) ?;
 ```
 
----
+This verifies the convenience function correctly configures RTCP report interceptors.
 
----
-
-## Test 9: Media Reflection (WebRTC to RTC)
-
-**File:** `reflect_webrtc_to_rtc_interop.rs`
-
-**Purpose:** Verifies that RTP packets can be sent from webrtc, received and reflected by rtc, and received back at
-webrtc.
-
-### Test Flow
-
-1. **WebRTC Peer (Offerer)**:
-    - Creates a video track using `TrackLocalStaticRTP`
-    - Creates offer with video track
-    - Sets up `on_track` handler to receive reflected packets
-
-2. **RTC Peer (Answerer)**:
-    - Receives offer from webrtc
-    - Adds video track for reflecting packets
-    - Creates answer
-
-3. **Connection Establishment**:
-    - Both peers exchange SDP and establish connection
-    - Event loops run concurrently
-
-4. **Packet Flow**:
-    - WebRTC sends 10 RTP packets with VP8 codec
-    - RTC receives packets via `poll_read()` → `RTCMessage::RtpPacket`
-    - RTC reflects packets back via `write_rtp()`
-    - WebRTC receives reflected packets
-    - Test succeeds when ≥5 reflected packets received
-
-### Running the Test
+### Running the Tests
 
 ```bash
-cargo test --test reflect_webrtc_to_rtc_interop -- --nocapture
+cargo test --test interceptor_rtcp_reports_interop -- --nocapture
 ```
 
 ### Key Features Tested
 
-- ✅ WebRTC creates offer with video track
-- ✅ RTC answers and adds video track
-- ✅ RTP packet sending from webrtc
-- ✅ RTP packet reception on rtc
-- ✅ RTP packet reflection via `write_rtp()`
-- ✅ Bidirectional media flow
+- ✅ Custom interceptor registry with `Registry::new().with(...)`
+- ✅ `SenderReportBuilder` with configurable intervals
+- ✅ `ReceiverReportBuilder` with configurable intervals
+- ✅ `RTCConfigurationBuilder.with_interceptor_registry()`
+- ✅ `register_default_interceptors()` helper function
+- ✅ RTCP Sender Report generation on RTP send
+- ✅ Full peer connection with interceptor chain
 
----
+### Related: rtc-interceptor Unit Tests
 
-## Test 10: Media Reflection (RTC to WebRTC) - KNOWN ISSUE
+The `rtc-interceptor` crate also has its own integration tests at `rtc-interceptor/tests/rtcp_report_integration.rs`
+which test the interceptor chain in isolation (without a full peer connection):
 
-**File:** `reflect_rtc_to_webrtc_interop.rs`
+| Test                                                       | Description              |
+|------------------------------------------------------------|--------------------------|
+| `test_sender_report_interceptor_generates_sr_on_timeout`   | SR generation on timeout |
+| `test_sender_report_tracks_packet_statistics`              | Packet/octet counting    |
+| `test_sender_report_multiple_streams`                      | Multiple SSRCs           |
+| `test_receiver_report_interceptor_generates_rr_on_timeout` | RR generation on timeout |
+| `test_receiver_report_tracks_sequence_numbers`             | Sequence number tracking |
+| `test_receiver_report_detects_packet_loss`                 | Loss detection           |
+| `test_combined_sender_and_receiver_interceptors`           | Chained SR+RR            |
+| `test_interceptor_chain_unbind_streams`                    | Stream unbinding         |
+| `test_receiver_processes_sender_report`                    | SR→RR LSR/DLSR           |
+| `test_report_interval_is_respected`                        | Interval timing          |
+| `test_poll_timeout_returns_earliest`                       | Timeout scheduling       |
 
-**Status:** ⚠️ **IGNORED** - Exposes codec negotiation bug
-
-**Purpose:** Verifies that RTP packets can be sent from rtc, received and reflected by webrtc, and received back at rtc.
-
-### Current Issue
-
-When RTC creates an offer and webrtc answers, the RTC sender's `rtp_parameters.codecs` list is **empty** after SDP
-negotiation completes:
-
-```
-Sender parameters: 0 codecs, 1 encodings
-  Encoding 0: ssrc=Some(2776494054), codec=video/VP8
-```
-
-This causes the error `"unsupported codec type by this transceiver"` when trying to send RTP packets via `write_rtp()`.
-The codec matching logic requires at least one negotiated codec in the parameters list.
-
-### Expected Flow (when bug is fixed)
-
-1. **RTC Peer (Offerer)**:
-    - Creates video track
-    - Creates offer
-    - Should send RTP packets to webrtc
-
-2. **WebRTC Peer (Answerer)**:
-    - Creates video track for reflecting
-    - Receives offer and creates answer
-    - Should reflect packets back to rtc
-
-3. **Expected Result**:
-    - RTC sends → webrtc reflects → RTC receives
-
-### Root Cause
-
-The bug is in the SDP answer processing when RTC is the offerer. The negotiated codecs from the answer are not being
-properly populated into the sender's parameters. This only affects the direction where RTC creates the offer; the
-reverse direction (webrtc offers, rtc answers) works correctly.
-
-### Running the Test
+Run these with:
 
 ```bash
-# Currently ignored, run with:
-cargo test --test reflect_rtc_to_webrtc_interop -- --ignored --nocapture
+cargo test --package rtc-interceptor --test rtcp_report_integration
 ```
-
----
-
-## Test 11: Save to Disk VPX
