@@ -138,8 +138,7 @@ impl<P> NackResponderInterceptor<P> {
                 // - Prepend original sequence number (2 bytes big-endian) to payload
                 // - Use separate RTX sequence number counter
                 let original_seq = original_packet.header.sequence_number;
-                let mut rtx_payload =
-                    Vec::with_capacity(2 + original_packet.payload.len());
+                let mut rtx_payload = Vec::with_capacity(2 + original_packet.payload.len());
                 rtx_payload.extend_from_slice(&original_seq.to_be_bytes());
                 rtx_payload.extend_from_slice(&original_packet.payload);
 
@@ -156,7 +155,6 @@ impl<P> NackResponderInterceptor<P> {
                         ..Default::default()
                     },
                     payload: rtx_payload.into(),
-                    ..Default::default()
                 }
             } else {
                 // No RTX: retransmit original packet as-is
@@ -203,10 +201,10 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Buffer outgoing RTP packets
-        if let Packet::Rtp(ref rtp_packet) = msg.message {
-            if let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc) {
-                stream.send_buffer.add(rtp_packet.clone());
-            }
+        if let Packet::Rtp(ref rtp_packet) = msg.message
+            && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
+        {
+            stream.send_buffer.add(rtp_packet.clone());
         }
 
         self.inner.handle_write(msg)
@@ -231,18 +229,18 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
 impl<P: Interceptor> Interceptor for NackResponderInterceptor<P> {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
-        if stream_supports_nack(info) {
-            if let Some(send_buffer) = SendBuffer::new(self.size) {
-                self.streams.insert(
-                    info.ssrc,
-                    LocalStream {
-                        send_buffer,
-                        ssrc_rtx: info.ssrc_rtx,
-                        payload_type_rtx: info.payload_type_rtx,
-                        rtx_sequence_number: 0,
-                    },
-                );
-            }
+        if stream_supports_nack(info)
+            && let Some(send_buffer) = SendBuffer::new(self.size)
+        {
+            self.streams.insert(
+                info.ssrc,
+                LocalStream {
+                    send_buffer,
+                    ssrc_rtx: info.ssrc_rtx,
+                    payload_type_rtx: info.payload_type_rtx,
+                    rtx_sequence_number: 0,
+                },
+            );
         }
         self.inner.bind_local_stream(info);
     }
@@ -264,8 +262,8 @@ impl<P: Interceptor> Interceptor for NackResponderInterceptor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_info::RTCPFeedback;
     use crate::Registry;
+    use crate::stream_info::RTCPFeedback;
     use sansio::Protocol;
 
     fn make_rtp_packet(ssrc: u32, seq: u16, payload: &[u8]) -> TaggedPacket {
@@ -279,16 +277,11 @@ mod tests {
                     ..Default::default()
                 },
                 payload: payload.to_vec().into(),
-                ..Default::default()
             }),
         }
     }
 
-    fn make_nack_packet(
-        sender_ssrc: u32,
-        media_ssrc: u32,
-        nacks: Vec<(u16, u16)>,
-    ) -> TaggedPacket {
+    fn make_nack_packet(sender_ssrc: u32, media_ssrc: u32, nacks: Vec<(u16, u16)>) -> TaggedPacket {
         let nack_pairs: Vec<rtcp::transport_feedbacks::transport_layer_nack::NackPair> = nacks
             .into_iter()
             .map(|(packet_id, lost_packets)| {
@@ -445,10 +438,10 @@ mod tests {
 
         let pkt = chain.poll_write();
         assert!(pkt.is_some());
-        if let Some(tagged) = pkt {
-            if let Packet::Rtp(rtp) = tagged.message {
-                assert_eq!(rtp.header.sequence_number, 10);
-            }
+        if let Some(tagged) = pkt
+            && let Packet::Rtp(rtp) = tagged.message
+        {
+            assert_eq!(rtp.header.sequence_number, 10);
         }
     }
 
@@ -526,7 +519,7 @@ mod tests {
         // Bind local stream with NACK support AND RTX configured
         let info = StreamInfo {
             ssrc: 1,
-            ssrc_rtx: Some(2),       // RTX SSRC
+            ssrc_rtx: Some(2), // RTX SSRC
             payload_type: 96,
             payload_type_rtx: Some(97), // RTX payload type
             clock_rate: 90000,
@@ -558,20 +551,34 @@ mod tests {
         let mut rtx_seq = 0u16;
         for expected_original_seq in [11u16, 12, 15] {
             let pkt = chain.poll_write();
-            assert!(pkt.is_some(), "Expected RTX packet for seq {}", expected_original_seq);
+            assert!(
+                pkt.is_some(),
+                "Expected RTX packet for seq {}",
+                expected_original_seq
+            );
 
             if let Some(tagged) = pkt {
                 if let Packet::Rtp(rtp) = tagged.message {
                     // Verify RTX SSRC
                     assert_eq!(rtp.header.ssrc, 2, "RTX packet should use RTX SSRC");
                     // Verify RTX payload type
-                    assert_eq!(rtp.header.payload_type, 97, "RTX packet should use RTX payload type");
+                    assert_eq!(
+                        rtp.header.payload_type, 97,
+                        "RTX packet should use RTX payload type"
+                    );
                     // Verify RTX sequence number (increments separately)
-                    assert_eq!(rtp.header.sequence_number, rtx_seq, "RTX seq should be {}", rtx_seq);
+                    assert_eq!(
+                        rtp.header.sequence_number, rtx_seq,
+                        "RTX seq should be {}",
+                        rtx_seq
+                    );
                     rtx_seq += 1;
 
                     // Verify payload: first 2 bytes should be original sequence number (big-endian)
-                    assert!(rtp.payload.len() >= 2, "RTX payload should have at least 2 bytes");
+                    assert!(
+                        rtp.payload.len() >= 2,
+                        "RTX payload should have at least 2 bytes"
+                    );
                     let original_seq_from_payload =
                         u16::from_be_bytes([rtp.payload[0], rtp.payload[1]]);
                     assert_eq!(

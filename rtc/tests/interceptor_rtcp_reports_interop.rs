@@ -12,38 +12,38 @@ use bytes::BytesMut;
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use rtc::interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder};
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_VP8};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
-use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::peer_connection::transport::RTCIceServer;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::shared::error::Error;
 
+use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
-use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_server::RTCIceServer as WebrtcIceServer;
 use webrtc::interceptor::registry::Registry as WebrtcRegistry;
+use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
@@ -225,7 +225,9 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
     while start_time.elapsed() < test_timeout {
         // Process writes
         while let Some(msg) = rtc_pc.poll_write() {
-            let _ = rtc_socket.send_to(&msg.message, msg.transport.peer_addr).await;
+            let _ = rtc_socket
+                .send_to(&msg.message, msg.transport.peer_addr)
+                .await;
         }
 
         // Process events
@@ -517,7 +519,9 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
                     log::info!("📤 Detected RTCP Sender Report #{}", rtcp_packets_sent);
                 }
             }
-            let _ = rtc_socket.send_to(&msg.message, msg.transport.peer_addr).await;
+            let _ = rtc_socket
+                .send_to(&msg.message, msg.transport.peer_addr)
+                .await;
         }
 
         // Process events
@@ -674,10 +678,11 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
 
     // Use the helper function to register default interceptors
     let registry = Registry::new();
-    let registry = rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-        registry,
-        &mut media_engine,
-    )?;
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut media_engine,
+        )?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -789,7 +794,9 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
 
     while start_time.elapsed() < test_timeout {
         while let Some(msg) = rtc_pc.poll_write() {
-            let _ = rtc_socket.send_to(&msg.message, msg.transport.peer_addr).await;
+            let _ = rtc_socket
+                .send_to(&msg.message, msg.transport.peer_addr)
+                .await;
         }
 
         while let Some(event) = rtc_pc.poll_event() {

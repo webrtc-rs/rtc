@@ -221,10 +221,10 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Track incoming RTP packets
-        if let Packet::Rtp(ref rtp_packet) = msg.message {
-            if let Some(receive_log) = self.receive_logs.get_mut(&rtp_packet.header.ssrc) {
-                receive_log.add(rtp_packet.header.sequence_number);
-            }
+        if let Packet::Rtp(ref rtp_packet) = msg.message
+            && let Some(receive_log) = self.receive_logs.get_mut(&rtp_packet.header.ssrc)
+        {
+            receive_log.add(rtp_packet.header.sequence_number);
         }
 
         self.inner.handle_read(msg)
@@ -256,10 +256,10 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     }
 
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        if let Some(inner_eto) = self.inner.poll_timeout() {
-            if inner_eto < self.eto {
-                return Some(inner_eto);
-            }
+        if let Some(inner_eto) = self.inner.poll_timeout()
+            && inner_eto < self.eto
+        {
+            return Some(inner_eto);
         }
         Some(self.eto)
     }
@@ -275,10 +275,10 @@ impl<P: Interceptor> Interceptor for NackGeneratorInterceptor<P> {
     }
 
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        if stream_supports_nack(info) {
-            if let Some(receive_log) = ReceiveLog::new(self.size) {
-                self.receive_logs.insert(info.ssrc, receive_log);
-            }
+        if stream_supports_nack(info)
+            && let Some(receive_log) = ReceiveLog::new(self.size)
+        {
+            self.receive_logs.insert(info.ssrc, receive_log);
         }
         self.inner.bind_remote_stream(info);
     }
@@ -293,8 +293,8 @@ impl<P: Interceptor> Interceptor for NackGeneratorInterceptor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_info::RTCPFeedback;
     use crate::Registry;
+    use crate::stream_info::RTCPFeedback;
     use sansio::Protocol;
 
     fn make_rtp_packet(ssrc: u32, seq: u16) -> TaggedPacket {
@@ -466,29 +466,29 @@ mod tests {
         let nack_pkt = chain.poll_write();
         assert!(nack_pkt.is_some());
 
-        if let Some(tagged) = nack_pkt {
-            if let Packet::Rtcp(rtcp_packets) = tagged.message {
-                let nack = rtcp_packets[0]
-                    .as_any()
-                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>()
-                    .expect("Expected TransportLayerNack");
+        if let Some(tagged) = nack_pkt
+            && let Packet::Rtcp(rtcp_packets) = tagged.message
+        {
+            let nack = rtcp_packets[0]
+                .as_any()
+                .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>()
+                .expect("Expected TransportLayerNack");
 
-                // Get all nacked sequence numbers
-                let mut nacked_seqs = Vec::new();
-                for nack_pair in &nack.nacks {
-                    nacked_seqs.push(nack_pair.packet_id);
-                    for i in 0..16 {
-                        if nack_pair.lost_packets & (1 << i) != 0 {
-                            nacked_seqs.push(nack_pair.packet_id.wrapping_add(i + 1));
-                        }
+            // Get all nacked sequence numbers
+            let mut nacked_seqs = Vec::new();
+            for nack_pair in &nack.nacks {
+                nacked_seqs.push(nack_pair.packet_id);
+                for i in 0..16 {
+                    if nack_pair.lost_packets & (1 << i) != 0 {
+                        nacked_seqs.push(nack_pair.packet_id.wrapping_add(i + 1));
                     }
                 }
-
-                // Should contain 13, 15 but not 17
-                assert!(nacked_seqs.contains(&13));
-                assert!(nacked_seqs.contains(&15));
-                assert!(!nacked_seqs.contains(&17));
             }
+
+            // Should contain 13, 15 but not 17
+            assert!(nacked_seqs.contains(&13));
+            assert!(nacked_seqs.contains(&15));
+            assert!(!nacked_seqs.contains(&17));
         }
     }
 

@@ -72,9 +72,7 @@ impl<P> TwccSenderInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for TwccSenderInterceptor<P>
-{
+impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()> for TwccSenderInterceptor<P> {
     type Rout = TaggedPacket;
     type Wout = TaggedPacket;
     type Eout = ();
@@ -91,21 +89,23 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
     fn handle_write(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
         // Add transport-wide CC sequence number to outgoing RTP packets
-        if let Packet::Rtp(ref mut rtp_packet) = msg.message {
-            if let Some(stream) = self.streams.get(&rtp_packet.header.ssrc) {
-                // Create transport CC extension
-                let seq = self.next_sequence_number;
-                self.next_sequence_number = self.next_sequence_number.wrapping_add(1);
+        if let Packet::Rtp(ref mut rtp_packet) = msg.message
+            && let Some(stream) = self.streams.get(&rtp_packet.header.ssrc)
+        {
+            // Create transport CC extension
+            let seq = self.next_sequence_number;
+            self.next_sequence_number = self.next_sequence_number.wrapping_add(1);
 
-                let tcc_ext = rtp::extension::transport_cc_extension::TransportCcExtension {
-                    transport_sequence: seq,
-                };
+            let tcc_ext = rtp::extension::transport_cc_extension::TransportCcExtension {
+                transport_sequence: seq,
+            };
 
-                // Marshal the extension
-                if let Ok(ext_data) = tcc_ext.marshal() {
-                    // Set the extension on the packet
-                    let _ = rtp_packet.header.set_extension(stream.hdr_ext_id, ext_data.freeze());
-                }
+            // Marshal the extension
+            if let Ok(ext_data) = tcc_ext.marshal() {
+                // Set the extension on the packet
+                let _ = rtp_packet
+                    .header
+                    .set_extension(stream.hdr_ext_id, ext_data.freeze());
             }
         }
 
@@ -153,8 +153,8 @@ impl<P: Interceptor> Interceptor for TwccSenderInterceptor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_info::RTPHeaderExtension;
     use crate::Registry;
+    use crate::stream_info::RTPHeaderExtension;
     use sansio::Protocol;
     use shared::marshal::Unmarshal;
 
@@ -169,7 +169,6 @@ mod tests {
                     ..Default::default()
                 },
                 payload: vec![].into(),
-                ..Default::default()
             }),
         }
     }
@@ -338,9 +337,8 @@ mod tests {
         chain.bind_local_stream(&info2);
 
         // Send packets alternating between streams
-        let mut expected_seq = 0u16;
-        for ssrc in [1111u32, 2222, 1111, 2222] {
-            let pkt = make_rtp_packet(ssrc, 1);
+        for (i, ssrc) in [1111u32, 2222, 1111, 2222].iter().enumerate() {
+            let pkt = make_rtp_packet(*ssrc, 1);
             chain.handle_write(pkt).unwrap();
             let out = chain.poll_write().unwrap();
 
@@ -350,9 +348,8 @@ mod tests {
                     &mut ext.as_ref(),
                 )
                 .unwrap();
-                assert_eq!(tcc.transport_sequence, expected_seq);
+                assert_eq!(tcc.transport_sequence, i as u16);
             }
-            expected_seq += 1;
         }
     }
 }

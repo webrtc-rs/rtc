@@ -117,7 +117,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParamet
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
 use interceptor::Interceptor;
-use interceptor::stream_info::*;
 use log::trace;
 use sdp::MediaDescription;
 use shared::error::{Error, Result};
@@ -606,10 +605,10 @@ pub(crate) fn create_stream_info(
     payload_type_fec: Option<PayloadType>,
     codec: &RTCRtpCodec,
     header_extensions: &[RTCRtpHeaderExtensionParameters],
-) -> StreamInfo {
-    let rtp_header_extensions: Vec<RTPHeaderExtension> = header_extensions
+) -> interceptor::StreamInfo {
+    let rtp_header_extensions: Vec<interceptor::RTPHeaderExtension> = header_extensions
         .iter()
-        .map(|h| RTPHeaderExtension {
+        .map(|h| interceptor::RTPHeaderExtension {
             id: h.id,
             uri: h.uri.clone(),
         })
@@ -618,13 +617,13 @@ pub(crate) fn create_stream_info(
     let feedbacks: Vec<_> = codec
         .rtcp_feedback
         .iter()
-        .map(|f| interceptor::stream_info::RTCPFeedback {
+        .map(|f| interceptor::RTCPFeedback {
             typ: f.typ.clone(),
             parameter: f.parameter.clone(),
         })
         .collect();
 
-    StreamInfo {
+    interceptor::StreamInfo {
         ssrc,
         ssrc_rtx,
         ssrc_fec,

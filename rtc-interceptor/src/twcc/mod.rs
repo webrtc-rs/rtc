@@ -22,8 +22,8 @@
 //! ```
 
 mod arrival_time_map;
-mod recorder;
 pub mod receiver;
+mod recorder;
 pub mod sender;
 
 use crate::stream_info::StreamInfo;

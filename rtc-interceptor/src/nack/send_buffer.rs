@@ -113,7 +113,6 @@ mod tests {
                 ..Default::default()
             },
             payload: vec![seq as u8].into(),
-            ..Default::default()
         }
     }
 

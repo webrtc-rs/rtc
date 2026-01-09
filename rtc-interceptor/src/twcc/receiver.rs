@@ -4,9 +4,9 @@ use super::recorder::Recorder;
 use super::stream_supports_twcc;
 use crate::stream_info::StreamInfo;
 use crate::{Interceptor, Packet, TaggedPacket};
+use shared::TransportContext;
 use shared::error::Error;
 use shared::marshal::Unmarshal;
-use shared::TransportContext;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
@@ -133,37 +133,32 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Process incoming RTP packets with TWCC extension
-        if let Packet::Rtp(ref rtp_packet) = msg.message {
-            if let Some(stream) = self.streams.get(&rtp_packet.header.ssrc) {
-                // Initialize recorder on first packet
-                if self.recorder.is_none() {
-                    // Use a random sender SSRC for feedback
-                    self.recorder = Some(Recorder::new(rand::random()));
-                    self.start_time = Some(msg.now);
-                    self.next_timeout = Some(msg.now + self.interval);
-                }
+        if let Packet::Rtp(ref rtp_packet) = msg.message
+            && let Some(stream) = self.streams.get(&rtp_packet.header.ssrc)
+        {
+            // Initialize recorder on first packet
+            if self.recorder.is_none() {
+                // Use a random sender SSRC for feedback
+                self.recorder = Some(Recorder::new(rand::random()));
+                self.start_time = Some(msg.now);
+                self.next_timeout = Some(msg.now + self.interval);
+            }
 
-                // Extract transport CC sequence number
-                if let Some(ext_data) = rtp_packet.header.get_extension(stream.hdr_ext_id) {
-                    if let Ok(tcc) =
-                        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                            &mut ext_data.as_ref(),
-                        )
-                    {
-                        // Calculate arrival time in microseconds since start
-                        let arrival_time = self
-                            .start_time
-                            .map(|start| msg.now.duration_since(start).as_micros() as i64)
-                            .unwrap_or(0);
+            // Extract transport CC sequence number
+            if let Some(ext_data) = rtp_packet.header.get_extension(stream.hdr_ext_id)
+                && let Ok(tcc) =
+                    rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
+                        &mut ext_data.as_ref(),
+                    )
+            {
+                // Calculate arrival time in microseconds since start
+                let arrival_time = self
+                    .start_time
+                    .map(|start| msg.now.duration_since(start).as_micros() as i64)
+                    .unwrap_or(0);
 
-                        if let Some(recorder) = self.recorder.as_mut() {
-                            recorder.record(
-                                rtp_packet.header.ssrc,
-                                tcc.transport_sequence,
-                                arrival_time,
-                            );
-                        }
-                    }
+                if let Some(recorder) = self.recorder.as_mut() {
+                    recorder.record(rtp_packet.header.ssrc, tcc.transport_sequence, arrival_time);
                 }
             }
         }
@@ -189,11 +184,11 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
         // Check if we need to send feedback
-        if let Some(timeout) = self.next_timeout {
-            if now >= timeout {
-                self.generate_feedback(now);
-                self.next_timeout = Some(now + self.interval);
-            }
+        if let Some(timeout) = self.next_timeout
+            && now >= timeout
+        {
+            self.generate_feedback(now);
+            self.next_timeout = Some(now + self.interval);
         }
         self.inner.handle_timeout(now)
     }
@@ -238,12 +233,17 @@ impl<P: Interceptor> Interceptor for TwccReceiverInterceptor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_info::RTPHeaderExtension;
     use crate::Registry;
+    use crate::stream_info::RTPHeaderExtension;
     use sansio::Protocol;
     use shared::marshal::Marshal;
 
-    fn make_rtp_packet_with_twcc(ssrc: u32, seq: u16, twcc_seq: u16, hdr_ext_id: u8) -> rtp::Packet {
+    fn make_rtp_packet_with_twcc(
+        ssrc: u32,
+        seq: u16,
+        twcc_seq: u16,
+        hdr_ext_id: u8,
+    ) -> rtp::Packet {
         let mut pkt = rtp::Packet {
             header: rtp::header::Header {
                 ssrc,
@@ -251,7 +251,6 @@ mod tests {
                 ..Default::default()
             },
             payload: vec![].into(),
-            ..Default::default()
         };
 
         let tcc_ext = rtp::extension::transport_cc_extension::TransportCcExtension {

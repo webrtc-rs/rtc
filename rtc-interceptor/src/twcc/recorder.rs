@@ -27,7 +27,9 @@ struct SequenceUnwrapper {
 
 impl SequenceUnwrapper {
     fn new() -> Self {
-        Self { last_unwrapped: None }
+        Self {
+            last_unwrapped: None,
+        }
     }
 
     fn unwrap(&mut self, seq: u16) -> i64 {
@@ -39,7 +41,7 @@ impl SequenceUnwrapper {
             Some(last) => {
                 // Calculate the difference, handling wraparound
                 let seq_i64 = seq as i64;
-                let last_seq = (last & 0xFFFF) as i64;
+                let last_seq = last & 0xFFFF;
                 let mut diff = seq_i64 - last_seq;
 
                 // Handle wraparound
@@ -106,23 +108,20 @@ impl Recorder {
         self.packets_held += 1;
 
         // Limit the range of sequence numbers to send feedback for.
-        if let Some(start) = self.start_sequence_number {
-            if start < self.arrival_time_map.begin_sequence_number() {
-                self.start_sequence_number = Some(self.arrival_time_map.begin_sequence_number());
-            }
+        if let Some(start) = self.start_sequence_number
+            && start < self.arrival_time_map.begin_sequence_number()
+        {
+            self.start_sequence_number = Some(self.arrival_time_map.begin_sequence_number());
         }
     }
 
     fn maybe_cull_old_packets(&mut self, sequence_number: i64, arrival_time: i64) {
-        if let Some(start) = self.start_sequence_number {
-            if start >= self.arrival_time_map.end_sequence_number()
-                && arrival_time >= PACKET_WINDOW_MICROSECONDS
-            {
-                self.arrival_time_map.remove_old_packets(
-                    sequence_number,
-                    arrival_time - PACKET_WINDOW_MICROSECONDS,
-                );
-            }
+        if let Some(start) = self.start_sequence_number
+            && start >= self.arrival_time_map.end_sequence_number()
+            && arrival_time >= PACKET_WINDOW_MICROSECONDS
+        {
+            self.arrival_time_map
+                .remove_old_packets(sequence_number, arrival_time - PACKET_WINDOW_MICROSECONDS);
         }
     }
 
@@ -175,7 +174,12 @@ impl Recorder {
                 break;
             }
 
-            if fb.is_none() {
+            if let Some(feedback) = fb.as_mut() {
+                if !feedback.add_received(seq as u16, arrival_time) {
+                    // Could not add timestamp. Packet may be full.
+                    break;
+                }
+            } else {
                 let mut new_fb = Feedback::new(self.sender_ssrc, self.media_ssrc, self.fb_pkt_cnt);
                 self.fb_pkt_cnt = self.fb_pkt_cnt.wrapping_add(1);
 
@@ -191,9 +195,6 @@ impl Recorder {
                     return None;
                 }
                 fb = Some(new_fb);
-            } else if !fb.as_mut().unwrap().add_received(seq as u16, arrival_time) {
-                // Could not add timestamp. Packet may be full.
-                break;
             }
 
             next_sequence_number = seq + 1;
@@ -288,7 +289,7 @@ impl Feedback {
             self.next_sequence_number = self.next_sequence_number.wrapping_add(1);
         }
 
-        let recv_delta = if delta_250us >= 0 && delta_250us <= 0xff {
+        let recv_delta = if (0..=0xff).contains(&delta_250us) {
             self.len += 1;
             SymbolTypeTcc::PacketReceivedSmallDelta
         } else {
@@ -338,7 +339,9 @@ impl Chunk {
         {
             return true;
         }
-        if self.deltas.len() < MAX_RUN_LENGTH_CAP && !self.has_different_types && delta == self.deltas[0]
+        if self.deltas.len() < MAX_RUN_LENGTH_CAP
+            && !self.has_different_types
+            && delta == self.deltas[0]
         {
             return true;
         }
@@ -465,7 +468,10 @@ mod tests {
         let encoded = chunk.encode();
         match encoded {
             PacketStatusChunk::RunLengthChunk(rlc) => {
-                assert_eq!(rlc.packet_status_symbol, SymbolTypeTcc::PacketReceivedSmallDelta);
+                assert_eq!(
+                    rlc.packet_status_symbol,
+                    SymbolTypeTcc::PacketReceivedSmallDelta
+                );
                 assert_eq!(rlc.run_length, 10);
             }
             _ => panic!("Expected RunLengthChunk"),

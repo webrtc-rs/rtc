@@ -203,7 +203,7 @@ mod tests {
         // Should report 127 missing packets (2-128 range, but only last 127 fit)
         let missing = rl.missing_seq_numbers(0);
         assert!(!missing.is_empty());
-        assert!(missing.contains(&2) || missing.len() > 0);
+        assert!(missing.contains(&2) || !missing.is_empty());
     }
 
     #[test]
@@ -261,7 +261,9 @@ mod tests {
     // Port of pion's TestReceivedBuffer with various start points
     #[test]
     fn test_receive_log_pion_compat() {
-        for start in [0u16, 1, 127, 128, 129, 511, 512, 513, 32767, 32768, 65534, 65535] {
+        for start in [
+            0u16, 1, 127, 128, 129, 511, 512, 513, 32767, 32768, 65534, 65535,
+        ] {
             let mut rl = ReceiveLog::new(128).unwrap();
 
             // Add first packet
