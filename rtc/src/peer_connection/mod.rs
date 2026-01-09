@@ -297,8 +297,7 @@ use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpSender,
 };
 use crate::rtp_transceiver::{
-    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
-    RTCRtpTransceiverInit, find_by_mid, satisfy_type_and_direction,
+    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId, RTCRtpTransceiverInit,
 };
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
@@ -350,7 +349,7 @@ where
     //////////////////////////////////////////////////
     pub(crate) pipeline_context: PipelineContext,
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
-    pub(super) rtp_transceivers: Vec<RTCRtpTransceiver>,
+    pub(super) rtp_transceivers: Vec<RTCRtpTransceiver<I>>,
 
     greater_mid: isize,
     sdp_origin: Origin,
@@ -948,7 +947,7 @@ where
                     continue;
                 }
 
-                let i = match find_by_mid(mid_value, &self.rtp_transceivers) {
+                let i = match RTCPeerConnection::find_by_mid(mid_value, &self.rtp_transceivers) {
                     Some(i) => i,
                     None => return Err(Error::ErrPeerConnTransceiverMidNil),
                 };
@@ -1106,14 +1105,21 @@ where
                         }
 
                         let transceiver = if let Some(i) =
-                            find_by_mid(mid_value, &self.rtp_transceivers)
+                            RTCPeerConnection::find_by_mid(mid_value, &self.rtp_transceivers)
                         {
                             if direction == RTCRtpTransceiverDirection::Inactive {
-                                self.rtp_transceivers[i].stop();
+                                self.rtp_transceivers[i].stop(
+                                    &self.configuration.media_engine,
+                                    &mut self.configuration.interceptor,
+                                )?;
                             }
                             Some(&mut self.rtp_transceivers[i])
                         } else {
-                            satisfy_type_and_direction(kind, direction, &mut self.rtp_transceivers)
+                            RTCPeerConnection::satisfy_type_and_direction(
+                                kind,
+                                direction,
+                                &mut self.rtp_transceivers,
+                            )
                         };
 
                         if let Some(transceiver) = transceiver {
@@ -1200,12 +1206,13 @@ where
                             continue;
                         }
 
-                        let transceiver =
-                            if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
-                                &mut self.rtp_transceivers[i]
-                            } else {
-                                return Err(Error::ErrPeerConnTransceiverMidNil);
-                            };
+                        let transceiver = if let Some(i) =
+                            RTCPeerConnection::find_by_mid(mid_value, &self.rtp_transceivers)
+                        {
+                            &mut self.rtp_transceivers[i]
+                        } else {
+                            return Err(Error::ErrPeerConnTransceiverMidNil);
+                        };
 
                         // reverse direction if it was a remote answer
                         if direction == RTCRtpTransceiverDirection::Sendonly {
@@ -1728,7 +1735,14 @@ where
         self.rtp_transceivers[sender_id.0]
             .set_direction(RTCRtpTransceiverDirection::from_send_recv(false, has_recv));
 
-        if self.stop_rtp_sender(sender_id).is_ok() {
+        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
+            && sender
+                .stop(
+                    &self.configuration.media_engine,
+                    &mut self.configuration.interceptor,
+                )
+                .is_ok()
+        {
             self.trigger_negotiation_needed();
         }
 

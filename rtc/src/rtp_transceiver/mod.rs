@@ -105,6 +105,7 @@
 
 use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrack;
+use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::sdp::codecs_from_media_description;
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
@@ -115,6 +116,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
+use interceptor::Interceptor;
 use interceptor::stream_info::*;
 use log::trace;
 use sdp::MediaDescription;
@@ -206,24 +208,30 @@ pub struct RTCRtpTransceiverInit {
 ///
 /// See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 #[derive(Default, Clone)]
-pub(crate) struct RTCRtpTransceiver {
+pub(crate) struct RTCRtpTransceiver<I>
+where
+    I: Interceptor,
+{
     mid: Option<String>,
     kind: RtpCodecKind,
-    sender: Option<RTCRtpSenderInternal>,
-    receiver: Option<RTCRtpReceiverInternal>,
+    sender: Option<RTCRtpSenderInternal<I>>,
+    receiver: Option<RTCRtpReceiverInternal<I>>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
     stopped: bool,
 }
 
-impl fmt::Debug for RTCRtpTransceiver {
+impl<I> fmt::Debug for RTCRtpTransceiver<I>
+where
+    I: Interceptor,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RTCRtpTransceiver")
             .field("mid", &self.mid)
             .field("kind", &self.kind)
-            .field("sender", &self.sender)
-            .field("receiver", &self.receiver)
+            //.field("sender", &self.sender)
+            //.field("receiver", &self.receiver)
             .field("direction", &self.direction)
             .field("current_direction", &self.current_direction)
             .field("preferred_codecs", &self.preferred_codecs)
@@ -232,7 +240,10 @@ impl fmt::Debug for RTCRtpTransceiver {
     }
 }
 
-impl RTCRtpTransceiver {
+impl<I> RTCRtpTransceiver<I>
+where
+    I: Interceptor,
+{
     pub(crate) fn new(
         kind: RtpCodecKind,
         track: Option<MediaStreamTrack>,
@@ -285,20 +296,20 @@ impl RTCRtpTransceiver {
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal> {
+    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal<I>> {
         &self.sender
     }
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender_mut(&mut self) -> &mut Option<RTCRtpSenderInternal> {
+    pub(crate) fn sender_mut(&mut self) -> &mut Option<RTCRtpSenderInternal<I>> {
         &mut self.sender
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal> {
+    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal<I>> {
         &self.receiver
     }
 
-    pub(crate) fn receiver_mut(&mut self) -> &mut Option<RTCRtpReceiverInternal> {
+    pub(crate) fn receiver_mut(&mut self) -> &mut Option<RTCRtpReceiverInternal<I>> {
         &mut self.receiver
     }
 
@@ -354,13 +365,23 @@ impl RTCRtpTransceiver {
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
-    pub(crate) fn stop(&mut self) {
+    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
         if self.stopped {
-            return;
+            return Ok(());
         }
         self.stopped = true;
+
+        if let Some(sender) = self.sender_mut() {
+            sender.stop(media_engine, interceptor)?;
+        }
+        if let Some(receiver) = self.receiver_mut() {
+            receiver.stop(media_engine, interceptor)?;
+        }
+
         self.direction = RTCRtpTransceiverDirection::Inactive;
         self.current_direction = RTCRtpTransceiverDirection::Inactive;
+
+        Ok(())
     }
 
     /// Sets the preferred codec list for this transceiver.
@@ -408,7 +429,7 @@ impl RTCRtpTransceiver {
 
     /// Codecs returns list of supported codecs
     pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        RTCRtpReceiverInternal::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
+        RTCRtpReceiverInternal::<I>::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
@@ -524,47 +545,55 @@ impl RTCRtpTransceiver {
     }
 }
 
-pub(crate) fn find_by_mid(mid: &String, local_transceivers: &[RTCRtpTransceiver]) -> Option<usize> {
-    local_transceivers
-        .iter()
-        .enumerate()
-        .find(|(_i, t)| t.mid.as_ref() == Some(mid))
-        .map(|(i, _v)| i)
-}
-
-/// Given a direction+type pluck a transceiver from the passed list
-/// if no entry satisfies the requested type+direction return a inactive Transceiver
-pub(crate) fn satisfy_type_and_direction(
-    remote_kind: RtpCodecKind,
-    remote_direction: RTCRtpTransceiverDirection,
-    local_transceivers: &mut [RTCRtpTransceiver],
-) -> Option<&mut RTCRtpTransceiver> {
-    // Get direction order from most preferred to least
-    let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
-        match remote_direction {
-            RTCRtpTransceiverDirection::Sendrecv => vec![
-                RTCRtpTransceiverDirection::Recvonly,
-                RTCRtpTransceiverDirection::Sendrecv,
-            ],
-            RTCRtpTransceiverDirection::Sendonly => vec![RTCRtpTransceiverDirection::Recvonly],
-            RTCRtpTransceiverDirection::Recvonly => vec![
-                RTCRtpTransceiverDirection::Sendonly,
-                RTCRtpTransceiverDirection::Sendrecv,
-            ],
-            _ => vec![],
-        }
-    };
-
-    for possible_direction in get_preferred_directions() {
-        // Find the index first to avoid multiple mutable borrows
-        if let Some(index) = local_transceivers.iter().position(|t| {
-            t.mid.is_none() && t.kind() == remote_kind && possible_direction == t.direction
-        }) {
-            return Some(&mut local_transceivers[index]);
-        }
+impl<I> RTCPeerConnection<I>
+where
+    I: Interceptor,
+{
+    pub(crate) fn find_by_mid(
+        mid: &String,
+        local_transceivers: &[RTCRtpTransceiver<I>],
+    ) -> Option<usize> {
+        local_transceivers
+            .iter()
+            .enumerate()
+            .find(|(_i, t)| t.mid.as_ref() == Some(mid))
+            .map(|(i, _v)| i)
     }
 
-    None
+    /// Given a direction+type pluck a transceiver from the passed list
+    /// if no entry satisfies the requested type+direction return a inactive Transceiver
+    pub(crate) fn satisfy_type_and_direction(
+        remote_kind: RtpCodecKind,
+        remote_direction: RTCRtpTransceiverDirection,
+        local_transceivers: &mut [RTCRtpTransceiver<I>],
+    ) -> Option<&mut RTCRtpTransceiver<I>> {
+        // Get direction order from most preferred to least
+        let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
+            match remote_direction {
+                RTCRtpTransceiverDirection::Sendrecv => vec![
+                    RTCRtpTransceiverDirection::Recvonly,
+                    RTCRtpTransceiverDirection::Sendrecv,
+                ],
+                RTCRtpTransceiverDirection::Sendonly => vec![RTCRtpTransceiverDirection::Recvonly],
+                RTCRtpTransceiverDirection::Recvonly => vec![
+                    RTCRtpTransceiverDirection::Sendonly,
+                    RTCRtpTransceiverDirection::Sendrecv,
+                ],
+                _ => vec![],
+            }
+        };
+
+        for possible_direction in get_preferred_directions() {
+            // Find the index first to avoid multiple mutable borrows
+            if let Some(index) = local_transceivers.iter().position(|t| {
+                t.mid.is_none() && t.kind() == remote_kind && possible_direction == t.direction
+            }) {
+                return Some(&mut local_transceivers[index]);
+            }
+        }
+
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

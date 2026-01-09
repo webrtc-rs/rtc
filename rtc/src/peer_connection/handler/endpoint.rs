@@ -8,9 +8,9 @@ use crate::peer_connection::message::internal::{
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
+use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
 use interceptor::{Interceptor, Packet};
@@ -34,7 +34,7 @@ where
     I: Interceptor,
 {
     ctx: &'a mut EndpointHandlerContext,
-    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
+    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
     media_engine: &'a MediaEngine,
     interceptor: &'a mut I,
 }
@@ -45,7 +45,7 @@ where
 {
     pub(crate) fn new(
         ctx: &'a mut EndpointHandlerContext,
-        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
+        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
         media_engine: &'a MediaEngine,
         interceptor: &'a mut I,
     ) -> Self {
@@ -409,7 +409,7 @@ where
                 }
 
                 let parameters = receiver.get_parameters(self.media_engine);
-                RTCPeerConnection::rtp_receiver_remote_stream_op(
+                RTCRtpReceiverInternal::interceptor_remote_stream_op(
                     self.interceptor,
                     true,
                     rtp_header.ssrc,
@@ -463,7 +463,7 @@ where
             receiver.set_coding_parameters(receive_codings);
 
             let parameters = receiver.get_parameters(self.media_engine);
-            RTCPeerConnection::rtp_receiver_remote_stream_op(
+            RTCRtpReceiverInternal::interceptor_remote_stream_op(
                 self.interceptor,
                 true,
                 rtp_header.ssrc,

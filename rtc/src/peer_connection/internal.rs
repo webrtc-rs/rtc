@@ -1,23 +1,16 @@
 use super::*;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     MediaSection, PopulateSdpParams, get_by_mid, get_peer_direction, get_rids, have_data_channel,
-    is_ext_map_allow_mixed_set, populate_sdp, rtp_extensions_from_media_description,
-    track_details_from_sdp,
+    is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    codec_parameters_fuzzy_search, find_fec_payload_type, find_rtx_payload_type,
-};
+use crate::rtp_transceiver::RTCRtpTransceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParameters};
-use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId, SSRC, create_stream_info};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
@@ -86,7 +79,7 @@ where
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
         };
-        populate_sdp(
+        RTCPeerConnection::populate_sdp(
             d,
             &dtls_fingerprints,
             &self.configuration.media_engine,
@@ -149,7 +142,9 @@ where
                         continue;
                     }
 
-                    if let Some(i) = find_by_mid(mid_value, &self.rtp_transceivers) {
+                    if let Some(i) =
+                        RTCPeerConnection::find_by_mid(mid_value, &self.rtp_transceivers)
+                    {
                         if let Some(sender) = self.rtp_transceivers[i].sender_mut() {
                             sender.set_negotiated();
                         }
@@ -230,7 +225,7 @@ where
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
         };
-        populate_sdp(
+        RTCPeerConnection::populate_sdp(
             d,
             &dtls_fingerprints,
             &self.configuration.media_engine,
@@ -448,7 +443,7 @@ where
     /// add_rtp_transceiver appends t into rtp_transceivers
     /// and fires onNegotiationNeeded;
     /// caller of this method should hold `self.mu` lock
-    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver) -> RTCRtpTransceiverId {
+    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver<I>) -> RTCRtpTransceiverId {
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
         self.rtp_transceivers.len() - 1
@@ -461,8 +456,7 @@ where
                 && !sender.has_sent()
                 && !sender.track().codings().is_empty()
             {
-                RTCPeerConnection::rtp_sender_local_stream_op(
-                    sender,
+                sender.interceptor_local_streams_op(
                     &self.configuration.media_engine,
                     &mut self.configuration.interceptor,
                     true,
@@ -473,146 +467,6 @@ where
         }
 
         Ok(())
-    }
-
-    pub(super) fn stop_rtp_sender(&mut self, sender_id: RTCRtpSenderId) -> Result<()> {
-        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
-            && sender.is_negotiated()
-            && sender.has_sent()
-            && !sender.track().codings().is_empty()
-        {
-            RTCPeerConnection::rtp_sender_local_stream_op(
-                sender,
-                &self.configuration.media_engine,
-                &mut self.configuration.interceptor,
-                false,
-            );
-
-            sender.stop()?;
-        }
-
-        Ok(())
-    }
-
-    fn rtp_sender_local_stream_op(
-        sender: &mut RTCRtpSenderInternal,
-        media_engine: &MediaEngine,
-        interceptor: &mut I,
-        is_binding: bool,
-    ) {
-        let parameters = sender.get_parameters(media_engine).clone();
-
-        for coding in sender.track().codings() {
-            let (codec, match_type) =
-                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
-            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
-                && match_type != CodecMatch::None
-            {
-                let stream_info = create_stream_info(
-                    ssrc,
-                    coding
-                        .rtp_coding_parameters
-                        .rtx
-                        .as_ref()
-                        .map(|rtx| rtx.ssrc),
-                    coding
-                        .rtp_coding_parameters
-                        .fec
-                        .as_ref()
-                        .map(|fec| fec.ssrc),
-                    codec.payload_type,
-                    find_rtx_payload_type(codec.payload_type, &parameters.rtp_parameters.codecs),
-                    find_fec_payload_type(&parameters.rtp_parameters.codecs),
-                    &codec.rtp_codec,
-                    &parameters.rtp_parameters.header_extensions,
-                );
-
-                if is_binding {
-                    interceptor.bind_local_stream(&stream_info);
-                } else {
-                    interceptor.unbind_local_stream(&stream_info);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn rtp_receiver_remote_streams_op(
-        receiver: &mut RTCRtpReceiverInternal,
-        media_engine: &MediaEngine,
-        interceptor: &mut I,
-        is_binding: bool,
-    ) {
-        let parameters = receiver.get_parameters(media_engine).clone();
-
-        for coding in receiver.track().codings() {
-            let (codec, match_type) =
-                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
-            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
-                && match_type != CodecMatch::None
-            {
-                RTCPeerConnection::rtp_receiver_remote_stream_op(
-                    interceptor,
-                    is_binding,
-                    ssrc,
-                    codec.payload_type,
-                    &codec.rtp_codec,
-                    &parameters.rtp_parameters.header_extensions,
-                );
-
-                if let Some(rtx) = coding.rtp_coding_parameters.rtx.as_ref() {
-                    RTCPeerConnection::rtp_receiver_remote_stream_op(
-                        interceptor,
-                        is_binding,
-                        rtx.ssrc,
-                        find_rtx_payload_type(
-                            codec.payload_type,
-                            &parameters.rtp_parameters.codecs,
-                        )
-                        .unwrap_or_default(),
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
-                }
-
-                if let Some(fec) = coding.rtp_coding_parameters.fec.as_ref() {
-                    RTCPeerConnection::rtp_receiver_remote_stream_op(
-                        interceptor,
-                        is_binding,
-                        fec.ssrc,
-                        find_fec_payload_type(&parameters.rtp_parameters.codecs)
-                            .unwrap_or_default(),
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
-                }
-            }
-        }
-    }
-
-    pub(crate) fn rtp_receiver_remote_stream_op(
-        interceptor: &mut I,
-        is_binding: bool,
-        ssrc: SSRC,
-        payload_type: PayloadType,
-        rtp_codec: &RTCRtpCodec,
-        header_extensions: &[RTCRtpHeaderExtensionParameters],
-    ) {
-        let stream_info = create_stream_info(
-            ssrc,
-            None,
-            None,
-            payload_type,
-            None,
-            None,
-            rtp_codec,
-            header_extensions,
-        );
-
-        if is_binding {
-            interceptor.bind_remote_stream(&stream_info);
-        } else {
-            interceptor.unbind_remote_stream(&stream_info);
-        }
     }
 
     pub(super) fn start_rtp(&mut self, remote_desc: RTCSessionDescription) -> Result<()> {
@@ -690,8 +544,7 @@ where
                         }],
                     ));
 
-                    RTCPeerConnection::rtp_receiver_remote_streams_op(
-                        receiver,
+                    receiver.interceptor_remote_streams_op(
                         &self.configuration.media_engine,
                         &mut self.configuration.interceptor,
                         true,
@@ -948,7 +801,7 @@ where
         &self,
         track: MediaStreamTrack,
         mut init: RTCRtpTransceiverInit,
-    ) -> Result<RTCRtpTransceiver> {
+    ) -> Result<RTCRtpTransceiver<I>> {
         if init.direction == RTCRtpTransceiverDirection::Unspecified {
             Err(Error::ErrPeerConnAddTransceiverFromTrackSupport)
         } else {

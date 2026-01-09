@@ -3,13 +3,19 @@ use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    CodecMatch, RtpCodecKind, codec_parameters_fuzzy_search, find_fec_payload_type,
+    find_rtx_payload_type,
+};
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_send_parameters::RTCRtpSendParameters;
 use crate::rtp_transceiver::rtp_sender::set_parameter_options::RTCSetParameterOptions;
+use interceptor::Interceptor;
+use std::marker::PhantomData;
 
+use crate::rtp_transceiver::create_stream_info;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 
@@ -26,7 +32,10 @@ use shared::util::math_rand_alpha;
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
 #[derive(Default, Debug, Clone)]
-pub(crate) struct RTCRtpSenderInternal {
+pub(crate) struct RTCRtpSenderInternal<I>
+where
+    I: Interceptor,
+{
     /// The codec kind (audio or video) for this sender
     kind: RtpCodecKind,
     /// The media track being sent
@@ -44,9 +53,14 @@ pub(crate) struct RTCRtpSenderInternal {
     /// Whether SDP negotiation has occurred for this sender
     negotiated: bool,
     sent: bool,
+
+    _phantom: PhantomData<I>,
 }
 
-impl RTCRtpSenderInternal {
+impl<I> RTCRtpSenderInternal<I>
+where
+    I: Interceptor,
+{
     /// Creates a new RTP sender internal state.
     ///
     /// # Parameters
@@ -77,6 +91,8 @@ impl RTCRtpSenderInternal {
             last_returned_parameters: None,
             negotiated: false,
             sent: false,
+
+            _phantom: PhantomData,
         }
     }
 
@@ -303,9 +319,14 @@ impl RTCRtpSenderInternal {
     }
 
     /// Stops the sender (placeholder for future implementation).
-    pub(crate) fn stop(&mut self) -> Result<()> {
+    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
+        if self.has_sent() && !self.track().codings().is_empty() {
+            self.interceptor_local_streams_op(media_engine, interceptor, false);
+        }
+
         self.negotiated = false;
         self.sent = false;
+
         Ok(())
     }
 
@@ -332,6 +353,48 @@ impl RTCRtpSenderInternal {
             }
             if !is_fec_enabled {
                 encoding.rtp_coding_parameters.fec = None;
+            }
+        }
+    }
+
+    pub(crate) fn interceptor_local_streams_op(
+        &mut self,
+        media_engine: &MediaEngine,
+        interceptor: &mut I,
+        is_binding: bool,
+    ) {
+        let parameters = self.get_parameters(media_engine).clone();
+
+        for coding in self.track().codings() {
+            let (codec, match_type) =
+                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
+            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
+                && match_type != CodecMatch::None
+            {
+                let stream_info = create_stream_info(
+                    ssrc,
+                    coding
+                        .rtp_coding_parameters
+                        .rtx
+                        .as_ref()
+                        .map(|rtx| rtx.ssrc),
+                    coding
+                        .rtp_coding_parameters
+                        .fec
+                        .as_ref()
+                        .map(|fec| fec.ssrc),
+                    codec.payload_type,
+                    find_rtx_payload_type(codec.payload_type, &parameters.rtp_parameters.codecs),
+                    find_fec_payload_type(&parameters.rtp_parameters.codecs),
+                    &codec.rtp_codec,
+                    &parameters.rtp_parameters.header_extensions,
+                );
+
+                if is_binding {
+                    interceptor.bind_local_stream(&stream_info);
+                } else {
+                    interceptor.unbind_local_stream(&stream_info);
+                }
             }
         }
     }
