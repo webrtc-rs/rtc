@@ -164,11 +164,12 @@ where
         )
     }
 
-    pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
+    pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_, I> {
         EndpointHandler::new(
             &mut self.pipeline_context.endpoint_handler_context,
             &mut self.rtp_transceivers,
             &self.configuration.media_engine,
+            &mut self.configuration.interceptor,
         )
     }
 }

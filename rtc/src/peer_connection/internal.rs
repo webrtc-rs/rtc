@@ -8,6 +8,7 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     codec_parameters_fuzzy_search, find_fec_payload_type, find_rtx_payload_type,
 };
@@ -15,7 +16,8 @@ use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::{RTCRtpTransceiverId, create_stream_info};
+use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParameters};
+use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId, SSRC, create_stream_info};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
@@ -521,7 +523,7 @@ where
                     codec.payload_type,
                     find_rtx_payload_type(codec.payload_type, &parameters.rtp_parameters.codecs),
                     find_fec_payload_type(&parameters.rtp_parameters.codecs),
-                    codec.rtp_codec.clone(),
+                    &codec.rtp_codec,
                     &parameters.rtp_parameters.header_extensions,
                 );
 
@@ -531,6 +533,85 @@ where
                     interceptor.unbind_local_stream(&stream_info);
                 }
             }
+        }
+    }
+
+    pub(crate) fn rtp_receiver_remote_streams_op(
+        receiver: &mut RTCRtpReceiverInternal,
+        media_engine: &MediaEngine,
+        interceptor: &mut I,
+        is_binding: bool,
+    ) {
+        let parameters = receiver.get_parameters(media_engine).clone();
+
+        for coding in receiver.track().codings() {
+            let (codec, match_type) =
+                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
+            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
+                && match_type != CodecMatch::None
+            {
+                RTCPeerConnection::rtp_receiver_remote_stream_op(
+                    interceptor,
+                    is_binding,
+                    ssrc,
+                    codec.payload_type,
+                    &codec.rtp_codec,
+                    &parameters.rtp_parameters.header_extensions,
+                );
+
+                if let Some(rtx) = coding.rtp_coding_parameters.rtx.as_ref() {
+                    RTCPeerConnection::rtp_receiver_remote_stream_op(
+                        interceptor,
+                        is_binding,
+                        rtx.ssrc,
+                        find_rtx_payload_type(
+                            codec.payload_type,
+                            &parameters.rtp_parameters.codecs,
+                        )
+                        .unwrap_or_default(),
+                        &codec.rtp_codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
+                }
+
+                if let Some(fec) = coding.rtp_coding_parameters.fec.as_ref() {
+                    RTCPeerConnection::rtp_receiver_remote_stream_op(
+                        interceptor,
+                        is_binding,
+                        fec.ssrc,
+                        find_fec_payload_type(&parameters.rtp_parameters.codecs)
+                            .unwrap_or_default(),
+                        &codec.rtp_codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) fn rtp_receiver_remote_stream_op(
+        interceptor: &mut I,
+        is_binding: bool,
+        ssrc: SSRC,
+        payload_type: PayloadType,
+        rtp_codec: &RTCRtpCodec,
+        header_extensions: &[RTCRtpHeaderExtensionParameters],
+    ) {
+        let stream_info = create_stream_info(
+            ssrc,
+            None,
+            None,
+            payload_type,
+            None,
+            None,
+            rtp_codec,
+            header_extensions,
+        );
+
+        if is_binding {
+            interceptor.bind_remote_stream(&stream_info);
+        } else {
+            interceptor.unbind_remote_stream(&stream_info);
         }
     }
 
@@ -608,6 +689,13 @@ where
                             ..Default::default()
                         }],
                     ));
+
+                    RTCPeerConnection::rtp_receiver_remote_streams_op(
+                        receiver,
+                        &self.configuration.media_engine,
+                        &mut self.configuration.interceptor,
+                        true,
+                    );
                 } else if only_one_rtp_transceiver {
                     // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
                     // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage

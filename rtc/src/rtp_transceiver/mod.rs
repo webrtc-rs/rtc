@@ -575,7 +575,7 @@ pub(crate) fn create_stream_info(
     payload_type: PayloadType,
     payload_type_rtx: Option<PayloadType>,
     payload_type_fec: Option<PayloadType>,
-    codec: RTCRtpCodec,
+    codec: &RTCRtpCodec,
     header_extensions: &[RTCRtpHeaderExtensionParameters],
 ) -> StreamInfo {
     let rtp_header_extensions: Vec<RTPHeaderExtension> = header_extensions
@@ -603,10 +603,10 @@ pub(crate) fn create_stream_info(
         payload_type_rtx,
         payload_type_fec,
         rtp_header_extensions,
-        mime_type: codec.mime_type,
+        mime_type: codec.mime_type.clone(),
         clock_rate: codec.clock_rate,
         channels: codec.channels,
-        sdp_fmtp_line: codec.sdp_fmtp_line,
+        sdp_fmtp_line: codec.sdp_fmtp_line.clone(),
         rtcp_feedback: feedbacks,
     }
 }

@@ -8,11 +8,12 @@ use crate::peer_connection::message::internal::{
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
+use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
-use interceptor::Packet;
+use interceptor::{Interceptor, Packet};
 use log::{debug, trace, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
@@ -28,22 +29,31 @@ pub(crate) struct EndpointHandlerContext {
 
 /// EndpointHandler implements DataChannel/Media Endpoint handling
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
-pub(crate) struct EndpointHandler<'a> {
+pub(crate) struct EndpointHandler<'a, I>
+where
+    I: Interceptor,
+{
     ctx: &'a mut EndpointHandlerContext,
     rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
     media_engine: &'a MediaEngine,
+    interceptor: &'a mut I,
 }
 
-impl<'a> EndpointHandler<'a> {
+impl<'a, I> EndpointHandler<'a, I>
+where
+    I: Interceptor,
+{
     pub(crate) fn new(
         ctx: &'a mut EndpointHandlerContext,
         rtp_transceivers: &'a mut Vec<RTCRtpTransceiver>,
         media_engine: &'a MediaEngine,
+        interceptor: &'a mut I,
     ) -> Self {
         EndpointHandler {
             ctx,
             rtp_transceivers,
             media_engine,
+            interceptor,
         }
     }
 
@@ -53,8 +63,10 @@ impl<'a> EndpointHandler<'a> {
 }
 
 // Implement Protocol trait for message processing
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
-    for EndpointHandler<'a>
+impl<'a, I> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+    for EndpointHandler<'a, I>
+where
+    I: Interceptor,
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
@@ -115,7 +127,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 }
 
-impl<'a> EndpointHandler<'a> {
+impl<'a, I> EndpointHandler<'a, I>
+where
+    I: Interceptor,
+{
     fn handle_dtls_message(
         &mut self,
         now: Instant,
@@ -305,6 +320,7 @@ impl<'a> EndpointHandler<'a> {
                     .get_codec_preferences()
                     .iter()
                     .find(|codec| codec.payload_type == rtp_header.payload_type)
+            //TODO: what about RTX/FEC stream?
             {
                 Some(codec.rtp_codec.clone())
             } else {
@@ -382,7 +398,7 @@ impl<'a> EndpointHandler<'a> {
             && let Some(codec) = receiver
                 .get_codec_preferences()
                 .iter()
-                .find(|codec| codec.payload_type == rtp_header.payload_type)
+                .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
                 .cloned()
         {
             if !rrid.is_empty() {
@@ -391,6 +407,16 @@ impl<'a> EndpointHandler<'a> {
                 if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                     coding.ssrc = Some(ssrc);
                 }
+
+                let parameters = receiver.get_parameters(self.media_engine);
+                RTCPeerConnection::rtp_receiver_remote_stream_op(
+                    self.interceptor,
+                    true,
+                    rtp_header.ssrc,
+                    codec.payload_type,
+                    &codec.rtp_codec,
+                    &parameters.rtp_parameters.header_extensions,
+                );
 
                 let new_entry =
                     receiver
@@ -425,7 +451,7 @@ impl<'a> EndpointHandler<'a> {
             && let Some(codec) = receiver
                 .get_codec_preferences()
                 .iter()
-                .find(|codec| codec.payload_type == rtp_header.payload_type)
+                .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
                 .cloned()
         {
             let receive_codings = vec![RTCRtpCodingParameters {
@@ -435,6 +461,16 @@ impl<'a> EndpointHandler<'a> {
                 fec: None,
             }];
             receiver.set_coding_parameters(receive_codings);
+
+            let parameters = receiver.get_parameters(self.media_engine);
+            RTCPeerConnection::rtp_receiver_remote_stream_op(
+                self.interceptor,
+                true,
+                rtp_header.ssrc,
+                codec.payload_type,
+                &codec.rtp_codec,
+                &parameters.rtp_parameters.header_extensions,
+            );
 
             // assert it inserts a new entry
             let new_entry = receiver
