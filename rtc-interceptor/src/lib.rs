@@ -68,13 +68,13 @@ mod registry;
 pub(crate) mod report;
 pub mod stream_info;
 
-use crate::stream_info::StreamInfo;
 pub use noop::NoopInterceptor;
 pub use registry::Registry;
 pub use report::{
     receiver_report::{ReceiverReportBuilder, ReceiverReportInterceptor},
     sender_report::{SenderReportBuilder, SenderReportInterceptor},
 };
+pub use stream_info::{RTCPFeedback, RTPHeaderExtension, StreamInfo};
 
 /// RTP/RTCP Packet
 ///

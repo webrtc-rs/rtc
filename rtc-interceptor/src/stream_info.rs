@@ -10,18 +10,6 @@ pub struct RTPHeaderExtension {
     pub id: u16,
 }
 
-/// Association between an auxiliary stream and its primary stream.
-///
-/// Used for streams like RTX (retransmission), FEC (forward error correction),
-/// or RED (redundant encoding) that are associated with a primary media stream.
-#[derive(Default, Debug, Clone)]
-pub struct AssociatedStreamInfo {
-    /// SSRC of the associated auxiliary stream
-    pub ssrc: u32,
-    /// Payload type of the associated stream
-    pub payload_type: u8,
-}
-
 /// RTCP feedback mechanism negotiated for the stream.
 ///
 /// Specifies additional RTCP packet types that can be used for feedback

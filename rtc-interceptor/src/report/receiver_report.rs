@@ -212,6 +212,10 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        // First drain generated RTCP reports
+        if let Some(pkt) = self.write_queue.pop_front() {
+            return Some(pkt);
+        }
         self.inner.poll_write()
     }
 
