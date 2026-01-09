@@ -31,6 +31,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::str::FromStr;
 
+use rtc::interceptor::Registry;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
@@ -146,6 +148,11 @@ async fn run(
 
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
+    let registry = Registry::new();
+
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
+
     // Create RTC peer connection configuration
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -154,6 +161,7 @@ async fn run(
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     // Create a new RTCPeerConnection

@@ -3,11 +3,13 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
+use rtc::interceptor::Registry;
 use rtc::media::io::ivf_reader::IVFReader;
 use rtc::media::io::ogg_reader::OggReader;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9, MediaEngine,
 };
@@ -220,16 +222,10 @@ async fn run(
         media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
     }
 
-    /*TODO:
-    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-    // for each PeerConnection.
-    let mut registry = Registry::new();
+    let registry = Registry::new();
 
     // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m)?;
-    */
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
 
     // Create RTC peer connection configuration
     let config = RTCConfigurationBuilder::new()
@@ -239,6 +235,7 @@ async fn run(
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     // Create a new RTCPeerConnection

@@ -231,6 +231,15 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         )?;
     }
 
+    let registry = rtc::interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut media_engine,
+        )?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -238,6 +247,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut rtc_pc = RtcPeerConnection::new(config)?;

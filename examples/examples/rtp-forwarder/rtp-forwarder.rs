@@ -3,8 +3,10 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
+use rtc::interceptor::Registry;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -156,6 +158,11 @@ async fn run_peer_connection(
         RtpCodecKind::Audio,
     )?;
 
+    let registry = Registry::new();
+
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
@@ -163,6 +170,7 @@ async fn run_peer_connection(
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut peer_connection = RTCPeerConnection::new(config)?;

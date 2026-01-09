@@ -215,6 +215,15 @@ async fn test_play_from_disk_rtc_set_remote_before_add_track() -> Result<()> {
     media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
+    let registry = interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut media_engine,
+        )?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -222,6 +231,7 @@ async fn test_play_from_disk_rtc_set_remote_before_add_track() -> Result<()> {
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut rtc_pc = RtcPeerConnection::new(config)?;

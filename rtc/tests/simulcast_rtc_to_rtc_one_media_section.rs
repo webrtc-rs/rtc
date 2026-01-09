@@ -106,6 +106,15 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         )?;
     }
 
+    let registry = rtc::interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut answerer_media_engine,
+        )?;
+
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -113,6 +122,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }])
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut answerer_pc = RtcPeerConnection::new(answerer_config)?;
@@ -159,6 +169,15 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         )?;
     }
 
+    let registry = rtc::interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut offerer_media_engine,
+        )?;
+
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -166,6 +185,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }])
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut offerer_pc = RtcPeerConnection::new(offerer_config)?;

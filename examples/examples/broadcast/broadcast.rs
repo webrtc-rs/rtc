@@ -3,9 +3,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
+use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCTrackEvent;
@@ -176,6 +178,11 @@ async fn run_broadcaster(
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
 
+    let registry = Registry::new();
+
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
@@ -183,6 +190,7 @@ async fn run_broadcaster(
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut peer_connection = RTCPeerConnection::new(config)?;
@@ -509,6 +517,11 @@ async fn run_viewer(
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
 
+    let registry = Registry::new();
+
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
+
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
@@ -516,6 +529,7 @@ async fn run_viewer(
         }])
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut peer_connection = RTCPeerConnection::new(config)?;

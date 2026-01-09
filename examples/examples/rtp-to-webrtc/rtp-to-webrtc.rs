@@ -3,9 +3,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
+use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
@@ -103,20 +105,26 @@ async fn main() -> Result<()> {
 }
 
 async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSocket) -> Result<()> {
+    let setting_engine = SettingEngine::default();
+
     // Create a MediaEngine with VP8 support
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
 
-    let setting_engine = SettingEngine::default();
+    let registry = Registry::new();
+
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
 
     // Create configuration with STUN server
     let config = RTCConfigurationBuilder::new()
-        .with_setting_engine(setting_engine)
-        .with_media_engine(media_engine)
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     // Create PeerConnection
