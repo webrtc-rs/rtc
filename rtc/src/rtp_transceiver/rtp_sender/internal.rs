@@ -40,8 +40,10 @@ pub(crate) struct RTCRtpSenderInternal {
 
     /// Cached parameters returned by get_parameters()
     last_returned_parameters: Option<RTCRtpSendParameters>,
+
     /// Whether SDP negotiation has occurred for this sender
     negotiated: bool,
+    sent: bool,
 }
 
 impl RTCRtpSenderInternal {
@@ -74,6 +76,7 @@ impl RTCRtpSenderInternal {
 
             last_returned_parameters: None,
             negotiated: false,
+            sent: false,
         }
     }
 
@@ -283,7 +286,7 @@ impl RTCRtpSenderInternal {
     }
 
     /// Returns whether this sender has been negotiated via SDP.
-    pub(crate) fn negotiated(&self) -> bool {
+    pub(crate) fn is_negotiated(&self) -> bool {
         self.negotiated
     }
 
@@ -292,9 +295,17 @@ impl RTCRtpSenderInternal {
         self.negotiated = true;
     }
 
+    pub(crate) fn has_sent(&self) -> bool {
+        self.sent
+    }
+    pub(crate) fn set_sent(&mut self) {
+        self.sent = true;
+    }
+
     /// Stops the sender (placeholder for future implementation).
     pub(crate) fn stop(&mut self) -> Result<()> {
-        //TODO:
+        self.negotiated = false;
+        self.sent = false;
         Ok(())
     }
 

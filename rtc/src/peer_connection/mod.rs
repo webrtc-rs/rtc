@@ -1728,9 +1728,7 @@ where
         self.rtp_transceivers[sender_id.0]
             .set_direction(RTCRtpTransceiverDirection::from_send_recv(false, has_recv));
 
-        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
-            && sender.stop().is_ok()
-        {
+        if self.stop_rtp_sender(sender_id).is_ok() {
             self.trigger_negotiation_needed();
         }
 

@@ -115,7 +115,6 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::*;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
-use interceptor::stream_info::AssociatedStreamInfo;
 use interceptor::stream_info::*;
 use log::trace;
 use sdp::MediaDescription;
@@ -568,15 +567,18 @@ pub(crate) fn satisfy_type_and_direction(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn create_stream_info(
-    id: String,
     ssrc: SSRC,
+    ssrc_rtx: Option<SSRC>,
+    ssrc_fec: Option<SSRC>,
     payload_type: PayloadType,
+    payload_type_rtx: Option<PayloadType>,
+    payload_type_fec: Option<PayloadType>,
     codec: RTCRtpCodec,
-    webrtc_header_extensions: &[RTCRtpHeaderExtensionParameters],
-    associated_stream: Option<AssociatedStreamInfo>,
+    header_extensions: &[RTCRtpHeaderExtensionParameters],
 ) -> StreamInfo {
-    let header_extensions: Vec<RTPHeaderExtension> = webrtc_header_extensions
+    let rtp_header_extensions: Vec<RTPHeaderExtension> = header_extensions
         .iter()
         .map(|h| RTPHeaderExtension {
             id: h.id,
@@ -594,16 +596,17 @@ pub(crate) fn create_stream_info(
         .collect();
 
     StreamInfo {
-        id,
-        attributes: Attributes::new(),
         ssrc,
+        ssrc_rtx,
+        ssrc_fec,
         payload_type,
-        rtp_header_extensions: header_extensions,
+        payload_type_rtx,
+        payload_type_fec,
+        rtp_header_extensions,
         mime_type: codec.mime_type,
         clock_rate: codec.clock_rate,
         channels: codec.channels,
         sdp_fmtp_line: codec.sdp_fmtp_line,
         rtcp_feedback: feedbacks,
-        associated_stream,
     }
 }

@@ -219,41 +219,15 @@ pub(crate) fn find_rtx_payload_type(
     None
 }
 
-/// Finds the RTX codec parameters for a given codec.
-///
-/// Searches for the appropriate RTX codec as defined in RFC 4588,
-/// matching the original codec's payload type via the APT parameter.
-///
-/// # Parameters
-///
-/// * `original_codec` - The codec to find RTX parameters for
-/// * `available_codecs` - List of available codec parameters
-///
-/// # Returns
-///
-/// The RTX codec parameters if found, None otherwise
-pub(crate) fn codec_rtx_search(
-    original_codec: &RTCRtpCodecParameters,
-    available_codecs: &[RTCRtpCodecParameters],
-) -> Option<RTCRtpCodecParameters> {
-    // find the rtx codec as defined in RFC4588
-
-    let (mime_kind, _) = original_codec.rtp_codec.mime_type.split_once("/")?;
-    let rtx_mime = format!("{mime_kind}/rtx");
-
-    for codec in available_codecs {
-        if codec.rtp_codec.mime_type != rtx_mime {
-            continue;
-        }
-
-        let params = fmtp::parse(&codec.rtp_codec.mime_type, &codec.rtp_codec.sdp_fmtp_line);
-
-        if params
-            .parameter("apt")
-            .and_then(|v| v.parse::<u8>().ok())
-            .is_some_and(|apt| apt == original_codec.payload_type)
+// For now, only FlexFEC is supported.
+pub(crate) fn find_fec_payload_type(haystack: &[RTCRtpCodecParameters]) -> Option<PayloadType> {
+    for c in haystack {
+        if c.rtp_codec
+            .mime_type
+            .to_lowercase()
+            .contains(MIME_TYPE_FLEX_FEC)
         {
-            return Some(codec.clone());
+            return Some(c.payload_type);
         }
     }
 

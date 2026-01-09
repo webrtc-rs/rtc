@@ -1,21 +1,3 @@
-use std::collections::HashMap;
-
-/// Generic key/value store used by interceptors to attach metadata to streams.
-///
-/// Interceptors can use attributes to store arbitrary data associated with
-/// a stream. Both keys and values are `usize`, allowing interceptors to use
-/// type IDs or custom identifiers as keys.
-///
-/// # Example
-///
-/// ```ignore
-/// use rtc_interceptor::stream_info::Attributes;
-///
-/// let mut attributes = Attributes::new();
-/// attributes.insert(1, 42); // Store some metadata with key 1
-/// ```
-pub type Attributes = HashMap<usize, usize>;
-
 /// RTP header extension as negotiated via SDP (RFC 5285).
 ///
 /// Represents a header extension that can be used to add metadata to RTP packets,
@@ -71,14 +53,14 @@ pub struct RTCPFeedback {
 /// `Interceptor::bind_remote_stream()`, and `Interceptor::unbind_remote_stream()`.
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfo {
-    /// Unique identifier for the stream
-    pub id: String,
-    /// Arbitrary metadata attached by interceptors
-    pub attributes: Attributes,
     /// Synchronization Source identifier (SSRC) of the stream
     pub ssrc: u32,
+    pub ssrc_rtx: Option<u32>,
+    pub ssrc_fec: Option<u32>,
     /// RTP payload type (e.g., 96 for VP8, 111 for Opus)
     pub payload_type: u8,
+    pub payload_type_rtx: Option<u8>,
+    pub payload_type_fec: Option<u8>,
     /// Negotiated RTP header extensions for this stream
     pub rtp_header_extensions: Vec<RTPHeaderExtension>,
     /// MIME type of the codec (e.g., "video/VP8", "audio/opus")
@@ -91,6 +73,4 @@ pub struct StreamInfo {
     pub sdp_fmtp_line: String,
     /// RTCP feedback mechanisms negotiated for this stream
     pub rtcp_feedback: Vec<RTCPFeedback>,
-    /// Optional association to a related stream (RTX, FEC, etc.)
-    pub associated_stream: Option<AssociatedStreamInfo>,
 }

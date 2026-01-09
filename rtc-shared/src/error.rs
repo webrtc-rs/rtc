@@ -1497,6 +1497,8 @@ pub enum Error {
     ErrRTPSenderTrackNil,
     #[error("RTPSender not existed")]
     ErrRTPSenderNotExisted,
+    #[error("Sender Track has been removed or replaced to nil")]
+    ErrRTPSenderTrackRemoved,
     #[error("Sender cannot add encoding as rid is empty")]
     ErrRTPSenderRidNil,
     #[error("Sender cannot add encoding as there is no base track")]

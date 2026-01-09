@@ -1,4 +1,5 @@
 use super::*;
+use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::sdp::{
     MediaSection, PopulateSdpParams, get_by_mid, get_peer_direction, get_rids, have_data_channel,
@@ -7,11 +8,14 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use crate::rtp_transceiver::RTCRtpTransceiverId;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    codec_parameters_fuzzy_search, find_fec_payload_type, find_rtx_payload_type,
+};
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::rtp_transceiver::{RTCRtpTransceiverId, create_stream_info};
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
@@ -449,7 +453,85 @@ where
     }
 
     fn start_rtp_senders(&mut self) -> Result<()> {
+        for transceiver in &mut self.rtp_transceivers {
+            if let Some(sender) = transceiver.sender_mut()
+                && sender.is_negotiated()
+                && !sender.has_sent()
+                && !sender.track().codings().is_empty()
+            {
+                RTCPeerConnection::rtp_sender_local_stream_op(
+                    sender,
+                    &self.configuration.media_engine,
+                    &mut self.configuration.interceptor,
+                    true,
+                );
+
+                sender.set_sent();
+            }
+        }
+
         Ok(())
+    }
+
+    pub(super) fn stop_rtp_sender(&mut self, sender_id: RTCRtpSenderId) -> Result<()> {
+        if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
+            && sender.is_negotiated()
+            && sender.has_sent()
+            && !sender.track().codings().is_empty()
+        {
+            RTCPeerConnection::rtp_sender_local_stream_op(
+                sender,
+                &self.configuration.media_engine,
+                &mut self.configuration.interceptor,
+                false,
+            );
+
+            sender.stop()?;
+        }
+
+        Ok(())
+    }
+
+    fn rtp_sender_local_stream_op(
+        sender: &mut RTCRtpSenderInternal,
+        media_engine: &MediaEngine,
+        interceptor: &mut I,
+        is_binding: bool,
+    ) {
+        let parameters = sender.get_parameters(media_engine).clone();
+
+        for coding in sender.track().codings() {
+            let (codec, match_type) =
+                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
+            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
+                && match_type != CodecMatch::None
+            {
+                let stream_info = create_stream_info(
+                    ssrc,
+                    coding
+                        .rtp_coding_parameters
+                        .rtx
+                        .as_ref()
+                        .map(|rtx| rtx.ssrc),
+                    coding
+                        .rtp_coding_parameters
+                        .fec
+                        .as_ref()
+                        .map(|fec| fec.ssrc),
+                    codec.payload_type,
+                    find_rtx_payload_type(codec.payload_type, &parameters.rtp_parameters.codecs),
+                    find_fec_payload_type(&parameters.rtp_parameters.codecs),
+                    codec.rtp_codec.clone(),
+                    &parameters.rtp_parameters.header_extensions,
+                );
+
+                if is_binding {
+                    interceptor.bind_local_stream(&stream_info);
+                } else {
+                    interceptor.unbind_local_stream(&stream_info);
+                }
+            }
+        }
     }
 
     pub(super) fn start_rtp(&mut self, remote_desc: RTCSessionDescription) -> Result<()> {
@@ -502,24 +584,7 @@ where
                         codings,
                     ));
                 } else if let Some(ssrc) = incoming_track.ssrc {
-                    receiver.set_track(MediaStreamTrack::new(
-                        incoming_track.stream_id,
-                        incoming_track.track_id,
-                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
-                        incoming_track.kind,
-                        vec![RTCRtpEncodingParameters {
-                            rtp_coding_parameters: RTCRtpCodingParameters {
-                                rid: "".to_string(),
-                                ssrc: Some(ssrc),
-                                rtx: None,
-                                fec: None,
-                            },
-                            codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
-                            ..Default::default()
-                        }],
-                    ));
-
-                    receive_codings.push(RTCRtpCodingParameters {
+                    let rtp_coding_parameters = RTCRtpCodingParameters {
                         rid: "".to_string(),
                         ssrc: Some(ssrc),
                         rtx: incoming_track
@@ -528,7 +593,21 @@ where
                         fec: incoming_track
                             .fec_ssrc
                             .map(|fec_ssrc| RTCRtpFecParameters { ssrc: fec_ssrc }),
-                    });
+                    };
+
+                    receive_codings.push(rtp_coding_parameters.clone());
+
+                    receiver.set_track(MediaStreamTrack::new(
+                        incoming_track.stream_id,
+                        incoming_track.track_id,
+                        format!("remote-{}-{}", incoming_track.kind, math_rand_alpha(16)), //TODO:// Label
+                        incoming_track.kind,
+                        vec![RTCRtpEncodingParameters {
+                            rtp_coding_parameters,
+                            codec: Default::default(), // Defer receiver's track's codec until received the first RTP packet with payload_type in endpoint handler
+                            ..Default::default()
+                        }],
+                    ));
                 } else if only_one_rtp_transceiver {
                     // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
                     // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
