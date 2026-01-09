@@ -875,37 +875,41 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
             return Err(Error::ErrConnectionClosed);
         }
 
-        // Check for timed out queries first
-        if let Some(timeout_duration) = self.query_timeout {
-            let mut timed_out_ids = Vec::new();
-            for query in &self.queries {
-                if now.duration_since(query.start_time) >= timeout_duration {
-                    timed_out_ids.push(query.id);
+        if let Some(next_timeout) = self.next_timeout.as_ref()
+            && next_timeout <= &now
+        {
+            // Check for timed out queries first
+            if let Some(timeout_duration) = self.query_timeout {
+                let mut timed_out_ids = Vec::new();
+                for query in &self.queries {
+                    if now.duration_since(query.start_time) >= timeout_duration {
+                        timed_out_ids.push(query.id);
+                    }
+                }
+
+                // Emit timeout events and remove timed out queries
+                for query_id in timed_out_ids {
+                    log::debug!("Query {} timed out after {:?}", query_id, timeout_duration);
+                    self.event_outs.push_back(MdnsEvent::QueryTimeout(query_id));
+                    self.queries.retain(|q| q.id != query_id);
                 }
             }
 
-            // Emit timeout events and remove timed out queries
-            for query_id in timed_out_ids {
-                log::debug!("Query {} timed out after {:?}", query_id, timeout_duration);
-                self.event_outs.push_back(MdnsEvent::QueryTimeout(query_id));
-                self.queries.retain(|q| q.id != query_id);
+            // Retry queries that are due
+            let mut names_to_query = Vec::new();
+            for query in &mut self.queries {
+                if query.next_retry <= now {
+                    names_to_query.push(query.name_with_suffix.clone());
+                    query.next_retry = now + self.query_interval;
+                }
             }
-        }
 
-        // Retry queries that are due
-        let mut names_to_query = Vec::new();
-        for query in &mut self.queries {
-            if query.next_retry <= now {
-                names_to_query.push(query.name_with_suffix.clone());
-                query.next_retry = now + self.query_interval;
+            for name in names_to_query {
+                self.send_question(&name, now);
             }
-        }
 
-        for name in names_to_query {
-            self.send_question(&name, now);
+            self.update_next_timeout();
         }
-
-        self.update_next_timeout();
         Ok(())
     }
 
