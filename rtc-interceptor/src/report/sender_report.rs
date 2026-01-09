@@ -27,10 +27,17 @@ use std::time::{Duration, Instant};
 /// let chain = Registry::new()
 ///     .with(SenderReportBuilder::new().with_interval(Duration::from_millis(500)).build())
 ///     .build();
+///
+/// // With use_latest_packet enabled
+/// let chain = Registry::new()
+///     .with(SenderReportBuilder::new().with_use_latest_packet().build())
+///     .build();
 /// ```
 pub struct SenderReportBuilder<P> {
     /// Interval between sender reports.
     interval: Duration,
+    /// Whether to always use the latest packet, even if out-of-order.
+    use_latest_packet: bool,
     _phantom: PhantomData<P>,
 }
 
@@ -38,6 +45,7 @@ impl<P> Default for SenderReportBuilder<P> {
     fn default() -> Self {
         Self {
             interval: Duration::from_secs(1),
+            use_latest_packet: false,
             _phantom: PhantomData,
         }
     }
@@ -67,6 +75,31 @@ impl<P> SenderReportBuilder<P> {
         self
     }
 
+    /// Enable always using the latest packet for timestamp tracking,
+    /// even if it appears to be out-of-order based on sequence numbers.
+    ///
+    /// By default (disabled), only in-order packets update the RTP↔NTP
+    /// timestamp correlation. This prevents out-of-order packets from
+    /// corrupting the timestamp mapping.
+    ///
+    /// Enable this option when:
+    /// - Packets are guaranteed to arrive in order
+    /// - The application reorders packets before the interceptor
+    /// - You want the sender report to always reflect the most recent packet
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rtc_interceptor::SenderReportBuilder;
+    ///
+    /// let builder = SenderReportBuilder::new()
+    ///     .with_use_latest_packet();
+    /// ```
+    pub fn with_use_latest_packet(mut self) -> Self {
+        self.use_latest_packet = true;
+        self
+    }
+
     /// Create a builder function for use with Registry.
     ///
     /// This returns a closure that can be passed to `Registry::with()`.
@@ -80,7 +113,7 @@ impl<P> SenderReportBuilder<P> {
     ///     .with(SenderReportBuilder::new().build());
     /// ```
     pub fn build(self) -> impl FnOnce(P) -> SenderReportInterceptor<P> {
-        move |inner| SenderReportInterceptor::new(inner, self.interval)
+        move |inner| SenderReportInterceptor::new(inner, self.interval, self.use_latest_packet)
     }
 }
 
@@ -109,6 +142,9 @@ pub struct SenderReportInterceptor<P> {
     interval: Duration,
     eto: Instant,
 
+    /// Whether to always use the latest packet, even if out-of-order.
+    use_latest_packet: bool,
+
     streams: HashMap<u32, SenderStream>,
 
     read_queue: VecDeque<TaggedPacket>,
@@ -117,12 +153,14 @@ pub struct SenderReportInterceptor<P> {
 
 impl<P> SenderReportInterceptor<P> {
     /// Create a new SenderReportInterceptor.
-    fn new(inner: P, interval: Duration) -> Self {
+    fn new(inner: P, interval: Duration, use_latest_packet: bool) -> Self {
         Self {
             inner,
 
             interval,
             eto: Instant::now(),
+
+            use_latest_packet,
 
             streams: HashMap::new(),
 
@@ -217,7 +255,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
 
 impl<P: Interceptor> Interceptor for SenderReportInterceptor<P> {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
-        let stream = SenderStream::new(info.ssrc, info.clock_rate);
+        let stream = SenderStream::new(info.ssrc, info.clock_rate, self.use_latest_packet);
         self.streams.insert(info.ssrc, stream);
 
         self.inner.bind_local_stream(info);
@@ -335,5 +373,42 @@ mod tests {
         let pkt_message = pkt.message.clone();
         chain.inner_mut().handle_write(pkt).unwrap();
         assert_eq!(chain.inner_mut().poll_write().unwrap().message, pkt_message);
+    }
+
+    #[test]
+    fn test_use_latest_packet_option() {
+        // Build with use_latest_packet enabled
+        let chain = Registry::new()
+            .with(
+                SenderReportBuilder::default()
+                    .with_use_latest_packet()
+                    .build(),
+            )
+            .build();
+
+        assert!(chain.use_latest_packet);
+
+        // Build without use_latest_packet (default)
+        let chain_default = Registry::new()
+            .with(SenderReportBuilder::default().build())
+            .build();
+
+        assert!(!chain_default.use_latest_packet);
+    }
+
+    #[test]
+    fn test_use_latest_packet_combined_options() {
+        // Test combining multiple options
+        let chain = Registry::new()
+            .with(
+                SenderReportBuilder::default()
+                    .with_interval(Duration::from_millis(250))
+                    .with_use_latest_packet()
+                    .build(),
+            )
+            .build();
+
+        assert_eq!(chain.interval, Duration::from_millis(250));
+        assert!(chain.use_latest_packet);
     }
 }

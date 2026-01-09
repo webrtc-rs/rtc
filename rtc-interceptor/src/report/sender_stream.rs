@@ -6,6 +6,15 @@ pub(crate) struct SenderStream {
     ssrc: u32,
     clock_rate: f64,
 
+    /// Whether to always use the latest packet, even if out-of-order.
+    use_latest_packet: bool,
+
+    /// Track if first packet has been processed
+    started: bool,
+
+    /// Last sequence number seen (for out-of-order detection)
+    last_rtp_sn: u16,
+
     /// data from rtp packets
     last_rtp_time_rtp: u32,
     last_rtp_time_time: Instant,
@@ -15,11 +24,15 @@ pub(crate) struct SenderStream {
 }
 
 impl SenderStream {
-    pub(crate) fn new(ssrc: u32, clock_rate: u32) -> Self {
+    pub(crate) fn new(ssrc: u32, clock_rate: u32, use_latest_packet: bool) -> Self {
         SenderStream {
             ssrc,
             clock_rate: clock_rate as f64,
 
+            use_latest_packet,
+
+            started: false,
+            last_rtp_sn: 0,
             last_rtp_time_rtp: 0,
             last_rtp_time_time: Instant::now(),
             time_baseline: SystemInstant::now(),
@@ -29,10 +42,31 @@ impl SenderStream {
     }
 
     pub(crate) fn process_rtp(&mut self, now: Instant, pkt: &rtp::packet::Packet) {
-        // always update time to minimize errors
-        self.last_rtp_time_rtp = pkt.header.timestamp;
-        self.last_rtp_time_time = now;
+        let seq = pkt.header.sequence_number;
 
+        // Check if this packet should update timestamp info
+        // Use u16 arithmetic: diff > 0 && diff < (1<<15) means in-order
+        let diff = seq.wrapping_sub(self.last_rtp_sn);
+        let is_in_order = !self.started || (diff > 0 && diff < (1 << 15));
+
+        // Update timestamp mapping if:
+        // - use_latest_packet is enabled (always update), OR
+        // - this is the first packet, OR
+        // - packet is in-order
+        if self.use_latest_packet || is_in_order {
+            self.started = true;
+            self.last_rtp_sn = seq;
+
+            // Update time only on first packet of a frame (when timestamp changes)
+            // This ensures sender report is not affected by processing delay
+            // of pushing a large frame which could span multiple packets
+            if pkt.header.timestamp != self.last_rtp_time_rtp {
+                self.last_rtp_time_rtp = pkt.header.timestamp;
+                self.last_rtp_time_time = now;
+            }
+        }
+
+        // Always count packets and octets regardless of order
         self.counters.increment_packets();
         self.counters.count_octets(pkt.payload.len());
     }
