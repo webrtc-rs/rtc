@@ -31,4 +31,8 @@ impl ResourceBody for CnameResource {
     fn unpack(&mut self, msg: &[u8], off: usize, _length: usize) -> Result<usize> {
         self.cname.unpack(msg, off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

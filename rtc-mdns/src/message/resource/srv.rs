@@ -57,4 +57,8 @@ impl ResourceBody for SrvResource {
 
         Ok(off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

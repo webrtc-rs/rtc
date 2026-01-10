@@ -66,7 +66,7 @@
 //! 5. Check [`poll_event()`](sansio::Protocol::poll_event) for [`MdnsEvent::QueryAnswered`]
 //! 6. If no answer, call [`handle_timeout()`](sansio::Protocol::handle_timeout) to trigger retries
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -554,6 +554,7 @@ impl Mdns {
                             IpAddr::V4(ip) => ip.octets(),
                             IpAddr::V6(_) => {
                                 log::warn!("Cannot send IPv6 address in A record");
+                                //TODO: How to support IPv6 mDNS?
                                 return;
                             }
                         },
@@ -645,7 +646,22 @@ impl Mdns {
 
     fn process_answers(&mut self, parser: &mut Parser<'_>, src: SocketAddr) {
         for _ in 0..=MAX_MESSAGE_RECORDS {
-            let answer = match parser.answer_header() {
+            let answer_header = match parser.answer_header() {
+                Ok(a) => a,
+                Err(err) => {
+                    if err != Error::ErrSectionDone {
+                        log::warn!("Failed to parse answer header: {err}");
+                    }
+                    return;
+                }
+            };
+
+            // Only process A and AAAA records
+            if answer_header.typ != DnsType::A && answer_header.typ != DnsType::Aaaa {
+                continue;
+            }
+
+            let answer_resource = match parser.answer() {
                 Ok(a) => a,
                 Err(err) => {
                     if err != Error::ErrSectionDone {
@@ -655,23 +671,26 @@ impl Mdns {
                 }
             };
 
-            // Only process A and AAAA records
-            if answer.typ != DnsType::A && answer.typ != DnsType::Aaaa {
-                continue;
-            }
+            let local_ip = if let Some(body) = answer_resource.body
+                && let Some(a) = body.as_any().downcast_ref::<AResource>()
+            {
+                Ipv4Addr::from_octets(a.a).into()
+            } else {
+                src.ip()
+            };
 
             // Check if this answer matches any pending queries
-            let mut matched_query_ids = Vec::new();
+            let mut matched_query_ids = HashMap::new();
             for query in &self.queries {
-                if query.name_with_suffix == answer.name.data {
-                    matched_query_ids.push(query.id);
+                if query.name_with_suffix == answer_header.name.data {
+                    matched_query_ids.insert(query.id, local_ip);
                 }
             }
 
             // Emit events and remove matched queries
-            for query_id in matched_query_ids {
+            for (query_id, local_ip) in matched_query_ids {
                 self.event_outs
-                    .push_back(MdnsEvent::QueryAnswered(query_id, src.ip()));
+                    .push_back(MdnsEvent::QueryAnswered(query_id, local_ip));
                 self.queries.retain(|q| q.id != query_id);
             }
         }

@@ -32,4 +32,8 @@ impl ResourceBody for NsResource {
     fn unpack(&mut self, msg: &[u8], off: usize, _txt_length: usize) -> Result<usize> {
         self.ns.unpack(msg, off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

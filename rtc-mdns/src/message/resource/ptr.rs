@@ -32,4 +32,8 @@ impl ResourceBody for PtrResource {
     fn unpack(&mut self, msg: &[u8], off: usize, _length: usize) -> Result<usize> {
         self.ptr.unpack(msg, off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

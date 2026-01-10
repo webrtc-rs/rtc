@@ -9,6 +9,7 @@ pub(crate) mod soa;
 pub(crate) mod srv;
 pub(crate) mod txt;
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -272,6 +273,8 @@ pub(crate) trait ResourceBody: fmt::Display + fmt::Debug {
     ) -> Result<Vec<u8>>;
 
     fn unpack(&mut self, msg: &[u8], off: usize, length: usize) -> Result<usize>;
+
+    fn as_any(&self) -> &dyn Any;
 }
 
 pub(crate) fn unpack_resource_body(

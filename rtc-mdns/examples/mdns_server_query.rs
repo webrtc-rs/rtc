@@ -41,7 +41,7 @@ struct Args {
 }
 
 fn get_local_ip() -> IpAddr {
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+    /*if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
         if socket.connect("8.8.8.8:80").is_ok() {
             if let Ok(addr) = socket.local_addr() {
                 if let IpAddr::V4(ip) = addr.ip() {
@@ -49,7 +49,7 @@ fn get_local_ip() -> IpAddr {
                 }
             }
         }
-    }
+    }*/
     Ipv4Addr::new(127, 0, 0, 1).into()
 }
 

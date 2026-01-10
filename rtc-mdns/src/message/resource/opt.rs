@@ -81,4 +81,8 @@ impl ResourceBody for OptResource {
         self.options = opts;
         Ok(off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

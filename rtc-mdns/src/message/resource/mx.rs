@@ -42,4 +42,8 @@ impl ResourceBody for MxResource {
         self.pref = pref;
         self.mx.unpack(msg, off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

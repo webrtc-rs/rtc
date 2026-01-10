@@ -71,4 +71,8 @@ impl ResourceBody for SoaResource {
 
         Ok(off)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

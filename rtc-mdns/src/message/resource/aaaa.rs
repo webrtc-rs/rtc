@@ -31,4 +31,8 @@ impl ResourceBody for AaaaResource {
     fn unpack(&mut self, msg: &[u8], off: usize, _length: usize) -> Result<usize> {
         unpack_bytes(msg, off, &mut self.aaaa)
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
