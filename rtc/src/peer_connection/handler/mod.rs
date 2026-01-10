@@ -322,7 +322,7 @@ where
                 RTCEventInternal::RTCPeerConnectionEvent(
                     RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
                 )
-                | RTCEventInternal::DTLSHandshakeComplete(_, _, _) => {
+                | RTCEventInternal::DTLSHandshakeComplete(_, _) => {
                     self.update_connection_state(false);
                 }
                 _ => {}

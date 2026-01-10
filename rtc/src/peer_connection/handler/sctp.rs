@@ -15,9 +15,9 @@ use sctp::{
     AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
     Payload, PayloadProtocolIdentifier, StreamEvent,
 };
-use shared::TransportMessage;
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
+use shared::{TransportContext, TransportMessage};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -392,35 +392,34 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
-        let remote_addr = if let RTCEventInternal::DTLSHandshakeComplete(remote_addr, _, _) = &evt {
-            debug!("recv dtls handshake complete with {:?}", remote_addr);
-            Some(*remote_addr)
-        } else {
-            None
-        };
+        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
+            debug!("recv dtls handshake complete");
+
+            if let Some(sctp_transport_config) =
+                self.ctx.sctp_transport.sctp_transport_config.clone()
+            {
+                let (sctp_endpoint, sctp_associations) = (
+                    self.ctx
+                        .sctp_transport
+                        .sctp_endpoint
+                        .as_mut()
+                        .ok_or(Error::ErrSCTPNotEstablished)?,
+                    &mut self.ctx.sctp_transport.sctp_associations,
+                );
+
+                debug!("sctp endpoint initiates connection for dtls client role");
+                let (ch, conn) = sctp_endpoint
+                    .connect(
+                        ClientConfig::new(sctp_transport_config),
+                        TransportContext::default().peer_addr,
+                    )
+                    .map_err(|e| Error::Other(e.to_string()))?;
+
+                sctp_associations.insert(ch, conn);
+            }
+        }
 
         self.ctx.event_outs.push_back(evt);
-
-        if let Some(remote_addr) = remote_addr
-            && let Some(sctp_transport_config) =
-                self.ctx.sctp_transport.sctp_transport_config.clone()
-        {
-            let (sctp_endpoint, sctp_associations) = (
-                self.ctx
-                    .sctp_transport
-                    .sctp_endpoint
-                    .as_mut()
-                    .ok_or(Error::ErrSCTPNotEstablished)?,
-                &mut self.ctx.sctp_transport.sctp_associations,
-            );
-
-            debug!("sctp endpoint initiates connection for dtls client role");
-            let (ch, conn) = sctp_endpoint
-                .connect(ClientConfig::new(sctp_transport_config), remote_addr)
-                .map_err(|e| Error::Other(e.to_string()))?;
-
-            sctp_associations.insert(ch, conn);
-        }
 
         Ok(())
     }

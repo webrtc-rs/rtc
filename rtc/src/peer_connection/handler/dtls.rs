@@ -127,7 +127,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::DTLSHandshakeComplete(
-                            msg.transport.peer_addr,
                             Some(local_srtp_context),
                             Some(remote_srtp_context),
                         ));

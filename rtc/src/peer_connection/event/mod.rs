@@ -141,7 +141,6 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use srtp::context::Context;
-use std::net::SocketAddr;
 
 pub(crate) mod data_channel_event;
 pub(crate) mod ice_error_event;
@@ -536,7 +535,10 @@ pub(crate) enum RTCEventInternal {
     /// - Remote socket address
     /// - Optional SRTP context (send)
     /// - Optional SRTCP context (receive)
-    DTLSHandshakeComplete(SocketAddr, Option<Context>, Option<Context>),
+    DTLSHandshakeComplete(
+        Option<Context>, /*local_srtp_context*/
+        Option<Context>, /*remote_srtp_context*/
+    ),
 
     /// SCTP handshake completed successfully
     ///
