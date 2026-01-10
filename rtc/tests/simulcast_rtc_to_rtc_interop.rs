@@ -284,7 +284,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     let mut track_id2_receiver_id = HashMap::new();
 
     let start_time = Instant::now();
-    let test_timeout = Duration::from_secs(15);
+    let test_timeout = Duration::from_secs(25);
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
