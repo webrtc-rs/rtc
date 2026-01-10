@@ -17,8 +17,9 @@
 //! ```
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
+use crate::MDNS_PORT;
 use crate::proto::MDNS_MULTICAST_IPV4;
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -60,8 +61,15 @@ use socket2::{Domain, Protocol, Socket, Type};
 /// ```
 #[derive(Debug, Clone)]
 pub struct MulticastSocket {
-    bind_addr: SocketAddr,
+    multicast_local_ipv4: Option<Ipv4Addr>,
+    multicast_local_port: Option<u16>,
     interface: Option<Ipv4Addr>,
+}
+
+impl Default for MulticastSocket {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MulticastSocket {
@@ -81,11 +89,22 @@ impl MulticastSocket {
     /// let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
     /// let builder = MulticastSocket::new(bind_addr);
     /// ```
-    pub fn new(bind_addr: SocketAddr) -> Self {
+    pub fn new() -> Self {
         Self {
-            bind_addr,
+            multicast_local_ipv4: None,
+            multicast_local_port: None,
             interface: None,
         }
+    }
+
+    pub fn with_multicast_local_ipv4(mut self, multicast_local_ipv4: Ipv4Addr) -> Self {
+        self.multicast_local_ipv4 = Some(multicast_local_ipv4);
+        self
+    }
+
+    pub fn with_multicast_local_port(mut self, multicast_local_port: u16) -> Self {
+        self.multicast_local_port = Some(multicast_local_port);
+        self
     }
 
     /// Sets a specific network interface for multicast operations.
@@ -158,8 +177,26 @@ impl MulticastSocket {
         // Set non-blocking mode for async compatibility
         socket.set_nonblocking(true)?;
 
+        let multicast_local_ip = if let Some(multicast_local_ipv4) = self.multicast_local_ipv4 {
+            IpAddr::V4(multicast_local_ipv4)
+        } else if cfg!(target_os = "linux") {
+            IpAddr::V4(MDNS_MULTICAST_IPV4)
+        } else {
+            // DNS_MULTICAST_IPV4 doesn't work on Mac/Win,
+            // only 0.0.0.0 works fine, even 127.0.0.1 doesn't work
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+        };
+
+        let multicast_local_port = if let Some(multicast_local_port) = self.multicast_local_port {
+            multicast_local_port
+        } else {
+            MDNS_PORT
+        };
+
+        let multicast_local_addr = SocketAddr::new(multicast_local_ip, multicast_local_port);
+
         // Bind to the specified address
-        socket.bind(&self.bind_addr.into())?;
+        socket.bind(&multicast_local_addr.into())?;
 
         // Join the mDNS multicast group
         let iface = self.interface.unwrap_or(Ipv4Addr::UNSPECIFIED);
@@ -173,6 +210,7 @@ impl MulticastSocket {
 mod tests {
     use super::*;
     use crate::proto::MDNS_PORT;
+    use std::str::FromStr;
 
     #[test]
     fn test_multicast_constants() {
@@ -182,17 +220,21 @@ mod tests {
 
     #[test]
     fn test_multicast_socket_builder() {
-        let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
-        let builder = MulticastSocket::new(bind_addr);
-        assert_eq!(builder.bind_addr, bind_addr);
+        let builder = MulticastSocket::new()
+            .with_multicast_local_ipv4(Ipv4Addr::from_str("0.0.0.0").unwrap())
+            .with_multicast_local_port(5353);
+        assert!(builder.multicast_local_ipv4.is_some());
+        assert!(builder.multicast_local_port.is_some());
         assert!(builder.interface.is_none());
     }
 
     #[test]
     fn test_multicast_socket_with_interface() {
-        let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
         let interface = Ipv4Addr::new(192, 168, 1, 100);
-        let builder = MulticastSocket::new(bind_addr).with_interface(interface);
+        let builder = MulticastSocket::new()
+            .with_multicast_local_ipv4(Ipv4Addr::from_str("0.0.0.0").unwrap())
+            .with_multicast_local_port(5353)
+            .with_interface(interface);
         assert_eq!(builder.interface, Some(interface));
     }
 

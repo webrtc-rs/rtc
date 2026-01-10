@@ -87,7 +87,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut conn = Mdns::new(config);
 
     // Create a multicast UDP socket using the builder
-    let std_socket = MulticastSocket::new(bind_addr).into_std()?;
+    let multicast_local_ip = match bind_addr.ip() {
+        IpAddr::V4(local_ip) => local_ip,
+        IpAddr::V6(_) => return Ok(()),
+    };
+    let std_socket = MulticastSocket::new()
+        .with_multicast_local_ipv4(multicast_local_ip)
+        .with_multicast_local_port(bind_addr.port())
+        .into_std()?;
     let socket = UdpSocket::from_std(std_socket)?;
 
     println!("mDNS server running. Press Ctrl+C to stop.");

@@ -516,7 +516,7 @@ impl Mdns {
         self.write_outs.push_back(TransportMessage {
             now,
             transport: TransportContext {
-                local_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+                local_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), MDNS_PORT),
                 peer_addr: MDNS_DEST_ADDR,
                 transport_protocol: TransportProtocol::UDP,
                 ecn: None,
@@ -572,7 +572,7 @@ impl Mdns {
             }
         };
 
-        log::trace!("Queuing mDNS answer for {name} -> {local_ip}");
+        log::trace!("mDNS Queuing answer for {name} -> {local_ip}");
         self.write_outs.push_back(TransportMessage {
             now,
             transport: TransportContext {
@@ -633,7 +633,7 @@ impl Mdns {
         if let Some(local_ip) = self.config.local_ip {
             for name in names_to_answer {
                 log::trace!(
-                    "Found question for local name: {}, responding with {}",
+                    "mDNS Found question for local name: {}, responding with {}",
                     name,
                     local_ip
                 );
@@ -906,7 +906,11 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
 
                 // Emit timeout events and remove timed out queries
                 for query_id in timed_out_ids {
-                    log::debug!("Query {} timed out after {:?}", query_id, timeout_duration);
+                    log::debug!(
+                        "mDNS Query {} timed out after {:?}",
+                        query_id,
+                        timeout_duration
+                    );
                     self.event_outs.push_back(MdnsEvent::QueryTimeout(query_id));
                     self.queries.retain(|q| q.id != query_id);
                 }

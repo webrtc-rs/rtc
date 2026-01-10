@@ -1,8 +1,8 @@
 //#[cfg(test)]
 //mod mdns_test;
 
+use mdns::Mdns;
 use mdns::MdnsConfig;
-use mdns::{MDNS_MULTICAST_IPV4, Mdns};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use uuid::Uuid;
@@ -36,28 +36,25 @@ pub(crate) fn create_multicast_dns(
     mdns_local_ip: &Option<IpAddr>,
     mdns_query_timeout: &Option<Duration>,
 ) -> Result<Option<Mdns>> {
-    let local_names = match mdns_mode {
-        MulticastDnsMode::QueryOnly => vec![],
-        MulticastDnsMode::QueryAndGather => vec![mdns_local_name.to_owned()],
-        MulticastDnsMode::Disabled => return Ok(None),
-    };
+    if mdns_mode == MulticastDnsMode::Disabled {
+        return Ok(None);
+    }
 
-    let local_ip = if let Some(local_ip) = mdns_local_ip {
-        *local_ip
-    } else {
-        if cfg!(target_os = "linux") {
-            IpAddr::V4(MDNS_MULTICAST_IPV4)
+    let mut config = if mdns_mode == MulticastDnsMode::QueryAndGather {
+        let local_ip = if let Some(local_ip) = mdns_local_ip {
+            *local_ip
         } else {
-            // MDNS_MULTICAST_IPV4 doesn't work on Mac/Win,
-            // only 0.0.0.0 works fine, even 127.0.0.1 doesn't work
-            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
-        }
-    };
-    log::info!("mDNS is using {local_ip} as local ip");
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+        };
+        log::info!("mDNS is using {local_ip} as local ip");
 
-    let mut config = MdnsConfig::new()
-        .with_local_names(local_names)
-        .with_local_ip(local_ip);
+        MdnsConfig::new()
+            .with_local_names(vec![mdns_local_name.to_owned()])
+            .with_local_ip(local_ip)
+    } else {
+        MdnsConfig::new()
+    };
+
     if let Some(query_timeout) = mdns_query_timeout {
         config = config.with_query_timeout(*query_timeout);
     }

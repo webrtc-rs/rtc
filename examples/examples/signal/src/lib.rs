@@ -151,14 +151,13 @@ func unzip(in []byte) []byte {
 */
 
 pub fn get_local_ip() -> IpAddr {
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                if let IpAddr::V4(ip) = addr.ip() {
-                    return ip.into();
-                }
-            }
-        }
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0")
+        && socket.connect("8.8.8.8:80").is_ok()
+        && let Ok(addr) = socket.local_addr()
+        && let IpAddr::V4(ip) = addr.ip()
+    {
+        ip.into()
+    } else {
+        Ipv4Addr::new(127, 0, 0, 1).into()
     }
-    Ipv4Addr::new(127, 0, 0, 1).into()
 }

@@ -123,13 +123,10 @@ async fn run(
     input_sdp_file: String,
     is_client: bool,
 ) -> Result<()> {
-    // Everything below is the RTC API! Thanks for using it ❤️.
-    let local_ip = signal::get_local_ip();
+    let mdns_udp_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
-    let mdns_udp_socket = UdpSocket::from_std(
-        MulticastSocket::new(SocketAddr::new(local_ip, MDNS_PORT)).into_std()?,
-    )?;
-    let pc_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, port)).await?;
+    let pc_local_ip = signal::get_local_ip();
+    let pc_udp_socket = UdpSocket::bind(SocketAddr::new(pc_local_ip, port)).await?;
 
     let mut setting_engine = SettingEngine::default();
     setting_engine.set_answering_dtls_role(if is_client {
@@ -141,7 +138,7 @@ async fn run(
     setting_engine.set_multicast_dns_timeout(Some(Duration::from_secs(10)));
     setting_engine
         .set_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string());
-    setting_engine.set_multicast_dns_local_ip(Some(local_ip));
+    setting_engine.set_multicast_dns_local_ip(Some(pc_local_ip));
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -171,7 +168,7 @@ async fn run(
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
-            address: local_ip.to_string(),
+            address: pc_local_ip.to_string(),
             port,
             component: 1,
             ..Default::default()

@@ -15,7 +15,7 @@
 //! cargo run --package rtc-mdns --example mdns_query -- --local-name pion-test.local
 //! ```
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
@@ -61,8 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_query_timeout(Duration::from_secs(args.timeout));
     let mut conn = Mdns::new(config);
 
+    let multicast_local_ip = match bind_addr.ip() {
+        IpAddr::V4(local_ip) => local_ip,
+        IpAddr::V6(_) => return Ok(()),
+    };
+
     // Create a multicast UDP socket using the builder
-    let std_socket = MulticastSocket::new(bind_addr).into_std()?;
+    let std_socket = MulticastSocket::new()
+        .with_multicast_local_ipv4(multicast_local_ip)
+        .with_multicast_local_port(bind_addr.port())
+        .into_std()?;
     let socket = UdpSocket::from_std(std_socket)?;
 
     // Start the query

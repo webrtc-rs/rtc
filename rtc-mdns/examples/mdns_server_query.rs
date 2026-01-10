@@ -15,14 +15,17 @@
 //! cargo run --package rtc-mdns --example mdns_server_query -- --timeout 5 --interval 500
 //! ```
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use clap::Parser;
-use rtc_mdns::{MDNS_MULTICAST_IPV4, MDNS_PORT, Mdns, MdnsConfig, MdnsEvent, MulticastSocket};
+use env_logger::Target;
+use rtc_mdns::{Mdns, MdnsConfig, MdnsEvent, MulticastSocket};
 use sansio::Protocol;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::fs::OpenOptions;
+use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
 #[derive(Parser, Debug)]
@@ -30,7 +33,16 @@ use tokio::net::UdpSocket;
 #[command(version = "0.1.0")]
 #[command(author = "Rain Liu <yuliu@webrtc.rs>")]
 #[command(about = "An example of mDNS Server + Query using sans-I/O rtc-mdns")]
-struct Args {
+struct Cli {
+    #[arg(short, long)]
+    debug: bool,
+
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
+
+    #[arg(short, long, default_value_t = format!(""))]
+    output_log_file: String,
+
     /// Query timeout in seconds
     #[arg(long, default_value = "10")]
     timeout: u64,
@@ -41,7 +53,7 @@ struct Args {
 }
 
 fn get_local_ip() -> IpAddr {
-    /*if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
         if socket.connect("8.8.8.8:80").is_ok() {
             if let Ok(addr) = socket.local_addr() {
                 if let IpAddr::V4(ip) = addr.ip() {
@@ -49,24 +61,43 @@ fn get_local_ip() -> IpAddr {
                 }
             }
         }
-    }*/
+    }
     Ipv4Addr::new(127, 0, 0, 1).into()
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let args = Cli::parse();
 
-    let args = Args::parse();
-
-    let multicast_local_ip = if cfg!(target_os = "linux") {
-        IpAddr::V4(MDNS_MULTICAST_IPV4)
-    } else {
-        // DNS_MULTICAST_IPV4 doesn't work on Mac/Win,
-        // only 0.0.0.0 works fine, even 127.0.0.1 doesn't work
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
-    };
-    let multicast_local_addr = SocketAddr::new(multicast_local_ip, MDNS_PORT);
+    let log_level = log::LevelFilter::from_str(&args.log_level)?;
+    let output_log_file = args.output_log_file;
+    if args.debug {
+        env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
+            .format(|buf, record| {
+                writeln!(
+                    buf,
+                    "{}:{} [{}] {} - {}",
+                    record.file().unwrap_or("unknown"),
+                    record.line().unwrap_or(0),
+                    record.level(),
+                    chrono::Local::now().format("%H:%M:%S.%6f"),
+                    record.args()
+                )
+            })
+            .filter(None, log_level)
+            .init();
+    }
 
     log::info!("Creating mDNS server with local names and local ip");
 
@@ -87,8 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a shared multicast UDP socket using the builder
     // In a real application, you might use separate sockets
-    let multicast_udp_socket =
-        UdpSocket::from_std(MulticastSocket::new(multicast_local_addr).into_std()?)?;
+    let multicast_udp_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
     // Query 1: webrtc-rs-mdns-1.local
     let query_id_1 = mdns_client.query("webrtc-rs-mdns-1.local");
@@ -108,13 +138,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // Send any queued packets from both connections
         while let Some(packet) = mdns_server.poll_write() {
-            log::trace!("server_a sending {} bytes", packet.message.len());
+            log::trace!(
+                "mdns_server sending {} bytes from {} to {}",
+                packet.message.len(),
+                packet.transport.local_addr,
+                packet.transport.peer_addr,
+            );
             multicast_udp_socket
                 .send_to(&packet.message, packet.transport.peer_addr)
                 .await?;
         }
         while let Some(packet) = mdns_client.poll_write() {
-            log::trace!("server_b sending {} bytes", packet.message.len());
+            log::trace!(
+                "mdns_client sending {} bytes from {} to {}",
+                packet.message.len(),
+                packet.transport.local_addr,
+                packet.transport.peer_addr,
+            );
             multicast_udp_socket
                 .send_to(&packet.message, packet.transport.peer_addr)
                 .await?;
@@ -140,12 +180,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             result = multicast_udp_socket.recv_from(&mut buf) => {
                 match result {
                     Ok((len, peer_addr)) => {
-                        log::trace!("Received {} bytes from {}", len, peer_addr);
+                        log::trace!("Received {} bytes from {} to {}", len, peer_addr, multicast_udp_socket.local_addr()?);
                         let now = Instant::now();
                         let msg = TaggedBytesMut {
                             now,
                             transport: TransportContext {
-                                local_addr: multicast_local_addr,
+                                local_addr: multicast_udp_socket.local_addr()?,
                                 peer_addr,
                                 transport_protocol: TransportProtocol::UDP,
                                 ecn: None,
