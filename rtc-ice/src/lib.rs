@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod attributes;
 pub mod candidate;
+pub mod mdns;
 pub mod network_type;
 pub mod rand;
 pub mod state;

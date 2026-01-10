@@ -257,7 +257,7 @@ use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataCha
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use crate::peer_connection::configuration::{
-    RTCConfiguration,
+    RTCConfiguration, RTCIceTransportPolicy,
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
 };
 use crate::peer_connection::handler::PipelineContext;
@@ -301,6 +301,7 @@ use crate::rtp_transceiver::{
 };
 use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
+use ice::AgentConfig;
 use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::{Interceptor, NoopInterceptor};
 use sdp::MEDIA_SECTION_APPLICATION;
@@ -426,15 +427,69 @@ where
     pub fn new(mut configuration: RTCConfiguration<I>) -> Result<Self> {
         configuration.validate()?;
 
-        // Create the ICE transport
-        let ice_transport = RTCIceTransport::new(
-            configuration
+        let mut candidate_types = vec![];
+        if configuration.setting_engine.candidates.ice_lite {
+            candidate_types.push(ice::candidate::CandidateType::Host);
+        } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
+            candidate_types.push(ice::candidate::CandidateType::Relay);
+        }
+
+        let mut validated_servers = vec![];
+        if !configuration.ice_servers.is_empty() {
+            for server in &configuration.ice_servers {
+                let url = server.urls()?;
+                validated_servers.extend(url);
+            }
+        }
+
+        let agent_config = AgentConfig {
+            lite: configuration.setting_engine.candidates.ice_lite,
+            urls: validated_servers,
+            disconnected_timeout: configuration
+                .setting_engine
+                .timeout
+                .ice_disconnected_timeout,
+            failed_timeout: configuration.setting_engine.timeout.ice_failed_timeout,
+            keepalive_interval: configuration.setting_engine.timeout.ice_keepalive_interval,
+            candidate_types,
+            host_acceptance_min_wait: configuration
+                .setting_engine
+                .timeout
+                .ice_host_acceptance_min_wait,
+            srflx_acceptance_min_wait: configuration
+                .setting_engine
+                .timeout
+                .ice_srflx_acceptance_min_wait,
+            prflx_acceptance_min_wait: configuration
+                .setting_engine
+                .timeout
+                .ice_prflx_acceptance_min_wait,
+            relay_acceptance_min_wait: configuration
+                .setting_engine
+                .timeout
+                .ice_relay_acceptance_min_wait,
+            multicast_dns_mode: configuration.setting_engine.candidates.multicast_dns_mode,
+            multicast_dns_host_name: configuration
+                .setting_engine
+                .candidates
+                .multicast_dns_host_name
+                .clone(),
+            multicast_dns_query_timeout: configuration
+                .setting_engine
+                .timeout
+                .ice_multicast_dns_timeout,
+            local_ufrag: configuration
                 .setting_engine
                 .candidates
                 .username_fragment
                 .clone(),
-            configuration.setting_engine.candidates.password.clone(),
-        )?;
+            local_pwd: configuration.setting_engine.candidates.password.clone(),
+
+            ..Default::default()
+        };
+
+        // Create the ICE transport
+        let ice_transport = RTCIceTransport::new(agent_config)?;
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();

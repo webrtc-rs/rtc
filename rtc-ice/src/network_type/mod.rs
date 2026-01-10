@@ -25,8 +25,8 @@ pub fn supported_network_types() -> Vec<NetworkType> {
 /// Represents the type of network.
 #[derive(Default, PartialEq, Debug, Copy, Clone, Eq, Hash, Serialize, Deserialize)]
 pub enum NetworkType {
-    #[default]
     #[serde(rename = "unspecified")]
+    #[default]
     Unspecified,
 
     /// Indicates UDP over IPv4.

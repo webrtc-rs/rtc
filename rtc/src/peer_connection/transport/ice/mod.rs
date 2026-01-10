@@ -4,7 +4,7 @@ use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
 use crate::peer_connection::transport::ice::state::RTCIceTransportState;
-use ice::candidate::{Candidate, CandidateType};
+use ice::candidate::Candidate;
 use ice::tcp_type::TcpType;
 use ice::{Agent, AgentConfig};
 use shared::error::{Error, Result};
@@ -31,25 +31,8 @@ pub(crate) struct RTCIceTransport {
 
 impl RTCIceTransport {
     /// creates a new RTCIceTransport
-    pub(crate) fn new(local_ufrag: String, local_pwd: String) -> Result<Self> {
-        let agent = Agent::new(Arc::new(AgentConfig {
-            urls: vec![],
-            local_ufrag,
-            local_pwd,
-            disconnected_timeout: None,
-            failed_timeout: None,
-            keepalive_interval: None,
-            candidate_types: vec![],
-            check_interval: Default::default(),
-            max_binding_requests: None,
-            is_controlling: false,
-            lite: false,
-            host_acceptance_min_wait: None,
-            srflx_acceptance_min_wait: None,
-            prflx_acceptance_min_wait: None,
-            relay_acceptance_min_wait: None,
-            insecure_skip_verify: false,
-        }))?;
+    pub(crate) fn new(agent_config: AgentConfig) -> Result<Self> {
+        let agent = Agent::new(Arc::new(agent_config))?;
 
         Ok(RTCIceTransport {
             agent,
@@ -135,30 +118,10 @@ impl RTCIceTransport {
             return Ok(());
         }
 
-        // If we have a mDNS Candidate lets fully resolve it before adding it locally
-        if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
-            //TODO: if self.mdns_mode == MulticastDnsMode::Disabled {
-            log::warn!(
-                "remote mDNS candidate is not supported due to that mDNS is disabled: ({})",
-                c.address()
-            );
-            return Ok(());
-        }
-
         self.agent.add_remote_candidate(c)
     }
 
     pub(crate) fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
-        // If we have a mDNS Candidate lets fully resolve it before adding it locally
-        if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
-            //TODO: if self.mdns_mode == MulticastDnsMode::Disabled {
-            log::warn!(
-                "local mDNS candidate is not supported due to that mDNS is disabled: ({})",
-                c.address()
-            );
-            return Ok(());
-        }
-
         self.agent.add_local_candidate(c)
     }
 

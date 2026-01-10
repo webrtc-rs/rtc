@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use super::*;
+use crate::mdns::*;
 use crate::url::*;
 
 /// The interval at which the agent performs candidate checks in the connecting phase.
@@ -59,6 +60,19 @@ pub struct AgentConfig {
     /// bits of output to generate the username fragment.
     pub local_pwd: String,
 
+    /// Controls mDNS behavior for the ICE agent.
+    pub multicast_dns_mode: MulticastDnsMode,
+
+    /// Controls the hostname for this agent. If none is specified a random one will be generated.
+    pub multicast_dns_host_name: String,
+
+    /// Controls mDNS query timeout
+    /// If the duration is 0, we will never go to failed.
+    pub multicast_dns_query_timeout: Option<Duration>,
+
+    /// Control mDNS destination address
+    pub multicast_dns_dest_addr: String,
+
     /// Defaults to 5 seconds when this property is nil.
     /// If the duration is 0, the ICE Agent will never go to disconnected.
     pub disconnected_timeout: Option<Duration>,
@@ -67,7 +81,7 @@ pub struct AgentConfig {
     /// If the duration is 0, we will never go to failed.
     pub failed_timeout: Option<Duration>,
 
-    /// Determines how often should we send ICE keepalives (should be less then connectiontimeout
+    /// Determines how often should we send ICE keepalives (should be less than connection timeout
     /// above) when this is nil, it defaults to 10 seconds.
     /// A keepalive interval of 0 means we never send keepalive packets
     pub keepalive_interval: Option<Duration>,
@@ -91,13 +105,10 @@ pub struct AgentConfig {
 
     /// Specify a minimum wait time before selecting host candidates.
     pub host_acceptance_min_wait: Option<Duration>,
-
-    /// Specify a minimum wait time before selecting srfl candidates.
+    /// Specify a minimum wait time before selecting srflx candidates.
     pub srflx_acceptance_min_wait: Option<Duration>,
-
-    /// Specify a minimum wait time before selecting prfl candidates.
+    /// Specify a minimum wait time before selecting prflx candidates.
     pub prflx_acceptance_min_wait: Option<Duration>,
-
     /// Specify a minimum wait time before selecting relay candidates.
     pub relay_acceptance_min_wait: Option<Duration>,
 

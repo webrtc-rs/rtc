@@ -1163,6 +1163,8 @@ pub enum Error {
     ErrIoEOF,
 
     // mDNS
+    #[error("mDNS: port not support, only 5353 is supported")]
+    ErrMDNSPortNotSupported,
     #[error("mDNS: connection is closed")]
     ErrMDNSConnectionClosed,
     #[error("mDNS: query not found")]

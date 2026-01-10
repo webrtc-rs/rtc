@@ -130,11 +130,11 @@ use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 //TODO: use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 //TODO: use ice::udp_network::UDPNetwork;
-use std::time::Duration;
-
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
+use ice::mdns::MulticastDnsMode;
 use shared::error::{Error, Result};
+use std::time::Duration;
 
 /// Equal to UDP MTU
 pub(crate) const RECEIVE_MTU: usize = 1460;
@@ -163,6 +163,10 @@ pub struct Timeout {
     /// Duration without network activity before ICE is considered failed after disconnected.
     /// Default: 25 seconds.
     pub ice_failed_timeout: Option<Duration>,
+
+    /// Duration without network activity before mDNS query is considered failed.
+    /// Default: 25 seconds.
+    pub ice_multicast_dns_timeout: Option<Duration>,
 
     /// How often ICE sends keepalive packets when there's no media flow.
     /// Default: 2 seconds. If media is flowing, no keepalives are sent.
@@ -199,8 +203,8 @@ pub struct Candidates {
 
     /// Candidate type to use for NAT 1:1 IPs (Host or Srflx).
     pub nat_1to1_ip_candidate_type: RTCIceCandidateType,
-    //TODO: pub multicast_dns_mode: MulticastDnsMode,
-    //TODO: pub multicast_dns_host_name: String,
+    pub multicast_dns_mode: MulticastDnsMode,
+    pub multicast_dns_host_name: String,
     /// Static ICE username fragment (ufrag) for reproducible sessions.
     pub username_fragment: String,
 
@@ -321,8 +325,6 @@ pub struct SettingEngine {
     pub(crate) timeout: Timeout,
     pub(crate) candidates: Candidates,
     pub(crate) replay_protection: ReplayProtection,
-    //pub(crate) disable_srtp_replay_protection: bool, // duplicated setting as replay_protection
-    //pub(crate) disable_srtcp_replay_protection: bool, // duplicated setting as replay_protection
     pub(crate) sdp_media_level_fingerprints: bool,
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) disable_certificate_fingerprint_verification: bool,
@@ -679,18 +681,21 @@ impl SettingEngine {
         Ok(())
     }
 
-    /*TODO:
+    pub fn set_ice_multicast_dns_timeout(&mut self, timeout: Option<Duration>) {
+        self.timeout.ice_multicast_dns_timeout = timeout;
+    }
+
     /// set_ice_multicast_dns_mode controls if ice queries and generates mDNS ICE Candidates
     pub fn set_ice_multicast_dns_mode(&mut self, multicast_dns_mode: ice::mdns::MulticastDnsMode) {
         self.candidates.multicast_dns_mode = multicast_dns_mode
     }
 
-    /// set_multicast_dns_host_name sets a static HostName to be used by ice instead of generating one on startup
+    /// set_ice_multicast_dns_host_name sets a static HostName to be used by ice instead of generating one on startup
     /// This should only be used for a single PeerConnection. Having multiple PeerConnections with the same HostName will cause
     /// undefined behavior
-    pub fn set_multicast_dns_host_name(&mut self, host_name: String) {
+    pub fn set_ice_multicast_dns_host_name(&mut self, host_name: String) {
         self.candidates.multicast_dns_host_name = host_name;
-    }*/
+    }
 
     /// Sets static ICE credentials for reproducible sessions.
     ///

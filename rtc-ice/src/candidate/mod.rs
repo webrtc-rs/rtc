@@ -338,6 +338,12 @@ impl Candidate {
             && self.tcp_type() == other.tcp_type()
             && self.related_address() == other.related_address()
     }
+
+    pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
+        self.network_type = determine_network_type(&self.network, ip)?;
+        self.resolved_addr = SocketAddr::new(*ip, self.port); //TODO:  create_addr(network_type, *ip, self.port);
+        Ok(())
+    }
 }
 
 impl Candidate {

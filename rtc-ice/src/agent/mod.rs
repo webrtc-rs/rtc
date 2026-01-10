@@ -9,8 +9,9 @@ pub mod agent_stats;
 use agent_config::*;
 use bytes::BytesMut;
 use log::{debug, error, info, trace, warn};
+use mdns::{Mdns, QueryId};
 use sansio::Protocol;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,12 +24,13 @@ use stun::xoraddr::*;
 
 use crate::candidate::candidate_peer_reflexive::CandidatePeerReflexiveConfig;
 use crate::candidate::{candidate_pair::*, *};
+use crate::mdns::{MulticastDnsMode, create_multicast_dns, generate_multicast_dns_name};
 use crate::network_type::NetworkType;
 use crate::rand::*;
 use crate::state::*;
 use crate::url::*;
 use shared::error::*;
-use shared::{TransportContext, TransportMessage, TransportProtocol};
+use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 
 const ZERO_DURATION: Duration = Duration::from_secs(0);
 
@@ -133,10 +135,15 @@ pub struct Agent {
     pub(crate) checking_duration: Instant,
     pub(crate) last_checking_time: Instant,
 
+    pub(crate) mdns_mode: MulticastDnsMode,
+    pub(crate) mdns_name: String,
+    pub(crate) mdns_queries: HashMap<QueryId, Candidate>,
+    pub(crate) mdns_conn: Option<Mdns>,
+
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
 
-    pub(crate) write_outs: VecDeque<TransportMessage<BytesMut>>,
+    pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<Event>,
 }
 
@@ -168,6 +175,10 @@ impl Default for Agent {
             check_interval: Default::default(),
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
+            mdns_mode: MulticastDnsMode::Disabled,
+            mdns_name: "".to_owned(),
+            mdns_queries: HashMap::new(),
+            mdns_conn: None,
             candidate_types: vec![],
             urls: vec![],
             write_outs: Default::default(),
@@ -179,6 +190,31 @@ impl Default for Agent {
 impl Agent {
     /// Creates a new Agent.
     pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
+        let mut mdns_name = config.multicast_dns_host_name.clone();
+        if mdns_name.is_empty() {
+            mdns_name = generate_multicast_dns_name();
+        }
+
+        if !mdns_name.ends_with(".local") || mdns_name.split('.').count() != 2 {
+            return Err(Error::ErrInvalidMulticastDnshostName);
+        }
+
+        let mdns_mode = config.multicast_dns_mode;
+        let mdns_conn = match create_multicast_dns(
+            mdns_mode,
+            &mdns_name,
+            &config.multicast_dns_query_timeout,
+            &config.multicast_dns_dest_addr,
+        ) {
+            Ok(c) => c,
+            Err(err) => {
+                // Opportunistic mDNS: If we can't open the connection, that's ok: we
+                // can continue without it.
+                warn!("Failed to initialize mDNS {mdns_name}: {err}");
+                None
+            }
+        };
+
         let candidate_types = if config.candidate_types.is_empty() {
             default_candidate_types()
         } else {
@@ -283,6 +319,11 @@ impl Agent {
             last_checking_time: Instant::now(),
             last_connection_state: ConnectionState::Unspecified,
 
+            mdns_mode,
+            mdns_name,
+            mdns_queries: HashMap::new(),
+            mdns_conn,
+
             ufrag_pwd: UfragPwd::default(),
 
             local_candidates: vec![],
@@ -309,7 +350,15 @@ impl Agent {
     }
 
     /// Adds a new local candidate.
-    pub fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
+    pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<()> {
+        if c.candidate_type() == CandidateType::Host
+            && c.network_type == NetworkType::Udp4
+            && self.mdns_mode == MulticastDnsMode::QueryAndGather
+        {
+            // only one .local mDNS host candidate per IPv4 is supported
+            c.address = self.mdns_name.clone();
+        }
+
         for cand in &self.local_candidates {
             if cand.equal(&c) {
                 return Ok(());
@@ -331,11 +380,24 @@ impl Agent {
     pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<()> {
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
-            warn!(
-                "remote mDNS candidate added, but mDNS is disabled: ({})",
-                c.address()
-            );
-            return Err(Error::ErrMulticastDnsNotSupported);
+            if self.mdns_mode == MulticastDnsMode::Disabled {
+                warn!(
+                    "remote mDNS candidate added, but mDNS is disabled: ({})",
+                    c.address()
+                );
+                return Ok(());
+            }
+
+            if c.candidate_type() != CandidateType::Host {
+                return Err(Error::ErrAddressParseFailed);
+            }
+
+            if let Some(mdns_conn) = &mut self.mdns_conn {
+                let query_id = mdns_conn.query(c.address());
+                self.mdns_queries.insert(query_id, c);
+            }
+
+            return Ok(());
         }
 
         for cand in &self.remote_candidates {
@@ -1070,7 +1132,7 @@ impl Agent {
             TransportProtocol::UDP
         };
 
-        self.write_outs.push_back(TransportMessage {
+        self.write_outs.push_back(TaggedBytesMut {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr,
@@ -1087,7 +1149,7 @@ impl Agent {
     fn handle_inbound_candidate_msg(
         &mut self,
         local_index: usize,
-        msg: TransportMessage<BytesMut>,
+        msg: TaggedBytesMut,
     ) -> Result<()> {
         if is_stun_message(&msg.message) {
             let mut m = Message {

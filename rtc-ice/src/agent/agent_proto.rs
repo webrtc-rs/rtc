@@ -1,14 +1,45 @@
 use super::*;
+use mdns::{MDNS_PORT, MdnsEvent};
 
-impl sansio::Protocol<TransportMessage<BytesMut>, (), ()> for Agent {
-    type Rout = TransportMessage<BytesMut>;
-    type Wout = TransportMessage<BytesMut>;
+impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
+    type Rout = TaggedBytesMut;
+    type Wout = TaggedBytesMut;
     type Eout = Event;
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
-        if let Some(local_index) =
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
+        // demuxing mDNS packet from STUN packet by
+        if msg.transport.local_addr.port() == MDNS_PORT
+            && let Some(mdns_conn) = &mut self.mdns_conn
+        {
+            mdns_conn.handle_read(msg)?;
+
+            // After mdns handle_read, check any query result
+            while let Some(event) = mdns_conn.poll_event() {
+                match event {
+                    MdnsEvent::QueryAnswered(id, addr) => {
+                        if let Some(mut c) = self.mdns_queries.remove(&id)
+                            && c.set_ip(&addr).is_ok()
+                            && !self.remote_candidates.iter().any(|cand| cand.equal(&c))
+                        {
+                            debug!(
+                                "mDNS query id {} answered Candidate {} is added into remote candidates",
+                                id, c
+                            );
+                            self.remote_candidates.push(c);
+                        }
+                    }
+                    MdnsEvent::QueryTimeout(id) => {
+                        if let Some(c) = self.mdns_queries.remove(&id) {
+                            error!("mDNS Query {} timed out for {}", id, c.address());
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        } else if let Some(local_index) =
             self.find_local_candidate(msg.transport.local_addr, msg.transport.transport_protocol)
         {
             self.handle_inbound_candidate_msg(local_index, msg)
@@ -32,6 +63,12 @@ impl sansio::Protocol<TransportMessage<BytesMut>, (), ()> for Agent {
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        if let Some(mdns_conn) = &mut self.mdns_conn {
+            while let Some(msg) = mdns_conn.poll_write() {
+                self.write_outs.push_back(msg);
+            }
+        }
+
         self.write_outs.pop_front()
     }
 
@@ -44,6 +81,33 @@ impl sansio::Protocol<TransportMessage<BytesMut>, (), ()> for Agent {
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> std::result::Result<(), Self::Error> {
+        if let Some(mdns_conn) = &mut self.mdns_conn {
+            let _ = mdns_conn.handle_timeout(now);
+
+            // After mdns handle_timeout, check any query result
+            while let Some(event) = mdns_conn.poll_event() {
+                match event {
+                    MdnsEvent::QueryAnswered(id, addr) => {
+                        if let Some(mut c) = self.mdns_queries.remove(&id)
+                            && c.set_ip(&addr).is_ok()
+                            && !self.remote_candidates.iter().any(|cand| cand.equal(&c))
+                        {
+                            debug!(
+                                "mDNS query id {} answered Candidate {} is added into remote candidates",
+                                id, c
+                            );
+                            self.remote_candidates.push(c);
+                        }
+                    }
+                    MdnsEvent::QueryTimeout(id) => {
+                        if let Some(c) = self.mdns_queries.remove(&id) {
+                            error!("mDNS Query {} timed out for {}", id, c.address());
+                        }
+                    }
+                }
+            }
+        }
+
         if self.ufrag_pwd.remote_credentials.is_some()
             && self.last_checking_time + self.get_timeout_interval() <= now
         {
@@ -53,18 +117,29 @@ impl sansio::Protocol<TransportMessage<BytesMut>, (), ()> for Agent {
     }
 
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        if self.ufrag_pwd.remote_credentials.is_some() {
+        let mdns_timeout = if let Some(mdns_conn) = &mut self.mdns_conn {
+            mdns_conn.poll_timeout()
+        } else {
+            None
+        };
+
+        let ice_timeout = if self.ufrag_pwd.remote_credentials.is_some() {
             Some(self.last_checking_time + self.get_timeout_interval())
         } else {
             None
-        }
+        };
+
+        // This treats the two options as a collection and picks the minimum
+        [mdns_timeout, ice_timeout].into_iter().flatten().min()
     }
 
     fn close(&mut self) -> std::result::Result<(), Self::Error> {
         self.set_selected_pair(None);
         self.delete_all_candidates(false);
         self.update_connection_state(ConnectionState::Closed);
-
+        if let Some(mdns_conn) = &mut self.mdns_conn {
+            mdns_conn.close()?;
+        }
         Ok(())
     }
 }
