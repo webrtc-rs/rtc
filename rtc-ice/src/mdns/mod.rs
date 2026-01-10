@@ -1,8 +1,8 @@
 //#[cfg(test)]
 //mod mdns_test;
 
-use mdns::Mdns;
 use mdns::MdnsConfig;
+use mdns::{MDNS_MULTICAST_IPV4, Mdns};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use uuid::Uuid;
@@ -45,7 +45,13 @@ pub(crate) fn create_multicast_dns(
     let local_ip = if let Some(local_ip) = mdns_local_ip {
         *local_ip
     } else {
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+        if cfg!(target_os = "linux") {
+            IpAddr::V4(MDNS_MULTICAST_IPV4)
+        } else {
+            // MDNS_MULTICAST_IPV4 doesn't work on Mac/Win,
+            // only 0.0.0.0 works fine, even 127.0.0.1 doesn't work
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+        }
     };
     log::info!("mDNS is using {local_ip} as local ip");
 

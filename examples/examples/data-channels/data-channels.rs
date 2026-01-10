@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
+use rtc::ice::mdns::MulticastDnsMode;
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
@@ -135,6 +136,7 @@ async fn run(
     } else {
         RTCDtlsRole::Server
     })?;
+    setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryOnly);
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
