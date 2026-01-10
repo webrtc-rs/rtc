@@ -12,7 +12,7 @@ use log::{debug, error, info, trace, warn};
 use mdns::{Mdns, QueryId};
 use sansio::Protocol;
 use std::collections::{HashMap, VecDeque};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
@@ -135,10 +135,12 @@ pub struct Agent {
     pub(crate) checking_duration: Instant,
     pub(crate) last_checking_time: Instant,
 
-    pub(crate) mdns_mode: MulticastDnsMode,
-    pub(crate) mdns_name: String,
+    pub(crate) mdns: Option<Mdns>,
     pub(crate) mdns_queries: HashMap<QueryId, Candidate>,
-    pub(crate) mdns_conn: Option<Mdns>,
+
+    pub(crate) mdns_mode: MulticastDnsMode,
+    pub(crate) mdns_local_name: String,
+    pub(crate) mdns_local_ip: Option<IpAddr>,
 
     pub(crate) candidate_types: Vec<CandidateType>,
     pub(crate) urls: Vec<Url>,
@@ -176,9 +178,10 @@ impl Default for Agent {
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
             mdns_mode: MulticastDnsMode::Disabled,
-            mdns_name: "".to_owned(),
+            mdns_local_name: "".to_owned(),
+            mdns_local_ip: None,
             mdns_queries: HashMap::new(),
-            mdns_conn: None,
+            mdns: None,
             candidate_types: vec![],
             urls: vec![],
             write_outs: Default::default(),
@@ -190,26 +193,26 @@ impl Default for Agent {
 impl Agent {
     /// Creates a new Agent.
     pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
-        let mut mdns_name = config.multicast_dns_local_name.clone();
-        if mdns_name.is_empty() {
-            mdns_name = generate_multicast_dns_name();
+        let mut mdns_local_name = config.multicast_dns_local_name.clone();
+        if mdns_local_name.is_empty() {
+            mdns_local_name = generate_multicast_dns_name();
         }
 
-        if !mdns_name.ends_with(".local") || mdns_name.split('.').count() != 2 {
+        if !mdns_local_name.ends_with(".local") || mdns_local_name.split('.').count() != 2 {
             return Err(Error::ErrInvalidMulticastDnshostName);
         }
 
         let mdns_mode = config.multicast_dns_mode;
-        let mdns_conn = create_multicast_dns(
+        let mdns = create_multicast_dns(
             mdns_mode,
-            &mdns_name,
+            &mdns_local_name,
             &config.multicast_dns_local_ip,
             &config.multicast_dns_query_timeout,
         )
         .unwrap_or_else(|err| {
             // Opportunistic mDNS: If we can't open the connection, that's ok: we
             // can continue without it.
-            warn!("Failed to initialize mDNS {mdns_name}: {err}");
+            warn!("Failed to initialize mDNS {mdns_local_name}: {err}");
             None
         });
 
@@ -317,10 +320,12 @@ impl Agent {
             last_checking_time: Instant::now(),
             last_connection_state: ConnectionState::Unspecified,
 
-            mdns_mode,
-            mdns_name,
+            mdns,
             mdns_queries: HashMap::new(),
-            mdns_conn,
+
+            mdns_mode,
+            mdns_local_name,
+            mdns_local_ip: config.multicast_dns_local_ip,
 
             ufrag_pwd: UfragPwd::default(),
 
@@ -350,11 +355,19 @@ impl Agent {
     /// Adds a new local candidate.
     pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<()> {
         if c.candidate_type() == CandidateType::Host
-            && c.network_type == NetworkType::Udp4
             && self.mdns_mode == MulticastDnsMode::QueryAndGather
+            && c.network_type == NetworkType::Udp4
+            && self
+                .mdns_local_ip
+                .is_some_and(|local_ip| local_ip == c.addr().ip())
         {
             // only one .local mDNS host candidate per IPv4 is supported
-            c.address = self.mdns_name.clone();
+            // when registered local ip matches, use mdns_local_name to hide local host ip
+            trace!(
+                "mDNS hides local ip {} with local name {}",
+                c.address, self.mdns_local_name
+            );
+            c.address = self.mdns_local_name.clone();
         }
 
         for cand in &self.local_candidates {
@@ -390,7 +403,7 @@ impl Agent {
                 return Err(Error::ErrAddressParseFailed);
             }
 
-            if let Some(mdns_conn) = &mut self.mdns_conn {
+            if let Some(mdns_conn) = &mut self.mdns {
                 let query_id = mdns_conn.query(c.address());
                 self.mdns_queries.insert(query_id, c);
             }
@@ -820,9 +833,8 @@ impl Agent {
     }
 
     pub(crate) fn find_remote_candidate(&self, addr: SocketAddr) -> Option<usize> {
-        let (ip, port) = (addr.ip(), addr.port());
         for (index, c) in self.remote_candidates.iter().enumerate() {
-            if c.address() == ip.to_string() && c.port() == port {
+            if c.addr() == addr {
                 return Some(index);
             }
         }

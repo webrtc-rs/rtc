@@ -11,7 +11,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
         // demuxing mDNS packet from STUN packet whether peer addr port is MDNS_PORT
         if msg.transport.peer_addr.port() == MDNS_PORT {
-            let remote_candidates = if let Some(mdns_conn) = &mut self.mdns_conn {
+            let remote_candidates = if let Some(mdns_conn) = &mut self.mdns {
                 mdns_conn.handle_read(msg)?;
 
                 let mut remote_candidates = vec![];
@@ -70,7 +70,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        if let Some(mdns_conn) = &mut self.mdns_conn {
+        if let Some(mdns_conn) = &mut self.mdns {
             while let Some(msg) = mdns_conn.poll_write() {
                 self.write_outs.push_back(msg);
             }
@@ -88,7 +88,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> std::result::Result<(), Self::Error> {
-        let remote_candidates = if let Some(mdns_conn) = &mut self.mdns_conn {
+        let remote_candidates = if let Some(mdns_conn) = &mut self.mdns {
             let _ = mdns_conn.handle_timeout(now);
 
             let mut remote_candidates = vec![];
@@ -130,7 +130,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        let mdns_timeout = if let Some(mdns_conn) = &mut self.mdns_conn {
+        let mdns_timeout = if let Some(mdns_conn) = &mut self.mdns {
             mdns_conn.poll_timeout()
         } else {
             None
@@ -150,7 +150,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
         self.set_selected_pair(None);
         self.delete_all_candidates(false);
         self.update_connection_state(ConnectionState::Closed);
-        if let Some(mdns_conn) = &mut self.mdns_conn {
+        if let Some(mdns_conn) = &mut self.mdns {
             mdns_conn.close()?;
         }
         Ok(())

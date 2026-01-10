@@ -43,7 +43,7 @@ struct Cli {
     input_sdp_file: String,
     #[arg(short, long, default_value_t = format!(""))]
     output_log_file: String,
-    #[arg(long, default_value_t = format!("127.0.0.1"))]
+    #[arg(long, default_value_t = format!(""))]
     host: String,
     #[arg(long, default_value_t = 0)]
     port: u16,
@@ -54,7 +54,11 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let host = cli.host;
+    let host = if cli.host.is_empty() {
+        signal::get_local_ip().to_string()
+    } else {
+        cli.host
+    };
     let port = cli.port;
     let query_only = cli.query_only;
     let is_client = cli.client;
@@ -135,7 +139,7 @@ async fn run(
     let mdns_udp_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
     let pc_udp_socket = UdpSocket::bind(format!("{host}:{port}")).await?;
-    let local_addr = pc_udp_socket.local_addr()?;
+    let pc_local_addr = pc_udp_socket.local_addr()?;
 
     let mut setting_engine = SettingEngine::default();
     setting_engine.set_answering_dtls_role(if is_client {
@@ -151,7 +155,8 @@ async fn run(
         setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryAndGather);
         setting_engine
             .set_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string());
-        setting_engine.set_multicast_dns_local_ip(Some(local_addr.ip()));
+        // In below Add local host candidate, this pc_local_addr will be hided with "webrtc-rs-hides-local-ip-by-mdns.local"
+        setting_engine.set_multicast_dns_local_ip(Some(pc_local_addr.ip()));
     }
 
     let config = RTCConfigurationBuilder::new()
@@ -182,8 +187,9 @@ async fn run(
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
-            address: local_addr.ip().to_string(),
-            port: local_addr.port(),
+            // must use pc_local_addr here, since mDNS hide it with webrtc-rs-hides-local-ip-by-mdns.local
+            address: pc_local_addr.ip().to_string(),
+            port: pc_local_addr.port(),
             component: 1,
             ..Default::default()
         },

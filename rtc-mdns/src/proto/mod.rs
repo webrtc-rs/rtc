@@ -71,6 +71,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
+use log::{trace, warn};
 use shared::{TaggedBytesMut, TransportContext, TransportMessage, TransportProtocol};
 
 use crate::config::{DEFAULT_QUERY_INTERVAL, MAX_MESSAGE_RECORDS, MdnsConfig, RESPONSE_TTL};
@@ -674,8 +675,28 @@ impl Mdns {
             let local_ip = if let Some(body) = answer_resource.body
                 && let Some(a) = body.as_any().downcast_ref::<AResource>()
             {
-                Ipv4Addr::from_octets(a.a).into()
+                let local_ip = Ipv4Addr::from_octets(a.a).into();
+                if local_ip != src.ip() {
+                    warn!(
+                        "mDNS answers with different local ip on AResource {} vs src ip {} on Socket for query {}",
+                        local_ip,
+                        src.ip(),
+                        answer_header.name.data
+                    );
+                } else {
+                    trace!(
+                        "mDNS answers with the local ip {} on AResource and Socket for query {}",
+                        local_ip, answer_header.name.data
+                    );
+                }
+
+                local_ip
             } else {
+                warn!(
+                    "mDNS answers without AResource, fallback to use src ip {} on Socket for local ip for query {}",
+                    src.ip(),
+                    answer_header.name.data
+                );
                 src.ip()
             };
 
