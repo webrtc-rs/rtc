@@ -3,7 +3,7 @@ use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 use interceptor::{Interceptor, Packet, TaggedPacket};
-use log::debug;
+use log::{debug, trace};
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -107,7 +107,8 @@ where
                 now: packet.now,
                 transport: packet.transport,
                 message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
-            })
+            });
+            trace!("interceptor write {:?}", packet.transport.peer_addr);
         }
 
         self.ctx.write_outs.pop_front()

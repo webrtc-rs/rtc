@@ -39,7 +39,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
@@ -52,9 +51,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         .ok();
 
     log::info!("Starting TRUE simulcast test: rtc (offerer/sender) -> rtc (answerer/receiver)");
-
-    // Track received packets per track on answerer side
-    let packets_received = Arc::new(Mutex::new(HashMap::<String, u32>::new()));
 
     // Create answerer rtc peer
     let answerer_socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -197,6 +193,11 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     let mid = "0".to_owned();
     let mut rid2ssrc = HashMap::new();
     let mut codings = vec![];
+
+    // Track sent/received packets per track
+    let mut packets_received = HashMap::new();
+    let mut packets_sent = HashMap::new();
+
     for rid in ["low", "mid", "high"] {
         let ssrc = rand::random::<u32>();
         rid2ssrc.insert(rid, ssrc);
@@ -210,6 +211,8 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
             ..Default::default()
         });
         log::info!("✅ Offerer added track with RID: {} vs SSRC: {}", rid, ssrc);
+        packets_received.insert(rid.to_string(), 0u16);
+        packets_sent.insert(rid.to_string(), 0u16);
     }
 
     let output_track = MediaStreamTrack::new(
@@ -285,7 +288,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
-    let mut sequence_number = 0;
 
     while start_time.elapsed() < test_timeout {
         // Process offerer writes
@@ -398,10 +400,8 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("ssrc_{}", rtp_packet.header.ssrc));
 
-                    let mut counts = packets_received.lock().await;
-                    let count = counts.entry(rid.clone()).or_insert(0);
+                    let count = packets_received.entry(rid.clone()).or_insert(0u16);
                     *count += 1;
-
                     if *count % 10 == 0 {
                         log::info!(
                             "Answerer received RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
@@ -427,60 +427,65 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
 
         // Send RTP packets from offerer on all 3 simulcast layers
         if streaming_started {
-            for (rid, ssrc) in &rid2ssrc {
-                let mut rtp_sender = offerer_pc
-                    .rtp_sender(sender_id)
-                    .ok_or(Error::ErrRTPSenderNotExisted)?;
+            for _ in 0..10 {
+                for (rid, ssrc) in &rid2ssrc {
+                    let mut rtp_sender = offerer_pc
+                        .rtp_sender(sender_id)
+                        .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                // Get negotiated header extension IDs
-                let params = rtp_sender.get_parameters();
-                let mut mid_id = None;
-                let mut rid_id = None;
+                    // Get negotiated header extension IDs
+                    let params = rtp_sender.get_parameters();
+                    let mut mid_id = None;
+                    let mut rid_id = None;
 
-                for ext in &params.rtp_parameters.header_extensions {
-                    if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
-                        mid_id = Some(ext.id as u8);
-                    } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
-                        rid_id = Some(ext.id as u8);
+                    for ext in &params.rtp_parameters.header_extensions {
+                        if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
+                            mid_id = Some(ext.id as u8);
+                        } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
+                            rid_id = Some(ext.id as u8);
+                        }
+                    }
+
+                    let sequence_number = packets_sent.entry(rid.to_string()).or_insert(0u16);
+                    *sequence_number += 1;
+
+                    // Create RTP packet header
+                    let mut header = rtp::header::Header {
+                        version: 2,
+                        padding: false,
+                        marker: false,
+                        payload_type: 96,
+                        sequence_number: *sequence_number,
+                        timestamp: (Instant::now().duration_since(start_time).as_millis() * 90)
+                            as u32,
+                        ssrc: *ssrc,
+                        ..Default::default()
+                    };
+
+                    // Add MID extension using set_extension
+                    if let Some(id) = mid_id {
+                        header
+                            .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
+                            .expect("Failed to set MID extension");
+                    }
+
+                    // Add RID extension using set_extension
+                    if let Some(id) = rid_id {
+                        header
+                            .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
+                            .expect("Failed to set RID extension");
+                    }
+
+                    // Create RTP packet with extensions
+                    let packet = rtp::packet::Packet {
+                        header,
+                        payload: bytes::Bytes::from(dummy_frame.clone()),
+                    };
+
+                    if let Err(e) = rtp_sender.write_rtp(packet) {
+                        log::debug!("Failed to send RTP on {}: {}", rid, e);
                     }
                 }
-
-                // Create RTP packet header
-                let mut header = rtp::header::Header {
-                    version: 2,
-                    padding: false,
-                    marker: false,
-                    payload_type: 96,
-                    sequence_number,
-                    timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
-                    ssrc: *ssrc,
-                    ..Default::default()
-                };
-
-                // Add MID extension using set_extension
-                if let Some(id) = mid_id {
-                    header
-                        .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
-                        .expect("Failed to set MID extension");
-                }
-
-                // Add RID extension using set_extension
-                if let Some(id) = rid_id {
-                    header
-                        .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
-                        .expect("Failed to set RID extension");
-                }
-
-                // Create RTP packet with extensions
-                let packet = rtp::packet::Packet {
-                    header,
-                    payload: bytes::Bytes::from(dummy_frame.clone()),
-                };
-
-                if let Err(e) = rtp_sender.write_rtp(packet) {
-                    log::debug!("Failed to send RTP on {}: {}", rid, e);
-                }
-                sequence_number += 1;
             }
 
             // Send at ~30fps
@@ -559,29 +564,27 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }
 
         // Check if we've received enough packets
-        let received_count = packets_received.lock().await;
-        let total: u32 = received_count.values().sum();
-        if total >= 30 && received_count.len() >= 3 {
+        let total: u16 = packets_received.values().sum();
+        if total >= 30 && packets_received.len() >= 3 {
             log::info!("Received sufficient packets from all tracks, ending test");
             break;
         }
     }
 
     // Check results
-    let final_counts = packets_received.lock().await;
     log::info!("Final packet counts by track:");
-    for (track, count) in final_counts.iter() {
+    for (track, count) in packets_received.iter() {
         log::info!("  {}: {} packets", track, count);
     }
 
     // Verify we received packets on all 3 simulcast layers
     assert!(
-        final_counts.len() >= 3,
+        packets_received.len() >= 3,
         "Should have received packets on 3 tracks, got {}",
-        final_counts.len()
+        packets_received.len()
     );
 
-    let total_packets: u32 = final_counts.values().sum();
+    let total_packets: u16 = packets_received.values().sum();
     assert!(
         total_packets >= 30,
         "Should have received at least 30 packets total, got {}",
@@ -591,7 +594,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     log::info!(
         "✅ SUCCESS: Received {} packets across {} simulcast tracks!",
         total_packets,
-        final_counts.len()
+        packets_received.len()
     );
 
     offerer_pc.close()?;

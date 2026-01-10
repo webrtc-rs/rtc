@@ -66,7 +66,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         ))))
                     } else {
                         Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for {:?}",
+                            "remote_srtp_context is not set yet for rtcp_packet {:?}",
                             msg.transport.peer_addr
                         )))
                     }
@@ -80,7 +80,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         ))))
                     } else {
                         Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for {:?}",
+                            "remote_srtp_context is not set yet for rtp_packet {:?}",
                             msg.transport.peer_addr
                         )))
                     }
@@ -127,7 +127,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             context.encrypt_rtcp(&packet)
                         } else {
                             Err(Error::Other(format!(
-                                "local_srtp_context is not set yet for {:?}",
+                                "local_srp_context is not set yet for rtcp_packet {:?}",
                                 msg.transport.peer_addr
                             )))
                         }
@@ -138,7 +138,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             context.encrypt_rtp(&packet)
                         } else {
                             Err(Error::Other(format!(
-                                "local_srtp_context is not set yet for {:?}",
+                                "local_srtp_context is not set yet for rtp_packet {:?}",
                                 msg.transport.peer_addr
                             )))
                         }
