@@ -183,6 +183,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         if let RTCEventInternal::DTLSHandshakeComplete(local_srtp_context, remote_srtp_context) =
             &mut evt
         {
+            debug!("srtp recv dtls handshake complete");
+
             self.ctx.local_srtp_context = local_srtp_context.take();
             self.ctx.remote_srtp_context = remote_srtp_context.take()
         }

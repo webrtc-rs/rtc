@@ -393,7 +393,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
         if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
-            debug!("recv dtls handshake complete");
+            debug!("sctp recv dtls handshake complete");
 
             if let Some(sctp_transport_config) =
                 self.ctx.sctp_transport.sctp_transport_config.clone()

@@ -10,6 +10,8 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct InterceptorHandlerContext {
+    is_dtls_handshake_complete: bool,
+
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
@@ -49,21 +51,23 @@ where
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
-            self.interceptor.handle_read(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: packet.clone(),
-                // RTP packet use Bytes which is zero-copy,
-                // RTCP packet may have clone overhead.
-                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
-            })?;
+        if self.ctx.is_dtls_handshake_complete {
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
+                self.interceptor.handle_read(TaggedPacket {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: packet.clone(),
+                    // RTP packet use Bytes which is zero-copy,
+                    // RTCP packet may have clone overhead.
+                    // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
+                })?;
 
-            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
-                // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-                // just add a new interceptor to forward it.
-                debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
-                return Ok(());
+                if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
+                    // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
+                    // just add a new interceptor to forward it.
+                    debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
+                    return Ok(());
+                }
             }
         }
 
@@ -73,27 +77,31 @@ where
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        while let Some(packet) = self.interceptor.poll_read() {
-            self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                now: packet.now,
-                transport: packet.transport,
-                message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
-            });
+        if self.ctx.is_dtls_handshake_complete {
+            while let Some(packet) = self.interceptor.poll_read() {
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                    now: packet.now,
+                    transport: packet.transport,
+                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                });
+            }
         }
 
         self.ctx.read_outs.pop_front()
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
-            self.interceptor.handle_write(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: packet.clone(),
-                // RTP packet use Bytes which is zero-copy,
-                // RTCP packet may have clone overhead.
-                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
-            })?;
+        if self.ctx.is_dtls_handshake_complete {
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
+                self.interceptor.handle_write(TaggedPacket {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: packet.clone(),
+                    // RTP packet use Bytes which is zero-copy,
+                    // RTCP packet may have clone overhead.
+                    // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
+                })?;
+            }
         }
 
         debug!("interceptor write {:?}", msg.transport.peer_addr);
@@ -102,20 +110,26 @@ where
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
-        while let Some(packet) = self.interceptor.poll_write() {
-            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                now: packet.now,
-                transport: packet.transport,
-                message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
-            });
-            trace!("interceptor write {:?}", packet.transport.peer_addr);
+        if self.ctx.is_dtls_handshake_complete {
+            while let Some(packet) = self.interceptor.poll_write() {
+                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                    now: packet.now,
+                    transport: packet.transport,
+                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                });
+                trace!("interceptor write {:?}", packet.transport.peer_addr);
+            }
         }
 
         self.ctx.write_outs.pop_front()
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        // self.interceptor.handle_event(());
+        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
+            debug!("interceptor recv dtls handshake complete");
+            self.ctx.is_dtls_handshake_complete = true;
+            // self.interceptor.handle_event(());
+        }
 
         self.ctx.event_outs.push_back(evt);
         Ok(())
@@ -128,11 +142,19 @@ where
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
-        self.interceptor.handle_timeout(now)
+        if self.ctx.is_dtls_handshake_complete {
+            self.interceptor.handle_timeout(now)
+        } else {
+            Ok(())
+        }
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
-        self.interceptor.poll_timeout()
+        if self.ctx.is_dtls_handshake_complete {
+            self.interceptor.poll_timeout()
+        } else {
+            None
+        }
     }
 
     fn close(&mut self) -> Result<()> {

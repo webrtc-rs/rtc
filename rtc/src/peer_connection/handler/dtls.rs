@@ -90,7 +90,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             if let Some(state) =
                                 dtls_endpoint.get_connection_state(msg.transport.peer_addr)
                             {
-                                debug!("recv dtls handshake complete");
+                                debug!("dtls handshake complete");
                                 let (local_srtp_context, remote_srtp_context) =
                                     DtlsHandler::update_srtp_contexts(
                                         state,
