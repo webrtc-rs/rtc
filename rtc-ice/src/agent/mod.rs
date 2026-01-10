@@ -190,7 +190,7 @@ impl Default for Agent {
 impl Agent {
     /// Creates a new Agent.
     pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
-        let mut mdns_name = config.multicast_dns_host_name.clone();
+        let mut mdns_name = config.multicast_dns_local_name.clone();
         if mdns_name.is_empty() {
             mdns_name = generate_multicast_dns_name();
         }
@@ -200,20 +200,18 @@ impl Agent {
         }
 
         let mdns_mode = config.multicast_dns_mode;
-        let mdns_conn = match create_multicast_dns(
+        let mdns_conn = create_multicast_dns(
             mdns_mode,
             &mdns_name,
+            &config.multicast_dns_local_ip,
             &config.multicast_dns_query_timeout,
-            &config.multicast_dns_dest_addr,
-        ) {
-            Ok(c) => c,
-            Err(err) => {
-                // Opportunistic mDNS: If we can't open the connection, that's ok: we
-                // can continue without it.
-                warn!("Failed to initialize mDNS {mdns_name}: {err}");
-                None
-            }
-        };
+        )
+        .unwrap_or_else(|err| {
+            // Opportunistic mDNS: If we can't open the connection, that's ok: we
+            // can continue without it.
+            warn!("Failed to initialize mDNS {mdns_name}: {err}");
+            None
+        });
 
         let candidate_types = if config.candidate_types.is_empty() {
             default_candidate_types()

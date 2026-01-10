@@ -468,16 +468,14 @@ where
                 .setting_engine
                 .timeout
                 .ice_relay_acceptance_min_wait,
-            multicast_dns_mode: configuration.setting_engine.candidates.multicast_dns_mode,
-            multicast_dns_host_name: configuration
+            multicast_dns_mode: configuration.setting_engine.multicast_dns.mode,
+            multicast_dns_local_name: configuration
                 .setting_engine
-                .candidates
-                .multicast_dns_host_name
+                .multicast_dns
+                .local_name
                 .clone(),
-            multicast_dns_query_timeout: configuration
-                .setting_engine
-                .timeout
-                .ice_multicast_dns_timeout,
+            multicast_dns_local_ip: configuration.setting_engine.multicast_dns.local_ip,
+            multicast_dns_query_timeout: configuration.setting_engine.multicast_dns.timeout,
             local_ufrag: configuration
                 .setting_engine
                 .candidates

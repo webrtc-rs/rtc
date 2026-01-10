@@ -102,7 +102,7 @@ fn test_server_responds_to_query() {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5353);
     let config_server = MdnsConfig::default()
         .with_local_names(vec!["test-server.local".to_string()])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     // Client configuration
@@ -146,7 +146,7 @@ fn test_multiple_local_names() {
             "name2.local".to_string(),
             "name3.local".to_string(),
         ])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5353);
@@ -189,7 +189,7 @@ fn test_query_for_unknown_name_remains_pending() {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 5353);
     let config_server = MdnsConfig::default()
         .with_local_names(vec!["known.local".to_string()])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 5353);
@@ -339,7 +339,7 @@ fn test_close_clears_all_state() {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 5353);
     let config = MdnsConfig::default()
         .with_local_names(vec!["host.local".to_string()])
-        .with_local_addr(server_addr)
+        .with_local_ip(server_addr.ip())
         .with_query_interval(Duration::from_secs(1));
     let mut conn = Mdns::new(config);
 
@@ -390,7 +390,7 @@ fn test_sequential_queries() {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 5353);
     let config_server = MdnsConfig::default()
         .with_local_names(vec!["first.local".to_string(), "second.local".to_string()])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 5353);
@@ -442,7 +442,7 @@ fn test_name_normalization() {
     // Server configured with name without trailing dot
     let config_server = MdnsConfig::default()
         .with_local_names(vec!["nodot.local".to_string()])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10)), 5353);
@@ -474,7 +474,7 @@ fn test_multiple_clients_single_server() {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1)), 5353);
     let config_server = MdnsConfig::default()
         .with_local_names(vec!["shared-server.local".to_string()])
-        .with_local_addr(server_addr);
+        .with_local_ip(server_addr.ip());
     let mut server = Mdns::new(config_server);
 
     let client1_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 10)), 5353);
@@ -534,13 +534,13 @@ fn test_bidirectional_server_client() {
     // Connection A: serves "hostA.local", queries for "hostB.local"
     let config_a = MdnsConfig::default()
         .with_local_names(vec!["hostA.local".to_string()])
-        .with_local_addr(addr_a);
+        .with_local_ip(addr_a.ip());
     let mut conn_a = Mdns::new(config_a);
 
     // Connection B: serves "hostB.local", queries for "hostA.local"
     let config_b = MdnsConfig::default()
         .with_local_names(vec!["hostB.local".to_string()])
-        .with_local_addr(addr_b);
+        .with_local_ip(addr_b.ip());
     let mut conn_b = Mdns::new(config_b);
 
     let now = Instant::now();

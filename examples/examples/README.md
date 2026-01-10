@@ -63,6 +63,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 ### Miscellaneous
 
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
+- [] [mDNS Query and Gather](mdns-query-and-gather) Example mdns-query-and-gather demonstrates webrtc-rs hides local ip
+  with mDNS.
 - 🚧 [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
   single port. By default, it listens on a new port for every PeerConnection. webrtc-rs can be configured to use a
   single port for multiple connections.

@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::time::Duration;
 
 use super::*;
@@ -60,18 +61,18 @@ pub struct AgentConfig {
     /// bits of output to generate the username fragment.
     pub local_pwd: String,
 
-    /// Controls mDNS behavior for the ICE agent.
-    pub multicast_dns_mode: MulticastDnsMode,
-
-    /// Controls the hostname for this agent. If none is specified a random one will be generated.
-    pub multicast_dns_host_name: String,
-
     /// Controls mDNS query timeout
     /// If the duration is 0, we will never go to failed.
     pub multicast_dns_query_timeout: Option<Duration>,
 
-    /// Control mDNS destination address
-    pub multicast_dns_dest_addr: String,
+    /// Controls mDNS behavior for the ICE agent.
+    pub multicast_dns_mode: MulticastDnsMode,
+
+    /// Controls the local name for this agent. If none is specified a random one will be generated.
+    pub multicast_dns_local_name: String,
+
+    /// Control mDNS local IP address
+    pub multicast_dns_local_ip: Option<IpAddr>,
 
     /// Defaults to 5 seconds when this property is nil.
     /// If the duration is 0, the ICE Agent will never go to disconnected.

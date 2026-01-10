@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the sans-I/O mDNS connection
     let config = MdnsConfig::default()
         .with_local_names(vec![args.local_name.clone()])
-        .with_local_addr(local_addr);
+        .with_local_ip(local_addr.ip());
     let mut conn = Mdns::new(config);
 
     // Create a multicast UDP socket using the builder

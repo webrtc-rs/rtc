@@ -1,14 +1,13 @@
 //#[cfg(test)]
 //mod mdns_test;
 
-use mdns::{MDNS_DEST_ADDR, Mdns};
-use mdns::{MDNS_PORT, MdnsConfig};
-use std::net::SocketAddr;
-use std::str::FromStr;
+use mdns::Mdns;
+use mdns::MdnsConfig;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use uuid::Uuid;
 
-use shared::error::{Error, Result};
+use shared::error::Result;
 
 /// Represents the different Multicast modes that ICE can run.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
@@ -33,35 +32,26 @@ pub(crate) fn generate_multicast_dns_name() -> String {
 
 pub(crate) fn create_multicast_dns(
     mdns_mode: MulticastDnsMode,
-    mdns_name: &str,
+    mdns_local_name: &str,
+    mdns_local_ip: &Option<IpAddr>,
     mdns_query_timeout: &Option<Duration>,
-    dest_addr: &str,
 ) -> Result<Option<Mdns>> {
     let local_names = match mdns_mode {
         MulticastDnsMode::QueryOnly => vec![],
-        MulticastDnsMode::QueryAndGather => vec![mdns_name.to_owned()],
+        MulticastDnsMode::QueryAndGather => vec![mdns_local_name.to_owned()],
         MulticastDnsMode::Disabled => return Ok(None),
     };
 
-    let local_addr = if dest_addr.is_empty() {
-        //TODO: why DEFAULT_DEST_ADDR doesn't work on Mac/Win?
-        if cfg!(target_os = "linux") {
-            MDNS_DEST_ADDR
-        } else {
-            SocketAddr::from_str("0.0.0.0:5353")?
-        }
+    let local_ip = if let Some(local_ip) = mdns_local_ip {
+        *local_ip
     } else {
-        let local_addr = SocketAddr::from_str(dest_addr)?;
-        if local_addr.port() != MDNS_PORT {
-            return Err(Error::ErrMDNSPortNotSupported);
-        }
-        local_addr
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
     };
-    log::info!("mDNS is using {local_addr} as dest_addr");
+    log::info!("mDNS is using {local_ip} as local ip");
 
     let mut config = MdnsConfig::new()
         .with_local_names(local_names)
-        .with_local_addr(local_addr);
+        .with_local_ip(local_ip);
     if let Some(query_timeout) = mdns_query_timeout {
         config = config.with_query_timeout(*query_timeout);
     }

@@ -22,17 +22,16 @@
 //!
 //! ```rust
 //! use rtc_mdns::MdnsConfig;
-//! use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+//! use std::net::{IpAddr, Ipv4Addr};
 //!
 //! let config = MdnsConfig::default()
 //!     .with_local_names(vec![
 //!         "mydevice.local".to_string(),
 //!         "mydevice._http._tcp.local".to_string(),
 //!     ])
-//!     .with_local_addr(SocketAddr::new(
+//!     .with_local_ip(
 //!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-//!         5353,
-//!     ));
+//!     );
 //! ```
 //!
 //! ## Combined Client/Server
@@ -41,19 +40,18 @@
 //!
 //! ```rust
 //! use rtc_mdns::MdnsConfig;
-//! use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+//! use std::net::{IpAddr, Ipv4Addr};
 //! use std::time::Duration;
 //!
 //! let config = MdnsConfig::default()
 //!     .with_query_interval(Duration::from_secs(1))
 //!     .with_local_names(vec!["myhost.local".to_string()])
-//!     .with_local_addr(SocketAddr::new(
+//!     .with_local_ip(
 //!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
-//!         5353,
-//!     ));
+//!     );
 //! ```
 
-use std::net::SocketAddr;
+use std::net::IpAddr;
 use std::time::Duration;
 
 /// Default interval between query retries (1 second)
@@ -173,16 +171,15 @@ pub struct MdnsConfig {
     ///
     /// ```rust
     /// use rtc_mdns::MdnsConfig;
-    /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    /// use std::net::{IpAddr, Ipv4Addr};
     ///
     /// let config = MdnsConfig::default()
     ///     .with_local_names(vec!["myhost.local".to_string()])
-    ///     .with_local_addr(SocketAddr::new(
+    ///     .with_local_ip(
     ///         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 42)),
-    ///         5353,
-    ///     ));
+    ///     );
     /// ```
-    pub local_addr: Option<SocketAddr>,
+    pub local_ip: Option<IpAddr>,
 }
 
 impl Default for MdnsConfig {
@@ -191,7 +188,7 @@ impl Default for MdnsConfig {
             query_interval: DEFAULT_QUERY_INTERVAL,
             query_timeout: DEFAULT_QUERY_TIMEOUT,
             local_names: Vec::new(),
-            local_addr: None,
+            local_ip: None,
         }
     }
 }
@@ -300,16 +297,15 @@ impl MdnsConfig {
     ///
     /// ```rust
     /// use rtc_mdns::MdnsConfig;
-    /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    /// use std::net::{IpAddr, Ipv4Addr};
     ///
     /// let config = MdnsConfig::default()
-    ///     .with_local_addr(SocketAddr::new(
+    ///     .with_local_ip(
     ///         IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
-    ///         5353,
-    ///     ));
+    ///     );
     /// ```
-    pub fn with_local_addr(mut self, addr: SocketAddr) -> Self {
-        self.local_addr = Some(addr);
+    pub fn with_local_ip(mut self, local_ip: IpAddr) -> Self {
+        self.local_ip = Some(local_ip);
         self
     }
 }

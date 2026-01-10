@@ -40,10 +40,7 @@ fn test_mdns_cancel_query() {
 fn test_mdns_local_names() {
     let config = MdnsConfig::default()
         .with_local_names(vec!["myhost.local".to_string()])
-        .with_local_addr(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-            5353,
-        ));
+        .with_local_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
 
     let conn = Mdns::new(config);
     assert_eq!(conn.local_names, vec!["myhost.local."]);

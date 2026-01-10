@@ -66,15 +66,14 @@
 //!
 //! ```rust
 //! use rtc_mdns::{MdnsConfig, Mdns};
-//! use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+//! use std::net::{IpAddr, Ipv4Addr};
 //!
 //! // MdnsConfigure with local names to respond to
 //! let config = MdnsConfig::default()
 //!     .with_local_names(vec!["myhost.local".to_string()])
-//!     .with_local_addr(SocketAddr::new(
+//!     .with_local_ip(
 //!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-//!         5353,
-//!     ));
+//!     );
 //!
 //! let conn = Mdns::new(config);
 //!

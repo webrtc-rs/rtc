@@ -42,14 +42,13 @@
 //!
 //! ```rust
 //! use rtc_mdns::{MdnsConfig, Mdns};
-//! use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+//! use std::net::{IpAddr, Ipv4Addr};
 //!
 //! let config = MdnsConfig::default()
 //!     .with_local_names(vec!["myserver.local".to_string()])
-//!     .with_local_addr(SocketAddr::new(
+//!     .with_local_ip(
 //!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-//!         5353,
-//!     ));
+//!     );
 //!
 //! let mut mdns_client = Mdns::new(config);
 //!
@@ -302,14 +301,13 @@ impl Mdns {
     /// let client = Mdns::new(MdnsConfig::default());
     ///
     /// // Server configuration
-    /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    /// use std::net::{IpAddr, Ipv4Addr};
     /// let server = Mdns::new(
     ///     MdnsConfig::default()
     ///         .with_local_names(vec!["myhost.local".to_string()])
-    ///         .with_local_addr(SocketAddr::new(
+    ///         .with_local_ip(
     ///             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-    ///             5353,
-    ///         ))
+    ///         )
     /// );
     /// ```
     pub fn new(config: MdnsConfig) -> Self {
@@ -527,7 +525,7 @@ impl Mdns {
         });
     }
 
-    fn send_answer(&mut self, interface_addr: SocketAddr, name: &str, now: Instant) {
+    fn send_answer(&mut self, local_ip: IpAddr, name: &str, now: Instant) {
         let packed_name = match Name::new(name) {
             Ok(n) => n,
             Err(err) => {
@@ -552,7 +550,7 @@ impl Mdns {
                         ..Default::default()
                     },
                     body: Some(Box::new(AResource {
-                        a: match interface_addr.ip() {
+                        a: match local_ip {
                             IpAddr::V4(ip) => ip.octets(),
                             IpAddr::V6(_) => {
                                 log::warn!("Cannot send IPv6 address in A record");
@@ -573,11 +571,11 @@ impl Mdns {
             }
         };
 
-        log::trace!("Queuing mDNS answer for {name} -> {interface_addr}");
+        log::trace!("Queuing mDNS answer for {name} -> {local_ip}");
         self.write_outs.push_back(TransportMessage {
             now,
             transport: TransportContext {
-                local_addr: interface_addr,
+                local_addr: SocketAddr::new(local_ip, MDNS_PORT),
                 peer_addr: MDNS_DEST_ADDR,
                 transport_protocol: TransportProtocol::UDP,
                 ecn: None,
@@ -631,14 +629,14 @@ impl Mdns {
         let _ = parser.skip_all_questions();
 
         // Now send answers
-        if let Some(local_addr) = self.config.local_addr {
+        if let Some(local_ip) = self.config.local_ip {
             for name in names_to_answer {
                 log::trace!(
                     "Found question for local name: {}, responding with {}",
                     name,
-                    local_addr
+                    local_ip
                 );
-                self.send_answer(local_addr, &name, now);
+                self.send_answer(local_ip, &name, now);
             }
         } else if !names_to_answer.is_empty() {
             log::warn!("Received questions for local names but no local_addr configured");

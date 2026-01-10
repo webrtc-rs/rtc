@@ -40,17 +40,17 @@ struct Args {
     interval: u64,
 }
 
-fn get_local_ip() -> Ipv4Addr {
+fn get_local_ip() -> IpAddr {
     if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
         if socket.connect("8.8.8.8:80").is_ok() {
             if let Ok(addr) = socket.local_addr() {
                 if let IpAddr::V4(ip) = addr.ip() {
-                    return ip;
+                    return ip.into();
                 }
             }
         }
     }
-    Ipv4Addr::new(127, 0, 0, 1)
+    Ipv4Addr::new(127, 0, 0, 1).into()
 }
 
 #[tokio::main]
@@ -61,7 +61,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 5353);
     let local_ip = get_local_ip();
-    let local_addr = SocketAddr::new(IpAddr::V4(local_ip), 5353);
 
     log::info!("Creating mDNS server with local names");
 
@@ -71,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "webrtc-rs-mdns-1.local".to_string(),
             "webrtc-rs-mdns-2.local".to_string(),
         ])
-        .with_local_addr(local_addr);
+        .with_local_ip(local_ip);
     let mut mdns_server = Mdns::new(config_server);
 
     // Client: queries for names with timeout
