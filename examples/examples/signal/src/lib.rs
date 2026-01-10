@@ -1,7 +1,7 @@
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -149,3 +149,16 @@ func unzip(in []byte) []byte {
     return res
 }
 */
+
+pub fn get_local_ip() -> IpAddr {
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                if let IpAddr::V4(ip) = addr.ip() {
+                    return ip.into();
+                }
+            }
+        }
+    }
+    Ipv4Addr::new(127, 0, 0, 1).into()
+}

@@ -6,7 +6,7 @@ use log::{error, trace};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
@@ -115,19 +115,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_local_ip() -> IpAddr {
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                if let IpAddr::V4(ip) = addr.ip() {
-                    return ip.into();
-                }
-            }
-        }
-    }
-    Ipv4Addr::new(127, 0, 0, 1).into()
-}
-
 async fn run(
     mut stop_rx: broadcast::Receiver<()>,
     mut message_rx: broadcast::Receiver<RTCMessage>,
@@ -137,7 +124,7 @@ async fn run(
     is_client: bool,
 ) -> Result<()> {
     // Everything below is the RTC API! Thanks for using it ❤️.
-    let local_ip = get_local_ip();
+    let local_ip = signal::get_local_ip();
 
     let mdns_udp_socket = UdpSocket::from_std(
         MulticastSocket::new(SocketAddr::new(local_ip, MDNS_PORT)).into_std()?,
