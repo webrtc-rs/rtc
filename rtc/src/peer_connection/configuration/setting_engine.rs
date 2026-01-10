@@ -96,23 +96,6 @@
 //! # }
 //! ```
 //!
-//! ## Enabling detached data channels
-//!
-//! ```no_run
-//! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut setting_engine = SettingEngine::default();
-//!
-//! // Enable detached mode for custom data channel handling
-//! setting_engine.detach_data_channels();
-//!
-//! // Now data channels must be detached in the on_open callback
-//! // This is useful for custom protocols or zero-copy processing
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! # See Also
 //!
 //! - [`RTCConfiguration`](crate::peer_connection::configuration::RTCConfiguration) - Standard WebRTC configuration
@@ -139,16 +122,6 @@ use std::time::Duration;
 
 /// Equal to UDP MTU
 pub(crate) const RECEIVE_MTU: usize = 1460;
-
-/// Configuration for detaching WebRTC components.
-///
-/// Detaching allows for custom handling of data channels outside the standard
-/// WebRTC event loop, enabling zero-copy processing and custom protocols.
-#[derive(Default, Clone)]
-pub struct Detach {
-    /// Whether data channels should operate in detached mode.
-    pub data_channels: bool,
-}
 
 /// ICE timeout configuration for connection health monitoring.
 ///
@@ -182,13 +155,17 @@ pub struct Timeout {
     pub ice_relay_acceptance_min_wait: Option<Duration>,
 }
 
+/// MulticastDNS configuration for mDNS.
 #[derive(Clone)]
 pub struct MulticastDNS {
     /// Duration without network activity before mDNS query is considered failed.
     /// Default: 10 seconds.
     pub timeout: Option<Duration>,
+    /// Represents the different Multicast modes that ICE can run.
     pub mode: MulticastDnsMode,
+    /// Controls the local name for this agent. If none is specified a random one will be generated.
     pub local_name: String,
+    /// Control mDNS local IP address
     pub local_ip: Option<IpAddr>,
 }
 
@@ -296,7 +273,6 @@ impl Default for SctpMaxMessageSize {
 ///
 /// # Configuration Categories
 ///
-/// - **Detach**: Enable custom handling of data channels
 /// - **Timeout**: ICE connection health monitoring and keepalive
 /// - **Candidates**: NAT traversal, network filtering, ICE credentials
 /// - **Replay Protection**: Anti-replay window sizes for DTLS/SRTP/SRTCP
@@ -337,7 +313,6 @@ impl Default for SctpMaxMessageSize {
 /// - [RFC 8445 - ICE](https://datatracker.ietf.org/doc/html/rfc8445)
 #[derive(Default, Clone)]
 pub struct SettingEngine {
-    pub(crate) detach: Detach,
     pub(crate) timeout: Timeout,
     pub(crate) candidates: Candidates,
     pub(crate) multicast_dns: MulticastDNS,
@@ -370,31 +345,6 @@ impl SettingEngine {
         } else {
             RECEIVE_MTU
         }
-    }
-
-    /// Enables detached mode for data channels.
-    ///
-    /// When enabled, data channels must be explicitly detached in the `on_open`
-    /// callback using the `DataChannel::detach()` method. This provides direct
-    /// access to the underlying transport for custom protocols or zero-copy processing.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    /// setting_engine.detach_data_channels();
-    ///
-    /// // In your data channel on_open handler:
-    /// // let detached = data_channel.detach().await?;
-    /// // Now you have raw read/write access to the transport
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn detach_data_channels(&mut self) {
-        self.detach.data_channels = true;
     }
 
     /// Overrides the default SRTP protection profiles.

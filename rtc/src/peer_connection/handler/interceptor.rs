@@ -51,23 +51,23 @@ where
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if self.ctx.is_dtls_handshake_complete {
-            if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
-                self.interceptor.handle_read(TaggedPacket {
-                    now: msg.now,
-                    transport: msg.transport,
-                    message: packet.clone(),
-                    // RTP packet use Bytes which is zero-copy,
-                    // RTCP packet may have clone overhead.
-                    // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
-                })?;
+        if self.ctx.is_dtls_handshake_complete
+            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message
+        {
+            self.interceptor.handle_read(TaggedPacket {
+                now: msg.now,
+                transport: msg.transport,
+                message: packet.clone(),
+                // RTP packet use Bytes which is zero-copy,
+                // RTCP packet may have clone overhead.
+                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
+            })?;
 
-                if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
-                    // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-                    // just add a new interceptor to forward it.
-                    debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
-                    return Ok(());
-                }
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
+                // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
+                // just add a new interceptor to forward it.
+                debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
+                return Ok(());
             }
         }
 
@@ -91,17 +91,17 @@ where
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if self.ctx.is_dtls_handshake_complete {
-            if let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message {
-                self.interceptor.handle_write(TaggedPacket {
-                    now: msg.now,
-                    transport: msg.transport,
-                    message: packet.clone(),
-                    // RTP packet use Bytes which is zero-copy,
-                    // RTCP packet may have clone overhead.
-                    // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
-                })?;
-            }
+        if self.ctx.is_dtls_handshake_complete
+            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message
+        {
+            self.interceptor.handle_write(TaggedPacket {
+                now: msg.now,
+                transport: msg.transport,
+                message: packet.clone(),
+                // RTP packet use Bytes which is zero-copy,
+                // RTCP packet may have clone overhead.
+                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
+            })?;
         }
 
         debug!("interceptor write {:?}", msg.transport.peer_addr);
