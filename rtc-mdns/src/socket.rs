@@ -84,10 +84,8 @@ impl MulticastSocket {
     ///
     /// ```rust
     /// use rtc_mdns::MulticastSocket;
-    /// use std::net::SocketAddr;
     ///
-    /// let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
-    /// let builder = MulticastSocket::new(bind_addr);
+    /// let builder = MulticastSocket::new();
     /// ```
     pub fn new() -> Self {
         Self {
@@ -120,10 +118,9 @@ impl MulticastSocket {
     ///
     /// ```rust
     /// use rtc_mdns::MulticastSocket;
-    /// use std::net::{Ipv4Addr, SocketAddr};
+    /// use std::net::Ipv4Addr;
     ///
-    /// let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
-    /// let builder = MulticastSocket::new(bind_addr)
+    /// let builder = MulticastSocket::new()
     ///     .with_interface(Ipv4Addr::new(192, 168, 1, 100));
     /// ```
     pub fn with_interface(mut self, interface: Ipv4Addr) -> Self {

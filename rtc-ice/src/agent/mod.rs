@@ -398,21 +398,22 @@ impl Agent {
             return Ok(());
         }
 
-        for cand in &self.remote_candidates {
-            if cand.equal(&c) {
-                return Ok(());
+        self.trigger_request_connectivity_check(vec![c]);
+        Ok(())
+    }
+
+    fn trigger_request_connectivity_check(&mut self, remote_candidates: Vec<Candidate>) {
+        for c in remote_candidates {
+            if !self.remote_candidates.iter().any(|cand| cand.equal(&c)) {
+                self.remote_candidates.push(c);
+
+                for local_index in 0..self.local_candidates.len() {
+                    self.add_pair(local_index, self.remote_candidates.len() - 1);
+                }
+
+                self.request_connectivity_check();
             }
         }
-
-        self.remote_candidates.push(c);
-
-        for local_index in 0..self.local_candidates.len() {
-            self.add_pair(local_index, self.remote_candidates.len() - 1);
-        }
-
-        self.request_connectivity_check();
-
-        Ok(())
     }
 
     /// Sets the credentials of the remote agent.

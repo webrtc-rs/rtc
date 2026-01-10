@@ -10,33 +10,40 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
         // demuxing mDNS packet from STUN packet whether peer addr port is MDNS_PORT
-        if msg.transport.peer_addr.port() == MDNS_PORT
-            && let Some(mdns_conn) = &mut self.mdns_conn
-        {
-            mdns_conn.handle_read(msg)?;
+        if msg.transport.peer_addr.port() == MDNS_PORT {
+            let remote_candidates = if let Some(mdns_conn) = &mut self.mdns_conn {
+                mdns_conn.handle_read(msg)?;
 
-            // After mdns handle_read, check any query result
-            while let Some(event) = mdns_conn.poll_event() {
-                match event {
-                    MdnsEvent::QueryAnswered(id, addr) => {
-                        if let Some(mut c) = self.mdns_queries.remove(&id)
-                            && c.set_ip(&addr).is_ok()
-                            && !self.remote_candidates.iter().any(|cand| cand.equal(&c))
-                        {
-                            debug!(
-                                "mDNS query id {} answered Candidate {} is added into remote candidates",
-                                id, c
-                            );
-                            self.remote_candidates.push(c);
+                let mut remote_candidates = vec![];
+                // After mdns handle_read, check any query result
+                while let Some(event) = mdns_conn.poll_event() {
+                    match event {
+                        MdnsEvent::QueryAnswered(id, addr) => {
+                            if let Some(mut c) = self.mdns_queries.remove(&id)
+                                && c.set_ip(&addr).is_ok()
+                            {
+                                debug!(
+                                    "mDNS query id {} answered Candidate {} with resolved_addr {} is added into remote candidates",
+                                    id,
+                                    c,
+                                    c.addr()
+                                );
+                                remote_candidates.push(c);
+                            }
                         }
-                    }
-                    MdnsEvent::QueryTimeout(id) => {
-                        if let Some(c) = self.mdns_queries.remove(&id) {
-                            error!("mDNS Query {} timed out for {}", id, c.address());
+                        MdnsEvent::QueryTimeout(id) => {
+                            if let Some(c) = self.mdns_queries.remove(&id) {
+                                error!("mDNS Query {} timed out for {}", id, c.address());
+                            }
                         }
                     }
                 }
-            }
+                remote_candidates
+            } else {
+                vec![]
+            };
+
+            self.trigger_request_connectivity_check(remote_candidates);
 
             Ok(())
         } else if let Some(local_index) =
@@ -81,22 +88,24 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn handle_timeout(&mut self, now: Self::Time) -> std::result::Result<(), Self::Error> {
-        if let Some(mdns_conn) = &mut self.mdns_conn {
+        let remote_candidates = if let Some(mdns_conn) = &mut self.mdns_conn {
             let _ = mdns_conn.handle_timeout(now);
 
+            let mut remote_candidates = vec![];
             // After mdns handle_timeout, check any query result
             while let Some(event) = mdns_conn.poll_event() {
                 match event {
                     MdnsEvent::QueryAnswered(id, addr) => {
                         if let Some(mut c) = self.mdns_queries.remove(&id)
                             && c.set_ip(&addr).is_ok()
-                            && !self.remote_candidates.iter().any(|cand| cand.equal(&c))
                         {
                             debug!(
-                                "mDNS query id {} answered Candidate {} is added into remote candidates",
-                                id, c
+                                "mDNS query id {} answered Candidate {} with resolved_addr {} is added into remote candidates",
+                                id,
+                                c,
+                                c.addr()
                             );
-                            self.remote_candidates.push(c);
+                            remote_candidates.push(c);
                         }
                     }
                     MdnsEvent::QueryTimeout(id) => {
@@ -106,7 +115,11 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
                     }
                 }
             }
-        }
+            remote_candidates
+        } else {
+            vec![]
+        };
+        self.trigger_request_connectivity_check(remote_candidates);
 
         if self.ufrag_pwd.remote_credentials.is_some()
             && self.last_checking_time + self.get_timeout_interval() <= now

@@ -6,7 +6,6 @@ use log::{error, trace};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
@@ -44,14 +43,20 @@ struct Cli {
     input_sdp_file: String,
     #[arg(short, long, default_value_t = format!(""))]
     output_log_file: String,
+    #[arg(long, default_value_t = format!("127.0.0.1"))]
+    host: String,
     #[arg(long, default_value_t = 0)]
     port: u16,
+    #[arg(short, long)]
+    query_only: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let host = cli.host;
     let port = cli.port;
+    let query_only = cli.query_only;
     let is_client = cli.client;
     let input_sdp_file = cli.input_sdp_file;
     let output_log_file = cli.output_log_file;
@@ -103,9 +108,11 @@ async fn main() -> Result<()> {
         stop_rx,
         message_rx,
         event_rx,
+        host,
         port,
         input_sdp_file,
         is_client,
+        query_only,
     )
     .await
     {
@@ -119,14 +126,16 @@ async fn run(
     mut stop_rx: broadcast::Receiver<()>,
     mut message_rx: broadcast::Receiver<RTCMessage>,
     mut event_rx: broadcast::Receiver<RTCEvent>,
+    host: String,
     port: u16,
     input_sdp_file: String,
     is_client: bool,
+    query_only: bool,
 ) -> Result<()> {
     let mdns_udp_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
-    let pc_local_ip = signal::get_local_ip();
-    let pc_udp_socket = UdpSocket::bind(SocketAddr::new(pc_local_ip, port)).await?;
+    let pc_udp_socket = UdpSocket::bind(format!("{host}:{port}")).await?;
+    let local_addr = pc_udp_socket.local_addr()?;
 
     let mut setting_engine = SettingEngine::default();
     setting_engine.set_answering_dtls_role(if is_client {
@@ -134,11 +143,16 @@ async fn run(
     } else {
         RTCDtlsRole::Server
     })?;
-    setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryAndGather);
+
     setting_engine.set_multicast_dns_timeout(Some(Duration::from_secs(10)));
-    setting_engine
-        .set_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string());
-    setting_engine.set_multicast_dns_local_ip(Some(pc_local_ip));
+    if query_only {
+        setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryOnly);
+    } else {
+        setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryAndGather);
+        setting_engine
+            .set_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string());
+        setting_engine.set_multicast_dns_local_ip(Some(local_addr.ip()));
+    }
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -168,8 +182,8 @@ async fn run(
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
-            address: pc_local_ip.to_string(),
-            port,
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
             component: 1,
             ..Default::default()
         },
@@ -209,13 +223,13 @@ async fn run(
                 {
                     Ok(n) => {
                         trace!(
-                            "socket write to {} with bytes {}",
+                            "mdns_udp_socket write to {} with bytes {}",
                             msg.transport.peer_addr, n
                         );
                     }
                     Err(err) => {
                         error!(
-                            "socket write to {} with error {}",
+                            "mdns_udp_socket write to {} with error {}",
                             msg.transport.peer_addr, err
                         );
                     }
@@ -227,13 +241,13 @@ async fn run(
                 {
                     Ok(n) => {
                         trace!(
-                            "socket write to {} with bytes {}",
+                            "pc_udp_socket write to {} with bytes {}",
                             msg.transport.peer_addr, n
                         );
                     }
                     Err(err) => {
                         error!(
-                            "socket write to {} with error {}",
+                            "pc_udp_socket write to {} with error {}",
                             msg.transport.peer_addr, err
                         );
                     }
@@ -340,31 +354,10 @@ async fn run(
             _ = timer.as_mut() => {
                 peer_connection.handle_timeout(Instant::now())?;
             }
-            res = pc_udp_socket.recv_from(&mut pc_buf) => {
-                match res {
-                    Ok((n, peer_addr)) => {
-                        trace!("socket read {} bytes", n);
-                        peer_connection.handle_read(TaggedBytesMut {
-                            now: Instant::now(),
-                            transport: TransportContext {
-                                local_addr: pc_udp_socket.local_addr()?,
-                                peer_addr,
-                                ecn: None,
-                                transport_protocol: TransportProtocol::UDP,
-                            },
-                            message: BytesMut::from(&pc_buf[..n]),
-                        })?;
-                    }
-                    Err(err) => {
-                        eprintln!("socket read error {}", err);
-                        break 'EventLoop;
-                    }
-                }
-            }
             res = mdns_udp_socket.recv_from(&mut mdns_buf) => {
                 match res {
                     Ok((n, peer_addr)) => {
-                        trace!("socket read {} bytes", n);
+                        trace!("mdns_udp_socket read {} bytes from {} to {}", n, peer_addr, mdns_udp_socket.local_addr()?);
                         peer_connection.handle_read(TaggedBytesMut {
                             now: Instant::now(),
                             transport: TransportContext {
@@ -377,7 +370,28 @@ async fn run(
                         })?;
                     }
                     Err(err) => {
-                        eprintln!("socket read error {}", err);
+                        eprintln!("mdns_udp_socket read error {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+            res = pc_udp_socket.recv_from(&mut pc_buf) => {
+                match res {
+                    Ok((n, peer_addr)) => {
+                        trace!("pc_udp_socket read {} bytes from {} to {}", n, peer_addr, pc_udp_socket.local_addr()?);
+                        peer_connection.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr: pc_udp_socket.local_addr()?,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&pc_buf[..n]),
+                        })?;
+                    }
+                    Err(err) => {
+                        eprintln!("pc_udp_socket read error {}", err);
                         break 'EventLoop;
                     }
                 }
