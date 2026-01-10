@@ -293,9 +293,14 @@ fn example(mut pc: RTCPeerConnection) -> Result<(), Box<dyn std::error::Error>> 
         "track-id".to_string(),
         "Camera".to_string(),
         RtpCodecKind::Video,
-        None,
-        12345, // SSRC
-        RTCRtpCodec::default(),
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(ssrc),
+                ..Default::default()
+            },
+            codec: RTCRtpCodec::default(),
+            ..Default::default()
+        }],
     );
 
     // Add to peer connection

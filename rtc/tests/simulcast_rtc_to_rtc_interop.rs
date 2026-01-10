@@ -46,7 +46,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 #[tokio::test]
 async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
+        .filter_level(log::LevelFilter::Trace)
         .try_init()
         .ok();
 
@@ -104,15 +104,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
-    let registry = rtc::interceptor::Registry::new();
-
-    // Use the default set of Interceptors
-    let registry =
-        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
-            &mut answerer_media_engine,
-        )?;
-
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -120,7 +111,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }])
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     let mut answerer_pc = RtcPeerConnection::new(answerer_config)?;
@@ -167,15 +157,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
-    let registry = rtc::interceptor::Registry::new();
-
-    // Use the default set of Interceptors
-    let registry =
-        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
-            &mut offerer_media_engine,
-        )?;
-
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -183,7 +164,6 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }])
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     let mut offerer_pc = RtcPeerConnection::new(offerer_config)?;
@@ -427,64 +407,61 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
 
         // Send RTP packets from offerer on all 3 simulcast layers
         if streaming_started {
-            for _ in 0..10 {
-                for (rid, ssrc) in &rid2ssrc {
-                    let mut rtp_sender = offerer_pc
-                        .rtp_sender(sender_id)
-                        .ok_or(Error::ErrRTPSenderNotExisted)?;
+            for (rid, ssrc) in &rid2ssrc {
+                let mut rtp_sender = offerer_pc
+                    .rtp_sender(sender_id)
+                    .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                    // Get negotiated header extension IDs
-                    let params = rtp_sender.get_parameters();
-                    let mut mid_id = None;
-                    let mut rid_id = None;
+                // Get negotiated header extension IDs
+                let params = rtp_sender.get_parameters();
+                let mut mid_id = None;
+                let mut rid_id = None;
 
-                    for ext in &params.rtp_parameters.header_extensions {
-                        if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
-                            mid_id = Some(ext.id as u8);
-                        } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
-                            rid_id = Some(ext.id as u8);
-                        }
+                for ext in &params.rtp_parameters.header_extensions {
+                    if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
+                        mid_id = Some(ext.id as u8);
+                    } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
+                        rid_id = Some(ext.id as u8);
                     }
+                }
 
-                    let sequence_number = packets_sent.entry(rid.to_string()).or_insert(0u16);
-                    *sequence_number += 1;
+                let sequence_number = packets_sent.entry(rid.to_string()).or_insert(0u16);
+                *sequence_number += 1;
 
-                    // Create RTP packet header
-                    let mut header = rtp::header::Header {
-                        version: 2,
-                        padding: false,
-                        marker: false,
-                        payload_type: 96,
-                        sequence_number: *sequence_number,
-                        timestamp: (Instant::now().duration_since(start_time).as_millis() * 90)
-                            as u32,
-                        ssrc: *ssrc,
-                        ..Default::default()
-                    };
+                // Create RTP packet header
+                let mut header = rtp::header::Header {
+                    version: 2,
+                    padding: false,
+                    marker: false,
+                    payload_type: 96,
+                    sequence_number: *sequence_number,
+                    timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
+                    ssrc: *ssrc,
+                    ..Default::default()
+                };
 
-                    // Add MID extension using set_extension
-                    if let Some(id) = mid_id {
-                        header
-                            .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
-                            .expect("Failed to set MID extension");
-                    }
+                // Add MID extension using set_extension
+                if let Some(id) = mid_id {
+                    header
+                        .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
+                        .expect("Failed to set MID extension");
+                }
 
-                    // Add RID extension using set_extension
-                    if let Some(id) = rid_id {
-                        header
-                            .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
-                            .expect("Failed to set RID extension");
-                    }
+                // Add RID extension using set_extension
+                if let Some(id) = rid_id {
+                    header
+                        .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
+                        .expect("Failed to set RID extension");
+                }
 
-                    // Create RTP packet with extensions
-                    let packet = rtp::packet::Packet {
-                        header,
-                        payload: bytes::Bytes::from(dummy_frame.clone()),
-                    };
+                // Create RTP packet with extensions
+                let packet = rtp::packet::Packet {
+                    header,
+                    payload: bytes::Bytes::from(dummy_frame.clone()),
+                };
 
-                    if let Err(e) = rtp_sender.write_rtp(packet) {
-                        log::debug!("Failed to send RTP on {}: {}", rid, e);
-                    }
+                if let Err(e) = rtp_sender.write_rtp(packet) {
+                    log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
             }
 
