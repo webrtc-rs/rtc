@@ -26,6 +26,38 @@
  <strong>Sans-I/O WebRTC implementation in Rust</strong>
 </p>
 
+<p align="center">
+<strong>Sponsored with 💖 by</strong><br>
+</p>
+<p align="center">
+<strong>Gold Sponsors:</strong><br>
+<a href="https://www.recall.ai" target="_blank">
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/recall.svg"
+alt="Recall.ai">
+</a><br>
+<p align="center">
+<strong>Silver Sponsors:</strong><br>
+<a href="https://getstream.io/video/voice-calling/?utm_source=https://github.com/webrtc-rs/webrtc&utm_medium=sponsorship&utm_content=&utm_campaign=webrtcRepo_July2023_video_klmh22" target="_blank">
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/stream-logo.png" height="50" alt="Stream Chat">
+</a><br>
+<a href="https://channel.io/" target="_blank">
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/ChannelTalk_logo.png" alt="ChannelTalk">
+</a><br>
+<strong>Bronze Sponsors:</strong><br>
+<a href="https://github.com/AdrianEddy" target="_blank">AdrianEddy</a><br>
+</p>
+
+<details>
+<summary><b>Table of Content</b></summary>
+
+- [Overview](#overview)
+- [Features](#features)
+- [Building](#building)
+- [Open Source License](#open-source-license)
+- [Contributing](#contributing)
+
+</details>
+
 ## Overview
 
 **RTC** is a pure Rust implementation of [WebRTC](https://www.w3.org/TR/webrtc/) using a **sans-I/O architecture**.
