@@ -46,7 +46,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 #[tokio::test]
 async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Trace)
+        .filter_level(log::LevelFilter::Info)
         .try_init()
         .ok();
 
@@ -382,6 +382,11 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
 
                     let count = packets_received.entry(rid.clone()).or_insert(0u16);
                     *count += 1;
+                    log::debug!(
+                        "simulcast read rid {}'s rtp packet sequence number {}",
+                        rid,
+                        rtp_packet.header.sequence_number,
+                    );
                     if *count % 10 == 0 {
                         log::info!(
                             "Answerer received RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
@@ -460,6 +465,11 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
                     payload: bytes::Bytes::from(dummy_frame.clone()),
                 };
 
+                log::debug!(
+                    "simulcast write rid {}'s rtp packet sequence number {}",
+                    rid,
+                    packet.header.sequence_number
+                );
                 if let Err(e) = rtp_sender.write_rtp(packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
