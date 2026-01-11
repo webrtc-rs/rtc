@@ -507,7 +507,7 @@ mod tests {
         nack.now = now;
         chain.handle_read(nack).unwrap();
         let out = chain.poll_read();
-        assert!(out.is_some());
+        assert!(out.is_none());
     }
 
     #[test]

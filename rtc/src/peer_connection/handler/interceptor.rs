@@ -3,7 +3,7 @@ use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 use interceptor::{Interceptor, Packet, TaggedPacket};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -65,10 +65,12 @@ where
 
             if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
                 // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-                // just add a new interceptor to forward it.
+                // just add a new interceptor to forward it by using self.interceptor.poll_read()
                 debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
                 return Ok(());
             }
+            // For Packet::Rtp packet, self.interceptor.poll_read() must not have return it,
+            // since it has already been bypassed as below, otherwise, it will cause duplicated rtp packets in SRTP
         }
 
         debug!("interceptor read bypass {:?}", msg.transport.peer_addr);
@@ -79,11 +81,21 @@ where
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_read() {
-                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                    now: packet.now,
-                    transport: packet.transport,
-                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
-                });
+                match &packet.message {
+                    Packet::Rtp(_) => {
+                        error!(
+                            "Interceptor should never forward RTP packet!!! Please double check your interceptor handle/poll_read implementation."
+                        );
+                    }
+                    Packet::Rtcp(rtcp_packet) => {
+                        trace!("Interceptor forward a RTCP packet {:?}", rtcp_packet);
+                        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                            now: packet.now,
+                            transport: packet.transport,
+                            message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                        });
+                    }
+                }
             }
         }
 
@@ -102,10 +114,10 @@ where
                 // RTCP packet may have clone overhead.
                 // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
             })?;
+        } else {
+            debug!("interceptor bypass {:?}", msg.transport.peer_addr);
+            self.ctx.write_outs.push_back(msg);
         }
-
-        debug!("interceptor write {:?}", msg.transport.peer_addr);
-        self.ctx.write_outs.push_back(msg);
         Ok(())
     }
 

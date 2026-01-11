@@ -104,6 +104,15 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
+    let registry = rtc::interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut answerer_media_engine,
+        )?;
+
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -111,6 +120,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }])
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut answerer_pc = RtcPeerConnection::new(answerer_config)?;
@@ -157,6 +167,15 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
+    let registry = rtc::interceptor::Registry::new();
+
+    // Use the default set of Interceptors
+    let registry =
+        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
+            registry,
+            &mut offerer_media_engine,
+        )?;
+
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -164,6 +183,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }])
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
+        .with_interceptor_registry(registry)
         .build();
 
     let mut offerer_pc = RtcPeerConnection::new(offerer_config)?;
@@ -264,10 +284,11 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     let mut track_id2_receiver_id = HashMap::new();
 
     let start_time = Instant::now();
-    let test_timeout = Duration::from_secs(25);
+    let test_timeout = Duration::from_secs(15);
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
+    let total_threshold = 60u16;
 
     while start_time.elapsed() < test_timeout {
         // Process offerer writes
@@ -411,7 +432,8 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }
 
         // Send RTP packets from offerer on all 3 simulcast layers
-        if streaming_started {
+        let total_sent: u16 = packets_sent.values().sum();
+        if streaming_started && total_sent < total_threshold {
             for (rid, ssrc) in &rid2ssrc {
                 let mut rtp_sender = offerer_pc
                     .rtp_sender(sender_id)
@@ -444,6 +466,16 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
                     ssrc: *ssrc,
                     ..Default::default()
                 };
+
+                if *sequence_number % 10 == 0 {
+                    log::info!(
+                        "Offer sent RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
+                        *sequence_number,
+                        rid,
+                        header.ssrc,
+                        header.sequence_number
+                    );
+                }
 
                 // Add MID extension using set_extension
                 if let Some(id) = mid_id {
@@ -551,8 +583,8 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         }
 
         // Check if we've received enough packets
-        let total: u16 = packets_received.values().sum();
-        if total >= 30 && packets_received.len() >= 3 {
+        let total_received: u16 = packets_received.values().sum();
+        if total_received >= total_threshold && packets_received.len() >= 3 {
             log::info!("Received sufficient packets from all tracks, ending test");
             break;
         }

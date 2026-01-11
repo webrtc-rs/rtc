@@ -315,9 +315,8 @@ mod tests {
 
         // Test read path
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
 
         // Test write path
         let pkt2 = dummy_rtp_packet();
@@ -378,9 +377,8 @@ mod tests {
 
         // Test packet flow through the chain
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
 
         let pkt2 = dummy_rtp_packet();
         let pkt2_message = pkt2.message.clone();

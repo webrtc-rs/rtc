@@ -217,9 +217,8 @@ mod tests {
         let registry = Registry::new();
         let mut chain = registry.build();
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
     }
 
     #[test]
@@ -228,9 +227,8 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
         assert_eq!(chain.name, "test");
     }
 
@@ -242,9 +240,8 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
         assert_eq!(chain.name, "outer");
         assert_eq!(chain.inner.name, "inner");
     }
@@ -277,9 +274,8 @@ mod tests {
         let mut chain = registry.build();
 
         let pkt = dummy_rtp_packet();
-        let pkt_message = pkt.message.clone();
         chain.handle_read(pkt).unwrap();
-        assert_eq!(chain.poll_read().unwrap().message, pkt_message);
+        assert!(chain.poll_read().is_none());
         assert_eq!(chain.name, "second");
         assert_eq!(chain.inner.name, "first");
     }

@@ -23,7 +23,6 @@ use std::time::Instant;
 /// assert!(noop.poll_read().is_some());
 /// ```
 pub struct NoopInterceptor {
-    read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
 }
 
@@ -31,7 +30,6 @@ impl NoopInterceptor {
     /// Create a new NoopInterceptor.
     pub fn new() -> Self {
         Self {
-            read_queue: VecDeque::new(),
             write_queue: VecDeque::new(),
         }
     }
@@ -50,13 +48,12 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.read_queue.push_back(msg);
+    fn handle_read(&mut self, _msg: TaggedPacket) -> Result<(), Self::Error> {
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.read_queue.pop_front()
+        None
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
@@ -85,7 +82,6 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     }
 
     fn close(&mut self) -> Result<(), Self::Error> {
-        self.read_queue.clear();
         self.write_queue.clear();
         Ok(())
     }
@@ -118,12 +114,8 @@ mod tests {
         // Test read
         let pkt1 = dummy_rtp_packet();
         let pkt2 = dummy_rtp_packet();
-        let pkt1_message = pkt1.message.clone();
-        let pkt2_message = pkt2.message.clone();
         noop.handle_read(pkt1).unwrap();
         noop.handle_read(pkt2).unwrap();
-        assert_eq!(noop.poll_read().unwrap().message, pkt1_message);
-        assert_eq!(noop.poll_read().unwrap().message, pkt2_message);
         assert!(noop.poll_read().is_none());
 
         // Test write
