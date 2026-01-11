@@ -659,3 +659,6 @@ pub mod media_stream;
 pub mod peer_connection;
 pub mod rtp_transceiver;
 pub mod statistics;
+
+#[cfg(feature = "ffi")]
+mod ffi;
