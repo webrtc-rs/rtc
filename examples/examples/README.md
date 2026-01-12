@@ -68,9 +68,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [Trickle ICE](trickle-ice) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to
   use since it allows ICE Gathering and Connecting to happen concurrently.
 - ✅ [ICE TCP](ice-tcp) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
-  default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port, and this TCP port can be used for
-  many
-  connections.
+  default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
+- ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
+  mode abilities.
 - 🚧 [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
 - 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
   signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your

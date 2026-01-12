@@ -3,6 +3,7 @@ use std::fmt;
 
 use super::candidate_type::RTCIceCandidateType;
 use super::protocol::RTCIceProtocol;
+use ice::tcp_type::TcpType;
 use shared::error::{Error, Result};
 
 pub use ice::candidate::{
@@ -78,7 +79,6 @@ impl RTCIceCandidate {
             address: self.address.clone(),
             port: self.port,
             component: self.component,
-            //tcp_type: ice.NewTCPType(c.TCPType),
             foundation: self.foundation.clone(),
             priority: self.priority,
         };
@@ -87,7 +87,7 @@ impl RTCIceCandidate {
             RTCIceCandidateType::Host => {
                 let config = CandidateHostConfig {
                     base_config,
-                    ..Default::default()
+                    tcp_type: TcpType::from(self.tcp_type.as_str()),
                 };
                 config.new_candidate_host()?
             }

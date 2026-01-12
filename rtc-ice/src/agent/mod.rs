@@ -28,6 +28,7 @@ use crate::mdns::{MulticastDnsMode, create_multicast_dns, generate_multicast_dns
 use crate::network_type::NetworkType;
 use crate::rand::*;
 use crate::state::*;
+use crate::tcp_type::TcpType;
 use crate::url::*;
 use shared::error::*;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -392,9 +393,28 @@ impl Agent {
         }
 
         self.local_candidates.push(c);
+        let local_index = self.local_candidates.len() - 1;
+        let local_tcp_type = self.local_candidates[local_index].tcp_type();
 
         for remote_index in 0..self.remote_candidates.len() {
-            self.add_pair(self.local_candidates.len() - 1, remote_index);
+            let remote_tcp_type = self.remote_candidates[remote_index].tcp_type();
+
+            // TCP type pairing rules (RFC 6544):
+            // - Active can only pair with Passive
+            // - Passive can only pair with Active
+            // - SimultaneousOpen can pair with SimultaneousOpen
+            // - Unspecified (UDP) can pair with Unspecified
+            let should_pair = match (local_tcp_type, remote_tcp_type) {
+                (TcpType::Active, TcpType::Passive) => true,
+                (TcpType::Passive, TcpType::Active) => true,
+                (TcpType::SimultaneousOpen, TcpType::SimultaneousOpen) => true,
+                (TcpType::Unspecified, TcpType::Unspecified) => true, // UDP candidates
+                _ => false,
+            };
+
+            if should_pair {
+                self.add_pair(local_index, remote_index);
+            }
         }
 
         self.request_connectivity_check();
@@ -414,6 +434,17 @@ impl Agent {
                 );
                 return Ok(false);
             }
+        }
+
+        // TCP active candidates don't have a listening port - they initiate connections.
+        // The remote active side will probe our passive candidates, so we don't need
+        // to do anything with remote active candidates.
+        if c.tcp_type() == TcpType::Active {
+            debug!(
+                "Ignoring remote candidate with tcptype active: {}",
+                c.address()
+            );
+            return Ok(false);
         }
 
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
@@ -445,10 +476,30 @@ impl Agent {
     fn trigger_request_connectivity_check(&mut self, remote_candidates: Vec<Candidate>) {
         for c in remote_candidates {
             if !self.remote_candidates.iter().any(|cand| cand.equal(&c)) {
+                let remote_tcp_type = c.tcp_type();
                 self.remote_candidates.push(c);
+                let remote_index = self.remote_candidates.len() - 1;
 
+                // Apply TCP type pairing rules (RFC 6544)
                 for local_index in 0..self.local_candidates.len() {
-                    self.add_pair(local_index, self.remote_candidates.len() - 1);
+                    let local_tcp_type = self.local_candidates[local_index].tcp_type();
+
+                    // TCP type pairing rules:
+                    // - Active can only pair with Passive
+                    // - Passive can only pair with Active
+                    // - SimultaneousOpen can pair with SimultaneousOpen
+                    // - Unspecified (UDP) can pair with Unspecified
+                    let should_pair = match (local_tcp_type, remote_tcp_type) {
+                        (TcpType::Active, TcpType::Passive) => true,
+                        (TcpType::Passive, TcpType::Active) => true,
+                        (TcpType::SimultaneousOpen, TcpType::SimultaneousOpen) => true,
+                        (TcpType::Unspecified, TcpType::Unspecified) => true, // UDP candidates
+                        _ => false,
+                    };
+
+                    if should_pair {
+                        self.add_pair(local_index, remote_index);
+                    }
                 }
 
                 self.request_connectivity_check();
@@ -874,7 +925,18 @@ impl Agent {
         transport_protocol: TransportProtocol,
     ) -> Option<usize> {
         for (index, c) in self.local_candidates.iter().enumerate() {
-            if c.addr() == addr && c.network_type().to_protocol() == transport_protocol {
+            if c.network_type().to_protocol() != transport_protocol {
+                continue;
+            }
+
+            // For TCP active candidates, match by IP only (ignore port).
+            // TCP active candidates use port 9 as placeholder in signaling,
+            // but the actual connection uses an ephemeral port.
+            if c.tcp_type() == TcpType::Active && transport_protocol == TransportProtocol::TCP {
+                if c.addr().ip() == addr.ip() {
+                    return Some(index);
+                }
+            } else if c.addr() == addr {
                 return Some(index);
             }
         }
@@ -1095,8 +1157,9 @@ impl Agent {
             }
 
             if remote_candidate_index.is_none() {
-                let (ip, port, network_type) =
-                    (remote_addr.ip(), remote_addr.port(), NetworkType::Udp4);
+                // Use the local candidate's network type for the peer-reflexive candidate
+                let network_type = self.local_candidates[local_index].network_type();
+                let (ip, port) = (remote_addr.ip(), remote_addr.port());
 
                 let prflx_candidate_config = CandidatePeerReflexiveConfig {
                     base_config: CandidateConfig {
