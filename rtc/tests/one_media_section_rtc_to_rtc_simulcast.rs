@@ -41,7 +41,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test simulcast: rtc sends 3 layers with RIDs -> rtc receives all 3 layers
 #[tokio::test]
-async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
+async fn test_one_media_section_rtc_to_rtc_simulcast() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .try_init()

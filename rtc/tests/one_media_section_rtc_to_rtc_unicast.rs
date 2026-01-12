@@ -27,7 +27,6 @@ use rtc::rtp;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
-    RTCRtpHeaderExtensionCapability,
 };
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
@@ -39,15 +38,15 @@ use tokio::net::UdpSocket;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
-/// Test simulcast: rtc sends 3 layers with RIDs -> rtc receives all 3 layers
+/// Test unicast: rtc sends just one stream in one media section only
 #[tokio::test]
-async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
+async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .try_init()
         .ok();
 
-    log::info!("Starting TRUE simulcast test: rtc (offerer/sender) -> rtc (answerer/receiver)");
+    log::info!("Starting unicast test: rtc (offerer/sender) -> rtc (answerer/receiver)");
 
     // Create answerer rtc peer
     let answerer_socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -73,30 +72,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
 
     answerer_media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
-    // Enable Extension Headers needed for Simulcast
-    for extension in [
-        "urn:ietf:params:rtp-hdrext:sdes:mid",
-        "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
-        "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
-    ] {
-        answerer_media_engine.register_header_extension(
-            RTCRtpHeaderExtensionCapability {
-                uri: extension.to_owned(),
-            },
-            RtpCodecKind::Video,
-            None,
-        )?;
-    }
-
-    let registry = rtc::interceptor::Registry::new();
-
-    // Use the default set of Interceptors
-    let registry =
-        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
-            &mut answerer_media_engine,
-        )?;
-
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -104,7 +79,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }])
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     let mut answerer_pc = RtcPeerConnection::new(answerer_config)?;
@@ -136,29 +110,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
     let mut offerer_media_engine = MediaEngine::default();
     offerer_media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
-    for extension in [
-        "urn:ietf:params:rtp-hdrext:sdes:mid",
-        "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
-        "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
-    ] {
-        offerer_media_engine.register_header_extension(
-            RTCRtpHeaderExtensionCapability {
-                uri: extension.to_owned(),
-            },
-            RtpCodecKind::Video,
-            None,
-        )?;
-    }
-
-    let registry = rtc::interceptor::Registry::new();
-
-    // Use the default set of Interceptors
-    let registry =
-        rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
-            &mut offerer_media_engine,
-        )?;
-
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -166,42 +117,33 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }])
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     let mut offerer_pc = RtcPeerConnection::new(offerer_config)?;
     log::info!("Created offerer peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs
-    let mid = "0".to_owned();
-    let mut rid2ssrc = HashMap::new();
     let mut codings = vec![];
 
     // Track sent/received packets per track
-    let mut packets_received = HashMap::new();
-    let mut packets_sent = HashMap::new();
+    let mut packets_received = 0;
+    let mut packets_sent = 0;
 
-    for rid in ["low", "mid", "high"] {
-        let ssrc = rand::random::<u32>();
-        rid2ssrc.insert(rid, ssrc);
-        codings.push(RTCRtpEncodingParameters {
-            rtp_coding_parameters: RTCRtpCodingParameters {
-                rid: rid.to_string(),
-                ssrc: Some(ssrc),
-                ..Default::default()
-            },
-            codec: video_codec.rtp_codec.clone(),
+    let ssrc = rand::random::<u32>();
+    codings.push(RTCRtpEncodingParameters {
+        rtp_coding_parameters: RTCRtpCodingParameters {
+            ssrc: Some(ssrc),
             ..Default::default()
-        });
-        log::info!("✅ Offerer added track with RID: {} vs SSRC: {}", rid, ssrc);
-        packets_received.insert(rid.to_string(), 0u16);
-        packets_sent.insert(rid.to_string(), 0u16);
-    }
+        },
+        codec: video_codec.rtp_codec.clone(),
+        ..Default::default()
+    });
+    log::info!("✅ Offerer added track with SSRC: {}", ssrc);
 
     let output_track = MediaStreamTrack::new(
-        format!("rtc-rs_simulcast"),
-        format!("video_simulcast"),
-        format!("video_simulcast"),
+        format!("rtc-rs_unicast"),
+        format!("video_unicast"),
+        format!("video_unicast"),
         RtpCodecKind::Video,
         codings,
     );
@@ -263,7 +205,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
-    let total_threshold = 60u16;
+    let total_threshold = 30u16;
 
     while start_time.elapsed() < test_timeout {
         // Process offerer writes
@@ -376,18 +318,16 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("ssrc_{}", rtp_packet.header.ssrc));
 
-                    let count = packets_received.entry(rid.clone()).or_insert(0u16);
-                    *count += 1;
+                    packets_received += 1;
                     log::debug!(
                         "simulcast read rid {}'s rtp packet sequence number {}",
                         rid,
                         rtp_packet.header.sequence_number,
                     );
-                    if *count % 10 == 0 {
+                    if packets_received % 10 == 0 {
                         log::info!(
-                            "Answerer received RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
-                            *count,
-                            rid,
+                            "Answerer received RTP packet #{} for SSRC: {}, seq: {}",
+                            packets_received,
                             rtp_packet.header.ssrc,
                             rtp_packet.header.sequence_number
                         );
@@ -407,79 +347,47 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }
 
         // Send RTP packets from offerer on all 3 simulcast layers
-        let total_sent: u16 = packets_sent.values().sum();
-        if streaming_started && total_sent < total_threshold {
-            for (rid, ssrc) in &rid2ssrc {
-                let mut rtp_sender = offerer_pc
-                    .rtp_sender(sender_id)
-                    .ok_or(Error::ErrRTPSenderNotExisted)?;
+        if streaming_started && packets_sent < total_threshold {
+            let mut rtp_sender = offerer_pc
+                .rtp_sender(sender_id)
+                .ok_or(Error::ErrRTPSenderNotExisted)?;
 
-                // Get negotiated header extension IDs
-                let params = rtp_sender.get_parameters();
-                let mut mid_id = None;
-                let mut rid_id = None;
+            packets_sent += 1;
 
-                for ext in &params.rtp_parameters.header_extensions {
-                    if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" {
-                        mid_id = Some(ext.id as u8);
-                    } else if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" {
-                        rid_id = Some(ext.id as u8);
-                    }
-                }
+            // Create RTP packet header
+            let header = rtp::header::Header {
+                version: 2,
+                padding: false,
+                marker: false,
+                payload_type: 96,
+                sequence_number: packets_sent,
+                timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
+                ssrc,
+                ..Default::default()
+            };
 
-                let sequence_number = packets_sent.entry(rid.to_string()).or_insert(0u16);
-                *sequence_number += 1;
-
-                // Create RTP packet header
-                let mut header = rtp::header::Header {
-                    version: 2,
-                    padding: false,
-                    marker: false,
-                    payload_type: 96,
-                    sequence_number: *sequence_number,
-                    timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
-                    ssrc: *ssrc,
-                    ..Default::default()
-                };
-
-                if *sequence_number % 10 == 0 {
-                    log::info!(
-                        "Offer sent RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
-                        *sequence_number,
-                        rid,
-                        header.ssrc,
-                        header.sequence_number
-                    );
-                }
-
-                // Add MID extension using set_extension
-                if let Some(id) = mid_id {
-                    header
-                        .set_extension(id, bytes::Bytes::from(mid.as_bytes().to_vec()))
-                        .expect("Failed to set MID extension");
-                }
-
-                // Add RID extension using set_extension
-                if let Some(id) = rid_id {
-                    header
-                        .set_extension(id, bytes::Bytes::from(rid.as_bytes().to_vec()))
-                        .expect("Failed to set RID extension");
-                }
-
-                // Create RTP packet with extensions
-                let packet = rtp::packet::Packet {
-                    header,
-                    payload: bytes::Bytes::from(dummy_frame.clone()),
-                };
-
-                log::debug!(
-                    "simulcast write rid {}'s rtp packet sequence number {}",
-                    rid,
-                    packet.header.sequence_number
+            if packets_sent % 10 == 0 {
+                log::info!(
+                    "Offer sent RTP packet #{} for SSRC: {}, seq: {}",
+                    packets_sent,
+                    header.ssrc,
+                    header.sequence_number
                 );
-                if let Err(e) = rtp_sender.write_rtp(packet) {
-                    log::debug!("Failed to send RTP on {}: {}", rid, e);
-                }
+            }
+
+            // Create RTP packet with extensions
+            let packet = rtp::packet::Packet {
+                header,
+                payload: bytes::Bytes::from(dummy_frame.clone()),
+            };
+
+            log::debug!(
+                "simulcast write ssrc {}'s rtp packet sequence number {}",
+                ssrc,
+                packet.header.sequence_number
+            );
+            if let Err(e) = rtp_sender.write_rtp(packet) {
+                log::debug!("Failed to send RTP on {}: {}", ssrc, e);
             }
 
             // Send at ~30fps
@@ -558,37 +466,19 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }
 
         // Check if we've received enough packets
-        let total_received: u16 = packets_received.values().sum();
-        if total_received >= total_threshold && packets_received.len() >= 3 {
+        if packets_received >= total_threshold {
             log::info!("Received sufficient packets from all tracks, ending test");
             break;
         }
     }
 
     // Check results
-    log::info!("Final packet counts by track:");
-    for (track, count) in packets_received.iter() {
-        log::info!("  {}: {} packets", track, count);
-    }
+    log::info!("Final packet counts {}", packets_received);
 
-    // Verify we received packets on all 3 simulcast layers
     assert!(
-        packets_received.len() >= 3,
-        "Should have received packets on 3 tracks, got {}",
-        packets_received.len()
-    );
-
-    let total_packets: u16 = packets_received.values().sum();
-    assert!(
-        total_packets >= 30,
-        "Should have received at least 30 packets total, got {}",
-        total_packets
-    );
-
-    log::info!(
-        "✅ SUCCESS: Received {} packets across {} simulcast tracks!",
-        total_packets,
-        packets_received.len()
+        packets_received >= 10,
+        "Should have received at least 10 packets total, got {}",
+        packets_received
     );
 
     offerer_pc.close()?;
