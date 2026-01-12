@@ -38,7 +38,7 @@
 </body>
 
 <script>
-  const socket = new WebSocket(`ws://${window.location.host}/websocket`)
+  const socket = new WebSocket(`ws://${window.location.hostname}:8081`)
   let pc = null
   let dc = null
   let offerCreated = false

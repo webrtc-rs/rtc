@@ -29,6 +29,8 @@ serde_json = "1.0.145"
 bytes = "1.11.0"
 rand = "0.9.2"
 ctrlc = "3.5.1"
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 
 [[example]]
 name = "broadcast"
@@ -121,31 +123,21 @@ path = "examples/simulcast_bidirection/simulcast_bidirection.rs"
 bench = false
 
 [[example]]
+name = "mdns-query-and-gather"
+path = "examples/mdns-query-and-gather/mdns-query-and-gather.rs"
+bench = false
+
+[[example]]
 name = "swap-tracks"
 path = "examples/swap-tracks/swap-tracks.rs"
 bench = false
 
-#[[example]]
-#name = "ortc"
-#path = "examples/ortc/ortc.rs"
-#bench = false
-#
-#[[example]]
-#name = "offer"
-#path = "examples/offer-answer/offer.rs"
-#bench = false
-#
-#[[example]]
-#name = "answer"
-#path = "examples/offer-answer/answer.rs"
-#bench = false
-#
 [[example]]
 name = "ice-restart"
 path = "examples/ice-restart/ice-restart.rs"
 bench = false
 
 [[example]]
-name = "mdns-query-and-gather"
-path = "examples/mdns-query-and-gather/mdns-query-and-gather.rs"
+name = "trickle-ice"
+path = "examples/trickle-ice/trickle-ice.rs"
 bench = false

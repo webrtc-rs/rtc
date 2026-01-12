@@ -1,5 +1,5 @@
 # trickle-ice
-trickle-ice demonstrates Pion WebRTC's Trickle ICE APIs.  ICE is the subsystem WebRTC uses to establish connectivity.
+trickle-ice demonstrates the sansio RTC's Trickle ICE APIs. ICE is the subsystem WebRTC uses to establish connectivity.
 
 Trickle ICE is the process of sharing addresses as soon as they are gathered. This parallelizes
 establishing a connection with a remote peer and starting sessions with TURN servers. Using Trickle ICE
@@ -9,19 +9,23 @@ Trickle ICE isn't mandatory to use, but highly recommended.
 
 ## Instructions
 
-### Download trickle-ice
-This example requires you to clone the repo since it is serving static HTML.
-
-```
-git clone https://github.com/pion/webrtc.git
-cd webrtc/examples/trickle-ice
-```
-
 ### Run trickle-ice
-Execute `go run *.go`
+From the `rtc` directory, execute:
+
+```
+cargo run --example trickle-ice
+```
+
+Or with debug logging:
+
+```
+cargo run --example trickle-ice -- --debug
+```
 
 ### Open the Web UI
-Open [http://localhost:8080](http://localhost:8080). This will automatically start a PeerConnection.
+Open [http://localhost:8080](http://localhost:8080). Click the "Start" button to initiate a PeerConnection.
+
+The WebSocket server runs on port 8081 and the HTTP server (for serving the HTML page) runs on port 8080.
 
 ## Note
-Congrats, you have used Pion WebRTC! Now start building something cool
+Congrats, you have used sansio RTC! Now start building something cool

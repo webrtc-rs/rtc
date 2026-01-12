@@ -62,9 +62,12 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 
 ### Miscellaneous
 
-- ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - ✅ [mDNS Query and Gather](mdns-query-and-gather) Example mdns-query-and-gather demonstrates webrtc-rs hides local ip
   with mDNS.
+- ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
+- ✅ [Trickle ICE](trickle-ice) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to
+  use
+  since it allows ICE Gathering and Connecting to happen concurrently.
 - 🚧 [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
   single port. By default, it listens on a new port for every PeerConnection. webrtc-rs can be configured to use a
   single port for multiple connections.
@@ -73,8 +76,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   many
   connections.
 - 🚧 [ICE Proxy](TODO) Example ice-proxy demonstrates how to use a proxy for TURN connections.
-- 🚧 [Trickle ICE](TODO) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to use
-  since it allows ICE Gathering and Connecting to happen concurrently.
 - 🚧 [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
 - 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
   signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
