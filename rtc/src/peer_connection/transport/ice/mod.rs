@@ -118,11 +118,13 @@ impl RTCIceTransport {
             return Ok(());
         }
 
-        self.agent.add_remote_candidate(c)
+        let _ = self.agent.add_remote_candidate(c)?;
+        Ok(())
     }
 
     pub(crate) fn add_local_candidate(&mut self, c: Candidate) -> Result<()> {
-        self.agent.add_local_candidate(c)
+        let _ = self.agent.add_local_candidate(c)?;
+        Ok(())
     }
 
     /// Role indicates the current role of the ICE transport.

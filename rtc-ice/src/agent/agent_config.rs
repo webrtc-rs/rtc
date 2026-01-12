@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::mdns::*;
+use crate::network_type::NetworkType;
 use crate::url::*;
 
 /// The interval at which the agent performs candidate checks in the connecting phase.
@@ -89,6 +90,10 @@ pub struct AgentConfig {
 
     /// An optional configuration for disabling or enabling support for specific candidate types.
     pub candidate_types: Vec<CandidateType>,
+
+    /// An optional configuration for disabling or enabling support for specific network types.
+    /// If empty, all network types are supported.
+    pub network_types: Vec<NetworkType>,
 
     /// Controls how often our internal task loop runs when in the connecting state.
     /// Only useful for testing.

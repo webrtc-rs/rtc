@@ -442,6 +442,21 @@ where
             }
         }
 
+        let network_types = if configuration
+            .setting_engine
+            .candidates
+            .ice_network_types
+            .is_empty()
+        {
+            ice::network_type::supported_network_types()
+        } else {
+            configuration
+                .setting_engine
+                .candidates
+                .ice_network_types
+                .clone()
+        };
+
         let agent_config = AgentConfig {
             lite: configuration.setting_engine.candidates.ice_lite,
             urls: validated_servers,
@@ -452,6 +467,7 @@ where
             failed_timeout: configuration.setting_engine.timeout.ice_failed_timeout,
             keepalive_interval: configuration.setting_engine.timeout.ice_keepalive_interval,
             candidate_types,
+            network_types,
             host_acceptance_min_wait: configuration
                 .setting_engine
                 .timeout

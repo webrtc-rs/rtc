@@ -143,6 +143,7 @@ pub struct Agent {
     pub(crate) mdns_local_ip: Option<IpAddr>,
 
     pub(crate) candidate_types: Vec<CandidateType>,
+    pub(crate) network_types: Vec<NetworkType>,
     pub(crate) urls: Vec<Url>,
 
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
@@ -183,6 +184,7 @@ impl Default for Agent {
             mdns_queries: HashMap::new(),
             mdns: None,
             candidate_types: vec![],
+            network_types: vec![],
             urls: vec![],
             write_outs: Default::default(),
             event_outs: Default::default(),
@@ -336,6 +338,7 @@ impl Agent {
             pending_binding_requests: vec![],
 
             candidate_types,
+            network_types: config.network_types.clone(),
             urls: config.urls.clone(),
 
             write_outs: VecDeque::new(),
@@ -353,7 +356,19 @@ impl Agent {
     }
 
     /// Adds a new local candidate.
-    pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<()> {
+    pub fn add_local_candidate(&mut self, mut c: Candidate) -> Result<bool> {
+        // Filter by network type if network_types is configured
+        if !self.network_types.is_empty() {
+            let candidate_network_type = c.network_type();
+            if !self.network_types.contains(&candidate_network_type) {
+                debug!(
+                    "Ignoring local candidate with network type {:?} (not in configured network types: {:?})",
+                    candidate_network_type, self.network_types
+                );
+                return Ok(false);
+            }
+        }
+
         if c.candidate_type() == CandidateType::Host
             && self.mdns_mode == MulticastDnsMode::QueryAndGather
             && c.network_type == NetworkType::Udp4
@@ -372,7 +387,7 @@ impl Agent {
 
         for cand in &self.local_candidates {
             if cand.equal(&c) {
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -384,11 +399,23 @@ impl Agent {
 
         self.request_connectivity_check();
 
-        Ok(())
+        Ok(true)
     }
 
     /// Adds a new remote candidate.
-    pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<()> {
+    pub fn add_remote_candidate(&mut self, c: Candidate) -> Result<bool> {
+        // Filter by network type if network_types is configured
+        if !self.network_types.is_empty() {
+            let candidate_network_type = c.network_type();
+            if !self.network_types.contains(&candidate_network_type) {
+                debug!(
+                    "Ignoring remote candidate with network type {:?} (not in configured network types: {:?})",
+                    candidate_network_type, self.network_types
+                );
+                return Ok(false);
+            }
+        }
+
         // If we have a mDNS Candidate lets fully resolve it before adding it locally
         if c.candidate_type() == CandidateType::Host && c.address().ends_with(".local") {
             if self.mdns_mode == MulticastDnsMode::Disabled {
@@ -396,7 +423,7 @@ impl Agent {
                     "remote mDNS candidate added, but mDNS is disabled: ({})",
                     c.address()
                 );
-                return Ok(());
+                return Ok(false);
             }
 
             if c.candidate_type() != CandidateType::Host {
@@ -408,11 +435,11 @@ impl Agent {
                 self.mdns_queries.insert(query_id, c);
             }
 
-            return Ok(());
+            return Ok(false);
         }
 
         self.trigger_request_connectivity_check(vec![c]);
-        Ok(())
+        Ok(true)
     }
 
     fn trigger_request_connectivity_check(&mut self, remote_candidates: Vec<Candidate>) {
@@ -1085,8 +1112,11 @@ impl Agent {
 
                 match prflx_candidate_config.new_candidate_peer_reflexive() {
                     Ok(prflx_candidate) => {
-                        let _ = self.add_remote_candidate(prflx_candidate);
-                        remote_candidate_index = Some(self.remote_candidates.len() - 1);
+                        if let Ok(added) = self.add_remote_candidate(prflx_candidate)
+                            && added
+                        {
+                            remote_candidate_index = Some(self.remote_candidates.len() - 1);
+                        }
                     }
                     Err(err) => {
                         error!(

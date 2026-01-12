@@ -394,12 +394,6 @@ async fn run_main_loop(
                             let mut setting_engine = SettingEngine::default();
                             setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
-                            // Only use TCP network types
-                            setting_engine.set_network_types(vec![
-                                ice::network_type::NetworkType::Tcp4,
-                                ice::network_type::NetworkType::Tcp6,
-                            ]);
-
                             let config = RTCConfigurationBuilder::new()
                                 .with_setting_engine(setting_engine)
                                 .build();

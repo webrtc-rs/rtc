@@ -69,7 +69,6 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 
 /// Test ICE restart between webrtc (offerer) and rtc (answerer)
 #[tokio::test]
-#[ignore]
 async fn test_ice_restart_interop() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
