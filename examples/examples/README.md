@@ -66,11 +66,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   with mDNS.
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - ✅ [Trickle ICE](trickle-ice) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to
-  use
-  since it allows ICE Gathering and Connecting to happen concurrently.
-- 🚧 [ICE Single Port](TODO) Example ice-single-port demonstrates how multiple WebRTC connections can be served from a
-  single port. By default, it listens on a new port for every PeerConnection. webrtc-rs can be configured to use a
-  single port for multiple connections.
+  use since it allows ICE Gathering and Connecting to happen concurrently.
 - 🚧 [ICE TCP](TODO) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port, and this TCP port can be used for
   many
@@ -80,3 +76,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
   signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
   browser, or pull the video back into OBS and GStreamer via WHEP.
+
+### N/A
+
+- [x] [ICE Single Port](N/A) This example doesn't apply to sansio RTC because sansio RTC is I/O-free by design: The
+  library never creates or manages sockets. Your application creates UDP sockets and feeds data to handle_read(). Port
+  multiplexing is already the application's responsibility.
