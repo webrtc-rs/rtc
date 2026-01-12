@@ -17,8 +17,8 @@ pub fn supported_network_types() -> Vec<NetworkType> {
     vec![
         NetworkType::Udp4,
         NetworkType::Udp6,
-        //NetworkType::TCP4,
-        //NetworkType::TCP6,
+        NetworkType::Tcp4,
+        NetworkType::Tcp6,
     ]
 }
 

@@ -16,6 +16,8 @@ categories.workspace = true
 [dev-dependencies]
 rtc.workspace = true
 signal.workspace = true
+shared.workspace = true
+ice.workspace = true
 
 tokio = { version = "1.48.0", features = ["full"] }
 env_logger = "0.11.8"
@@ -140,4 +142,9 @@ bench = false
 [[example]]
 name = "trickle-ice"
 path = "examples/trickle-ice/trickle-ice.rs"
+bench = false
+
+[[example]]
+name = "ice-tcp"
+path = "examples/ice-tcp/ice-tcp.rs"
 bench = false

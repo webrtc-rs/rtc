@@ -35,23 +35,34 @@
       document.getElementById('iceConnectionStates').appendChild(el);
     }
 
-    pc.createOffer()
-      .then(offer => {
-        pc.setLocalDescription(offer)
+    // Wait for ICE gathering to complete before sending offer (non-trickle ICE)
+    // Use onicecandidate with null to detect gathering complete
+    pc.onicecandidate = event => {
+      if (event.candidate === null) {
+        // ICE gathering complete - send the offer with all candidates
+        console.log('ICE gathering complete, sending offer:', pc.localDescription.sdp);
 
-        return fetch(`/doSignaling`, {
+        fetch(`/doSignaling`, {
           method: 'post',
           headers: {
             'Accept': 'application/json, text/plain, */*',
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(offer)
+          body: JSON.stringify(pc.localDescription)
         })
-      })
-      .then(res => res.json())
-      .then(res => {
-        pc.setRemoteDescription(res)
-      })
+        .then(res => res.json())
+        .then(res => {
+          console.log('Received answer:', res.sdp);
+          pc.setRemoteDescription(res)
+        })
+        .catch(alert)
+      } else {
+        console.log('ICE candidate gathered:', event.candidate.candidate);
+      }
+    }
+
+    pc.createOffer()
+      .then(offer => pc.setLocalDescription(offer))
       .catch(alert)
   </script>
 </html>
