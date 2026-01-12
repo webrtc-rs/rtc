@@ -165,7 +165,7 @@ use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{
-    PayloadType, RTCRtpTransceiver, SSRC, rtp_sender::rtcp_parameters::RTCPFeedback,
+    PayloadType, RTCRtpTransceiver, RtpStreamId, SSRC, rtp_sender::rtcp_parameters::RTCPFeedback,
 };
 use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::Interceptor;
@@ -742,10 +742,9 @@ where
             });
         }
 
+        let mut recv_sc_list: Vec<String> = vec![];
+        let mut send_sc_list: Vec<String> = vec![];
         if !media_section.rid_map.is_empty() {
-            let mut recv_sc_list: Vec<String> = vec![];
-            let mut send_sc_list: Vec<String> = vec![];
-
             for rid in &media_section.rid_map {
                 let rid_syntax = match rid.direction {
                     SimulcastDirection::Send => {
@@ -769,24 +768,33 @@ where
                 };
                 media = media.with_value_attribute(SDP_ATTRIBUTE_RID.to_owned(), rid_syntax);
             }
-
-            // Simulcast
-            let mut sc_attr = String::new();
-            if !recv_sc_list.is_empty() {
-                sc_attr.push_str(&format!("recv {}", recv_sc_list.join(";")));
-            }
-            if !send_sc_list.is_empty() {
-                sc_attr.push_str(&format!("send {}", send_sc_list.join(";")));
-            }
-            media = media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr);
         }
 
-        media = RTCPeerConnection::add_sender_sdp(
-            media,
-            media_engine,
-            transceiver,
-            write_ssrc_attributes_for_simulcast,
-        );
+        media = {
+            let (media, send_rids) = RTCPeerConnection::add_sender_sdp(
+                media,
+                media_engine,
+                transceiver,
+                write_ssrc_attributes_for_simulcast,
+            );
+
+            // Simulcast
+            let mut sc_attr = vec![];
+            if !recv_sc_list.is_empty() {
+                sc_attr.push(format!("recv {}", recv_sc_list.join(";")));
+            }
+            if !send_sc_list.is_empty() {
+                sc_attr.push(format!("send {}", send_sc_list.join(";")));
+            }
+            if !send_rids.is_empty() {
+                sc_attr.push(format!("send {}", send_rids.join(";")));
+            }
+            if !sc_attr.is_empty() {
+                media.with_value_attribute(SDP_ATTRIBUTE_SIMULCAST.to_owned(), sc_attr.join(" "))
+            } else {
+                media
+            }
+        };
 
         media = media.with_property_attribute(transceiver.direction().to_string());
 
@@ -809,7 +817,9 @@ where
         media_engine: &MediaEngine,
         transceiver: &mut RTCRtpTransceiver<I>,
         write_ssrc_attributes_for_simulcast: bool,
-    ) -> MediaDescription {
+    ) -> (MediaDescription, Vec<RtpStreamId>) {
+        let mut send_rids = vec![];
+
         if let Some(sender) = transceiver.sender_mut() {
             let (encodings, track) = (
                 sender.get_parameters(media_engine).encodings.clone(),
@@ -876,8 +886,6 @@ where
             }
 
             if is_simulcast {
-                let mut send_rids = Vec::with_capacity(encodings.len());
-
                 for encoding in &encodings {
                     media = media.with_value_attribute(
                         SDP_ATTRIBUTE_RID.to_owned(),
@@ -885,15 +893,10 @@ where
                     );
                     send_rids.push(encoding.rtp_coding_parameters.rid.to_string());
                 }
-
-                media = media.with_value_attribute(
-                    SDP_ATTRIBUTE_SIMULCAST.to_owned(),
-                    format!("send {}", send_rids.join(";")),
-                );
             }
         }
 
-        media
+        (media, send_rids)
     }
 }
 

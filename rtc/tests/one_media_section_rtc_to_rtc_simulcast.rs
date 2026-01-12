@@ -36,13 +36,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test simulcast: rtc sends 3 layers with RIDs -> rtc receives all 3 layers
 #[tokio::test]
-#[ignore]
 async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
@@ -50,9 +48,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         .ok();
 
     log::info!("Starting TRUE simulcast test: rtc (offerer/sender) -> rtc (answerer/receiver)");
-
-    // Track received packets per track on answerer side
-    let packets_received = Arc::new(Mutex::new(HashMap::<String, u32>::new()));
 
     // Create answerer rtc peer
     let answerer_socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -76,20 +71,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         ..Default::default()
     };
 
-    /*let audio_codec = RTCRtpCodecParameters {
-        rtp_codec: RTCRtpCodec {
-            mime_type: MIME_TYPE_OPUS.to_owned(),
-            clock_rate: 48000,
-            channels: 2,
-            sdp_fmtp_line: "".to_owned(),
-            rtcp_feedback: vec![],
-        },
-        payload_type: 120,
-        ..Default::default()
-    };*/
-
     answerer_media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
-    //answerer_media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
 
     // Enable Extension Headers needed for Simulcast
     for extension in [
@@ -153,7 +135,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
 
     let mut offerer_media_engine = MediaEngine::default();
     offerer_media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
-    //offerer_media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
 
     for extension in [
         "urn:ietf:params:rtp-hdrext:sdes:mid",
@@ -195,6 +176,11 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
     let mid = "0".to_owned();
     let mut rid2ssrc = HashMap::new();
     let mut codings = vec![];
+
+    // Track sent/received packets per track
+    let mut packets_received = HashMap::new();
+    let mut packets_sent = HashMap::new();
+
     for rid in ["low", "mid", "high"] {
         let ssrc = rand::random::<u32>();
         rid2ssrc.insert(rid, ssrc);
@@ -208,6 +194,8 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
             ..Default::default()
         });
         log::info!("✅ Offerer added track with RID: {} vs SSRC: {}", rid, ssrc);
+        packets_received.insert(rid.to_string(), 0u16);
+        packets_sent.insert(rid.to_string(), 0u16);
     }
 
     let output_track = MediaStreamTrack::new(
@@ -218,14 +206,6 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         codings,
     );
     let sender_id = offerer_pc.add_track(output_track)?;
-    /*let _ = offerer_pc.add_transceiver_from_kind(
-        RtpCodecKind::Audio,
-        Some(RTCRtpTransceiverInit {
-            direction: RTCRtpTransceiverDirection::Recvonly,
-            streams: vec![],
-            send_encodings: vec![],
-        }),
-    );*/
 
     // Add local candidate for offerer
     let offerer_candidate = CandidateHostConfig {
@@ -283,7 +263,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
 
     // Create dummy video data to send
     let dummy_frame = vec![0xAA; 500];
-    let mut sequence_number = 0;
+    let total_threshold = 60u16;
 
     while start_time.elapsed() < test_timeout {
         // Process offerer writes
@@ -353,10 +333,14 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                         track_id2_receiver_id.insert(init.track_id.clone(), init.receiver_id);
 
                         if let Some(rid) = init.rid.as_ref() {
-                            log::info!("✅ Answerer Track Open with RID: {}", rid);
+                            log::info!(
+                                "✅ Answerer Track (track_id: {}) Open with RID: {}",
+                                init.track_id,
+                                rid
+                            );
                         } else {
                             log::info!(
-                                "✅ Answerer Track Open without RID (track_id: {})",
+                                "✅ Answerer Track (track_id: {}) Open without RID ",
                                 init.track_id
                             );
                         }
@@ -392,10 +376,13 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("ssrc_{}", rtp_packet.header.ssrc));
 
-                    let mut counts = packets_received.lock().await;
-                    let count = counts.entry(rid.clone()).or_insert(0);
+                    let count = packets_received.entry(rid.clone()).or_insert(0u16);
                     *count += 1;
-
+                    log::debug!(
+                        "simulcast read rid {}'s rtp packet sequence number {}",
+                        rid,
+                        rtp_packet.header.sequence_number,
+                    );
                     if *count % 10 == 0 {
                         log::info!(
                             "Answerer received RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
@@ -420,7 +407,8 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }
 
         // Send RTP packets from offerer on all 3 simulcast layers
-        if streaming_started {
+        let total_sent: u16 = packets_sent.values().sum();
+        if streaming_started && total_sent < total_threshold {
             for (rid, ssrc) in &rid2ssrc {
                 let mut rtp_sender = offerer_pc
                     .rtp_sender(sender_id)
@@ -439,17 +427,30 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                     }
                 }
 
+                let sequence_number = packets_sent.entry(rid.to_string()).or_insert(0u16);
+                *sequence_number += 1;
+
                 // Create RTP packet header
                 let mut header = rtp::header::Header {
                     version: 2,
                     padding: false,
                     marker: false,
                     payload_type: 96,
-                    sequence_number,
+                    sequence_number: *sequence_number,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc: *ssrc,
                     ..Default::default()
                 };
+
+                if *sequence_number % 10 == 0 {
+                    log::info!(
+                        "Offer sent RTP packet #{} for RID: {} (SSRC: {}, seq: {})",
+                        *sequence_number,
+                        rid,
+                        header.ssrc,
+                        header.sequence_number
+                    );
+                }
 
                 // Add MID extension using set_extension
                 if let Some(id) = mid_id {
@@ -471,10 +472,14 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
                     payload: bytes::Bytes::from(dummy_frame.clone()),
                 };
 
+                log::debug!(
+                    "simulcast write rid {}'s rtp packet sequence number {}",
+                    rid,
+                    packet.header.sequence_number
+                );
                 if let Err(e) = rtp_sender.write_rtp(packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
-                sequence_number += 1;
             }
 
             // Send at ~30fps
@@ -553,29 +558,27 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
         }
 
         // Check if we've received enough packets
-        let received_count = packets_received.lock().await;
-        let total: u32 = received_count.values().sum();
-        if total >= 30 && received_count.len() >= 3 {
+        let total_received: u16 = packets_received.values().sum();
+        if total_received >= total_threshold && packets_received.len() >= 3 {
             log::info!("Received sufficient packets from all tracks, ending test");
             break;
         }
     }
 
     // Check results
-    let final_counts = packets_received.lock().await;
     log::info!("Final packet counts by track:");
-    for (track, count) in final_counts.iter() {
+    for (track, count) in packets_received.iter() {
         log::info!("  {}: {} packets", track, count);
     }
 
     // Verify we received packets on all 3 simulcast layers
     assert!(
-        final_counts.len() >= 3,
+        packets_received.len() >= 3,
         "Should have received packets on 3 tracks, got {}",
-        final_counts.len()
+        packets_received.len()
     );
 
-    let total_packets: u32 = final_counts.values().sum();
+    let total_packets: u16 = packets_received.values().sum();
     assert!(
         total_packets >= 30,
         "Should have received at least 30 packets total, got {}",
@@ -585,7 +588,7 @@ async fn test_simulcast_rtc_to_rtc_one_media_section() -> Result<()> {
     log::info!(
         "✅ SUCCESS: Received {} packets across {} simulcast tracks!",
         total_packets,
-        final_counts.len()
+        packets_received.len()
     );
 
     offerer_pc.close()?;

@@ -443,6 +443,15 @@ where
 
     fn handle_undeclared_ssrc(&mut self, rtp_header: &rtp::Header) -> Option<MediaStreamTrackId> {
         if self.rtp_transceivers.len() != 1 {
+            // it is multi-media-section case, let's use find_track_id_by_rid
+            return None;
+        }
+
+        if let Some(transceiver) = self.rtp_transceivers.first()
+            && let Some(receiver) = transceiver.receiver()
+            && !receiver.track().codings().is_empty()
+        {
+            // it is rid-based, let's use find_track_id_by_rid
             return None;
         }
 
