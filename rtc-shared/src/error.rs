@@ -1501,6 +1501,8 @@ pub enum Error {
     ErrPeerConnSDPTypeInvalidValueSetLocalDescription,
     #[error("remoteDescription contained media section without mid value")]
     ErrPeerConnRemoteDescriptionWithoutMidValue,
+    #[error("localDescription contained media section without mid value")]
+    ErrPeerConnLocalDescriptionWithoutMidValue,
     #[error("remoteDescription has not been set yet")]
     ErrPeerConnRemoteDescriptionNil,
     #[error("localDescription has not been set yet")]

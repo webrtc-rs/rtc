@@ -50,8 +50,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   track.
 - ✅ [RTCP Processing](rtcp-processing) The rtcp-processing example demonstrates how to create a custom
   RtcpForwarderInterceptor using the derive macros. This allows access to media statistics and control information.
-- 🚧 [Save to Disk AV1](TODO): The save-to-disk-av1 is a simple application that shows how to save a video to disk
-  using AV1.
+- ✅ [Save to Disk AV1](save-to-disk-av1): The save-to-disk-av1 is a simple application that shows how to save a video to
+  disk using AV1.
 - 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
   while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
   media packets, but browser will recover them using the FEC packets and the delivered packets.

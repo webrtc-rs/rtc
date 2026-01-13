@@ -687,39 +687,44 @@ where
             }
 
             // Explicitly reject track if we don't have the codec
-            d = d.with_media(MediaDescription {
-                media_name: MediaName {
-                    media: transceiver.kind().to_string(),
-                    port: RangedPort {
-                        value: 0,
-                        range: None,
+            // RFC 8829 Section 5.3.1: Set port=0 to reject, further processing can be skipped
+            // However, mid attribute is still needed for offer/answer correlation with BUNDLE
+            d = d.with_media(
+                MediaDescription {
+                    media_name: MediaName {
+                        media: transceiver.kind().to_string(),
+                        port: RangedPort {
+                            value: 0,
+                            range: None,
+                        },
+                        protos: vec![
+                            "UDP".to_owned(),
+                            "TLS".to_owned(),
+                            "RTP".to_owned(),
+                            "SAVPF".to_owned(),
+                        ],
+                        formats: vec!["0".to_owned()],
                     },
-                    protos: vec![
-                        "UDP".to_owned(),
-                        "TLS".to_owned(),
-                        "RTP".to_owned(),
-                        "SAVPF".to_owned(),
-                    ],
-                    formats: vec!["0".to_owned()],
-                },
-                media_title: None,
-                // We need to include connection information even if we're rejecting a track, otherwise Firefox will fail to
-                // parse the SDP with an error like:
-                // SIPCC Failed to parse SDP: SDP Parse Error on line 50:  c= connection line not specified for every media level, validation failed.
-                // In addition this makes our SDP compliant with RFC 4566 Section 5.7: https://datatracker.ietf.org/doc/html/rfc4566#section-5.7
-                connection_information: Some(ConnectionInformation {
-                    network_type: "IN".to_owned(),
-                    address_type: "IP4".to_owned(),
-                    address: Some(Address {
-                        address: "0.0.0.0".to_owned(),
-                        ttl: None,
-                        range: None,
+                    media_title: None,
+                    // We need to include connection information even if we're rejecting a track, otherwise Firefox will fail to
+                    // parse the SDP with an error like:
+                    // SIPCC Failed to parse SDP: SDP Parse Error on line 50:  c= connection line not specified for every media level, validation failed.
+                    // In addition this makes our SDP compliant with RFC 4566 Section 5.7: https://datatracker.ietf.org/doc/html/rfc4566#section-5.7
+                    connection_information: Some(ConnectionInformation {
+                        network_type: "IN".to_owned(),
+                        address_type: "IP4".to_owned(),
+                        address: Some(Address {
+                            address: "0.0.0.0".to_owned(),
+                            ttl: None,
+                            range: None,
+                        }),
                     }),
-                }),
-                bandwidth: vec![],
-                encryption_key: None,
-                attributes: vec![],
-            });
+                    bandwidth: vec![],
+                    encryption_key: None,
+                    attributes: vec![],
+                }
+                .with_value_attribute(ATTR_KEY_MID.to_owned(), mid_value),
+            );
             return Ok((d, false));
         }
 

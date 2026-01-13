@@ -10,9 +10,12 @@ use shared::error::Result;
 
 #[cfg(test)]
 mod av1_test;
+mod depacketizer;
 mod leb128;
 mod obu;
 mod packetizer;
+
+pub use depacketizer::Av1Depacketizer;
 
 #[derive(Default, Clone, Debug)]
 pub struct Av1Payloader {}

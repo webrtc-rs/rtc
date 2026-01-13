@@ -1009,7 +1009,7 @@ where
             for media in &parsed_local_description.media_descriptions {
                 let mid_value = match get_mid_value(media) {
                     Some(mid) if !mid.is_empty() => mid,
-                    _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
+                    _ => return Err(Error::ErrPeerConnLocalDescriptionWithoutMidValue),
                 };
 
                 if media.media_name.media == MEDIA_SECTION_APPLICATION {
