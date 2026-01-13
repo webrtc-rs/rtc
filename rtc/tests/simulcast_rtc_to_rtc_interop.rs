@@ -47,6 +47,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
+        .is_test(true)
         .try_init()
         .ok();
 

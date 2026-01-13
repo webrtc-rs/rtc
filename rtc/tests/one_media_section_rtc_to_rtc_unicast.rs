@@ -43,6 +43,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
+        .is_test(true)
         .try_init()
         .ok();
 
