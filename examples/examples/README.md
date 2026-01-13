@@ -19,8 +19,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [Data Channels Offer Answer](data-channels-offer-answer): Example offer-answer is an example of two webrtc-rs
   instances communicating directly!
 - 🚧 [Data Channels Simple](TODO): Simple example of a WebRTC DataChannel using it as the signaling server.
-- 🚧 [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
-  DataChannel support for real-time chat.
 
 ### Media API
 
@@ -72,14 +70,16 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
   mode abilities.
 - 🚧 [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
-- 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
-  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
-  browser, or pull the video back into OBS and GStreamer via WHEP.
 
-### N/A
+### Not Applicable
 
 - [x] [ICE Single Port](N/A) This example doesn't apply to sansio RTC because sansio RTC is I/O-free by design: The
   library never creates or manages sockets. Your application creates UDP sockets and feeds data to handle_read(). Port
   multiplexing is already the application's responsibility.
 - [x] [ICE Proxy](N/A) This example doesn't apply to sansio RTC too, since Sansio RTC is I/O-free - it never creates
   network connections. The application is responsible for all I/O.
+- [x] [Data Channels WHIP WHEP](N/A): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
+  DataChannel support for real-time chat.
+- [x] [WHIP WHEP](N/A): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
+  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
+  browser, or pull the video back into OBS and GStreamer via WHEP.
