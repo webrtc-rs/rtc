@@ -164,3 +164,8 @@ bench = false
 name = "rtcp-processing"
 path = "examples/rtcp-processing/rtcp-processing.rs"
 bench = false
+
+[[example]]
+name = "data-channels-simple"
+path = "examples/data-channels-simple/data-channels-simple.rs"
+bench = false
