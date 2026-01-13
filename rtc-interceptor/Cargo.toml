@@ -14,6 +14,7 @@ categories.workspace = true
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 sansio.workspace = true
+interceptor-derive.workspace = true
 
 rtp.workspace = true
 rtcp.workspace = true

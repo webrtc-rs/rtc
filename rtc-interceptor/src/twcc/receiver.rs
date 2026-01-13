@@ -3,7 +3,7 @@
 use super::recorder::Recorder;
 use super::stream_supports_twcc;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket, interceptor};
 use shared::TransportContext;
 use shared::error::Error;
 use shared::marshal::Unmarshal;
@@ -71,7 +71,9 @@ struct RemoteStream {
 ///
 /// This interceptor examines incoming RTP packets for transport-wide CC sequence
 /// numbers and periodically generates TransportLayerCC feedback packets.
+#[derive(Interceptor)]
 pub struct TwccReceiverInterceptor<P> {
+    #[next]
     inner: P,
 
     /// Configuration
@@ -122,15 +124,9 @@ impl<P> TwccReceiverInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for TwccReceiverInterceptor<P>
-{
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
+#[interceptor]
+impl<P: Interceptor> TwccReceiverInterceptor<P> {
+    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Process incoming RTP packets with TWCC extension
         if let Packet::Rtp(ref rtp_packet) = msg.message
@@ -166,14 +162,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_read(msg)
     }
 
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.inner.poll_read()
-    }
-
-    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.inner.handle_write(msg)
-    }
-
+    #[overrides]
     fn poll_write(&mut self) -> Option<Self::Wout> {
         // First drain feedback packets
         if let Some(pkt) = self.write_queue.pop_front() {
@@ -182,6 +171,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.poll_write()
     }
 
+    #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
         // Check if we need to send feedback
         if let Some(timeout) = self.next_timeout
@@ -193,6 +183,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_timeout(now)
     }
 
+    #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
         let inner_timeout = self.inner.poll_timeout();
 
@@ -203,17 +194,8 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
             (None, None) => None,
         }
     }
-}
 
-impl<P: Interceptor> Interceptor for TwccReceiverInterceptor<P> {
-    fn bind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_local_stream(info);
-    }
-
-    fn unbind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_local_stream(info);
-    }
-
+    #[overrides]
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         if let Some(hdr_ext_id) = stream_supports_twcc(info) {
             // Don't track if ID is 0 (invalid)
@@ -224,6 +206,7 @@ impl<P: Interceptor> Interceptor for TwccReceiverInterceptor<P> {
         self.inner.bind_remote_stream(info);
     }
 
+    #[overrides]
     fn unbind_remote_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
         self.inner.unbind_remote_stream(info);

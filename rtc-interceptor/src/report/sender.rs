@@ -2,7 +2,7 @@
 
 use super::sender_stream::SenderStream;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket, interceptor};
 use rtcp::header::PacketType;
 use shared::TransportContext;
 use shared::error::Error;
@@ -136,7 +136,9 @@ impl<P> SenderReportBuilder<P> {
 ///     .with(SenderReportBuilder::new().build())
 ///     .build();
 /// ```
+#[derive(Interceptor)]
 pub struct SenderReportInterceptor<P> {
+    #[next]
     inner: P,
 
     interval: Duration,
@@ -190,23 +192,9 @@ impl<P> SenderReportInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for SenderReportInterceptor<P>
-{
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.inner.handle_read(msg)
-    }
-
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.inner.poll_read()
-    }
-
+#[interceptor]
+impl<P: Interceptor> SenderReportInterceptor<P> {
+    #[overrides]
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         if let Packet::Rtp(rtp_packet) = &msg.message
             && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
@@ -217,6 +205,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_write(msg)
     }
 
+    #[overrides]
     fn poll_write(&mut self) -> Option<Self::Wout> {
         // First drain generated RTCP reports
         if let Some(pkt) = self.write_queue.pop_front() {
@@ -225,6 +214,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.poll_write()
     }
 
+    #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
         if self.eto <= now {
             self.eto = now + self.interval;
@@ -242,6 +232,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_timeout(now)
     }
 
+    #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
         if let Some(eto) = self.inner.poll_timeout()
             && eto < self.eto
@@ -251,25 +242,20 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
             Some(self.eto)
         }
     }
-}
 
-impl<P: Interceptor> Interceptor for SenderReportInterceptor<P> {
+    #[overrides]
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         let stream = SenderStream::new(info.ssrc, info.clock_rate, self.use_latest_packet);
         self.streams.insert(info.ssrc, stream);
 
         self.inner.bind_local_stream(info);
     }
+
+    #[overrides]
     fn unbind_local_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
 
         self.inner.unbind_local_stream(info);
-    }
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_remote_stream(info);
-    }
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_remote_stream(info);
     }
 }
 

@@ -3,7 +3,7 @@
 use super::send_buffer::SendBuffer;
 use super::stream_supports_nack;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket, interceptor};
 use shared::TransportContext;
 use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
@@ -75,7 +75,9 @@ struct LocalStream {
 ///
 /// This interceptor buffers outgoing RTP packets on local streams and
 /// retransmits them when RTCP TransportLayerNack packets are received.
+#[derive(Interceptor)]
 pub struct NackResponderInterceptor<P> {
+    #[next]
     inner: P,
 
     /// Configuration
@@ -170,15 +172,9 @@ impl<P> NackResponderInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for NackResponderInterceptor<P>
-{
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
+#[interceptor]
+impl<P: Interceptor> NackResponderInterceptor<P> {
+    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Process NACK packets
         if let Packet::Rtcp(ref rtcp_packets) = msg.message {
@@ -195,10 +191,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_read(msg)
     }
 
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.inner.poll_read()
-    }
-
+    #[overrides]
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Buffer outgoing RTP packets
         if let Packet::Rtp(ref rtp_packet) = msg.message
@@ -210,6 +203,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_write(msg)
     }
 
+    #[overrides]
     fn poll_write(&mut self) -> Option<Self::Wout> {
         // First drain retransmitted packets
         if let Some(pkt) = self.write_queue.pop_front() {
@@ -218,16 +212,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.poll_write()
     }
 
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        self.inner.handle_timeout(now)
-    }
-
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        self.inner.poll_timeout()
-    }
-}
-
-impl<P: Interceptor> Interceptor for NackResponderInterceptor<P> {
+    #[overrides]
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         if stream_supports_nack(info)
             && let Some(send_buffer) = SendBuffer::new(self.size)
@@ -245,17 +230,10 @@ impl<P: Interceptor> Interceptor for NackResponderInterceptor<P> {
         self.inner.bind_local_stream(info);
     }
 
+    #[overrides]
     fn unbind_local_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
         self.inner.unbind_local_stream(info);
-    }
-
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_remote_stream(info);
-    }
-
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_remote_stream(info);
     }
 }
 

@@ -1,0 +1,20 @@
+[package]
+name = "rtc-interceptor-derive"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Derive macros for RTC Interceptor trait"
+license.workspace = true
+documentation = "https://docs.rs/rtc-interceptor-derive"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "parsing", "extra-traits"] }

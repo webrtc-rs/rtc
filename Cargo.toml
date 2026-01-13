@@ -6,6 +6,7 @@ members = [
     "rtc-dtls",
     "rtc-ice",
     "rtc-interceptor",
+    "rtc-interceptor-derive",
     "rtc-media",
     "rtc-mdns",
     "rtc-rtcp",
@@ -40,6 +41,7 @@ datachannel = { version = "0.7.2", path = "rtc-datachannel", package = "rtc-data
 dtls = { version = "0.7.2", path = "rtc-dtls", package = "rtc-dtls" }
 ice = { version = "0.7.2", path = "rtc-ice", package = "rtc-ice" }
 interceptor = { version = "0.7.2", path = "rtc-interceptor", package = "rtc-interceptor" }
+interceptor-derive = { version = "0.7.2", path = "rtc-interceptor-derive", package = "rtc-interceptor-derive" }
 mdns = { version = "0.7.2", path = "rtc-mdns", package = "rtc-mdns" }
 media = { version = "0.7.2", path = "rtc-media", package = "rtc-media" }
 rtcp = { version = "0.7.2", path = "rtc-rtcp", package = "rtc-rtcp" }

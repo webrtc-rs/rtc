@@ -3,7 +3,7 @@
 use super::receive_log::ReceiveLog;
 use super::stream_supports_nack;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket, interceptor};
 use shared::TransportContext;
 use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
@@ -106,7 +106,9 @@ impl<P> NackGeneratorBuilder<P> {
 /// This interceptor monitors incoming RTP packets on remote streams,
 /// tracks which sequence numbers have been received, and periodically
 /// generates RTCP TransportLayerNack packets for missing sequences.
+#[derive(Interceptor)]
 pub struct NackGeneratorInterceptor<P> {
+    #[next]
     inner: P,
 
     /// Configuration
@@ -210,15 +212,9 @@ impl<P> NackGeneratorInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for NackGeneratorInterceptor<P>
-{
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
+#[interceptor]
+impl<P: Interceptor> NackGeneratorInterceptor<P> {
+    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Track incoming RTP packets
         if let Packet::Rtp(ref rtp_packet) = msg.message
@@ -230,14 +226,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_read(msg)
     }
 
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.inner.poll_read()
-    }
-
-    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.inner.handle_write(msg)
-    }
-
+    #[overrides]
     fn poll_write(&mut self) -> Option<Self::Wout> {
         // First drain generated NACK packets
         if let Some(pkt) = self.write_queue.pop_front() {
@@ -246,6 +235,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.poll_write()
     }
 
+    #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
         if self.eto <= now {
             self.eto = now + self.interval;
@@ -255,6 +245,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         self.inner.handle_timeout(now)
     }
 
+    #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
         if let Some(inner_eto) = self.inner.poll_timeout()
             && inner_eto < self.eto
@@ -263,17 +254,8 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()>
         }
         Some(self.eto)
     }
-}
 
-impl<P: Interceptor> Interceptor for NackGeneratorInterceptor<P> {
-    fn bind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_local_stream(info);
-    }
-
-    fn unbind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_local_stream(info);
-    }
-
+    #[overrides]
     fn bind_remote_stream(&mut self, info: &StreamInfo) {
         if stream_supports_nack(info)
             && let Some(receive_log) = ReceiveLog::new(self.size)
@@ -283,6 +265,7 @@ impl<P: Interceptor> Interceptor for NackGeneratorInterceptor<P> {
         self.inner.bind_remote_stream(info);
     }
 
+    #[overrides]
     fn unbind_remote_stream(&mut self, info: &StreamInfo) {
         self.receive_logs.remove(&info.ssrc);
         self.nack_counts.remove(&info.ssrc);

@@ -47,8 +47,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   Simulcast streams. It then returns the media as 3 independent Tracks back to the sender.
 - ✅ [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
   track.
-- 🚧 [RTCP Processing](TODO) The rtcp-processing example demonstrates RTCP APIs. This allows access to media statistics
-  and control information.
+- ✅ [RTCP Processing](rtcp-processing) The rtcp-processing example demonstrates how to create a custom
+  RtcpForwarderInterceptor using the derive macros. This allows access to media statistics and control information.
 - 🚧 [Save to Disk AV1](TODO): The save-to-disk-av1 is a simple application that shows how to save a video to disk
   using AV1.
 - 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)

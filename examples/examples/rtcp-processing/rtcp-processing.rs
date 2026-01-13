@@ -18,7 +18,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
-use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket};
+use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
 use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -34,7 +34,7 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
-use rtc::sansio::Protocol;
+use rtc::sansio::{self, Protocol}; // Required for #[interceptor] macro and Protocol trait methods
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::collections::{HashMap, VecDeque};
@@ -84,30 +84,26 @@ impl<P> RtcpForwarderBuilder<P> {
 ///
 /// This interceptor intercepts incoming RTCP packets and queues them for
 /// `poll_read()`, allowing the application to receive and process RTCP packets.
+#[derive(Interceptor)]
 pub struct RtcpForwarderInterceptor<P> {
-    inner: P,
+    #[next]
+    next: P,
     read_queue: VecDeque<TaggedPacket>,
 }
 
 impl<P> RtcpForwarderInterceptor<P> {
     /// Create a new RtcpForwarderInterceptor.
-    fn new(inner: P) -> Self {
+    fn new(next: P) -> Self {
         Self {
-            inner,
+            next,
             read_queue: VecDeque::new(),
         }
     }
 }
 
-impl<P: Interceptor> rtc::sansio::Protocol<TaggedPacket, TaggedPacket, ()>
-    for RtcpForwarderInterceptor<P>
-{
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
+#[interceptor]
+impl<P: Interceptor> RtcpForwarderInterceptor<P> {
+    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // If this is an RTCP packet, queue a copy for the application
         if let Packet::Rtcp(rtcp_packets) = &msg.message {
@@ -117,64 +113,24 @@ impl<P: Interceptor> rtc::sansio::Protocol<TaggedPacket, TaggedPacket, ()>
                 message: Packet::Rtcp(rtcp_packets.clone()),
             });
         }
-        // Always pass to inner interceptor for normal processing
-        self.inner.handle_read(msg)
+        // Always pass to next interceptor for normal processing
+        self.next.handle_read(msg)
     }
 
+    #[overrides]
     fn poll_read(&mut self) -> Option<Self::Rout> {
         // First return any queued RTCP packets
         if let Some(pkt) = self.read_queue.pop_front() {
             return Some(pkt);
         }
-        // Then check inner interceptor
-        self.inner.poll_read()
+        // Then check next interceptor
+        self.next.poll_read()
     }
 
-    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.inner.handle_write(msg)
-    }
-
-    fn poll_write(&mut self) -> Option<Self::Wout> {
-        self.inner.poll_write()
-    }
-
-    fn handle_event(&mut self, evt: ()) -> Result<(), Self::Error> {
-        self.inner.handle_event(evt)
-    }
-
-    fn poll_event(&mut self) -> Option<Self::Eout> {
-        self.inner.poll_event()
-    }
-
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        self.inner.handle_timeout(now)
-    }
-
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        self.inner.poll_timeout()
-    }
-
+    #[overrides]
     fn close(&mut self) -> Result<(), Self::Error> {
         self.read_queue.clear();
-        self.inner.close()
-    }
-}
-
-impl<P: Interceptor> Interceptor for RtcpForwarderInterceptor<P> {
-    fn bind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_local_stream(info);
-    }
-
-    fn unbind_local_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_local_stream(info);
-    }
-
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_remote_stream(info);
-    }
-
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_remote_stream(info);
+        self.next.close()
     }
 }
 
@@ -351,8 +307,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
                 Ok(n) => {
                     trace!(
                         "socket write to {} with {} bytes",
-                        msg.transport.peer_addr,
-                        n
+                        msg.transport.peer_addr, n
                     );
                 }
                 Err(err) => {

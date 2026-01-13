@@ -2,12 +2,11 @@
 
 use super::stream_supports_twcc;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket, interceptor};
 use shared::error::Error;
 use shared::marshal::Marshal;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::time::Instant;
 
 /// Builder for the TwccSenderInterceptor.
 ///
@@ -54,7 +53,9 @@ struct LocalStream {
 ///
 /// This interceptor examines the stream's RTP header extensions for the transport-wide
 /// CC extension URI and adds sequence numbers to each outgoing packet.
+#[derive(Interceptor)]
 pub struct TwccSenderInterceptor<P> {
+    #[next]
     inner: P,
     /// Transport-wide sequence number counter (shared across all streams).
     next_sequence_number: u16,
@@ -72,21 +73,9 @@ impl<P> TwccSenderInterceptor<P> {
     }
 }
 
-impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()> for TwccSenderInterceptor<P> {
-    type Rout = TaggedPacket;
-    type Wout = TaggedPacket;
-    type Eout = ();
-    type Error = Error;
-    type Time = Instant;
-
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        self.inner.handle_read(msg)
-    }
-
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.inner.poll_read()
-    }
-
+#[interceptor]
+impl<P: Interceptor> TwccSenderInterceptor<P> {
+    #[overrides]
     fn handle_write(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
         // Add transport-wide CC sequence number to outgoing RTP packets
         if let Packet::Rtp(ref mut rtp_packet) = msg.message
@@ -112,20 +101,7 @@ impl<P: Interceptor> sansio::Protocol<TaggedPacket, TaggedPacket, ()> for TwccSe
         self.inner.handle_write(msg)
     }
 
-    fn poll_write(&mut self) -> Option<Self::Wout> {
-        self.inner.poll_write()
-    }
-
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        self.inner.handle_timeout(now)
-    }
-
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        self.inner.poll_timeout()
-    }
-}
-
-impl<P: Interceptor> Interceptor for TwccSenderInterceptor<P> {
+    #[overrides]
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         if let Some(hdr_ext_id) = stream_supports_twcc(info) {
             // Don't add header extension if ID is 0 (invalid)
@@ -136,17 +112,10 @@ impl<P: Interceptor> Interceptor for TwccSenderInterceptor<P> {
         self.inner.bind_local_stream(info);
     }
 
+    #[overrides]
     fn unbind_local_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
         self.inner.unbind_local_stream(info);
-    }
-
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.bind_remote_stream(info);
-    }
-
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        self.inner.unbind_remote_stream(info);
     }
 }
 
@@ -157,6 +126,7 @@ mod tests {
     use crate::stream_info::RTPHeaderExtension;
     use sansio::Protocol;
     use shared::marshal::Unmarshal;
+    use std::time::Instant;
 
     fn make_rtp_packet(ssrc: u32, seq: u16) -> TaggedPacket {
         TaggedPacket {

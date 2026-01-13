@@ -23,19 +23,25 @@ media data, RTCP provides out-of-band statistics and control information for an 
 
 ## Custom RTCP Forwarder Interceptor
 
-**Important:** By default, RTCP packets are consumed by the interceptor chain (for generating statistics, NACK responses, congestion control, etc.) and are **not forwarded** to the application via `poll_read()`.
+**Important:** By default, RTCP packets are consumed by the interceptor chain (for generating statistics, NACK
+responses, congestion control, etc.) and are **not forwarded** to the application via `poll_read()`.
 
-This example demonstrates how to create a custom `RtcpForwarderInterceptor` that captures RTCP packets and forwards them to the application:
+This example demonstrates how to create a custom `RtcpForwarderInterceptor` using the derive macros:
 
 ```rust
+use rtc::interceptor::{Interceptor, Packet, TaggedPacket, interceptor};
+use std::collections::VecDeque;
+
+#[derive(Interceptor)]
 pub struct RtcpForwarderInterceptor<P> {
-    inner: P,
+    #[next]
+    next: P,  // The next interceptor in the chain (can use any field name)
     read_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P: Interceptor> Protocol<TaggedPacket, TaggedPacket, ()>
-    for RtcpForwarderInterceptor<P>
-{
+#[interceptor]
+impl<P: Interceptor> RtcpForwarderInterceptor<P> {
+    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // If this is an RTCP packet, queue a copy for the application
         if let Packet::Rtcp(rtcp_packets) = &msg.message {
@@ -45,38 +51,51 @@ impl<P: Interceptor> Protocol<TaggedPacket, TaggedPacket, ()>
                 message: Packet::Rtcp(rtcp_packets.clone()),
             });
         }
-        // Always pass to inner interceptor for normal processing
-        self.inner.handle_read(msg)
+        // Always pass to next interceptor for normal processing
+        self.next.handle_read(msg)
     }
 
+    #[overrides]
     fn poll_read(&mut self) -> Option<Self::Rout> {
         // First return any queued RTCP packets
         if let Some(pkt) = self.read_queue.pop_front() {
             return Some(pkt);
         }
-        // Then check inner interceptor
-        self.inner.poll_read()
+        // Then check next interceptor
+        self.next.poll_read()
     }
-    // ... other Protocol methods delegate to inner
+
+    #[overrides]
+    fn close(&mut self) -> Result<(), Self::Error> {
+        self.read_queue.clear();
+        self.next.close()
+    }
 }
 ```
 
+The derive macros handle all the boilerplate:
+
+- `#[derive(Interceptor)]` marks the struct and requires a `#[next]` field
+- `#[interceptor]` generates `Protocol` and `Interceptor` trait implementations
+- `#[overrides]` marks methods with custom logic (non-marked methods delegate to `next`)
+
 ### Registering the Interceptor
 
-The RTCP forwarder must be registered as the **outermost layer** in the interceptor chain to capture RTCP packets before they are consumed by other interceptors:
+The RTCP forwarder must be registered as the **outermost layer** in the interceptor chain to capture RTCP packets before
+they are consumed by other interceptors:
 
 ```rust
 let registry = Registry::new();
 
 // Register default interceptors (NACK, reports, TWCC, etc.)
-let registry = register_default_interceptors(registry, &mut media_engine)?;
+let registry = register_default_interceptors(registry, & mut media_engine) ?;
 
 // Add RTCP forwarder as the outermost layer
 let registry = registry.with(RtcpForwarderBuilder::new().build());
 
 let config = RTCConfigurationBuilder::new()
-    .with_interceptor_registry(registry)
-    .build();
+.with_interceptor_registry(registry)
+.build();
 ```
 
 ## Instructions
@@ -180,23 +199,24 @@ With the `RtcpForwarderInterceptor` registered, RTCP packets become available vi
 
 ```rust
 while let Some(message) = peer_connection.poll_read() {
-    match message {
-        RTCMessage::RtcpPacket(track_id, rtcp_packets) => {
-            for packet in rtcp_packets {
-                // Get header info
-                let header = packet.header();
-                println!("Type: {:?}", header.packet_type);
+match message {
+RTCMessage::RtcpPacket(track_id, rtcp_packets) => {
+for packet in rtcp_packets {
+// Get header info
+let header = packet.header();
+println! ("Type: {:?}", header.packet_type);
 
-                // Display full packet (implements Display trait)
-                println!("{}", packet);
-            }
-        }
-        _ => {}
-    }
+// Display full packet (implements Display trait)
+println! ("{}", packet);
+}
+}
+_ => {}
+}
 }
 ```
 
-**Note:** Without the custom `RtcpForwarderInterceptor`, you will **not** receive `RTCMessage::RtcpPacket` messages since RTCP is consumed internally by the interceptor chain.
+**Note:** Without the custom `RtcpForwarderInterceptor`, you will **not** receive `RTCMessage::RtcpPacket` messages
+since RTCP is consumed internally by the interceptor chain.
 
 ## Sending RTCP Packets
 
@@ -205,10 +225,10 @@ To send RTCP packets (e.g., PLI for keyframe requests):
 ```rust
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 
-if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
-    receiver.write_rtcp(vec![Box::new(PictureLossIndication {
-        sender_ssrc: 0,
-        media_ssrc: track_ssrc,
-    })])?;
+if let Some( mut receiver) = peer_connection.rtp_receiver(receiver_id) {
+receiver.write_rtcp(vec ! [Box::new(PictureLossIndication {
+sender_ssrc: 0,
+media_ssrc: track_ssrc,
+})]) ?;
 }
 ```

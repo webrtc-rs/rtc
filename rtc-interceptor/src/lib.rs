@@ -139,6 +139,37 @@
 //! // Bind for incoming streams (receiver side)
 //! chain.bind_remote_stream(&stream_info);
 //! ```
+//!
+//! # Creating Custom Interceptors
+//!
+//! Use the derive macros to easily create custom interceptors:
+//!
+//! ```ignore
+//! use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, StreamInfo};
+//! use std::collections::VecDeque;
+//!
+//! #[derive(Interceptor)]
+//! pub struct MyInterceptor<P: Interceptor> {
+//!     #[next]
+//!     next: P,  // The next interceptor in the chain (can use any field name)
+//!     buffer: VecDeque<TaggedPacket>,
+//! }
+//!
+//! #[interceptor]
+//! impl<P: Interceptor> MyInterceptor<P> {
+//!     #[overrides]
+//!     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+//!         // Custom logic here
+//!         self.next.handle_read(msg)
+//!     }
+//! }
+//! ```
+//!
+//! - `#[derive(Interceptor)]` - Marks a struct as an interceptor, requires `#[next]` field
+//! - `#[interceptor]` - Generates `Protocol` and `Interceptor` trait implementations
+//! - `#[overrides]` - Marks methods with custom implementations (non-marked methods delegate to next)
+//!
+//! See the [`Interceptor`] trait documentation for more details.
 
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
@@ -169,6 +200,11 @@ pub use twcc::{
     receiver::{TwccReceiverBuilder, TwccReceiverInterceptor},
     sender::{TwccSenderBuilder, TwccSenderInterceptor},
 };
+
+// Re-export derive macros for creating custom interceptors
+// - `Interceptor` derive macro: marks a struct as an interceptor with #[next] field
+// - `interceptor` attribute macro: generates Protocol and Interceptor trait implementations
+pub use interceptor_derive::{Interceptor, interceptor};
 
 /// RTP/RTCP Packet
 ///
@@ -201,12 +237,45 @@ pub type TaggedPacket = TransportMessage<Packet>;
 /// This trait adds stream binding methods and provides a [`with()`](Interceptor::with)
 /// method for composable chaining of interceptors.
 ///
-/// Each interceptor must explicitly implement both `Protocol` and `Interceptor` traits.
+/// # Creating Custom Interceptors
 ///
-/// # Example
+/// ## Using Derive Macros (Recommended)
+///
+/// The easiest way to create a custom interceptor is using the derive macros:
 ///
 /// ```ignore
-/// // Define a custom interceptor
+/// use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, Packet, StreamInfo};
+/// use std::collections::VecDeque;
+///
+/// #[derive(Interceptor)]
+/// pub struct MyInterceptor<P: Interceptor> {
+///     #[next]
+///     next: P,  // The next interceptor in the chain
+///     buffer: VecDeque<TaggedPacket>,
+/// }
+///
+/// #[interceptor]
+/// impl<P: Interceptor> MyInterceptor<P> {
+///     #[overrides]
+///     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+///         // Custom logic here
+///         self.next.handle_read(msg)
+///     }
+/// }
+/// ```
+///
+/// The `#[derive(Interceptor)]` macro requires a `#[next]` field that contains the
+/// next interceptor in the chain. The `#[interceptor]` attribute on the impl block
+/// generates the `Protocol` and `Interceptor` trait implementations, delegating
+/// non-overridden methods to the next interceptor.
+///
+/// Use `#[overrides]` to mark methods with custom implementations.
+///
+/// ## Manual Implementation
+///
+/// For more control, you can implement the traits manually:
+///
+/// ```ignore
 /// pub struct MyInterceptor<P> {
 ///     inner: P,
 /// }
@@ -226,10 +295,13 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///     fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
 ///     fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 /// }
+/// ```
 ///
-/// // Use with the builder
+/// # Using with Registry
+///
+/// ```ignore
 /// let chain = Registry::new()
-///     .with(MyInterceptor::new);
+///     .with(|inner| MyInterceptor { next: inner, buffer: VecDeque::new() });
 /// ```
 pub trait Interceptor:
     sansio::Protocol<
@@ -279,4 +351,73 @@ pub trait Interceptor:
 
     /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
     fn unbind_remote_stream(&mut self, info: &StreamInfo);
+}
+
+#[cfg(test)]
+mod derive_tests {
+    use super::*;
+    #[allow(unused_imports)]
+    use shared::error::Error;
+
+    /// Test interceptor that uses the derive macro.
+    /// It should automatically delegate all Protocol and Interceptor methods to inner.
+    #[derive(Interceptor)]
+    pub struct SimplePassthrough<P: Interceptor> {
+        #[next]
+        inner: P,
+    }
+
+    // Empty impl block - #[interceptor] generates all delegations
+    #[interceptor]
+    impl<P: Interceptor> SimplePassthrough<P> {}
+
+    impl<P: Interceptor> SimplePassthrough<P> {
+        fn new(inner: P) -> Self {
+            Self { inner }
+        }
+    }
+
+    #[test]
+    fn test_derive_interceptor_basic() {
+        // Build a chain with the derived interceptor
+        let mut chain = SimplePassthrough::new(NoopInterceptor::new());
+
+        // Test that delegation works
+        let pkt = TaggedPacket {
+            now: std::time::Instant::now(),
+            transport: Default::default(),
+            message: Packet::Rtp(rtp::Packet::default()),
+        };
+
+        // handle_write should delegate to inner
+        sansio::Protocol::handle_write(&mut chain, pkt).unwrap();
+
+        // poll_write should return the packet from inner
+        let result = sansio::Protocol::poll_write(&mut chain);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_derive_interceptor_close() {
+        let mut chain = SimplePassthrough::new(NoopInterceptor::new());
+
+        // close should delegate to inner without error
+        sansio::Protocol::close(&mut chain).unwrap();
+    }
+
+    #[test]
+    fn test_derive_interceptor_stream_binding() {
+        let mut chain = SimplePassthrough::new(NoopInterceptor::new());
+
+        let info = StreamInfo {
+            ssrc: 12345,
+            ..Default::default()
+        };
+
+        // These should delegate to inner without panic
+        chain.bind_local_stream(&info);
+        chain.unbind_local_stream(&info);
+        chain.bind_remote_stream(&info);
+        chain.unbind_remote_stream(&info);
+    }
 }
