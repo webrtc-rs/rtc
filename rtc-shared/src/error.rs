@@ -1154,6 +1154,10 @@ pub enum Error {
     ErrBadIDPagePayloadSignature,
     #[error("not enough data for payload header")]
     ErrShortPageHeader,
+    #[error("bad OpusTags signature")]
+    ErrBadOpusTagsSignature,
+    #[error("unsupported channel mapping family")]
+    ErrUnsupportedChannelMappingFamily,
 
     #[error("data is not a H264 bitstream")]
     ErrDataIsNotH264Stream,

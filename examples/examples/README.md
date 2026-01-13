@@ -52,12 +52,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   RtcpForwarderInterceptor using the derive macros. This allows access to media statistics and control information.
 - ✅ [Save to Disk AV1](save-to-disk-av1): The save-to-disk-av1 is a simple application that shows how to save a video to
   disk using AV1.
-- 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
-  while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
-  media packets, but browser will recover them using the FEC packets and the delivered packets.
-- 🚧 [Play from Disk Playlist Control](TODO): Streams Opus pages from multi or single track Ogg containers, exposes the
-  playlist over an SCTP DataChannel, and lets the browser hop between tracks while showing artist/title metadata parsed
-  from OpusTags.
+- ✅ [Play from Disk Playlist Control](play-from-disk-playlist-control): Streams Opus pages from multi or single track
+  Ogg containers, exposes the playlist over an SCTP DataChannel, and lets the browser hop between tracks while showing
+  artist/title metadata parsed from OpusTags.
 
 ### Miscellaneous
 
@@ -70,7 +67,18 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
 - ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
   mode abilities.
+
+### TODO
+
 - 🚧 [Stats](TODO): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
+- 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
+  while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
+  media packets, but browser will recover them using the FEC packets and the delivered packets.
+- 🚧 [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
+  DataChannel support for real-time chat.
+- 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
+  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
+  browser, or pull the video back into OBS and GStreamer via WHEP.
 
 ### Not Applicable
 
@@ -79,8 +87,3 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   multiplexing is already the application's responsibility.
 - [x] [ICE Proxy](N/A) This example doesn't apply to sansio RTC too, since Sansio RTC is I/O-free - it never creates
   network connections. The application is responsible for all I/O.
-- [x] [Data Channels WHIP WHEP](N/A): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
-  DataChannel support for real-time chat.
-- [x] [WHIP WHEP](N/A): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
-  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
-  browser, or pull the video back into OBS and GStreamer via WHEP.

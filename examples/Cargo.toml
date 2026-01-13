@@ -174,3 +174,8 @@ bench = false
 name = "save-to-disk-av1"
 path = "examples/save-to-disk-av1/save-to-disk-av1.rs"
 bench = false
+
+[[example]]
+name = "play-from-disk-playlist-control"
+path = "examples/play-from-disk-playlist-control/play-from-disk-playlist-control.rs"
+bench = false
