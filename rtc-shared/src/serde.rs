@@ -4,7 +4,7 @@
 ///
 /// Note that an `Instant` is not connected to real world time, so this conversion is
 /// approximate.
-pub mod instant_to_epoch_seconds {
+pub mod instant_to_epoch {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

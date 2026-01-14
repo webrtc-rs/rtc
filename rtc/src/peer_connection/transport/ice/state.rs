@@ -1,6 +1,6 @@
-use std::fmt;
-
 use ice::state::ConnectionState;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// ICETransportState represents the current state of the ICE transport.
 ///
@@ -11,18 +11,20 @@ use ice::state::ConnectionState;
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceTransport/state
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicetransportstate
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceTransportState {
     #[default]
     Unspecified,
 
     /// ICETransportStateNew indicates the ICETransport is waiting
     /// for remote candidates to be supplied.
+    #[serde(rename = "new")]
     New,
 
     /// ICETransportStateChecking indicates the ICETransport has
     /// received at least one remote candidate, and a local and remote
     /// ICECandidateComplete dictionary was not added as the last candidate.
+    #[serde(rename = "checking")]
     Checking,
 
     /// ICETransportStateConnected indicates the ICETransport has
@@ -30,26 +32,31 @@ pub enum RTCIceTransportState {
     /// received incoming DTLS/media after a successful response to an
     /// incoming connectivity check, but is still checking other candidate
     /// pairs to see if there is a better connection.
+    #[serde(rename = "connected")]
     Connected,
 
     /// ICETransportStateCompleted indicates the ICETransport tested
     /// all appropriate candidate pairs and at least one functioning
     /// candidate pair has been found.
+    #[serde(rename = "completed")]
     Completed,
 
     /// ICETransportStateFailed indicates the ICETransport the last
     /// candidate was added and all appropriate candidate pairs have either
     /// failed connectivity checks or have lost consent.
+    #[serde(rename = "failed")]
     Failed,
 
     /// ICETransportStateDisconnected indicates the ICETransport has received
     /// at least one local and remote candidate, but the final candidate was
     /// received yet and all appropriate candidate pairs thus far have been
     /// tested and failed.
+    #[serde(rename = "disconnected")]
     Disconnected,
 
     /// ICETransportStateClosed indicates the ICETransport has shut down
     /// and is no longer responding to STUN requests.
+    #[serde(rename = "closed")]
     Closed,
 }
 

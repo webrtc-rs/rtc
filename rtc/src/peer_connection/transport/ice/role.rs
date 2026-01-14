@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// ICERole describes the role ice.Agent is playing in selecting the
@@ -10,7 +11,7 @@ use std::fmt;
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceTransport/role
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicerole
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceRole {
     #[default]
     Unspecified,
@@ -19,10 +20,12 @@ pub enum RTCIceRole {
     /// for selecting the final choice of candidate pairs and signaling them
     /// through STUN and an updated offer, if needed. In any session, one agent
     /// is always controlling. The other is the controlled agent.
+    #[serde(rename = "controlling")]
     Controlling,
 
     /// ICERoleControlled indicates that an ICE agent that waits for the
     /// controlling agent to select the final choice of candidate pairs.
+    #[serde(rename = "controlled")]
     Controlled,
 }
 

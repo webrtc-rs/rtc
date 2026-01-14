@@ -1,24 +1,26 @@
-use std::fmt;
-
 use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use crate::peer_connection::configuration::media_engine::*;
 use crate::rtp_transceiver::rtp_sender::rtcp_parameters::RTCPFeedback;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 use crate::rtp_transceiver::{PayloadType, fmtp};
+use serde::{Deserialize, Serialize};
 use shared::error::{Error, Result};
+use std::fmt;
 
 /// Codec kind identifying the media type.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RtpCodecKind {
     /// Unspecified or unknown codec type
     #[default]
     Unspecified = 0,
 
     /// Audio codec
+    #[serde(rename = "audio")]
     Audio = 1,
 
     /// Video codec
+    #[serde(rename = "video")]
     Video = 2,
 }
 

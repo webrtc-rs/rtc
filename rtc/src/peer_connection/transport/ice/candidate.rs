@@ -12,6 +12,56 @@ pub use ice::candidate::{
     candidate_server_reflexive::CandidateServerReflexiveConfig,
 };
 
+#[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum RTCIceTcpCandidateType {
+    #[default]
+    Unspecified,
+
+    #[serde(rename = "active")]
+    Active,
+
+    #[serde(rename = "passive")]
+    Passive,
+
+    #[serde(rename = "so")]
+    SimultaneousOpen,
+}
+
+impl From<TcpType> for RTCIceTcpCandidateType {
+    fn from(t: TcpType) -> Self {
+        match t {
+            TcpType::Unspecified => RTCIceTcpCandidateType::Unspecified,
+            TcpType::Active => RTCIceTcpCandidateType::Active,
+            TcpType::Passive => RTCIceTcpCandidateType::Passive,
+            TcpType::SimultaneousOpen => RTCIceTcpCandidateType::SimultaneousOpen,
+        }
+    }
+}
+
+impl RTCIceTcpCandidateType {
+    pub fn to_ice(self) -> TcpType {
+        match self {
+            RTCIceTcpCandidateType::Unspecified => TcpType::Unspecified,
+            RTCIceTcpCandidateType::Active => TcpType::Active,
+            RTCIceTcpCandidateType::Passive => TcpType::Passive,
+            RTCIceTcpCandidateType::SimultaneousOpen => TcpType::SimultaneousOpen,
+        }
+    }
+}
+
+#[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum RTCIceServerTransportProtocol {
+    #[default]
+    Unspecified,
+
+    #[serde(rename = "udp")]
+    Udp,
+    #[serde(rename = "tcp")]
+    Tcp,
+    #[serde(rename = "tls")]
+    Tls,
+}
+
 /// ICECandidate represents a ice candidate
 ///
 /// ## Specifications
@@ -33,8 +83,8 @@ pub struct RTCIceCandidate {
     pub component: u16,
     pub related_address: String,
     pub related_port: u16,
-    pub tcp_type: String, //TODO: RTCIceTcpCandidateType
-                          //pub relay_protocol: RTCIceServerTransportProtocol,
+    pub tcp_type: RTCIceTcpCandidateType,
+    pub relay_protocol: RTCIceServerTransportProtocol,
 }
 
 /// Conversion for ice_candidates
@@ -63,9 +113,10 @@ impl From<&Candidate> for RTCIceCandidate {
             port: c.port(),
             component: c.component(),
             typ,
-            tcp_type: c.tcp_type().to_string(),
+            tcp_type: c.tcp_type().into(),
             related_address,
             related_port,
+            relay_protocol: Default::default(),
         }
     }
 }
@@ -87,7 +138,7 @@ impl RTCIceCandidate {
             RTCIceCandidateType::Host => {
                 let config = CandidateHostConfig {
                     base_config,
-                    tcp_type: TcpType::from(self.tcp_type.as_str()),
+                    tcp_type: self.tcp_type.to_ice(),
                 };
                 config.new_candidate_host()?
             }

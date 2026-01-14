@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Indicates the state of the DTLS transport.
@@ -83,7 +84,7 @@ use std::fmt;
 /// [W3C RTCDtlsTransport.state]: https://w3c.github.io/webrtc-pc/#dom-rtcdtlstransportstate
 /// [MDN RTCDtlsTransport.state]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDtlsTransport/state
 /// [RFC 6347]: https://datatracker.ietf.org/doc/html/rfc6347
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCDtlsTransportState {
     /// State not specified. This should not occur in normal operation.
     #[default]
@@ -93,6 +94,7 @@ pub enum RTCDtlsTransportState {
     ///
     /// This is the initial state before the DTLS handshake begins. The transport
     /// is waiting for ICE to establish connectivity before starting DTLS.
+    #[serde(rename = "new")]
     New = 1,
 
     /// DTLS handshake is in progress.
@@ -105,6 +107,7 @@ pub enum RTCDtlsTransportState {
     /// - Key derivation for encryption
     ///
     /// Media cannot flow yet in this state.
+    #[serde(rename = "connecting")]
     Connecting = 2,
 
     /// DTLS has completed negotiation successfully.
@@ -114,6 +117,7 @@ pub enum RTCDtlsTransportState {
     /// ready for encrypted media or data transmission.
     ///
     /// This is the desired state for active communication.
+    #[serde(rename = "connected")]
     Connected = 3,
 
     /// Transport has been closed intentionally.
@@ -124,6 +128,7 @@ pub enum RTCDtlsTransportState {
     /// - Local call to close() on the peer connection
     ///
     /// No further DTLS communication is possible.
+    #[serde(rename = "closed")]
     Closed = 4,
 
     /// Transport has failed due to an error.
@@ -137,6 +142,7 @@ pub enum RTCDtlsTransportState {
     ///
     /// Common causes include fingerprint mismatch or network issues. Connection
     /// cannot be recovered without reestablishing from scratch.
+    #[serde(rename = "failed")]
     Failed = 5,
 }
 

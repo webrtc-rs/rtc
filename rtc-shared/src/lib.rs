@@ -14,6 +14,7 @@ pub mod marshal;
 pub mod replay_detector;
 
 pub mod error;
+pub mod serde;
 pub mod tcp_framing;
 pub mod time;
 pub(crate) mod transport;

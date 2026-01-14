@@ -658,4 +658,4 @@ pub mod data_channel;
 pub mod media_stream;
 pub mod peer_connection;
 pub mod rtp_transceiver;
-pub mod statistics;
+pub mod stats;
