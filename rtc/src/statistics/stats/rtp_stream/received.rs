@@ -1,4 +1,4 @@
-use crate::stats::rtp_stream::RTCRtpStreamStats;
+use super::RTCRtpStreamStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

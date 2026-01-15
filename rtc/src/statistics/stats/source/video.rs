@@ -1,4 +1,4 @@
-use crate::stats::source::media::RTCMediaSourceStats;
+use super::media::RTCMediaSourceStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

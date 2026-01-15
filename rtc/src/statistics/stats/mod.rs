@@ -1,4 +1,6 @@
-//! Statistics Model (WIP)
+//! WebRTC Statistics types.
+//!
+//! This module contains the W3C WebRTC Statistics API types.
 
 use ::serde::{Deserialize, Serialize};
 use shared::serde::instant_to_epoch;
@@ -15,7 +17,8 @@ pub mod rtp_stream;
 pub mod source;
 pub mod transport;
 
-#[derive(Debug, Serialize, Deserialize)]
+/// The type of statistics object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCStatsType {
     #[serde(rename = "codec")]
     Codec,
@@ -47,8 +50,10 @@ pub enum RTCStatsType {
     Certificate,
 }
 
+/// The unique identifier for a statistics object.
 pub type RTCStatsId = String;
 
+/// Base statistics object containing common fields.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RTCStats {
     #[serde(with = "instant_to_epoch")]
@@ -58,8 +63,10 @@ pub struct RTCStats {
     pub id: RTCStatsId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// The reason for quality limitation in video encoding.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCQualityLimitationReason {
+    #[default]
     #[serde(rename = "none")]
     None,
     #[serde(rename = "cpu")]

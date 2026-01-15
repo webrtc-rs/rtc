@@ -1,6 +1,6 @@
 use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
-use crate::stats::RTCStats;
+use super::RTCStats;
 use serde::{Deserialize, Serialize};
 
 pub mod inbound;

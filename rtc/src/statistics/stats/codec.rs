@@ -1,5 +1,5 @@
 use crate::rtp_transceiver::PayloadType;
-use crate::stats::RTCStats;
+use super::RTCStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

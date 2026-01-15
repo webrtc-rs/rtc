@@ -27,6 +27,7 @@ use crate::peer_connection::message::{
 };
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Interceptor;
 use ::interceptor::Packet;
 use log::warn;
@@ -116,6 +117,9 @@ pub(crate) struct PipelineContext {
     pub(crate) read_outs: VecDeque<RTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
+
+    // Statistics accumulator
+    pub(crate) stats: RTCStatsAccumulator,
 }
 
 impl<I> RTCPeerConnection<I>

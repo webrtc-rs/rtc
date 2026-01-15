@@ -2,7 +2,8 @@
 
 > **Version:** 1.0
 > **Status:** Draft
-> **References:** [W3C WebRTC Stats](https://www.w3.org/TR/webrtc-stats/), [W3C WebRTC](https://www.w3.org/TR/webrtc/#sec.stats-model)
+> **References:
+** [W3C WebRTC Stats](https://www.w3.org/TR/webrtc-stats/), [W3C WebRTC](https://www.w3.org/TR/webrtc/#sec.stats-model)
 
 ---
 
@@ -25,24 +26,24 @@
 
 ### 1.1 Comparison with Other Implementations
 
-| Aspect | Pion (Go) | Async WebRTC-RS | Sansio RTC |
-|--------|-----------|-----------------|------------|
-| Collection | WaitGroup + goroutines | tokio::join! async | Synchronous accumulation |
-| Timing | On-demand fetch | On-demand async fetch | Continuous accumulation + snapshot |
-| I/O | Direct network access | Async network | No I/O, application-driven |
-| Threading | Multi-threaded | Async tasks | Single-threaded, event-loop friendly |
-| Synchronization | Mutex + WaitGroup | Mutex + async | None needed |
+| Aspect          | Pion (Go)              | Async WebRTC-RS       | Sansio RTC                           |
+|-----------------|------------------------|-----------------------|--------------------------------------|
+| Collection      | WaitGroup + goroutines | tokio::join! async    | Synchronous accumulation             |
+| Timing          | On-demand fetch        | On-demand async fetch | Continuous accumulation + snapshot   |
+| I/O             | Direct network access  | Async network         | No I/O, application-driven           |
+| Threading       | Multi-threaded         | Async tasks           | Single-threaded, event-loop friendly |
+| Synchronization | Mutex + WaitGroup      | Mutex + async         | None needed                          |
 
 ### 1.2 Coverage Summary
 
-| Category | Stats Types | Coverage |
-|----------|-------------|----------|
-| **Network/Transport** | ICE, Transport, Certificate | 95%+ ✅ |
-| **RTP Core** | Packet counts, RTCP feedback | 90%+ ✅ |
-| **Codec/DataChannel** | Codec, DataChannel, PeerConnection | 100% ✅ |
-| **Media Source** | Audio/Video source capture | Via App API |
-| **Encoder/Decoder** | Frame encode/decode stats | Via App API |
-| **Audio Playout** | Jitter buffer, concealment | Via App API |
+| Category              | Stats Types                        | Coverage    |
+|-----------------------|------------------------------------|-------------|
+| **Network/Transport** | ICE, Transport, Certificate        | 95%+ ✅      |
+| **RTP Core**          | Packet counts, RTCP feedback       | 90%+ ✅      |
+| **Codec/DataChannel** | Codec, DataChannel, PeerConnection | 100% ✅      |
+| **Media Source**      | Audio/Video source capture         | Via App API |
+| **Encoder/Decoder**   | Frame encode/decode stats          | Via App API |
+| **Audio Playout**     | Jitter buffer, concealment         | Via App API |
 
 ---
 
@@ -51,10 +52,10 @@
 ### 2.1 High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          RTCPeerConnection                                   │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                        RTCStatsAccumulator                              ││
+┌────────────────────────────────────────────────────────────────────────────┐
+│                          RTCPeerConnection                                 │
+│  ┌────────────────────────────────────────────────────────────────────────┐│
+│  │                        RTCStatsAccumulator                             ││
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   ││
 │  │  │ ICE Stats    │ │ Transport    │ │ RTP Stream   │ │ DataChannel  │   ││
 │  │  │ Accumulators │ │ Accumulator  │ │ Accumulators │ │ Accumulators │   ││
@@ -63,25 +64,25 @@
 │  │  │ Codec        │ │ Certificate  │ │ PeerConn     │ │ MediaSource  │   ││
 │  │  │ Accumulators │ │ Accumulators │ │ Accumulator  │ │ Accumulators │   ││
 │  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
-│                                                                              │
-│  pub fn get_stats(&self, now: Instant) -> RTCStatsReport                    │
-│      └─> Collects snapshots from all accumulators, builds report            │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  └────────────────────────────────────────────────────────────────────────┘│
+│                                                                            │
+│  pub fn get_stats(&self, now: Instant) -> RTCStatsReport                   │
+│      └─> Collects snapshots from all accumulators, builds report           │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Data Flow Diagram
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────┐
-│                                RTCPeerConnection                                    │
-│                                                                                     │
-│   handle_read(packet)                                                               │
-│        │                                                                            │
-│        ▼                                                                            │
+│                                RTCPeerConnection                                   │
+│                                                                                    │
+│   handle_read(packet)                                                              │
+│        │                                                                           │
+│        ▼                                                                           │
 │   ┌─────────────────────────────────────────────────────────────────────────────┐  │
-│   │                            Handler Pipeline                                  │  │
-│   │                                                                              │  │
+│   │                            Handler Pipeline                                 │  │
+│   │                                                                             │  │
 │   │   ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐   │  │
 │   │   │Demuxer  │───▶│  ICE    │───▶│  DTLS   │───▶│  SCTP   │───▶│DataChan │   │  │
 │   │   │Handler  │    │Handler  │    │Handler  │    │Handler  │    │Handler  │   │  │
@@ -92,26 +93,26 @@
 │   │   │                      RTCStatsAccumulator                            │   │  │
 │   │   │  Updates stats as packets flow through the pipeline                 │   │  │
 │   │   └─────────────────────────────────────────────────────────────────────┘   │  │
-│   │                                                                              │  │
+│   │                                                                             │  │
 │   │   ┌─────────┐    ┌─────────┐    ┌─────────┐                                 │  │
 │   │   │  SRTP   │───▶│Intercep │───▶│Endpoint │                                 │  │
 │   │   │Handler  │    │Handler  │    │Handler  │                                 │  │
 │   │   └────┬────┘    └────┬────┘    └────┬────┘                                 │  │
-│   │        │              │              │                                       │  │
-│   │        ▼              ▼              ▼                                       │  │
-│   │   Update SRTP    Update RTP      Update Track                                │  │
-│   │   Stats          Stream Stats    Stats                                       │  │
+│   │        │              │              │                                      │  │
+│   │        ▼              ▼              ▼                                      │  │
+│   │   Update SRTP    Update RTP      Update Track                               │  │
+│   │   Stats          Stream Stats    Stats                                      │  │
 │   └─────────────────────────────────────────────────────────────────────────────┘  │
-│        │                                                                            │
-│        ▼                                                                            │
-│   poll_read() -> RTCMessage                                                         │
-│                                                                                     │
+│        │                                                                           │
+│        ▼                                                                           │
+│   poll_read() -> RTCMessage                                                        │
+│                                                                                    │
 │   ──────────────────────────────────────────────────────────────────────────────── │
-│                                                                                     │
-│   get_stats(now: Instant) -> RTCStatsReport                                         │
-│        │                                                                            │
-│        ▼                                                                            │
-│   RTCStatsAccumulator.snapshot(now) ──► RTCStatsReport                              │
+│                                                                                    │
+│   get_stats(now: Instant) -> RTCStatsReport                                        │
+│        │                                                                           │
+│        ▼                                                                           │
+│   RTCStatsAccumulator.snapshot(now) ──► RTCStatsReport                             │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -121,20 +122,24 @@
 
 ### 3.1 Incremental Accumulation
 
-Stats are accumulated incrementally during normal `handle_read/handle_write/handle_event/handle_timeout` processing, then returned as a snapshot when `get_stats()` is called.
+Stats are accumulated incrementally during normal `handle_read/handle_write/handle_event/handle_timeout` processing,
+then returned as a snapshot when `get_stats()` is called.
 
 **Benefits:**
+
 - Zero-cost stats collection (no extra queries)
 - Always up-to-date counters
 - Instant snapshot without waiting
 
 ### 3.2 No Async, No Locks
 
-The sansio design is inherently single-threaded. Stats accumulation happens synchronously during packet processing, eliminating the need for mutexes or async coordination.
+The sansio design is inherently single-threaded. Stats accumulation happens synchronously during packet processing,
+eliminating the need for mutexes or async coordination.
 
 ### 3.3 Centralized Stats Storage
 
 A single `RTCStatsAccumulator` in `PipelineContext` holds all stats. This:
+
 - Simplifies access from any handler
 - Enables efficient snapshot generation
 - Avoids scattered stats across components
@@ -142,22 +147,25 @@ A single `RTCStatsAccumulator` in `PipelineContext` holds all stats. This:
 ### 3.4 Explicit Timestamp Parameter
 
 The `get_stats(now: Instant)` API takes an explicit timestamp rather than using `Instant::now()` internally. This:
+
 - Enables deterministic testing
 - Follows sansio principle of no hidden I/O
 - Allows batch stats with consistent timestamps
 
 ### 3.5 Application Integration for Media Stats
 
-Since sansio doesn't handle media encoding/decoding, the application provides these stats via dedicated APIs. This is consistent with the sansio philosophy: the library handles **protocol**, the application handles **I/O and media processing**.
+Since sansio doesn't handle media encoding/decoding, the application provides these stats via dedicated APIs. This is
+consistent with the sansio philosophy: the library handles **protocol**, the application handles **I/O and media
+processing**.
 
 ---
 
 ## 4. File Structure
 
 ```
-src/stats/
-├── mod.rs                     # Existing stat type definitions + re-exports
-├── report.rs                  # RTCStatsReport and RTCStatsReportType
+src/statistics/
+├── mod.rs                     # Module exports (accumulator, report, stats)
+├── report.rs                  # RTCStatsReport and RTCStatsReportEntry
 ├── accumulator/               # Stats accumulation layer
 │   ├── mod.rs                 # RTCStatsAccumulator (master accumulator)
 │   ├── ice.rs                 # IceCandidateAccumulator, IceCandidatePairAccumulator
@@ -168,8 +176,31 @@ src/stats/
 │   ├── codec.rs               # CodecStatsAccumulator
 │   ├── peer_connection.rs     # PeerConnectionStatsAccumulator
 │   ├── media_source.rs        # MediaSourceStatsAccumulator
-│   └── audio_playout.rs       # AudioPlayoutStatsAccumulator
-└── app_provided.rs            # Application-provided stats update types
+│   ├── audio_playout.rs       # AudioPlayoutStatsAccumulator
+│   └── app_provided.rs        # Application-provided stats update types
+└── stats/                     # W3C WebRTC Stats API types
+    ├── mod.rs                 # RTCStatsType, RTCStats, RTCStatsId, RTCQualityLimitationReason
+    ├── audio_playout.rs       # RTCAudioPlayoutStats
+    ├── certificate.rs         # RTCCertificateStats
+    ├── codec.rs               # RTCCodecStats
+    ├── data_channel.rs        # RTCDataChannelStats
+    ├── ice_candidate.rs       # RTCIceCandidateStats
+    ├── ice_candidate_pair.rs  # RTCIceCandidatePairStats
+    ├── peer_connection.rs     # RTCPeerConnectionStats
+    ├── transport.rs           # RTCTransportStats
+    ├── rtp_stream/            # RTP stream stats
+    │   ├── mod.rs             # RTCRtpStreamStats
+    │   ├── inbound.rs         # RTCInboundRtpStreamStats
+    │   ├── outbound.rs        # RTCOutboundRtpStreamStats
+    │   ├── received.rs        # RTCReceivedRtpStreamStats
+    │   ├── sent.rs            # RTCSentRtpStreamStats
+    │   ├── remote_inbound.rs  # RTCRemoteInboundRtpStreamStats
+    │   └── remote_outbound.rs # RTCRemoteOutboundRtpStreamStats
+    └── source/                # Media source stats
+        ├── mod.rs
+        ├── media.rs           # RTCMediaSourceStats
+        ├── audio.rs           # RTCAudioSourceStats
+        └── video.rs           # RTCVideoSourceStats
 ```
 
 ---
@@ -797,49 +828,53 @@ impl RTCStatsAccumulator {
 
 ### 6.1 Coverage Summary Table
 
-| Stats Type | Fields | Covered | Partial | Missing | Coverage |
-|------------|--------|---------|---------|---------|----------|
-| RTCCodecStats | 5 | 5 | 0 | 0 | 100% ✅ |
-| RTCDataChannelStats | 7 | 7 | 0 | 0 | 100% ✅ |
-| RTCIceCandidateStats | 13 | 13 | 0 | 0 | 100% ✅ |
-| RTCIceCandidatePairStats | 20 | 18 | 2 | 0 | 90% ✅ |
-| RTCPeerConnectionStats | 2 | 2 | 0 | 0 | 100% ✅ |
-| RTCTransportStats | 17 | 17 | 0 | 0 | 100% ✅ |
-| RTCCertificateStats | 4 | 4 | 0 | 0 | 100% ✅ |
-| RTCAudioPlayoutStats | 5 | 5 | 0 | 0 | 100% (via API) |
-| RTCRtpStreamStats (base) | 4 | 4 | 0 | 0 | 100% ✅ |
-| RTCReceivedRtpStreamStats | 7 | 5 | 2 | 0 | 71% ⚠️ |
-| RTCSentRtpStreamStats | 2 | 2 | 0 | 0 | 100% ✅ |
-| RTCInboundRtpStreamStats | 57 | 25 | 10 | 22 | 44% (+ app API) |
-| RTCOutboundRtpStreamStats | 35 | 20 | 5 | 10 | 57% (+ app API) |
-| RTCRemoteInboundRtpStreamStats | 6 | 5 | 0 | 1 | 83% ✅ |
-| RTCRemoteOutboundRtpStreamStats | 6 | 5 | 0 | 1 | 83% ✅ |
-| RTCMediaSourceStats | 2 | 2 | 0 | 0 | 100% ✅ |
-| RTCAudioSourceStats | 5 | 5 | 0 | 0 | 100% (via API) |
-| RTCVideoSourceStats | 4 | 4 | 0 | 0 | 100% (via API) |
+| Stats Type                      | Fields | Covered | Partial | Missing | Coverage        |
+|---------------------------------|--------|---------|---------|---------|-----------------|
+| RTCCodecStats                   | 5      | 5       | 0       | 0       | 100% ✅          |
+| RTCDataChannelStats             | 7      | 7       | 0       | 0       | 100% ✅          |
+| RTCIceCandidateStats            | 13     | 13      | 0       | 0       | 100% ✅          |
+| RTCIceCandidatePairStats        | 20     | 18      | 2       | 0       | 90% ✅           |
+| RTCPeerConnectionStats          | 2      | 2       | 0       | 0       | 100% ✅          |
+| RTCTransportStats               | 17     | 17      | 0       | 0       | 100% ✅          |
+| RTCCertificateStats             | 4      | 4       | 0       | 0       | 100% ✅          |
+| RTCAudioPlayoutStats            | 5      | 5       | 0       | 0       | 100% (via API)  |
+| RTCRtpStreamStats (base)        | 4      | 4       | 0       | 0       | 100% ✅          |
+| RTCReceivedRtpStreamStats       | 7      | 5       | 2       | 0       | 71% ⚠️          |
+| RTCSentRtpStreamStats           | 2      | 2       | 0       | 0       | 100% ✅          |
+| RTCInboundRtpStreamStats        | 57     | 25      | 10      | 22      | 44% (+ app API) |
+| RTCOutboundRtpStreamStats       | 35     | 20      | 5       | 10      | 57% (+ app API) |
+| RTCRemoteInboundRtpStreamStats  | 6      | 5       | 0       | 1       | 83% ✅           |
+| RTCRemoteOutboundRtpStreamStats | 6      | 5       | 0       | 1       | 83% ✅           |
+| RTCMediaSourceStats             | 2      | 2       | 0       | 0       | 100% ✅          |
+| RTCAudioSourceStats             | 5      | 5       | 0       | 0       | 100% (via API)  |
+| RTCVideoSourceStats             | 4      | 4       | 0       | 0       | 100% (via API)  |
 
 ### 6.2 Fields Requiring Application Input
 
 The following fields cannot be tracked by sansio RTC and require application input:
 
 **Decoder Stats (video inbound):**
+
 - `frames_decoded`, `key_frames_decoded`, `frames_rendered`
 - `frame_width`, `frame_height`, `qp_sum`
 - `total_decode_time`, `total_inter_frame_delay`
 - `decoder_implementation`, `power_efficient_decoder`
 
 **Encoder Stats (video outbound):**
+
 - `frames_encoded`, `key_frames_encoded`
 - `frame_width`, `frame_height`, `qp_sum`
 - `total_encode_time`, `encoder_implementation`
 - `power_efficient_encoder`, `scalability_mode`
 
 **Audio Processing Stats:**
+
 - `audio_level`, `total_audio_energy`, `total_samples_duration`
 - `concealed_samples`, `concealment_events`
 - `echo_return_loss`, `echo_return_loss_enhancement`
 
 **Playout Stats:**
+
 - `synthesized_samples_duration`, `synthesized_samples_events`
 - `total_playout_delay`, `jitter_buffer_delay`
 
@@ -852,7 +887,7 @@ The following fields cannot be tracked by sansio RTC and require application inp
 ```rust
 // src/peer_connection/handler/mod.rs
 
-use crate::stats::accumulator::RTCStatsAccumulator;
+use crate::statistics::accumulator::RTCStatsAccumulator;
 
 #[derive(Default)]
 pub(crate) struct PipelineContext {
@@ -878,17 +913,17 @@ pub(crate) struct PipelineContext {
 
 ### 7.2 Handler Stats Collection Points
 
-| Handler | Stats Updated | Trigger |
-|---------|--------------|---------|
-| **ICE** | Candidate pair (packets, bytes, RTT) | handle_read/handle_write, STUN events |
-| **ICE** | Transport (bytes, state) | State changes, packet flow |
-| **DTLS** | Transport (DTLS state, cipher) | Handshake completion |
-| **DTLS** | Certificates | Handshake completion |
-| **SRTP** | Transport (SRTP cipher) | Key derivation |
-| **Interceptor** | RTP stream (packets, bytes, RTCP) | handle_read/handle_write |
-| **DataChannel** | Data channel (messages, bytes) | handle_read/handle_write |
-| **DataChannel** | Peer connection (opened/closed) | State changes |
-| **Endpoint** | Track references | Track events |
+| Handler         | Stats Updated                        | Trigger                               |
+|-----------------|--------------------------------------|---------------------------------------|
+| **ICE**         | Candidate pair (packets, bytes, RTT) | handle_read/handle_write, STUN events |
+| **ICE**         | Transport (bytes, state)             | State changes, packet flow            |
+| **DTLS**        | Transport (DTLS state, cipher)       | Handshake completion                  |
+| **DTLS**        | Certificates                         | Handshake completion                  |
+| **SRTP**        | Transport (SRTP cipher)              | Key derivation                        |
+| **Interceptor** | RTP stream (packets, bytes, RTCP)    | handle_read/handle_write              |
+| **DataChannel** | Data channel (messages, bytes)       | handle_read/handle_write              |
+| **DataChannel** | Peer connection (opened/closed)      | State changes                         |
+| **Endpoint**    | Track references                     | Track events                          |
 
 ### 7.3 Example: ICE Handler Stats Update
 
@@ -1000,7 +1035,7 @@ impl RTCStatsReport {
     }
 
     /// Iterate over all inbound RTP stats
-    pub fn iter_inbound_rtp(&self) -> impl Iterator<Item = (&str, &RTCInboundRtpStreamStats)> {
+    pub fn iter_inbound_rtp(&self) -> impl Iterator<Item=(&str, &RTCInboundRtpStreamStats)> {
         self.reports.iter().filter_map(|(id, stat)| match stat {
             RTCStatsReportType::InboundRTP(s) => Some((id.as_str(), s)),
             _ => None,
@@ -1008,7 +1043,7 @@ impl RTCStatsReport {
     }
 
     /// Iterate over all outbound RTP stats
-    pub fn iter_outbound_rtp(&self) -> impl Iterator<Item = (&str, &RTCOutboundRtpStreamStats)> {
+    pub fn iter_outbound_rtp(&self) -> impl Iterator<Item=(&str, &RTCOutboundRtpStreamStats)> {
         self.reports.iter().filter_map(|(id, stat)| match stat {
             RTCStatsReportType::OutboundRTP(s) => Some((id.as_str(), s)),
             _ => None,
@@ -1214,42 +1249,100 @@ where
 
 ## 10. Implementation Roadmap
 
-### Phase 1: Core Infrastructure
-- [ ] Create `src/stats/accumulator/` module structure
-- [ ] Implement `RTCStatsAccumulator` master struct
-- [ ] Add `stats: RTCStatsAccumulator` to `PipelineContext`
-- [ ] Implement `get_stats(now: Instant)` on `RTCPeerConnection`
-- [ ] Implement `RTCStatsReport` and `RTCStatsReportType`
+### Phase 1: Core Infrastructure ✅ COMPLETED
 
-### Phase 2: Basic Accumulators
-- [ ] Implement `IceCandidateAccumulator`
-- [ ] Implement `IceCandidatePairAccumulator`
-- [ ] Implement `TransportStatsAccumulator`
-- [ ] Implement `CertificateStatsAccumulator`
-- [ ] Implement `CodecStatsAccumulator`
-- [ ] Implement `PeerConnectionStatsAccumulator`
+**Status:** Completed on 2026-01-15
 
-### Phase 3: RTP Stream Accumulators
-- [ ] Implement `InboundRtpStreamAccumulator`
-- [ ] Implement `OutboundRtpStreamAccumulator`
-- [ ] Implement `RtpStreamStatsCollection`
-- [ ] Add RTCP SR/RR parsing for remote stats
+**Files Created:**
+
+#### Accumulator Module (`src/statistics/accumulator/`)
+
+- **`mod.rs`** - Master `RTCStatsAccumulator` struct that aggregates all category-specific accumulators with a
+  `snapshot()` method that produces `RTCStatsReport`
+- **`ice.rs`** - `IceCandidateAccumulator`, `IceCandidatePairAccumulator`, and `IceCandidatePairCollection` for ICE
+  statistics
+- **`transport.rs`** - `TransportStatsAccumulator` for transport-level stats (packets, bytes, ICE/DTLS state)
+- **`certificate.rs`** - `CertificateStatsAccumulator` for certificate stats
+- **`codec.rs`** - `CodecStatsAccumulator` for codec stats
+- **`data_channel.rs`** - `DataChannelStatsAccumulator` with message/byte counters
+- **`peer_connection.rs`** - `PeerConnectionStatsAccumulator` for peer connection level stats
+- **`rtp_stream.rs`** - `InboundRtpStreamAccumulator`, `OutboundRtpStreamAccumulator`, and `RtpStreamStatsCollection`
+- **`media_source.rs`** - `MediaSourceStatsAccumulator` for media source stats
+- **`audio_playout.rs`** - `AudioPlayoutStatsAccumulator` for audio playout stats
+- **`app_provided.rs`** - Application-provided stats update types (encoder, decoder, audio)
+
+#### Report Module (`src/statistics/report.rs`)
+
+- `RTCStatsReportEntry` enum with all stats types
+- `RTCStatsReport` struct with map-like access and convenience methods
+
+#### Stats Types Module (`src/statistics/stats/`)
+
+- **`mod.rs`** - Base types: `RTCStatsType`, `RTCStats`, `RTCStatsId`, `RTCQualityLimitationReason`
+- W3C WebRTC Stats API type definitions (moved from `src/stats/`)
+
+**Files Modified:**
+
+- **`src/statistics/mod.rs`** - Added `accumulator`, `report`, and `stats` submodules
+- **`src/peer_connection/handler/mod.rs`** - Added `stats: RTCStatsAccumulator` to `PipelineContext`
+- **`src/peer_connection/mod.rs`** - Added `get_stats(now: Instant)`, `stats()`, and `stats_mut()` methods to
+  `RTCPeerConnection`
+
+**Key Features Implemented:**
+
+- ✅ Create `src/statistics/accumulator/` module structure
+- ✅ Implement `RTCStatsAccumulator` master struct
+- ✅ Add `stats: RTCStatsAccumulator` to `PipelineContext`
+- ✅ Implement `get_stats(now: Instant)` on `RTCPeerConnection`
+- ✅ Implement `RTCStatsReport` and `RTCStatsReportEntry`
+- ✅ Incremental accumulation + snapshot pattern for deterministic testing
+- ✅ Explicit timestamp parameter for all snapshot operations
+- ✅ Application-provided stats API for encoder/decoder/audio stats that sansio can't collect
+- ✅ Event-driven update methods (e.g., `on_rtp_received()`, `on_nack_sent()`)
+
+### Phase 2: Basic Accumulators ✅ COMPLETED (as part of Phase 1)
+
+**Status:** Completed on 2026-01-15
+
+**Changes:**
+
+- Renamed `src/stats/` to `src/statistics/`
+- Created `src/statistics/stats/` subfolder for W3C stats types
+- Moved base types (`RTCStatsType`, `RTCStats`, `RTCStatsId`, `RTCQualityLimitationReason`) to `statistics/stats/mod.rs`
+- No re-exports from `statistics/mod.rs` - all imports use full paths
+- Updated all import references throughout the codebase
+- ✅ Implement `IceCandidateAccumulator`
+- ✅ Implement `IceCandidatePairAccumulator`
+- ✅ Implement `TransportStatsAccumulator`
+- ✅ Implement `CertificateStatsAccumulator`
+- ✅ Implement `CodecStatsAccumulator`
+- ✅ Implement `PeerConnectionStatsAccumulator`
+
+### Phase 3: RTP Stream Accumulators ✅ COMPLETED (as part of Phase 1)
+
+- ✅ Implement `InboundRtpStreamAccumulator`
+- ✅ Implement `OutboundRtpStreamAccumulator`
+- ✅ Implement `RtpStreamStatsCollection`
+- [ ] Add RTCP SR/RR parsing for remote stats (pending handler integration)
 
 ### Phase 4: Handler Integration
+
 - [ ] Wire up ICE Handler stats collection
 - [ ] Wire up DTLS Handler stats collection
 - [ ] Wire up SRTP Handler stats collection
 - [ ] Wire up Interceptor Handler stats collection
 - [ ] Wire up DataChannel Handler stats collection
 
-### Phase 5: Application Integration APIs
-- [ ] Implement `DecoderStatsUpdate` and related types
-- [ ] Implement `EncoderStatsUpdate` and related types
-- [ ] Implement `AudioReceiverStatsUpdate` type
-- [ ] Implement `AudioSourceStatsUpdate` and `VideoSourceStatsUpdate`
-- [ ] Add `report_*_stats()` methods to `RTCPeerConnection`
+### Phase 5: Application Integration APIs ✅ COMPLETED (as part of Phase 1)
+
+- ✅ Implement `DecoderStatsUpdate` and related types
+- ✅ Implement `EncoderStatsUpdate` and related types
+- ✅ Implement `AudioReceiverStatsUpdate` type
+- ✅ Implement `AudioSourceStatsUpdate` and `VideoSourceStatsUpdate`
+- ✅ Add `stats_mut()` method for application-provided stats updates
 
 ### Phase 6: Testing
+
 - [ ] Unit tests for each accumulator type
 - [ ] Integration tests for complete stats flow
 - [ ] Tests for application-provided stats

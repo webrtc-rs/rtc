@@ -1,4 +1,4 @@
-use crate::stats::rtp_stream::received::RTCReceivedRtpStreamStats;
+use super::received::RTCReceivedRtpStreamStats;
 use ::serde::{Deserialize, Serialize};
 use shared::serde::instant_to_epoch;
 use std::time::Instant;
