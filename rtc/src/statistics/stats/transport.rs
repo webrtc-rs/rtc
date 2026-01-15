@@ -1,7 +1,7 @@
+use super::RTCStats;
 use crate::peer_connection::transport::{
     RTCDtlsRole, RTCDtlsTransportState, RTCIceRole, RTCIceTransportState,
 };
-use super::RTCStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

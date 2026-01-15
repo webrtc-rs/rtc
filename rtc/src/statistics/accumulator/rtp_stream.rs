@@ -1,15 +1,15 @@
 //! RTP stream statistics accumulators for inbound and outbound streams.
 
-use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::rtp_transceiver::SSRC;
+use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
+use crate::statistics::stats::RTCQualityLimitationReason;
+use crate::statistics::stats::rtp_stream::RTCRtpStreamStats;
 use crate::statistics::stats::rtp_stream::inbound::RTCInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::outbound::RTCOutboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::received::RTCReceivedRtpStreamStats;
 use crate::statistics::stats::rtp_stream::remote_inbound::RTCRemoteInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteInboundRtpStreamStats as RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::RTCSentRtpStreamStats;
-use crate::statistics::stats::rtp_stream::RTCRtpStreamStats;
-use crate::statistics::stats::RTCQualityLimitationReason;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -215,17 +215,49 @@ impl InboundRtpStreamAccumulator {
             track_identifier: self.track_identifier.clone(),
             mid: self.mid.clone(),
             remote_id: format!("RTCRemoteOutboundRTPStream_{}_{}", self.kind, self.ssrc),
-            frames_decoded: self.decoder_stats.as_ref().map(|s| s.frames_decoded).unwrap_or(0),
-            key_frames_decoded: self.decoder_stats.as_ref().map(|s| s.key_frames_decoded).unwrap_or(0),
-            frames_rendered: self.decoder_stats.as_ref().map(|s| s.frames_rendered).unwrap_or(0),
+            frames_decoded: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.frames_decoded)
+                .unwrap_or(0),
+            key_frames_decoded: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.key_frames_decoded)
+                .unwrap_or(0),
+            frames_rendered: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.frames_rendered)
+                .unwrap_or(0),
             frames_dropped: self.frames_dropped,
-            frame_width: self.decoder_stats.as_ref().map(|s| s.frame_width).unwrap_or(0),
-            frame_height: self.decoder_stats.as_ref().map(|s| s.frame_height).unwrap_or(0),
+            frame_width: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.frame_width)
+                .unwrap_or(0),
+            frame_height: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.frame_height)
+                .unwrap_or(0),
             frames_per_second: self.frames_per_second,
             qp_sum: self.decoder_stats.as_ref().map(|s| s.qp_sum).unwrap_or(0),
-            total_decode_time: self.decoder_stats.as_ref().map(|s| s.total_decode_time).unwrap_or(0.0),
-            total_inter_frame_delay: self.decoder_stats.as_ref().map(|s| s.total_inter_frame_delay).unwrap_or(0.0),
-            total_squared_inter_frame_delay: self.decoder_stats.as_ref().map(|s| s.total_squared_inter_frame_delay).unwrap_or(0.0),
+            total_decode_time: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.total_decode_time)
+                .unwrap_or(0.0),
+            total_inter_frame_delay: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.total_inter_frame_delay)
+                .unwrap_or(0.0),
+            total_squared_inter_frame_delay: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.total_squared_inter_frame_delay)
+                .unwrap_or(0.0),
             pause_count: self.pause_count,
             total_pauses_duration: self.total_pauses_duration,
             freeze_count: self.freeze_count,
@@ -242,23 +274,79 @@ impl InboundRtpStreamAccumulator {
             pli_count: self.pli_count,
             total_processing_delay: 0.0,
             estimated_playout_timestamp: now,
-            jitter_buffer_delay: self.audio_receiver_stats.as_ref().map(|s| s.jitter_buffer_delay).unwrap_or(0.0),
-            jitter_buffer_target_delay: self.audio_receiver_stats.as_ref().map(|s| s.jitter_buffer_target_delay).unwrap_or(0.0),
-            jitter_buffer_emitted_count: self.audio_receiver_stats.as_ref().map(|s| s.jitter_buffer_emitted_count).unwrap_or(0),
+            jitter_buffer_delay: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.jitter_buffer_delay)
+                .unwrap_or(0.0),
+            jitter_buffer_target_delay: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.jitter_buffer_target_delay)
+                .unwrap_or(0.0),
+            jitter_buffer_emitted_count: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.jitter_buffer_emitted_count)
+                .unwrap_or(0),
             jitter_buffer_minimum_delay: 0.0,
-            total_samples_received: self.audio_receiver_stats.as_ref().map(|s| s.total_samples_received).unwrap_or(0),
-            concealed_samples: self.audio_receiver_stats.as_ref().map(|s| s.concealed_samples).unwrap_or(0),
-            silent_concealed_samples: self.audio_receiver_stats.as_ref().map(|s| s.silent_concealed_samples).unwrap_or(0),
-            concealment_events: self.audio_receiver_stats.as_ref().map(|s| s.concealment_events).unwrap_or(0),
-            inserted_samples_for_deceleration: self.audio_receiver_stats.as_ref().map(|s| s.inserted_samples_for_deceleration).unwrap_or(0),
-            removed_samples_for_acceleration: self.audio_receiver_stats.as_ref().map(|s| s.removed_samples_for_acceleration).unwrap_or(0),
-            audio_level: self.audio_receiver_stats.as_ref().map(|s| s.audio_level).unwrap_or(0.0),
-            total_audio_energy: self.audio_receiver_stats.as_ref().map(|s| s.total_audio_energy).unwrap_or(0.0),
-            total_samples_duration: self.audio_receiver_stats.as_ref().map(|s| s.total_samples_duration).unwrap_or(0.0),
+            total_samples_received: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.total_samples_received)
+                .unwrap_or(0),
+            concealed_samples: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.concealed_samples)
+                .unwrap_or(0),
+            silent_concealed_samples: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.silent_concealed_samples)
+                .unwrap_or(0),
+            concealment_events: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.concealment_events)
+                .unwrap_or(0),
+            inserted_samples_for_deceleration: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.inserted_samples_for_deceleration)
+                .unwrap_or(0),
+            removed_samples_for_acceleration: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.removed_samples_for_acceleration)
+                .unwrap_or(0),
+            audio_level: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.audio_level)
+                .unwrap_or(0.0),
+            total_audio_energy: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.total_audio_energy)
+                .unwrap_or(0.0),
+            total_samples_duration: self
+                .audio_receiver_stats
+                .as_ref()
+                .map(|s| s.total_samples_duration)
+                .unwrap_or(0.0),
             frames_received: self.frames_received,
-            decoder_implementation: self.decoder_stats.as_ref().map(|s| s.decoder_implementation.clone()).unwrap_or_default(),
+            decoder_implementation: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.decoder_implementation.clone())
+                .unwrap_or_default(),
             playout_id: String::new(),
-            power_efficient_decoder: self.decoder_stats.as_ref().map(|s| s.power_efficient_decoder).unwrap_or(false),
+            power_efficient_decoder: self
+                .decoder_stats
+                .as_ref()
+                .map(|s| s.power_efficient_decoder)
+                .unwrap_or(false),
             frames_assembled_from_multiple_packets: self.frames_assembled_from_multiple_packets,
             total_assembly_time: self.total_assembly_time,
             retransmitted_packets_received: self.retransmitted_packets_received,
@@ -481,17 +569,37 @@ impl OutboundRtpStreamAccumulator {
             rtx_ssrc: self.rtx_ssrc.unwrap_or(0),
             target_bitrate: self.target_bitrate,
             total_encoded_bytes_target: 0,
-            frame_width: self.encoder_stats.as_ref().map(|s| s.frame_width).unwrap_or(0),
-            frame_height: self.encoder_stats.as_ref().map(|s| s.frame_height).unwrap_or(0),
+            frame_width: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.frame_width)
+                .unwrap_or(0),
+            frame_height: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.frame_height)
+                .unwrap_or(0),
             frames_per_second: self.frames_per_second,
             frames_sent: self.frames_sent,
             huge_frames_sent: self.huge_frames_sent,
-            frames_encoded: self.encoder_stats.as_ref().map(|s| s.frames_encoded).unwrap_or(0),
-            key_frames_encoded: self.encoder_stats.as_ref().map(|s| s.key_frames_encoded).unwrap_or(0),
+            frames_encoded: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.frames_encoded)
+                .unwrap_or(0),
+            key_frames_encoded: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.key_frames_encoded)
+                .unwrap_or(0),
             qp_sum: self.encoder_stats.as_ref().map(|s| s.qp_sum).unwrap_or(0),
             psnr_sum: HashMap::new(),
             psnr_measurements: 0,
-            total_encode_time: self.encoder_stats.as_ref().map(|s| s.total_encode_time).unwrap_or(0.0),
+            total_encode_time: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.total_encode_time)
+                .unwrap_or(0.0),
             total_packet_send_delay: self.total_packet_send_delay,
             quality_limitation_reason: self.quality_limitation_reason,
             quality_limitation_durations: HashMap::new(),
@@ -499,10 +607,22 @@ impl OutboundRtpStreamAccumulator {
             nack_count: self.nack_count,
             fir_count: self.fir_count,
             pli_count: self.pli_count,
-            encoder_implementation: self.encoder_stats.as_ref().map(|s| s.encoder_implementation.clone()).unwrap_or_default(),
-            power_efficient_encoder: self.encoder_stats.as_ref().map(|s| s.power_efficient_encoder).unwrap_or(false),
+            encoder_implementation: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.encoder_implementation.clone())
+                .unwrap_or_default(),
+            power_efficient_encoder: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.power_efficient_encoder)
+                .unwrap_or(false),
             active: self.active,
-            scalability_mode: self.encoder_stats.as_ref().map(|s| s.scalability_mode.clone()).unwrap_or_default(),
+            scalability_mode: self
+                .encoder_stats
+                .as_ref()
+                .map(|s| s.scalability_mode.clone())
+                .unwrap_or_default(),
             packets_sent_with_ect1: 0,
         }
     }
@@ -556,14 +676,14 @@ impl RtpStreamStatsCollection {
         ssrc: SSRC,
         kind: RtpCodecKind,
     ) -> &mut InboundRtpStreamAccumulator {
-        self.inbound.entry(ssrc).or_insert_with(|| {
-            InboundRtpStreamAccumulator {
+        self.inbound
+            .entry(ssrc)
+            .or_insert_with(|| InboundRtpStreamAccumulator {
                 ssrc,
                 kind,
                 transport_id: "transport".to_string(),
                 ..Default::default()
-            }
-        })
+            })
     }
 
     /// Gets or creates an outbound stream accumulator for the given SSRC.
@@ -572,14 +692,14 @@ impl RtpStreamStatsCollection {
         ssrc: SSRC,
         kind: RtpCodecKind,
     ) -> &mut OutboundRtpStreamAccumulator {
-        self.outbound.entry(ssrc).or_insert_with(|| {
-            OutboundRtpStreamAccumulator {
+        self.outbound
+            .entry(ssrc)
+            .or_insert_with(|| OutboundRtpStreamAccumulator {
                 ssrc,
                 kind,
                 transport_id: "transport".to_string(),
                 active: true,
                 ..Default::default()
-            }
-        })
+            })
     }
 }

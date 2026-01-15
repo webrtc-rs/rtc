@@ -139,11 +139,17 @@ where
     }
 
     pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {
-        IceHandler::new(&mut self.pipeline_context.ice_handler_context)
+        IceHandler::new(
+            &mut self.pipeline_context.ice_handler_context,
+            &mut self.pipeline_context.stats,
+        )
     }
 
     pub(crate) fn get_dtls_handler(&mut self) -> DtlsHandler<'_> {
-        DtlsHandler::new(&mut self.pipeline_context.dtls_handler_context)
+        DtlsHandler::new(
+            &mut self.pipeline_context.dtls_handler_context,
+            &mut self.pipeline_context.stats,
+        )
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
@@ -154,6 +160,7 @@ where
         DataChannelHandler::new(
             &mut self.pipeline_context.datachannel_handler_context,
             &mut self.data_channels,
+            &mut self.pipeline_context.stats,
         )
     }
 
@@ -165,6 +172,7 @@ where
         InterceptorHandler::new(
             &mut self.pipeline_context.interceptor_handler_context,
             &mut self.configuration.interceptor,
+            &mut self.pipeline_context.stats,
         )
     }
 

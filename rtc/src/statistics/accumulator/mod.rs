@@ -30,8 +30,8 @@ pub use rtp_stream::{
 pub use transport::TransportStatsAccumulator;
 
 use crate::data_channel::RTCDataChannelId;
-use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::rtp_transceiver::SSRC;
+use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -115,13 +115,13 @@ impl RTCStatsAccumulator {
         ));
 
         // Transport stats
-        entries.push(RTCStatsReportEntry::Transport(
-            self.transport.snapshot(now),
-        ));
+        entries.push(RTCStatsReportEntry::Transport(self.transport.snapshot(now)));
 
         // ICE candidate pair stats
         for (id, pair) in &self.ice_candidate_pairs.pairs {
-            entries.push(RTCStatsReportEntry::IceCandidatePair(pair.snapshot(now, id)));
+            entries.push(RTCStatsReportEntry::IceCandidatePair(
+                pair.snapshot(now, id),
+            ));
         }
 
         // Local ICE candidate stats
@@ -227,12 +227,12 @@ impl RTCStatsAccumulator {
         &mut self,
         id: RTCDataChannelId,
     ) -> &mut DataChannelStatsAccumulator {
-        self.data_channels.entry(id).or_insert_with(|| {
-            DataChannelStatsAccumulator {
+        self.data_channels
+            .entry(id)
+            .or_insert_with(|| DataChannelStatsAccumulator {
                 id,
                 ..Default::default()
-            }
-        })
+            })
     }
 
     /// Gets or creates an ICE candidate pair accumulator.
@@ -338,11 +338,7 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates audio playout stats.
-    pub fn update_audio_playout_stats(
-        &mut self,
-        playout_id: &str,
-        stats: AudioPlayoutStatsUpdate,
-    ) {
+    pub fn update_audio_playout_stats(&mut self, playout_id: &str, stats: AudioPlayoutStatsUpdate) {
         if let Some(playout) = self.audio_playouts.get_mut(playout_id) {
             playout.synthesized_samples_duration = stats.synthesized_samples_duration;
             playout.synthesized_samples_events = stats.synthesized_samples_events;

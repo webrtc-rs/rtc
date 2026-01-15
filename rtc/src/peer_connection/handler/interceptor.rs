@@ -2,8 +2,12 @@ use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
+use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet, TaggedPacket};
 use log::{debug, error, trace};
+use rtcp::receiver_report::ReceiverReport;
+use rtcp::sender_report::SenderReport;
 use shared::error::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -24,18 +28,63 @@ where
 {
     ctx: &'a mut InterceptorHandlerContext,
     interceptor: &'a mut I,
+    stats: &'a mut RTCStatsAccumulator,
 }
 
 impl<'a, I> InterceptorHandler<'a, I>
 where
     I: Interceptor,
 {
-    pub(crate) fn new(ctx: &'a mut InterceptorHandlerContext, interceptor: &'a mut I) -> Self {
-        InterceptorHandler { ctx, interceptor }
+    pub(crate) fn new(
+        ctx: &'a mut InterceptorHandlerContext,
+        interceptor: &'a mut I,
+        stats: &'a mut RTCStatsAccumulator,
+    ) -> Self {
+        InterceptorHandler {
+            ctx,
+            interceptor,
+            stats,
+        }
     }
 
     pub(crate) fn name(&self) -> &'static str {
         "InterceptorHandler"
+    }
+
+    /// Process RTCP packets and update stats
+    fn process_rtcp_for_stats(&mut self, rtcp_packets: &[Box<dyn rtcp::Packet>], now: Instant) {
+        for packet in rtcp_packets {
+            // Try to downcast to SenderReport
+            if let Some(sr) = packet.as_any().downcast_ref::<SenderReport>() {
+                // SR contains info about the remote sender
+                // Update inbound stream stats with remote sender info
+                let stream = self
+                    .stats
+                    .rtp_streams
+                    .get_or_create_inbound(sr.ssrc, RtpCodecKind::Video);
+                stream.on_rtcp_sr_received(sr.packet_count as u64, sr.octet_count as u64, now);
+            }
+
+            // Try to downcast to ReceiverReport
+            if let Some(rr) = packet.as_any().downcast_ref::<ReceiverReport>() {
+                // RR contains info about how the remote receiver is receiving our stream
+                for report in &rr.reports {
+                    if let Some(stream) = self.stats.rtp_streams.outbound.get_mut(&report.ssrc) {
+                        // Calculate jitter in seconds (jitter is in timestamp units, divide by typical clock rate)
+                        let jitter_seconds = report.jitter as f64 / 90000.0; // Assume 90kHz for video
+                        let fraction_lost = report.fraction_lost as f64 / 256.0;
+
+                        stream.on_rtcp_rr_received(
+                            report.last_sequence_number as u64,
+                            report.total_lost as u64,
+                            jitter_seconds,
+                            fraction_lost,
+                            0.0, // RTT calculation would require additional tracking
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -63,7 +112,12 @@ where
                 // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
             })?;
 
-            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(_))) = &msg.message {
+            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packets))) =
+                &msg.message
+            {
+                // Process RTCP packets for stats (SR/RR parsing)
+                self.process_rtcp_for_stats(rtcp_packets, msg.now);
+
                 // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
                 // just add a new interceptor to forward it by using self.interceptor.poll_read()
                 debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);

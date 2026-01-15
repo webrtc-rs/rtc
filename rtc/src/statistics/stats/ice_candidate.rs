@@ -1,8 +1,8 @@
+use super::RTCStats;
 use crate::peer_connection::transport::RTCIceCandidateType;
 use crate::peer_connection::transport::ice::candidate::{
     RTCIceServerTransportProtocol, RTCIceTcpCandidateType,
 };
-use super::RTCStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

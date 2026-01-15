@@ -5,7 +5,9 @@ use crate::peer_connection::transport::ice::candidate::{
 };
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::statistics::stats::ice_candidate::RTCIceCandidateStats;
-use crate::statistics::stats::ice_candidate_pair::{RTCIceCandidatePairStats, RTCStatsIceCandidatePairState};
+use crate::statistics::stats::ice_candidate_pair::{
+    RTCIceCandidatePairStats, RTCStatsIceCandidatePairState,
+};
 use crate::statistics::stats::{RTCStats, RTCStatsType};
 use std::collections::HashMap;
 use std::time::Instant;

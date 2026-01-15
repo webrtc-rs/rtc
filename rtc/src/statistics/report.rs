@@ -3,6 +3,7 @@
 //! This module provides the `RTCStatsReport` type which is the return value
 //! of `getStats()` and contains a collection of statistics objects.
 
+use crate::statistics::stats::RTCStatsType;
 use crate::statistics::stats::audio_playout::RTCAudioPlayoutStats;
 use crate::statistics::stats::certificate::RTCCertificateStats;
 use crate::statistics::stats::codec::RTCCodecStats;
@@ -17,7 +18,6 @@ use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteInboundRtpSt
 use crate::statistics::stats::source::audio::RTCAudioSourceStats;
 use crate::statistics::stats::source::video::RTCVideoSourceStats;
 use crate::statistics::stats::transport::RTCTransportStats;
-use crate::statistics::stats::RTCStatsType;
 use std::collections::HashMap;
 
 /// An entry in the stats report representing a single statistics object.
@@ -90,10 +90,18 @@ impl RTCStatsReportEntry {
             RTCStatsReportEntry::Certificate(s) => &s.stats.id,
             RTCStatsReportEntry::Codec(s) => &s.stats.id,
             RTCStatsReportEntry::DataChannel(s) => &s.stats.id,
-            RTCStatsReportEntry::InboundRtp(s) => &s.received_rtp_stream_stats.rtp_stream_stats.stats.id,
-            RTCStatsReportEntry::OutboundRtp(s) => &s.sent_rtp_stream_stats.rtp_stream_stats.stats.id,
-            RTCStatsReportEntry::RemoteInboundRtp(s) => &s.received_rtp_stream_stats.rtp_stream_stats.stats.id,
-            RTCStatsReportEntry::RemoteOutboundRtp(s) => &s.sent_rtp_stream_stats.rtp_stream_stats.stats.id,
+            RTCStatsReportEntry::InboundRtp(s) => {
+                &s.received_rtp_stream_stats.rtp_stream_stats.stats.id
+            }
+            RTCStatsReportEntry::OutboundRtp(s) => {
+                &s.sent_rtp_stream_stats.rtp_stream_stats.stats.id
+            }
+            RTCStatsReportEntry::RemoteInboundRtp(s) => {
+                &s.received_rtp_stream_stats.rtp_stream_stats.stats.id
+            }
+            RTCStatsReportEntry::RemoteOutboundRtp(s) => {
+                &s.sent_rtp_stream_stats.rtp_stream_stats.stats.id
+            }
             RTCStatsReportEntry::AudioSource(s) => &s.media_source_stats.stats.id,
             RTCStatsReportEntry::VideoSource(s) => &s.media_source_stats.stats.id,
             RTCStatsReportEntry::AudioPlayout(s) => &s.stats.id,

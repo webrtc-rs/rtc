@@ -3,9 +3,8 @@ use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 
-use bytes::BytesMut;
 use interceptor::Packet;
-use log::{debug, error};
+use log::debug;
 use shared::error::{Error, Result};
 use shared::marshal::{Marshal, Unmarshal};
 use shared::util::is_rtcp;
@@ -51,55 +50,47 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         if let RTCMessageInternal::Rtp(RTPMessage::Raw(message)) = msg.message {
             debug!("srtp read {:?}", msg.transport.peer_addr);
 
-            let mut try_read = || -> Result<RTCMessageInternal> {
-                #[allow(clippy::collapsible_else_if)]
-                if is_rtcp(&message) {
-                    if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
-                        let mut decrypted = context.decrypt_rtcp(&message)?;
-                        let rtcp_packets = rtcp::packet::unmarshal(&mut decrypted)?;
-                        if rtcp_packets.is_empty() {
-                            return Err(Error::Other("empty rtcp_packets".to_string()));
-                        }
-
-                        Ok(RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(
-                            rtcp_packets,
-                        ))))
-                    } else {
-                        Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for rtcp_packet {:?}",
-                            msg.transport.peer_addr
-                        )))
+            #[allow(clippy::collapsible_else_if)]
+            if is_rtcp(&message) {
+                if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
+                    let mut decrypted = context.decrypt_rtcp(&message)?;
+                    let rtcp_packets = rtcp::packet::unmarshal(&mut decrypted)?;
+                    if rtcp_packets.is_empty() {
+                        return Err(Error::Other("empty rtcp_packets".to_string()));
                     }
-                } else {
-                    if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
-                        let mut decrypted = context.decrypt_rtp(&message)?;
-                        let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
 
-                        Ok(RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(
-                            rtp_packet,
-                        ))))
-                    } else {
-                        Err(Error::Other(format!(
-                            "remote_srtp_context is not set yet for rtp_packet {:?}",
-                            msg.transport.peer_addr
-                        )))
-                    }
-                }
-            };
-
-            match try_read() {
-                Ok(message) => {
                     self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                         now: msg.now,
                         transport: msg.transport,
-                        message,
+                        message: RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(
+                            rtcp_packets,
+                        ))),
                     });
+                } else {
+                    return Err(Error::Other(format!(
+                        "remote_srtp_context is not set yet for rtcp_packet {:?}",
+                        msg.transport.peer_addr
+                    )));
                 }
-                Err(err) => {
-                    error!("try_read got error {}", err);
-                    return Err(err);
+            } else {
+                if let Some(context) = self.ctx.remote_srtp_context.as_mut() {
+                    let mut decrypted = context.decrypt_rtp(&message)?;
+                    let rtp_packet = rtp::Packet::unmarshal(&mut decrypted)?;
+
+                    self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                        now: msg.now,
+                        transport: msg.transport,
+                        message: RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(
+                            rtp_packet,
+                        ))),
+                    });
+                } else {
+                    return Err(Error::Other(format!(
+                        "remote_srtp_context is not set yet for rtp_packet {:?}",
+                        msg.transport.peer_addr
+                    )));
                 }
-            };
+            }
         } else {
             debug!("bypass srtp read {:?}", msg.transport.peer_addr);
             self.ctx.read_outs.push_back(msg);
@@ -115,58 +106,50 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         if let RTCMessageInternal::Rtp(message) = msg.message {
             debug!("srtp write {:?}", msg.transport.peer_addr);
 
-            let try_write = || -> Result<BytesMut> {
-                match message {
-                    RTPMessage::Packet(Packet::Rtcp(rtcp_packets)) => {
-                        if rtcp_packets.is_empty() {
-                            return Err(Error::Other("empty rtcp_packets".to_string()));
-                        };
+            let encrypted = match message {
+                RTPMessage::Packet(Packet::Rtcp(rtcp_packets)) => {
+                    if rtcp_packets.is_empty() {
+                        return Err(Error::Other("empty rtcp_packets".to_string()));
+                    };
 
-                        if let Some(context) = self.ctx.local_srtp_context.as_mut() {
-                            let packet = rtcp::packet::marshal(&rtcp_packets)?;
-                            context.encrypt_rtcp(&packet)
-                        } else {
-                            Err(Error::Other(format!(
-                                "local_srp_context is not set yet for rtcp_packet {:?}",
-                                msg.transport.peer_addr
-                            )))
-                        }
+                    if let Some(context) = self.ctx.local_srtp_context.as_mut() {
+                        let packet = rtcp::packet::marshal(&rtcp_packets)?;
+                        context.encrypt_rtcp(&packet)?
+                    } else {
+                        return Err(Error::Other(format!(
+                            "local_srp_context is not set yet for rtcp_packet {:?}",
+                            msg.transport.peer_addr
+                        )));
                     }
-                    RTPMessage::Packet(Packet::Rtp(rtp_message)) => {
-                        if let Some(context) = self.ctx.local_srtp_context.as_mut() {
-                            let packet = rtp_message.marshal()?;
-                            context.encrypt_rtp(&packet)
-                        } else {
-                            Err(Error::Other(format!(
-                                "local_srtp_context is not set yet for rtp_packet {:?}",
-                                msg.transport.peer_addr
-                            )))
-                        }
+                }
+                RTPMessage::Packet(Packet::Rtp(rtp_message)) => {
+                    if let Some(context) = self.ctx.local_srtp_context.as_mut() {
+                        let packet = rtp_message.marshal()?;
+                        context.encrypt_rtp(&packet)?
+                    } else {
+                        return Err(Error::Other(format!(
+                            "local_srtp_context is not set yet for rtp_packet {:?}",
+                            msg.transport.peer_addr
+                        )));
                     }
-                    RTPMessage::Raw(raw_packet) => {
-                        // Bypass
-                        debug!("Bypass srtp write {:?}", msg.transport.peer_addr);
-                        Ok(raw_packet)
-                    }
-                    RTPMessage::TrackPacket(_) => Err(Error::Other(
+                }
+                RTPMessage::Raw(raw_packet) => {
+                    // Bypass
+                    debug!("Bypass srtp write {:?}", msg.transport.peer_addr);
+                    raw_packet
+                }
+                RTPMessage::TrackPacket(_) => {
+                    return Err(Error::Other(
                         "application level track message should never reach here".to_string(),
-                    )),
+                    ));
                 }
             };
 
-            match try_write() {
-                Ok(encrypted) => {
-                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: msg.now,
-                        transport: msg.transport,
-                        message: RTCMessageInternal::Rtp(RTPMessage::Raw(encrypted)),
-                    });
-                }
-                Err(err) => {
-                    error!("try_write with error {}", err);
-                    return Err(err);
-                }
-            }
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                now: msg.now,
+                transport: msg.transport,
+                message: RTCMessageInternal::Rtp(RTPMessage::Raw(encrypted)),
+            });
         } else {
             // Bypass
             debug!("Bypass srtp write {:?}", msg.transport.peer_addr);

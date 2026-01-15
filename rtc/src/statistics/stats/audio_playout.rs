@@ -1,5 +1,5 @@
-use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use super::RTCStats;
+use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -4,6 +4,7 @@ use crate::peer_connection::message::internal::{
     RTCMessageInternal, STUNMessage, TaggedRTCMessageInternal,
 };
 use crate::peer_connection::transport::ice::RTCIceTransport;
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use log::{debug, trace};
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage};
@@ -34,11 +35,12 @@ impl IceHandlerContext {
 /// IceHandler implements ICE Protocol handling
 pub(crate) struct IceHandler<'a> {
     ctx: &'a mut IceHandlerContext,
+    stats: &'a mut RTCStatsAccumulator,
 }
 
 impl<'a> IceHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut IceHandlerContext) -> Self {
-        IceHandler { ctx }
+    pub(crate) fn new(ctx: &'a mut IceHandlerContext, stats: &'a mut RTCStatsAccumulator) -> Self {
+        IceHandler { ctx, stats }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -71,6 +73,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         {
             // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
+
+            // Update transport stats for received packet
+            if let RTCMessageInternal::Raw(ref raw) = msg.message {
+                self.stats.transport.on_packet_received(raw.len());
+            }
+
             // When ICE restarts and the selected candidate pair changes,
             // WebRTC treats this as a path migration, and DTLS continues unchanged, bound to the ICE transport, not to a fixed 5-tuple.
             // Use default for transport to make DTLS tunneled
@@ -96,6 +104,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             msg.transport.local_addr = local.addr();
             msg.transport.peer_addr = remote.addr();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
+
+            // Update transport stats for sent packet
+            if let RTCMessageInternal::Raw(ref raw) = msg.message {
+                self.stats.transport.on_packet_sent(raw.len());
+            }
+
             self.ctx.write_outs.push_back(msg);
         } else {
             trace!(
@@ -130,6 +144,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 ::ice::Event::ConnectionStateChange(state) => {
                     let ice_connection_state = state.into();
                     self.ctx.ice_transport.ice_connection_state = ice_connection_state;
+
+                    // Update transport stats for ICE state change
+                    // Use the original ice state which converts to RTCIceTransportState
+                    self.stats.transport.on_ice_state_changed(state.into());
+
                     self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::RTCPeerConnectionEvent(
@@ -144,6 +163,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         local.addr(),
                         remote.addr()
                     );
+
+                    // Update transport stats for selected candidate pair change
+                    let pair_id = format!("{}_{}", local.foundation(), remote.foundation());
+                    self.stats
+                        .transport
+                        .on_selected_candidate_pair_changed(pair_id);
+
                     self.ctx
                         .event_outs
                         .push_back(RTCEventInternal::ICESelectedCandidatePairChange);

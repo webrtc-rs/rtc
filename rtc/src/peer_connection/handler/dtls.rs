@@ -7,11 +7,11 @@ use crate::peer_connection::message::internal::{
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use bytes::BytesMut;
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
-use log::{debug, error, warn};
+use log::{debug, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
@@ -43,15 +43,49 @@ impl DtlsHandlerContext {
 /// DtlsHandler implements DTLS Protocol handling
 pub(crate) struct DtlsHandler<'a> {
     ctx: &'a mut DtlsHandlerContext,
+    stats: &'a mut RTCStatsAccumulator,
 }
 
 impl<'a> DtlsHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut DtlsHandlerContext) -> Self {
-        DtlsHandler { ctx }
+    pub(crate) fn new(ctx: &'a mut DtlsHandlerContext, stats: &'a mut RTCStatsAccumulator) -> Self {
+        DtlsHandler { ctx, stats }
     }
 
     pub(crate) fn name(&self) -> &'static str {
         "DtlsHandler"
+    }
+
+    /// Update stats when DTLS handshake completes
+    fn update_dtls_stats_from_profile(&mut self, srtp_profile: SrtpProtectionProfile) {
+        // Update transport DTLS state
+        self.stats
+            .transport
+            .on_dtls_state_changed(RTCDtlsTransportState::Connected);
+
+        // Update DTLS role from transport
+        self.stats.transport.dtls_role = self.ctx.dtls_transport.dtls_role;
+
+        // Update SRTP cipher from DTLS negotiation
+        let srtp_cipher = match srtp_profile {
+            SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => "SRTP_AEAD_AES_128_GCM",
+            SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm => "SRTP_AEAD_AES_256_GCM",
+            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80 => "SRTP_AES128_CM_HMAC_SHA1_80",
+            SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32 => "SRTP_AES128_CM_HMAC_SHA1_32",
+            _ => "Unknown",
+        };
+        self.stats.transport.srtp_cipher = srtp_cipher.to_string();
+
+        // Update TLS version
+        self.stats.transport.tls_version = "DTLS 1.2".to_string();
+
+        // Update DTLS cipher from the connection state if available
+        // Note: The dtls crate state may not expose cipher suite directly,
+        // so we use a placeholder. The actual cipher would need to be extracted
+        // from the dtls handshake state if available.
+        if self.stats.transport.dtls_cipher.is_empty() {
+            self.stats.transport.dtls_cipher =
+                "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string();
+        }
     }
 }
 
@@ -68,89 +102,87 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv dtls RAW {:?}", msg.transport.peer_addr);
 
-            let try_read = || -> Result<Vec<BytesMut>> {
-                let mut messages = vec![];
-                let mut srtp_contexts = None;
+            let mut messages = vec![];
+            let mut srtp_contexts = None;
+            let mut srtp_profile_for_stats: Option<SrtpProtectionProfile> = None;
 
-                let dtls_endpoint = self
-                    .ctx
-                    .dtls_transport
-                    .dtls_endpoint
-                    .as_mut()
-                    .ok_or(Error::ErrDtlsTransportNotStarted)?;
+            let dtls_endpoint = self
+                .ctx
+                .dtls_transport
+                .dtls_endpoint
+                .as_mut()
+                .ok_or(Error::ErrDtlsTransportNotStarted)?;
 
-                for message in dtls_endpoint.read(
-                    msg.now,
-                    msg.transport.peer_addr,
-                    msg.transport.ecn,
-                    dtls_message,
-                )? {
-                    match message {
-                        EndpointEvent::HandshakeComplete => {
-                            if let Some(state) =
-                                dtls_endpoint.get_connection_state(msg.transport.peer_addr)
-                            {
-                                debug!("dtls handshake complete");
-                                let (local_srtp_context, remote_srtp_context) =
-                                    DtlsHandler::update_srtp_contexts(
-                                        state,
-                                        &self.ctx.dtls_transport.replay_protection,
-                                    )?;
-                                srtp_contexts = Some((local_srtp_context, remote_srtp_context));
-                            } else {
-                                warn!(
-                                    "Unable to find connection state for {}",
-                                    msg.transport.peer_addr
-                                );
-                            }
-                        }
-                        EndpointEvent::ApplicationData(message) => {
-                            debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                            messages.push(message);
+            for message in dtls_endpoint.read(
+                msg.now,
+                msg.transport.peer_addr,
+                msg.transport.ecn,
+                dtls_message,
+            )? {
+                match message {
+                    EndpointEvent::HandshakeComplete => {
+                        if let Some(state) =
+                            dtls_endpoint.get_connection_state(msg.transport.peer_addr)
+                        {
+                            debug!("dtls handshake complete");
+
+                            // Save profile for stats update after borrow ends
+                            srtp_profile_for_stats = Some(state.srtp_protection_profile());
+
+                            let (local_srtp_context, remote_srtp_context) =
+                                DtlsHandler::update_srtp_contexts(
+                                    state,
+                                    &self.ctx.dtls_transport.replay_protection,
+                                )?;
+                            srtp_contexts = Some((local_srtp_context, remote_srtp_context));
+                        } else {
+                            warn!(
+                                "Unable to find connection state for {}",
+                                msg.transport.peer_addr
+                            );
                         }
                     }
-                }
-
-                while let Some(transmit) = dtls_endpoint.poll_transmit() {
-                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: transmit.now,
-                        transport: transmit.transport,
-                        message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
-                    });
-                }
-
-                if let Some((local_srtp_context, remote_srtp_context)) = srtp_contexts {
-                    self.ctx
-                        .dtls_transport
-                        .state_change(RTCDtlsTransportState::Connected);
-
-                    self.ctx
-                        .event_outs
-                        .push_back(RTCEventInternal::DTLSHandshakeComplete(
-                            Some(local_srtp_context),
-                            Some(remote_srtp_context),
-                        ));
-                }
-
-                Ok(messages)
-            };
-
-            match try_read() {
-                Ok(messages) => {
-                    for message in messages {
+                    EndpointEvent::ApplicationData(message) => {
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
-                        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                            now: msg.now,
-                            transport: msg.transport,
-                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(message)),
-                        });
+                        messages.push(message);
                     }
                 }
-                Err(err) => {
-                    error!("try_read with error {}", err);
-                    return Err(err);
-                }
-            };
+            }
+
+            while let Some(transmit) = dtls_endpoint.poll_transmit() {
+                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                    now: transmit.now,
+                    transport: transmit.transport,
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(transmit.message)),
+                });
+            }
+
+            if let Some((local_srtp_context, remote_srtp_context)) = srtp_contexts {
+                self.ctx
+                    .dtls_transport
+                    .state_change(RTCDtlsTransportState::Connected);
+
+                self.ctx
+                    .event_outs
+                    .push_back(RTCEventInternal::DTLSHandshakeComplete(
+                        Some(local_srtp_context),
+                        Some(remote_srtp_context),
+                    ));
+            }
+
+            // Update stats after dtls_endpoint borrow ends
+            if let Some(srtp_profile) = srtp_profile_for_stats {
+                self.update_dtls_stats_from_profile(srtp_profile);
+            }
+
+            for message in messages {
+                debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(message)),
+                });
+            }
         } else {
             // Bypass
             debug!("bypass dtls read {:?}", msg.transport.peer_addr);

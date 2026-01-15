@@ -1,5 +1,5 @@
-use crate::data_channel::RTCDataChannelState;
 use super::RTCStats;
+use crate::data_channel::RTCDataChannelState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

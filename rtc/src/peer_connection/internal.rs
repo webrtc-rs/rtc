@@ -852,4 +852,12 @@ where
             })
             .collect()
     }
+
+    pub(crate) fn stats(&self) -> &RTCStatsAccumulator {
+        &self.pipeline_context.stats
+    }
+
+    pub(crate) fn stats_mut(&mut self) -> &mut RTCStatsAccumulator {
+        &mut self.pipeline_context.stats
+    }
 }

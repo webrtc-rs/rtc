@@ -2059,43 +2059,4 @@ where
     pub fn get_stats(&self, now: std::time::Instant) -> RTCStatsReport {
         self.pipeline_context.stats.snapshot(now)
     }
-
-    /// Returns a reference to the statistics accumulator.
-    ///
-    /// This allows direct read access to the accumulated statistics without
-    /// creating a snapshot. Useful for checking specific values without the
-    /// overhead of creating a full report.
-    pub fn stats(&self) -> &RTCStatsAccumulator {
-        &self.pipeline_context.stats
-    }
-
-    /// Returns a mutable reference to the statistics accumulator.
-    ///
-    /// This allows the application to provide statistics that the sansio
-    /// layer cannot collect (e.g., encoder/decoder stats from the media
-    /// processing pipeline).
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-    /// use rtc::stats::accumulator::EncoderStatsUpdate;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
-    ///
-    /// // Application provides encoder stats from its media pipeline
-    /// pc.stats_mut().update_encoder_stats(12345, EncoderStatsUpdate {
-    ///     frame_width: 1920,
-    ///     frame_height: 1080,
-    ///     frames_encoded: 1000,
-    ///     ..Default::default()
-    /// });
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn stats_mut(&mut self) -> &mut RTCStatsAccumulator {
-        &mut self.pipeline_context.stats
-    }
 }
