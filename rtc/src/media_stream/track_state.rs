@@ -6,6 +6,7 @@
 //!
 //! See [MediaStreamTrack.readyState](https://www.w3.org/TR/mediacapture-streams/#dom-mediastreamtrack-readystate).
 
+use crate::peer_connection::configuration::UNSPECIFIED_STR;
 use std::fmt;
 
 /// Represents the lifecycle state of a media stream track.
@@ -77,9 +78,7 @@ impl fmt::Display for MediaStreamTrackState {
         let s = match *self {
             MediaStreamTrackState::Live => MEDIA_STREAM_TRACK_STATE_LIVE_STR,
             MediaStreamTrackState::Ended => MEDIA_STREAM_TRACK_STATE_ENDED_STR,
-            MediaStreamTrackState::Unspecified => {
-                crate::peer_connection::configuration::UNSPECIFIED_STR
-            }
+            MediaStreamTrackState::Unspecified => UNSPECIFIED_STR,
         };
         write!(f, "{s}")
     }

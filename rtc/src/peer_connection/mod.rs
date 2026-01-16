@@ -2012,6 +2012,8 @@ where
     pub fn get_stats(&mut self, now: std::time::Instant) -> RTCStatsReport {
         // Update ICE agent stats before taking snapshot
         self.update_ice_agent_stats();
+        // Update codec stats from transceivers before taking snapshot
+        self.update_codec_stats();
         self.pipeline_context.stats.snapshot(now)
     }
 }

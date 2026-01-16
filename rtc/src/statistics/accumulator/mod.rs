@@ -16,7 +16,7 @@ mod rtp_stream;
 mod transport;
 
 pub use certificate::CertificateStatsAccumulator;
-pub use codec::CodecStatsAccumulator;
+pub use codec::{CodecDirection, CodecStatsAccumulator};
 pub use data_channel::DataChannelStatsAccumulator;
 pub use ice_candidate::IceCandidateAccumulator;
 pub use ice_candidate_pair::IceCandidatePairAccumulator;
@@ -29,8 +29,8 @@ pub use rtp_stream::outbound::OutboundRtpStreamAccumulator;
 pub use transport::TransportStatsAccumulator;
 
 use crate::data_channel::RTCDataChannelId;
-use crate::rtp_transceiver::SSRC;
-use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use crate::rtp_transceiver::{PayloadType, SSRC};
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use ice::CandidatePairStats;
 use std::collections::HashMap;
@@ -273,11 +273,6 @@ impl RTCStatsAccumulator {
         self.remote_candidates.insert(id, candidate);
     }
 
-    /// Registers a codec.
-    pub fn register_codec(&mut self, id: String, codec: CodecStatsAccumulator) {
-        self.codecs.insert(id, codec);
-    }
-
     /// Registers a certificate.
     pub fn register_certificate(&mut self, fingerprint: String, cert: CertificateStatsAccumulator) {
         self.certificates.insert(fingerprint, cert);
@@ -386,5 +381,100 @@ impl RTCStatsAccumulator {
         pair.consent_requests_sent = cp_stats.consent_requests_sent;
         pair.total_round_trip_time = cp_stats.total_round_trip_time;
         pair.current_round_trip_time = cp_stats.current_round_trip_time;
+    }
+
+    // ========================================================================
+    // Codec stats methods
+    // ========================================================================
+
+    /// Registers a codec for an inbound RTP stream and sets the codec_id.
+    ///
+    /// Per W3C spec, codecs are only exposed when referenced by an RTP stream.
+    /// This method registers the codec (if not already registered) and links it
+    /// to the inbound RTP stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssrc` - The SSRC of the inbound RTP stream
+    /// * `codec` - The codec information
+    /// * `payload_type` - The payload type for this codec
+    pub fn register_inbound_codec(
+        &mut self,
+        ssrc: SSRC,
+        codec: &RTCRtpCodec,
+        payload_type: PayloadType,
+    ) {
+        let transport_id = self.transport.transport_id.clone();
+        let codec_id = CodecStatsAccumulator::generate_id(
+            &transport_id,
+            CodecDirection::Receive,
+            payload_type,
+        );
+
+        // Register the codec if not already present
+        self.codecs
+            .entry(codec_id.clone())
+            .or_insert_with(|| CodecStatsAccumulator::from_codec(codec, payload_type));
+
+        // Link the codec to the inbound RTP stream
+        if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
+            stream.codec_id = codec_id;
+        }
+    }
+
+    /// Registers a codec for an outbound RTP stream and sets the codec_id.
+    ///
+    /// Per W3C spec, codecs are only exposed when referenced by an RTP stream.
+    /// This method registers the codec (if not already registered) and links it
+    /// to the outbound RTP stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssrc` - The SSRC of the outbound RTP stream
+    /// * `codec` - The codec information
+    /// * `payload_type` - The payload type for this codec
+    pub fn register_outbound_codec(
+        &mut self,
+        ssrc: SSRC,
+        codec: &RTCRtpCodec,
+        payload_type: PayloadType,
+    ) {
+        let transport_id = self.transport.transport_id.clone();
+        let codec_id =
+            CodecStatsAccumulator::generate_id(&transport_id, CodecDirection::Send, payload_type);
+
+        // Register the codec if not already present
+        self.codecs
+            .entry(codec_id.clone())
+            .or_insert_with(|| CodecStatsAccumulator::from_codec(codec, payload_type));
+
+        // Link the codec to the outbound RTP stream
+        if let Some(stream) = self.outbound_rtp_streams.get_mut(&ssrc) {
+            stream.codec_id = codec_id;
+        }
+    }
+
+    /// Removes codecs that are no longer referenced by any RTP stream.
+    ///
+    /// Per W3C spec, when there is no longer any reference to an RTCCodecStats,
+    /// the stats object should be deleted.
+    pub fn cleanup_unreferenced_codecs(&mut self) {
+        // Collect all referenced codec IDs
+        let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for stream in self.inbound_rtp_streams.values() {
+            if !stream.codec_id.is_empty() {
+                referenced.insert(stream.codec_id.clone());
+            }
+        }
+
+        for stream in self.outbound_rtp_streams.values() {
+            if !stream.codec_id.is_empty() {
+                referenced.insert(stream.codec_id.clone());
+            }
+        }
+
+        // Remove codecs that are not referenced
+        self.codecs.retain(|id, _| referenced.contains(id));
     }
 }

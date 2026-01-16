@@ -611,7 +611,21 @@ impl DataChannelStatsAccumulator {
 ### 5.9 Codec Stats Accumulator
 
 ```rust
-/// Accumulated codec statistics (static after SDP negotiation)
+/// Direction qualifier for codec stats IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecDirection {
+    /// Codec used for sending (encoding).
+    Send,
+    /// Codec used for receiving (decoding).
+    Receive,
+}
+
+/// Accumulated codec statistics.
+///
+/// Per W3C spec (Section 8.3):
+/// - Codecs are only exposed when referenced by an RTP stream
+/// - Codec stats are per payload type per transport
+/// - May need separate encode/decode entries if sdpFmtpLine differs
 #[derive(Debug, Default, Clone)]
 pub struct CodecStatsAccumulator {
     pub payload_type: PayloadType,
@@ -620,9 +634,38 @@ pub struct CodecStatsAccumulator {
     pub clock_rate: u32,
     pub sdp_fmtp_line: String,
 }
+
+impl CodecStatsAccumulator {
+    /// Creates a new codec stats accumulator from RTCRtpCodecParameters.
+    pub fn from_codec_parameters(params: &RTCRtpCodecParameters) -> Self { ... }
+
+    /// Creates a new codec stats accumulator from RTCRtpCodec and payload type.
+    pub fn from_codec(codec: &RTCRtpCodec, payload_type: PayloadType) -> Self { ... }
+
+    /// Generates a codec stats ID following the W3C recommended format.
+    /// Format: `RTCCodec_{transport_id}_{direction}_{payload_type}`
+    pub fn generate_id(transport_id: &str, direction: CodecDirection, payload_type: PayloadType) -> String { ... }
+}
 ```
 
-**Source:** MediaEngine - static after SDP negotiation
+**Source:** Transceivers - synced on-demand via `get_stats()` → `update_codec_stats()`
+
+**Codec Stats Collection Strategy:**
+
+Per W3C spec section 8.3, codecs are only exposed in `getStats()` when referenced by an RTP stream. The implementation
+follows an on-demand sync pattern:
+
+1. **When `get_stats()` is called:**
+    - `update_codec_stats()` iterates through all transceivers
+    - For each receiver with an active track, extracts codec info and registers it
+    - For each sender that has sent media, extracts codec info and registers it
+    - Sets the `codec_id` on the corresponding RTP stream accumulator
+
+2. **Codec ID Format:**
+    - Inbound streams: `RTCCodec_{transport_id}_recv_PT{payload_type}`
+    - Outbound streams: `RTCCodec_{transport_id}_send_PT{payload_type}`
+
+3. **Cleanup:** `cleanup_unreferenced_codecs()` removes codecs no longer referenced by any RTP stream
 
 ### 5.10 Peer Connection Stats Accumulator
 
@@ -824,7 +867,6 @@ impl RTCStatsAccumulator {
 | RTCPeerConnectionStats          | 2      | 2       | 0       | 0       | 100% ✅          |
 | RTCTransportStats               | 17     | 17      | 0       | 0       | 100% ✅          |
 | RTCCertificateStats             | 4      | 4       | 0       | 0       | 100% ✅          |
-| RTCAudioPlayoutStats            | 5      | 5       | 0       | 0       | 100% (via API)  |
 | RTCRtpStreamStats (base)        | 4      | 4       | 0       | 0       | 100% ✅          |
 | RTCReceivedRtpStreamStats       | 7      | 5       | 2       | 0       | 71% ⚠️          |
 | RTCSentRtpStreamStats           | 2      | 2       | 0       | 0       | 100% ✅          |
@@ -832,9 +874,10 @@ impl RTCStatsAccumulator {
 | RTCOutboundRtpStreamStats       | 35     | 20      | 5       | 10      | 57% (+ app API) |
 | RTCRemoteInboundRtpStreamStats  | 6      | 5       | 0       | 1       | 83% ✅           |
 | RTCRemoteOutboundRtpStreamStats | 6      | 5       | 0       | 1       | 83% ✅           |
-| RTCMediaSourceStats             | 2      | 2       | 0       | 0       | 100% ✅          |
-| RTCAudioSourceStats             | 5      | 5       | 0       | 0       | 100% (via API)  |
-| RTCVideoSourceStats             | 4      | 4       | 0       | 0       | 100% (via API)  |
+| RTCMediaSourceStats             | 2      | N/A     | 0       | 0       | via API         |
+| RTCAudioSourceStats             | 5      | N/A     | 0       | 0       | via API         |
+| RTCVideoSourceStats             | 4      | N/A     | 0       | 0       | via API         |
+| RTCAudioPlayoutStats            | 5      | N/A     | 0       | 0       | via API         |
 
 ### 6.2 Fields Requiring Application Input
 
@@ -915,7 +958,29 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 **PeerConnectionStatsAccumulator Coverage: 2/2 fields = 100%** ✅
 
-#### 6.3.4 DataChannelStatsAccumulator
+#### 6.3.4 CodecStatsAccumulator
+
+| Field           | Type        | Collected | Source      | Notes                                            |
+|-----------------|-------------|-----------|-------------|--------------------------------------------------|
+| `payload_type`  | PayloadType | ✅         | Transceiver | From `RTCRtpCodecParameters.payload_type`        |
+| `mime_type`     | String      | ✅         | Transceiver | From `RTCRtpCodec.mime_type` (e.g., "video/VP8") |
+| `channels`      | u16         | ✅         | Transceiver | From `RTCRtpCodec.channels` (audio only)         |
+| `clock_rate`    | u32         | ✅         | Transceiver | From `RTCRtpCodec.clock_rate` (e.g., 90000)      |
+| `sdp_fmtp_line` | String      | ✅         | Transceiver | From `RTCRtpCodec.sdp_fmtp_line`                 |
+
+**CodecStatsAccumulator Coverage: 5/5 fields = 100%** ✅
+
+**Implementation Notes:**
+
+- Codecs are registered on-demand via `update_codec_stats()` when `get_stats()` is called
+- Per W3C spec (Section 8.3), codecs are only exposed when referenced by an RTP stream
+- Codec ID format: `RTCCodec_{transport_id}_{direction}_PT{payload_type}`
+    - Inbound streams use `recv` direction
+    - Outbound streams use `send` direction
+- Separate entries are created for send vs receive if needed (different sdpFmtpLine)
+- Unreferenced codecs are cleaned up via `cleanup_unreferenced_codecs()`
+
+#### 6.3.5 DataChannelStatsAccumulator
 
 | Field                     | Type                | Collected | Handler/Location | Notes                   |
 |---------------------------|---------------------|-----------|------------------|-------------------------|
@@ -930,7 +995,7 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 **DataChannelStatsAccumulator Coverage: 8/8 fields = 100%** ✅
 
-#### 6.3.5 IceCandidateAccumulator
+#### 6.3.6 IceCandidateAccumulator
 
 | Field               | Type                          | Collected | Handler/Location | Notes                                                |
 |---------------------|-------------------------------|-----------|------------------|------------------------------------------------------|
@@ -955,31 +1020,31 @@ This section provides detailed field-by-field coverage analysis for each accumul
   the STUN/TURN server). For remote candidates, this property MUST NOT be present. The application provides this URL via
   the `RTCIceCandidateInit.url` field when calling `add_local_candidate()`.
 
-#### 6.3.6 IceCandidatePairAccumulator
+#### 6.3.7 IceCandidatePairAccumulator
 
-| Field                            | Type                          | Collected | Source      | Notes                                                       |
-|----------------------------------|-------------------------------|-----------|-------------|-------------------------------------------------------------|
-| `local_candidate_id`             | String                        | ✅         | ICE Handler | Set on `SelectedCandidatePairChange` event                  |
-| `remote_candidate_id`            | String                        | ✅         | ICE Handler | Set on `SelectedCandidatePairChange` event                  |
-| `packets_sent`                   | u64                           | ✅         | ICE Handler | `on_packet_sent()` called in `handle_write`                 |
-| `packets_received`               | u64                           | ✅         | ICE Handler | `on_packet_received()` called in `handle_read`              |
-| `bytes_sent`                     | u64                           | ✅         | ICE Handler | `on_packet_sent()` called in `handle_write`                 |
-| `bytes_received`                 | u64                           | ✅         | ICE Handler | `on_packet_received()` called in `handle_read`              |
-| `last_packet_sent_timestamp`     | Option\<Instant\>             | ✅         | ICE Handler | Updated by `on_packet_sent()`                               |
-| `last_packet_received_timestamp` | Option\<Instant\>             | ✅         | ICE Handler | Updated by `on_packet_received()`                           |
-| `total_round_trip_time`          | f64                           | ✅         | ICE Agent   | Synced on-demand via `get_stats()` → `update_ice_agent_stats()` |
-| `current_round_trip_time`        | f64                           | ✅         | ICE Agent   | Synced on-demand via `get_stats()` → `update_ice_agent_stats()` |
-| `requests_sent`                  | u64                           | ✅         | ICE Agent   | Tracked in `send_binding_request()`, synced via `get_stats()` |
-| `requests_received`              | u64                           | ✅         | ICE Agent   | Tracked in `handle_binding_request()`, synced via `get_stats()` |
-| `responses_sent`                 | u64                           | ✅         | ICE Agent   | Tracked in `send_binding_success()`, synced via `get_stats()` |
+| Field                            | Type                          | Collected | Source      | Notes                                                            |
+|----------------------------------|-------------------------------|-----------|-------------|------------------------------------------------------------------|
+| `local_candidate_id`             | String                        | ✅         | ICE Handler | Set on `SelectedCandidatePairChange` event                       |
+| `remote_candidate_id`            | String                        | ✅         | ICE Handler | Set on `SelectedCandidatePairChange` event                       |
+| `packets_sent`                   | u64                           | ✅         | ICE Handler | `on_packet_sent()` called in `handle_write`                      |
+| `packets_received`               | u64                           | ✅         | ICE Handler | `on_packet_received()` called in `handle_read`                   |
+| `bytes_sent`                     | u64                           | ✅         | ICE Handler | `on_packet_sent()` called in `handle_write`                      |
+| `bytes_received`                 | u64                           | ✅         | ICE Handler | `on_packet_received()` called in `handle_read`                   |
+| `last_packet_sent_timestamp`     | Option\<Instant\>             | ✅         | ICE Handler | Updated by `on_packet_sent()`                                    |
+| `last_packet_received_timestamp` | Option\<Instant\>             | ✅         | ICE Handler | Updated by `on_packet_received()`                                |
+| `total_round_trip_time`          | f64                           | ✅         | ICE Agent   | Synced on-demand via `get_stats()` → `update_ice_agent_stats()`  |
+| `current_round_trip_time`        | f64                           | ✅         | ICE Agent   | Synced on-demand via `get_stats()` → `update_ice_agent_stats()`  |
+| `requests_sent`                  | u64                           | ✅         | ICE Agent   | Tracked in `send_binding_request()`, synced via `get_stats()`    |
+| `requests_received`              | u64                           | ✅         | ICE Agent   | Tracked in `handle_binding_request()`, synced via `get_stats()`  |
+| `responses_sent`                 | u64                           | ✅         | ICE Agent   | Tracked in `send_binding_success()`, synced via `get_stats()`    |
 | `responses_received`             | u64                           | ✅         | ICE Agent   | Tracked in `handle_success_response()`, synced via `get_stats()` |
-| `consent_requests_sent`          | u64                           | ✅         | ICE Agent   | Tracked in `check_keepalive()`, synced via `get_stats()` |
-| `packets_discarded_on_send`      | u32                           | N/A       | Application | Socket-level errors outside sansio scope                    |
-| `bytes_discarded_on_send`        | u32                           | N/A       | Application | Socket-level errors outside sansio scope                    |
-| `available_outgoing_bitrate`     | f64                           | ❌         | BWE/TWCC    | Requires congestion control integration                     |
-| `available_incoming_bitrate`     | f64                           | ❌         | BWE/TWCC    | Requires congestion control integration                     |
-| `state`                          | RTCStatsIceCandidatePairState | ✅         | ICE Handler | Set to `Succeeded` on selection                             |
-| `nominated`                      | bool                          | ✅         | ICE Handler | Set to `true` on selection                                  |
+| `consent_requests_sent`          | u64                           | ✅         | ICE Agent   | Tracked in `check_keepalive()`, synced via `get_stats()`         |
+| `packets_discarded_on_send`      | u32                           | N/A       | Application | Socket-level errors outside sansio scope                         |
+| `bytes_discarded_on_send`        | u32                           | N/A       | Application | Socket-level errors outside sansio scope                         |
+| `available_outgoing_bitrate`     | f64                           | ❌         | BWE/TWCC    | Requires congestion control integration                          |
+| `available_incoming_bitrate`     | f64                           | ❌         | BWE/TWCC    | Requires congestion control integration                          |
+| `state`                          | RTCStatsIceCandidatePairState | ✅         | ICE Handler | Set to `Succeeded` on selection                                  |
+| `nominated`                      | bool                          | ✅         | ICE Handler | Set to `true` on selection                                       |
 
 **IceCandidatePairAccumulator Coverage: 17/19 applicable fields = 89%** ✅
 
@@ -1000,15 +1065,15 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 | Category                | Implemented | Not Implemented | Coverage |
 |-------------------------|-------------|-----------------|----------|
-| **Transport**           | 19          | 0               | 100%     |
-| **Certificate**         | 4           | 0               | 100%     |
-| **PeerConnection**      | 2           | 0               | 100%     |
-| **DataChannel**         | 8           | 0               | 100%     |
-| **ICE Candidates**      | 13          | 0               | 100%     |
+| **Certificate**         | 4           | 0               | 100%  ✅  |
+| **Codec**               | 5           | 0               | 100% ✅   |
+| **Transport**           | 19          | 0               | 100% ✅   |
+| **PeerConnection**      | 2           | 0               | 100% ✅   |
+| **DataChannel**         | 8           | 0               | 100%  ✅  |
+| **ICE Candidates**      | 13          | 0               | 100% ✅   |
 | **ICE Candidate Pairs** | 17          | 2               | 89%      |
 | **Inbound RTP Stream**  | 1 (SR)      | 8               | ~11%     |
 | **Outbound RTP Stream** | 1 (RR)      | 6               | ~14%     |
-| **Codec**               | 0           | 5               | 0%       |
 | **MediaSource**         | 0           | -               | App API  |
 
 ### 6.5 Priority Gaps for Future Implementation
@@ -1016,7 +1081,6 @@ This section provides detailed field-by-field coverage analysis for each accumul
 1. **Bitrate estimation** - Requires BWE/TWCC integration for `available_outgoing/incoming_bitrate`
 2. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
 3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
-4. **Codec stats** - Not populated from SDP/MediaEngine
 
 ---
 
@@ -1502,26 +1566,28 @@ where
 
 ##### ICE Handler (`ice.rs`)
 
-| Accumulator Method                               | Called | Location       | Notes                                        |
-|--------------------------------------------------|--------|----------------|----------------------------------------------|
-| `transport.on_ice_state_changed(state)`          | ✅      | `poll_event`   | On ConnectionStateChange                     |
-| `transport.on_selected_candidate_pair_changed()` | ✅      | `poll_event`   | On SelectedCandidatePairChange               |
-| `ice_candidate_pairs` creation                   | ✅      | `poll_event`   | Created on SelectedCandidatePairChange       |
-| `ice_candidate_pairs.local_candidate_id`         | ✅      | `poll_event`   | Set on SelectedCandidatePairChange           |
-| `ice_candidate_pairs.remote_candidate_id`        | ✅      | `poll_event`   | Set on SelectedCandidatePairChange           |
-| `ice_candidate_pairs.nominated`                  | ✅      | `poll_event`   | Set to `true` on selection                   |
-| `ice_candidate_pairs.state`                      | ✅      | `poll_event`   | Set to `Succeeded` on selection              |
-| `ice_candidate_pairs.on_packet_sent()`           | ✅      | `handle_write` | Tracks packets/bytes sent                    |
-| `ice_candidate_pairs.on_packet_received()`       | ✅      | `handle_read`  | Tracks packets/bytes received                |
+| Accumulator Method                               | Called | Location       | Notes                                           |
+|--------------------------------------------------|--------|----------------|-------------------------------------------------|
+| `transport.on_ice_state_changed(state)`          | ✅      | `poll_event`   | On ConnectionStateChange                        |
+| `transport.on_selected_candidate_pair_changed()` | ✅      | `poll_event`   | On SelectedCandidatePairChange                  |
+| `ice_candidate_pairs` creation                   | ✅      | `poll_event`   | Created on SelectedCandidatePairChange          |
+| `ice_candidate_pairs.local_candidate_id`         | ✅      | `poll_event`   | Set on SelectedCandidatePairChange              |
+| `ice_candidate_pairs.remote_candidate_id`        | ✅      | `poll_event`   | Set on SelectedCandidatePairChange              |
+| `ice_candidate_pairs.nominated`                  | ✅      | `poll_event`   | Set to `true` on selection                      |
+| `ice_candidate_pairs.state`                      | ✅      | `poll_event`   | Set to `Succeeded` on selection                 |
+| `ice_candidate_pairs.on_packet_sent()`           | ✅      | `handle_write` | Tracks packets/bytes sent                       |
+| `ice_candidate_pairs.on_packet_received()`       | ✅      | `handle_read`  | Tracks packets/bytes received                   |
 | STUN transaction stats (RTT, requests, etc.)     | ✅      | `get_stats()`  | Synced on-demand via `update_ice_agent_stats()` |
-| `local_candidates` population                    | ✅      | `internal.rs`  | Via `add_ice_local_candidate()`              |
-| `remote_candidates` population                   | ✅      | `internal.rs`  | Via `add_ice_remote_candidate()`             |
+| `local_candidates` population                    | ✅      | `internal.rs`  | Via `add_ice_local_candidate()`                 |
+| `remote_candidates` population                   | ✅      | `internal.rs`  | Via `add_ice_remote_candidate()`                |
 
 **Note:**
+
 - `ice_role` and `ice_local_username_fragment` are updated via helper methods in `internal.rs`
 - `ice_role` is set in `start_transports()` during initial connection setup
 - `ice_local_username_fragment` is set in `ice_restart()` after ICE restart, reading from agent
-- STUN transaction stats (requests/responses sent/received, RTT) are tracked in the ice agent's `CandidatePair` struct and synced to the RTC accumulator on-demand when `get_stats()` is called
+- STUN transaction stats (requests/responses sent/received, RTT) are tracked in the ice agent's `CandidatePair` struct
+  and synced to the RTC accumulator on-demand when `get_stats()` is called
 
 ##### DTLS Handler (`dtls.rs`)
 

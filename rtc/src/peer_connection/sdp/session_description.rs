@@ -398,9 +398,6 @@ impl RTCSessionDescription {
 #[cfg(test)]
 mod test {
     use super::*;
-    //TODO:use crate::api::media_engine::MediaEngine;
-    //TODO:use crate::api::APIBuilder;
-    //TODO:use crate::peer_connection::configuration::RTCConfiguration;
 
     #[test]
     fn test_session_description_json() {

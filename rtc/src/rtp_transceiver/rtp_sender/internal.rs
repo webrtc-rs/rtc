@@ -105,6 +105,14 @@ where
         self.kind
     }
 
+    /// Returns the negotiated codec parameters for this sender.
+    ///
+    /// These are the codecs that were negotiated during SDP exchange
+    /// and are available for sending.
+    pub(crate) fn get_send_codecs(&self) -> &[RTCRtpCodecParameters] {
+        &self.send_codecs
+    }
+
     /// Returns the RTP capabilities for the specified codec kind.
     ///
     /// Filters codecs by the requested kind and returns available codecs

@@ -8,11 +8,12 @@ use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
-use crate::rtp_transceiver::RTCRtpTransceiverId;
+use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId};
 use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
@@ -1030,5 +1031,85 @@ where
                 }
             }
         }
+    }
+
+    /// Update codec stats from transceivers to the stats accumulator.
+    ///
+    /// This is called automatically by `get_stats()` to ensure codec statistics
+    /// are registered for all active RTP streams. Per W3C spec, codecs are only
+    /// exposed when referenced by an RTP stream.
+    pub(super) fn update_codec_stats(&mut self) {
+        // Collect codec info from transceivers to avoid borrow conflicts
+        let mut inbound_codecs: Vec<(u32, RTCRtpCodec, PayloadType)> = Vec::new();
+        let mut outbound_codecs: Vec<(u32, RTCRtpCodec, PayloadType)> = Vec::new();
+
+        for transceiver in &self.rtp_transceivers {
+            // Process receivers (inbound streams)
+            if let Some(receiver) = transceiver.receiver() {
+                let codec_prefs = receiver.get_codec_preferences();
+                let track = receiver.track();
+
+                for coding in track.codings() {
+                    if let Some(ssrc) = coding.rtp_coding_parameters.ssrc {
+                        // Find the codec for this encoding
+                        if let Some(codec) = track.get_codec_by_ssrc(ssrc)
+                            && !codec.mime_type.is_empty()
+                                // Find matching payload type from codec preferences
+                                && let Some(codec_params) = codec_prefs.iter().find(|cp| {
+                                    cp.rtp_codec.mime_type == codec.mime_type
+                                        && (cp.rtp_codec.sdp_fmtp_line.is_empty()
+                                            || cp.rtp_codec.sdp_fmtp_line == codec.sdp_fmtp_line)
+                                })
+                        {
+                            inbound_codecs.push((ssrc, codec.clone(), codec_params.payload_type));
+                        }
+                    }
+                }
+            }
+
+            // Process senders (outbound streams)
+            if let Some(sender) = transceiver.sender()
+                && sender.has_sent()
+            {
+                let track = sender.track();
+                let send_codecs = sender.get_send_codecs();
+                for coding in track.codings() {
+                    if let Some(ssrc) = coding.rtp_coding_parameters.ssrc {
+                        let codec = &coding.codec;
+                        if !codec.mime_type.is_empty() {
+                            // Find matching payload type from send codecs
+                            if let Some(codec_params) = send_codecs.iter().find(|cp| {
+                                cp.rtp_codec.mime_type == codec.mime_type
+                                    && (cp.rtp_codec.sdp_fmtp_line.is_empty()
+                                        || cp.rtp_codec.sdp_fmtp_line == codec.sdp_fmtp_line)
+                            }) {
+                                outbound_codecs.push((
+                                    ssrc,
+                                    codec.clone(),
+                                    codec_params.payload_type,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Register inbound codecs
+        for (ssrc, codec, payload_type) in inbound_codecs {
+            self.pipeline_context
+                .stats
+                .register_inbound_codec(ssrc, &codec, payload_type);
+        }
+
+        // Register outbound codecs
+        for (ssrc, codec, payload_type) in outbound_codecs {
+            self.pipeline_context
+                .stats
+                .register_outbound_codec(ssrc, &codec, payload_type);
+        }
+
+        // Clean up unreferenced codecs
+        self.pipeline_context.stats.cleanup_unreferenced_codecs();
     }
 }
