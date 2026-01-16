@@ -185,6 +185,7 @@ where
             &mut self.rtp_transceivers,
             &self.configuration.media_engine,
             &mut self.configuration.interceptor,
+            &mut self.pipeline_context.stats,
         )
     }
 }

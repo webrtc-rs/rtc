@@ -89,6 +89,13 @@ pub struct RTCStatsAccumulator {
 
     /// Audio playout stats keyed by playout ID.
     pub audio_playouts: HashMap<String, AudioPlayoutStatsAccumulator>,
+
+    // Reverse lookup maps for O(1) RTX/FEC SSRC detection
+    /// Maps RTX SSRC to primary SSRC for O(1) lookup.
+    rtx_ssrc_to_primary: HashMap<SSRC, SSRC>,
+
+    /// Maps FEC SSRC to primary SSRC for O(1) lookup.
+    fec_ssrc_to_primary: HashMap<SSRC, SSRC>,
 }
 
 impl RTCStatsAccumulator {
@@ -208,33 +215,80 @@ impl RTCStatsAccumulator {
     // ========================================================================
 
     /// Gets or creates an inbound stream accumulator for the given SSRC.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssrc` - The SSRC identifier for this stream
+    /// * `kind` - The media kind (audio/video)
+    /// * `track_identifier` - The track identifier from MediaStreamTrack
+    /// * `mid` - The media stream identification tag from SDP
+    /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
+    /// * `fec_ssrc` - The FEC SSRC for forward error correction (if available)
     pub fn get_or_create_inbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
+        track_identifier: &str,
+        mid: &str,
+        rtx_ssrc: Option<u32>,
+        fec_ssrc: Option<u32>,
     ) -> &mut InboundRtpStreamAccumulator {
+        // Populate reverse lookup maps for O(1) RTX/FEC detection
+        if let Some(rtx) = rtx_ssrc {
+            self.rtx_ssrc_to_primary.insert(rtx, ssrc);
+        }
+        if let Some(fec) = fec_ssrc {
+            self.fec_ssrc_to_primary.insert(fec, ssrc);
+        }
+
+        let transport_id = self.transport.transport_id.clone();
         self.inbound_rtp_streams
             .entry(ssrc)
             .or_insert_with(|| InboundRtpStreamAccumulator {
                 ssrc,
                 kind,
-                transport_id: "transport".to_string(),
+                transport_id,
+                track_identifier: track_identifier.to_string(),
+                mid: mid.to_string(),
+                rtx_ssrc,
+                fec_ssrc,
                 ..Default::default()
             })
     }
 
     /// Gets or creates an outbound stream accumulator for the given SSRC.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssrc` - The SSRC identifier for this stream
+    /// * `kind` - The media kind (audio/video)
+    /// * `mid` - The media stream identification tag from SDP
+    /// * `rid` - The RTP stream ID for simulcast (empty if not simulcast)
+    /// * `encoding_index` - The index of this encoding in the simulcast layer order
+    /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
     pub fn get_or_create_outbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
+        mid: &str,
+        rid: &str,
+        encoding_index: u32,
+        rtx_ssrc: Option<u32>,
     ) -> &mut OutboundRtpStreamAccumulator {
+        if let Some(rtx) = rtx_ssrc {
+            self.rtx_ssrc_to_primary.insert(rtx, ssrc);
+        }
+
         self.outbound_rtp_streams
             .entry(ssrc)
             .or_insert_with(|| OutboundRtpStreamAccumulator {
                 ssrc,
                 kind,
-                transport_id: "transport".to_string(),
+                transport_id: self.transport.transport_id.clone(),
+                mid: mid.to_string(),
+                rid: rid.to_string(),
+                encoding_index,
+                rtx_ssrc,
                 active: true,
                 ..Default::default()
             })
@@ -304,6 +358,48 @@ impl RTCStatsAccumulator {
                 kind: RtpCodecKind::Audio,
                 ..Default::default()
             })
+    }
+
+    pub fn on_rtx_packet_sent_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+        if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
+            && let Some(stream) = self.outbound_rtp_streams.get_mut(primary_ssrc)
+        {
+            stream.on_rtx_sent(payload_bytes);
+            return true;
+        }
+        false
+    }
+
+    /// Tracks an RTX packet received for an inbound stream.
+    ///
+    /// Call this when an RTP packet is received with an SSRC that matches
+    /// a stream's `rtx_ssrc`. This updates the retransmission stats.
+    ///
+    /// Returns `true` if the RTX packet was tracked, `false` if no matching stream found.
+    pub fn on_rtx_packet_received_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+        if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
+            && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
+        {
+            stream.on_rtx_received(payload_bytes);
+            return true;
+        }
+        false
+    }
+
+    /// Tracks a FEC packet received for an inbound stream.
+    ///
+    /// Call this when an RTP packet is received with an SSRC that matches
+    /// a stream's `fec_ssrc`. This updates the FEC stats.
+    ///
+    /// Returns `true` if the FEC packet was tracked, `false` if no matching stream found.
+    pub fn on_fec_packet_received_if_fec(&mut self, fec_ssrc: SSRC, payload_bytes: usize) -> bool {
+        if let Some(primary_ssrc) = self.fec_ssrc_to_primary.get(&fec_ssrc)
+            && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
+        {
+            stream.on_fec_received(payload_bytes);
+            return true;
+        }
+        false
     }
 
     // ========================================================================

@@ -870,8 +870,8 @@ impl RTCStatsAccumulator {
 | RTCRtpStreamStats (base)        | 4      | 4       | 0       | 0       | 100% ✅          |
 | RTCReceivedRtpStreamStats       | 7      | 5       | 2       | 0       | 71% ⚠️          |
 | RTCSentRtpStreamStats           | 2      | 2       | 0       | 0       | 100% ✅          |
-| RTCInboundRtpStreamStats        | 57     | 25      | 10      | 22      | 44% (+ app API) |
-| RTCOutboundRtpStreamStats       | 35     | 20      | 5       | 10      | 57% (+ app API) |
+| RTCInboundRtpStreamStats        | 57     | 28      | 10      | 19      | 49% (+ app API) |
+| RTCOutboundRtpStreamStats       | 35     | 24      | 5       | 6       | 69% (+ app API) |
 | RTCRemoteInboundRtpStreamStats  | 6      | 5       | 0       | 1       | 83% ✅           |
 | RTCRemoteOutboundRtpStreamStats | 6      | 5       | 0       | 1       | 83% ✅           |
 | RTCMediaSourceStats             | 2      | N/A     | 0       | 0       | via API         |
@@ -1061,6 +1061,116 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 - Bitrate estimation (`available_outgoing/incoming_bitrate`) - requires BWE/TWCC integration
 
+#### 6.3.8 InboundRtpStreamAccumulator
+
+| Field                                    | Type              | Collected | Handler/Location       | Method/Trigger                  | Notes                                   |
+|------------------------------------------|-------------------|-----------|------------------------|---------------------------------|-----------------------------------------|
+| **Base Identification**                  |                   |           |                        |                                 |                                         |
+| `ssrc`                                   | SSRC              | ✅         | endpoint.rs            | `get_or_create_inbound`         | Set on accumulator creation             |
+| `kind`                                   | RtpCodecKind      | ✅         | endpoint.rs            | `get_or_create_inbound`         | Set on accumulator creation             |
+| `transport_id`                           | String            | ✅         | accumulator/mod.rs     | `get_or_create_inbound`         | From `transport.transport_id`           |
+| `codec_id`                               | String            | ✅         | internal.rs            | `update_codec_stats()`          | Via `register_inbound_codec()`          |
+| `track_identifier`                       | String            | ✅         | endpoint.rs            | `get_or_create_inbound`         | Set on accumulator creation             |
+| `mid`                                    | String            | ✅         | endpoint.rs            | `get_or_create_inbound`         | Set on accumulator creation             |
+| **Packet Counters**                      |                   |           |                        |                                 |                                         |
+| `packets_received`                       | u64               | ✅         | endpoint.rs:178        | `on_rtp_received()`             | Per RTP packet                          |
+| `bytes_received`                         | u64               | ✅         | endpoint.rs:178        | `on_rtp_received()`             | Payload bytes                           |
+| `header_bytes_received`                  | u64               | ✅         | endpoint.rs:178        | `on_rtp_received()`             | RTP header bytes                        |
+| `packets_lost`                           | i64               | ✅         | interceptor.rs:139-147 | `on_rtcp_rr_generated()`        | From outbound RR total_lost             |
+| `jitter`                                 | f64               | ✅         | interceptor.rs:139-147 | `on_rtcp_rr_generated()`        | From outbound RR jitter                 |
+| `packets_discarded`                      | u64               | ❌         | -                      | -                               | Application-level                       |
+| `last_packet_received_timestamp`         | Option\<Instant\> | ✅         | endpoint.rs:178        | `on_rtp_received()`             | Per RTP packet                          |
+| **ECN Support**                          |                   |           |                        |                                 |                                         |
+| `packets_received_with_ect1`             | u64               | ❌         | -                      | -                               | Requires ECN parsing                    |
+| `packets_received_with_ce`               | u64               | ❌         | -                      | -                               | Requires ECN parsing                    |
+| `packets_reported_as_lost`               | u64               | ❌         | -                      | -                               | Requires congestion control integration |
+| `packets_reported_as_lost_but_recovered` | u64               | ❌         | -                      | -                               | Requires congestion control integration |
+| **RTCP Feedback Sent**                   |                   |           |                        |                                 |                                         |
+| `nack_count`                             | u32               | ✅         | interceptor.rs:142-144 | `on_nack_sent()`                | When NACK sent                          |
+| `fir_count`                              | u32               | ✅         | interceptor.rs:155-159 | `on_fir_sent()`                 | When FIR sent                           |
+| `pli_count`                              | u32               | ✅         | interceptor.rs:148-152 | `on_pli_sent()`                 | When PLI sent                           |
+| **FEC Stats**                            |                   |           |                        |                                 |                                         |
+| `fec_packets_received`                   | u64               | ✅         | endpoint.rs            | `on_fec_packet_received()`      | Via FEC SSRC detection                  |
+| `fec_bytes_received`                     | u64               | ✅         | endpoint.rs            | `on_fec_packet_received()`      | Via FEC SSRC detection                  |
+| `fec_packets_discarded`                  | u64               | ❌         | -                      | -                               | Application-level                       |
+| **Retransmission**                       |                   |           |                        |                                 |                                         |
+| `retransmitted_packets_received`         | u64               | ✅         | endpoint.rs            | `on_rtx_packet_received()`      | Via RTX SSRC detection                  |
+| `retransmitted_bytes_received`           | u64               | ✅         | endpoint.rs            | `on_rtx_packet_received()`      | Via RTX SSRC detection                  |
+| `rtx_ssrc`                               | Option\<u32\>     | ✅         | endpoint.rs            | `get_or_create_inbound`         | From receiver coding parameters         |
+| `fec_ssrc`                               | Option\<u32\>     | ✅         | endpoint.rs            | `get_or_create_inbound`         | From receiver coding parameters         |
+| **Video Frame Tracking**                 |                   |           |                        |                                 |                                         |
+| `frames_received`                        | u32               | ❌         | -                      | `on_frame_received()`           | Application-level                       |
+| `frames_dropped`                         | u32               | ❌         | -                      | `on_frame_dropped()`            | Application-level                       |
+| `frames_per_second`                      | f64               | ❌         | -                      | -                               | Application-level                       |
+| **Pause/Freeze Detection**               |                   |           |                        |                                 |                                         |
+| `pause_count`                            | u32               | ❌         | -                      | -                               | Application-level                       |
+| `total_pauses_duration`                  | f64               | ❌         | -                      | -                               | Application-level                       |
+| `freeze_count`                           | u32               | ❌         | -                      | -                               | Application-level                       |
+| `total_freezes_duration`                 | f64               | ❌         | -                      | -                               | Application-level                       |
+| **Frame Assembly**                       |                   |           |                        |                                 |                                         |
+| `frames_assembled_from_multiple_packets` | u32               | ❌         | -                      | -                               | Application-level                       |
+| `total_assembly_time`                    | f64               | ❌         | -                      | -                               | Application-level                       |
+| **Remote Sender Info (RTCP SR)**         |                   |           |                        |                                 |                                         |
+| `remote_packets_sent`                    | u64               | ✅         | interceptor.rs:75-82   | `on_rtcp_sr_received()`         | From SR packet_count                    |
+| `remote_bytes_sent`                      | u64               | ✅         | interceptor.rs:75-82   | `on_rtcp_sr_received()`         | From SR octet_count                     |
+| `remote_timestamp`                       | Option\<Instant\> | ✅         | interceptor.rs:75-82   | `on_rtcp_sr_received()`         | When SR received                        |
+| `reports_received`                       | u64               | ✅         | interceptor.rs:75-82   | `on_rtcp_sr_received()`         | SR count                                |
+| **Application-Provided**                 |                   |           |                        |                                 |                                         |
+| `decoder_stats`                          | Option\<...\>     | Via API   | Application            | `report_decoder_stats()`        | App provides decoder metrics            |
+| `audio_receiver_stats`                   | Option\<...\>     | Via API   | Application            | `report_audio_receiver_stats()` | App provides audio metrics              |
+
+**InboundRtpStreamAccumulator Coverage: 22/37 fields tracked by handlers**
+
+#### 6.3.9 OutboundRtpStreamAccumulator
+
+| Field                                   | Type                       | Collected | Handler/Location       | Method/Trigger               | Notes                           |
+|-----------------------------------------|----------------------------|-----------|------------------------|------------------------------|---------------------------------|
+| **Base Identification**                 |                            |           |                        |                              |                                 |
+| `ssrc`                                  | SSRC                       | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| `kind`                                  | RtpCodecKind               | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| `transport_id`                          | String                     | ✅         | accumulator/mod.rs     | `get_or_create_outbound`     | From `transport.transport_id`   |
+| `codec_id`                              | String                     | ✅         | internal.rs            | `update_codec_stats()`       | Via `register_outbound_codec()` |
+| `mid`                                   | String                     | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| `rid`                                   | String                     | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| `encoding_index`                        | u32                        | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| `media_source_id`                       | String                     | ❌         | -                      | -                            | Needs media source binding      |
+| **Packet Counters**                     |                            |           |                        |                              |                                 |
+| `packets_sent`                          | u64                        | ✅         | interceptor.rs:264-268 | `on_rtp_sent()`              | Per RTP packet                  |
+| `bytes_sent`                            | u64                        | ✅         | interceptor.rs:264-268 | `on_rtp_sent()`              | Payload bytes                   |
+| `header_bytes_sent`                     | u64                        | ✅         | interceptor.rs:264-268 | `on_rtp_sent()`              | RTP header bytes                |
+| `last_packet_sent_timestamp`            | Option\<Instant\>          | ✅         | interceptor.rs:264-268 | `on_rtp_sent()`              | Per RTP packet                  |
+| **Retransmission**                      |                            |           |                        |                              |                                 |
+| `retransmitted_packets_sent`            | u64                        | ✅️        | interceptor.rs:268     | `on_rtp_sent(is_retransmit)` | Via RTX SSRC detection          |
+| `retransmitted_bytes_sent`              | u64                        | ✅         | interceptor.rs:268     | `on_rtp_sent(is_retransmit)` | Via RTX SSRC detection          |
+| `rtx_ssrc`                              | Option\<u32\>              | ✅         | internal.rs            | `get_or_create_outbound`     | Set on accumulator creation     |
+| **Frame Tracking**                      |                            |           |                        |                              |                                 |
+| `frames_sent`                           | u32                        | ❌         | -                      | `on_frame_sent()`            | Application-level               |
+| `huge_frames_sent`                      | u32                        | ❌         | -                      | `on_frame_sent(is_huge)`     | Application-level               |
+| `frames_per_second`                     | f64                        | ❌         | -                      | -                            | Application-level               |
+| **RTCP Feedback Received**              |                            |           |                        |                              |                                 |
+| `nack_count`                            | u32                        | ✅         | interceptor.rs:105-109 | `on_nack_received()`         | When NACK received              |
+| `fir_count`                             | u32                        | ✅         | interceptor.rs:119-125 | `on_fir_received()`          | When FIR received               |
+| `pli_count`                             | u32                        | ✅         | interceptor.rs:112-116 | `on_pli_received()`          | When PLI received               |
+| **Timing**                              |                            |           |                        |                              |                                 |
+| `total_packet_send_delay`               | f64                        | ❌         | -                      | -                            | Requires capture timestamp      |
+| **State**                               |                            |           |                        |                              |                                 |
+| `active`                                | bool                       | ✅         | accumulator/mod.rs     | Default                      | Set to true on creation         |
+| **Quality Limitation**                  |                            |           |                        |                              |                                 |
+| `quality_limitation_reason`             | RTCQualityLimitationReason | ❌         | -                      | -                            | Requires BWE integration        |
+| `quality_limitation_resolution_changes` | u32                        | ❌         | -                      | -                            | Requires encoder integration    |
+| `target_bitrate`                        | f64                        | ❌         | -                      | -                            | Requires BWE integration        |
+| **Remote Receiver Info (RTCP RR)**      |                            |           |                        |                              |                                 |
+| `remote_packets_received`               | u64                        | ✅         | interceptor.rs:85-101  | `on_rtcp_rr_received()`      | From RR last_sequence_number    |
+| `remote_packets_lost`                   | u64                        | ✅         | interceptor.rs:85-101  | `on_rtcp_rr_received()`      | From RR total_lost              |
+| `remote_jitter`                         | f64                        | ✅         | interceptor.rs:85-101  | `on_rtcp_rr_received()`      | From RR jitter                  |
+| `remote_fraction_lost`                  | f64                        | ✅         | interceptor.rs:85-101  | `on_rtcp_rr_received()`      | From RR fraction_lost           |
+| `remote_round_trip_time`                | f64                        | ⚠️        | interceptor.rs:98      | `on_rtcp_rr_received()`      | Always 0.0, needs LSR/DLSR calc |
+| `rtt_measurements`                      | u64                        | ✅         | interceptor.rs:85-101  | `on_rtcp_rr_received()`      | Incremented per RR              |
+| **Application-Provided**                |                            |           |                        |                              |                                 |
+| `encoder_stats`                         | Option\<...\>              | Via API   | Application            | `report_encoder_stats()`     | App provides encoder metrics    |
+
+**OutboundRtpStreamAccumulator Coverage: 22/33 fields tracked by handlers (⚠️ = partial)**
+
 ### 6.4 Coverage Summary by Category
 
 | Category                | Implemented | Not Implemented | Coverage |
@@ -1071,16 +1181,17 @@ This section provides detailed field-by-field coverage analysis for each accumul
 | **PeerConnection**      | 2           | 0               | 100% ✅   |
 | **DataChannel**         | 8           | 0               | 100%  ✅  |
 | **ICE Candidates**      | 13          | 0               | 100% ✅   |
-| **ICE Candidate Pairs** | 17          | 2               | 89%      |
-| **Inbound RTP Stream**  | 1 (SR)      | 8               | ~11%     |
-| **Outbound RTP Stream** | 1 (RR)      | 6               | ~14%     |
+| **ICE Candidate Pairs** | 17          | 2               | 89% ✅    |
+| **Inbound RTP Stream**  | 22          | 15              | 60% ✅    |
+| **Outbound RTP Stream** | 22          | 11              | 67% ✅    |
 | **MediaSource**         | 0           | -               | App API  |
 
 ### 6.5 Priority Gaps for Future Implementation
 
 1. **Bitrate estimation** - Requires BWE/TWCC integration for `available_outgoing/incoming_bitrate`
-2. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
-3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
+2. **RTX detection** - Need to detect retransmissions by RTX SSRC mapping in both directions
+3. **RTT calculation** - Outbound needs LSR/DLSR-based RTT calculation from RR
+4. **Video frame tracking** - Detect frames via marker bit, track frame sizes
 
 ---
 
@@ -1610,17 +1721,19 @@ where
 | Accumulator Method                           | Called | Location                       | Notes                        |
 |----------------------------------------------|--------|--------------------------------|------------------------------|
 | `rtp_streams.inbound.on_rtcp_sr_received()`  | ✅      | `process_read_rtcp_for_stats`  | From RTCP SR                 |
+| `rtp_streams.inbound.on_rtcp_rr_generated()` | ✅      | `process_write_rtcp_for_stats` | packets_lost, jitter from RR |
 | `rtp_streams.outbound.on_rtcp_rr_received()` | ✅      | `process_read_rtcp_for_stats`  | From RTCP RR                 |
 | `transport.on_ccfb_received()`               | ✅      | `process_read_rtcp_for_stats`  | PT=205, FMT=11 per RFC 8888  |
 | `transport.on_ccfb_sent()`                   | ✅      | `process_write_rtcp_for_stats` | PT=205, FMT=11 per RFC 8888  |
-| `rtp_streams.inbound.on_rtp_received()`      | ❌      | -                              | RTP packet stats not tracked |
-| `rtp_streams.outbound.on_rtp_sent()`         | ❌      | -                              | RTP packet stats not tracked |
-| `rtp_streams.inbound.on_nack_sent()`         | ❌      | -                              | RTCP feedback not tracked    |
-| `rtp_streams.inbound.on_pli_sent()`          | ❌      | -                              | RTCP feedback not tracked    |
-| `rtp_streams.inbound.on_fir_sent()`          | ❌      | -                              | RTCP feedback not tracked    |
-| `rtp_streams.outbound.on_nack_received()`    | ❌      | -                              | RTCP feedback not tracked    |
-| `rtp_streams.outbound.on_pli_received()`     | ❌      | -                              | RTCP feedback not tracked    |
-| `rtp_streams.outbound.on_fir_received()`     | ❌      | -                              | RTCP feedback not tracked    |
+| `rtp_streams.outbound.on_rtp_sent()`         | ✅      | `poll_write`                   | Outbound RTP packet tracking |
+| `rtp_streams.inbound.on_nack_sent()`         | ✅      | `process_write_rtcp_for_stats` | NACK sent for inbound stream |
+| `rtp_streams.inbound.on_pli_sent()`          | ✅      | `process_write_rtcp_for_stats` | PLI sent for inbound stream  |
+| `rtp_streams.inbound.on_fir_sent()`          | ✅      | `process_write_rtcp_for_stats` | FIR sent for inbound stream  |
+| `rtp_streams.outbound.on_nack_received()`    | ✅      | `process_read_rtcp_for_stats`  | NACK received for outbound   |
+| `rtp_streams.outbound.on_pli_received()`     | ✅      | `process_read_rtcp_for_stats`  | PLI received for outbound    |
+| `rtp_streams.outbound.on_fir_received()`     | ✅      | `process_read_rtcp_for_stats`  | FIR received for outbound    |
+
+**Interceptor Handler: 100% Complete** ✅
 
 ##### DataChannel Handler (`datachannel.rs`)
 
@@ -1643,9 +1756,26 @@ where
 
 ##### Endpoint Handler (`endpoint.rs`)
 
-| Accumulator Method | Called | Location | Notes                            |
-|--------------------|--------|----------|----------------------------------|
-| (not wired)        | ❌      | -        | Stats not passed to this handler |
+| Accumulator Method                                       | Called | Location                 | Notes                       |
+|----------------------------------------------------------|--------|--------------------------|-----------------------------|
+| `get_or_create_inbound_rtp_streams(ssrc,kind,track,mid)` | ✅      | `find_track_id_by_ssrc`  | Before OnOpen event         |
+| `get_or_create_inbound_rtp_streams(ssrc,kind,track,mid)` | ✅      | `find_track_id_by_rid`   | Before OnOpen event         |
+| `get_or_create_inbound_rtp_streams(ssrc,kind,track,mid)` | ✅      | `handle_undeclared_ssrc` | Before OnOpen event         |
+| `inbound_rtp_streams.get_mut().on_rtp_received()`        | ✅      | `handle_rtp_message`     | Inbound RTP packet tracking |
+
+**Endpoint Handler: 100% Complete** ✅
+
+##### RTCPeerConnection Internal (`internal.rs`)
+
+| Accumulator Method                                            | Called | Location            | Notes                                  |
+|---------------------------------------------------------------|--------|---------------------|----------------------------------------|
+| `get_or_create_outbound_rtp_streams(ssrc,kind,mid,rid,index)` | ✅      | `start_rtp_senders` | Creates accumulator when sender starts |
+
+**Note:** Outbound stream accumulators are created when senders are started (after negotiation), ensuring the
+accumulator exists
+before the first RTP packet is sent through the interceptor. Inbound stream accumulators are created in endpoint.rs when
+the
+first RTP packet is received for a track, just before firing the RTCTrackEvent::OnOpen event.
 
 ### Phase 5: Application Integration APIs ✅ COMPLETED (as part of Phase 1)
 

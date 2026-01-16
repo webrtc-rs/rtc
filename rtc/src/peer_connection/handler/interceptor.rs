@@ -2,14 +2,17 @@ use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
-use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet, TaggedPacket};
 use log::{debug, error, trace};
 use rtcp::header::{FORMAT_CCFB, PacketType};
+use rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
+use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtcp::receiver_report::ReceiverReport;
 use rtcp::sender_report::SenderReport;
+use rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
 use shared::error::{Error, Result};
+use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -70,11 +73,10 @@ where
             // Try to downcast to SenderReport
             if let Some(sr) = packet.as_any().downcast_ref::<SenderReport>() {
                 // SR contains info about the remote sender
-                // Update inbound stream stats with remote sender info
-                let stream = self
-                    .stats
-                    .get_or_create_inbound_rtp_streams(sr.ssrc, RtpCodecKind::Video);
-                stream.on_rtcp_sr_received(sr.packet_count as u64, sr.octet_count as u64, now);
+                // Update inbound stream stats with remote sender info (if accumulator exists)
+                if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&sr.ssrc) {
+                    stream.on_rtcp_sr_received(sr.packet_count as u64, sr.octet_count as u64, now);
+                }
             }
 
             // Try to downcast to ReceiverReport
@@ -82,17 +84,38 @@ where
                 // RR contains info about how the remote receiver is receiving our stream
                 for report in &rr.reports {
                     if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&report.ssrc) {
-                        // Calculate jitter in seconds (jitter is in timestamp units, divide by typical clock rate)
-                        let jitter_seconds = report.jitter as f64 / 90000.0; // Assume 90kHz for video
                         let fraction_lost = report.fraction_lost as f64 / 256.0;
 
                         stream.on_rtcp_rr_received(
                             report.last_sequence_number as u64,
                             report.total_lost as u64,
-                            jitter_seconds,
+                            report.jitter as f64,
                             fraction_lost,
                             0.0, // RTT calculation would require additional tracking
                         );
+                    }
+                }
+            }
+
+            // NACK received from remote - feedback about our outbound stream
+            if let Some(nack) = packet.as_any().downcast_ref::<TransportLayerNack>()
+                && let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&nack.media_ssrc)
+            {
+                stream.on_nack_received();
+            }
+
+            // PLI received from remote - feedback about our outbound stream
+            if let Some(pli) = packet.as_any().downcast_ref::<PictureLossIndication>()
+                && let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&pli.media_ssrc)
+            {
+                stream.on_pli_received();
+            }
+
+            // FIR received from remote - feedback about our outbound stream
+            if let Some(fir) = packet.as_any().downcast_ref::<FullIntraRequest>() {
+                for fir_entry in &fir.fir {
+                    if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&fir_entry.ssrc) {
+                        stream.on_fir_received();
                     }
                 }
             }
@@ -108,6 +131,38 @@ where
                 && header.count == FORMAT_CCFB
             {
                 self.stats.transport.on_ccfb_sent();
+            }
+
+            // Receiver Report sent - contains packets_lost and jitter for inbound streams
+            if let Some(rr) = packet.as_any().downcast_ref::<ReceiverReport>() {
+                for report in &rr.reports {
+                    if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&report.ssrc) {
+                        stream.on_rtcp_rr_generated(report.total_lost as i64, report.jitter as f64);
+                    }
+                }
+            }
+
+            // NACK sent - feedback about inbound stream we want retransmission for
+            if let Some(nack) = packet.as_any().downcast_ref::<TransportLayerNack>()
+                && let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&nack.media_ssrc)
+            {
+                stream.on_nack_sent();
+            }
+
+            // PLI sent - requesting keyframe from remote sender
+            if let Some(pli) = packet.as_any().downcast_ref::<PictureLossIndication>()
+                && let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&pli.media_ssrc)
+            {
+                stream.on_pli_sent();
+            }
+
+            // FIR sent - requesting keyframe from remote sender
+            if let Some(fir) = packet.as_any().downcast_ref::<FullIntraRequest>() {
+                for fir_entry in &fir.fir {
+                    if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&fir_entry.ssrc) {
+                        stream.on_fir_sent();
+                    }
+                }
             }
         }
     }
@@ -147,9 +202,19 @@ where
                 // just add a new interceptor to forward it by using self.interceptor.poll_read()
                 debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
                 return Ok(());
+            } else if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet))) =
+                &msg.message
+            {
+                // For Packet::Rtp packet, self.interceptor.poll_read() must not have return it,
+                // since it has already been bypassed as below, otherwise, it will cause duplicated rtp packets in SRTP
+
+                let ssrc = rtp_packet.header.ssrc;
+                let payload_bytes = rtp_packet.payload.len();
+                self.stats
+                    .on_rtx_packet_received_if_rtx(ssrc, payload_bytes);
+                self.stats
+                    .on_fec_packet_received_if_fec(ssrc, payload_bytes);
             }
-            // For Packet::Rtp packet, self.interceptor.poll_read() must not have return it,
-            // since it has already been bypassed as below, otherwise, it will cause duplicated rtp packets in SRTP
         }
 
         debug!("interceptor read bypass {:?}", msg.transport.peer_addr);
@@ -203,9 +268,25 @@ where
     fn poll_write(&mut self) -> Option<Self::Wout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_write() {
-                // Process outgoing RTCP packets for stats
-                if let Packet::Rtcp(rtcp_packets) = &packet.message {
-                    self.process_write_rtcp_for_stats(rtcp_packets);
+                // Process outgoing packets for stats
+                match &packet.message {
+                    Packet::Rtcp(rtcp_packets) => {
+                        self.process_write_rtcp_for_stats(rtcp_packets);
+                    }
+                    Packet::Rtp(rtp_packet) => {
+                        // Track outbound RTP stats if the stream accumulator exists
+                        let ssrc = rtp_packet.header.ssrc;
+                        let payload_bytes = rtp_packet.payload.len();
+                        self.stats.on_rtx_packet_sent_if_rtx(ssrc, payload_bytes);
+
+                        if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&ssrc) {
+                            stream.on_rtp_sent(
+                                rtp_packet.header.marshal_size(),
+                                payload_bytes,
+                                packet.now,
+                            );
+                        }
+                    }
                 }
 
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {

@@ -13,10 +13,12 @@ use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventIni
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet};
 use log::{debug, trace, warn};
 use shared::TransportContext;
 use shared::error::{Error, Result};
+use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -37,6 +39,7 @@ where
     rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
     media_engine: &'a MediaEngine,
     interceptor: &'a mut I,
+    stats: &'a mut RTCStatsAccumulator,
 }
 
 impl<'a, I> EndpointHandler<'a, I>
@@ -48,12 +51,14 @@ where
         rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
         media_engine: &'a MediaEngine,
         interceptor: &'a mut I,
+        stats: &'a mut RTCStatsAccumulator,
     ) -> Self {
         EndpointHandler {
             ctx,
             rtp_transceivers,
             media_engine,
             interceptor,
+            stats,
         }
     }
 
@@ -161,8 +166,18 @@ where
     ) -> Result<()> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
 
-        if let Some(track_id) = self.find_track_id(rtp_packet.header.ssrc, Some(&rtp_packet.header))
-        {
+        let ssrc = rtp_packet.header.ssrc;
+
+        if let Some(track_id) = self.find_track_id(ssrc, Some(&rtp_packet.header)) {
+            // Track RTP stats if accumulator exists (created when OnOpen event is fired)
+            if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&ssrc) {
+                stream.on_rtp_received(
+                    rtp_packet.header.marshal_size(),
+                    rtp_packet.payload.len(),
+                    now,
+                );
+            }
+
             self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                 now,
                 transport: transport_context,
@@ -172,7 +187,7 @@ where
                 })),
             });
         } else {
-            debug!("drop rtp packet ssrc = {}", rtp_packet.header.ssrc);
+            debug!("drop rtp packet ssrc = {}", ssrc);
         }
         Ok(())
     }
@@ -300,65 +315,91 @@ where
                         false
                     }
                 })
-            && let Some(receiver) = transceiver.receiver_mut()
-            && receiver
-                .track()
-                .ssrcs()
-                .any(|track_ssrc| track_ssrc == ssrc)
         {
-            let (is_track_codec_empty, track_id) = (
-                receiver
+            // Get kind and mid before borrowing receiver mutably
+            let kind = transceiver.kind();
+            let mid = transceiver.mid().clone().unwrap_or_default();
+
+            if let Some(receiver) = transceiver.receiver_mut()
+                && receiver
                     .track()
-                    .get_codec_by_ssrc(ssrc)
-                    .is_some_and(|codec| codec.mime_type.is_empty()),
-                receiver.track().track_id().clone(),
-            );
-
-            let track_codec = if is_track_codec_empty
-                && let Some(rtp_header) = rtp_header
-                && let Some(codec) = receiver
-                    .get_codec_preferences()
-                    .iter()
-                    .find(|codec| codec.payload_type == rtp_header.payload_type)
-            //TODO: what about RTX/FEC stream?
+                    .ssrcs()
+                    .any(|track_ssrc| track_ssrc == ssrc)
             {
-                Some(codec.rtp_codec.clone())
-            } else {
-                None
-            };
+                let (is_track_codec_empty, track_id) = (
+                    receiver
+                        .track()
+                        .get_codec_by_ssrc(ssrc)
+                        .is_some_and(|codec| codec.mime_type.is_empty()),
+                    receiver.track().track_id().clone(),
+                );
 
-            if let Some(codec) = track_codec {
-                // Set valid Codec for track when received the first RTP packet for such ssrc stream
-                // assert not inserting new entry
-                let new_entry = receiver.track_mut().set_codec_by_ssrc(codec, ssrc);
-                assert!(!new_entry);
-
-                // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
-                            receiver_id: RTCRtpReceiverId(id),
-                            track_id: receiver.track().track_id().to_owned(),
-                            stream_ids: vec![receiver.track().stream_id().to_owned()],
-                            rid: None,
-                        })),
-                    ));
-            }
-
-            Some(track_id)
-        } else {
-            trace!(
-                "no track id for {:?} for {}",
-                ssrc,
-                if rtp_header.is_some() {
-                    "RTP packet, let's try search rid"
+                let track_codec = if is_track_codec_empty
+                    && let Some(rtp_header) = rtp_header
+                    && let Some(codec) = receiver
+                        .get_codec_preferences()
+                        .iter()
+                        .find(|codec| codec.payload_type == rtp_header.payload_type)
+                //TODO: what about RTX/FEC stream?
+                {
+                    Some(codec.rtp_codec.clone())
                 } else {
-                    "RTCP packet"
+                    None
+                };
+
+                if let Some(codec) = track_codec {
+                    // Set valid Codec for track when received the first RTP packet for such ssrc stream
+                    // assert not inserting new entry
+                    let new_entry = receiver.track_mut().set_codec_by_ssrc(codec, ssrc);
+                    assert!(!new_entry);
+
+                    // Get RTX and FEC SSRCs from coding parameters
+                    let (rtx_ssrc, fec_ssrc) = receiver
+                        .get_coding_parameters()
+                        .iter()
+                        .find(|c| c.ssrc == Some(ssrc))
+                        .map(|c| {
+                            (
+                                c.rtx.as_ref().map(|r| r.ssrc),
+                                c.fec.as_ref().map(|f| f.ssrc),
+                            )
+                        })
+                        .unwrap_or((None, None));
+
+                    // Create inbound stream accumulator before firing OnOpen event
+                    self.stats.get_or_create_inbound_rtp_streams(
+                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc,
+                    );
+
+                    // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                            RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(
+                                RTCTrackEventInit {
+                                    receiver_id: RTCRtpReceiverId(id),
+                                    track_id: receiver.track().track_id().to_owned(),
+                                    stream_ids: vec![receiver.track().stream_id().to_owned()],
+                                    rid: None,
+                                },
+                            )),
+                        ));
                 }
-            );
-            None
+
+                return Some(track_id);
+            }
         }
+
+        trace!(
+            "no track id for {:?} for {}",
+            ssrc,
+            if rtp_header.is_some() {
+                "RTP packet, let's try search rid"
+            } else {
+                "RTCP packet"
+            }
+        );
+        None
     }
 
     fn find_track_id_by_rid(
@@ -394,48 +435,75 @@ where
                         .as_deref()
                         .is_some_and(|t_mid| t_mid == mid)
                 })
-            && let Some(receiver) = transceiver.receiver_mut()
-            && let Some(codec) = receiver
-                .get_codec_preferences()
-                .iter()
-                .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
-                .cloned()
         {
-            if !rrid.is_empty() {
-                //TODO: Add support of handling repair rtp stream id (rrid) #12
-            } else {
-                if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
-                    coding.ssrc = Some(ssrc);
+            // Get kind before borrowing receiver mutably
+            let kind = transceiver.kind();
+
+            if let Some(receiver) = transceiver.receiver_mut()
+                && let Some(codec) = receiver
+                    .get_codec_preferences()
+                    .iter()
+                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    .cloned()
+            {
+                if !rrid.is_empty() {
+                    //TODO: Add support of handling repair rtp stream id (rrid) #12
+                } else {
+                    if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
+                        coding.ssrc = Some(ssrc);
+                    }
+
+                    let parameters = receiver.get_parameters(self.media_engine);
+                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                        self.interceptor,
+                        true,
+                        rtp_header.ssrc,
+                        codec.payload_type,
+                        &codec.rtp_codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
+
+                    let new_entry =
+                        receiver
+                            .track_mut()
+                            .set_codec_ssrc_by_rid(codec.rtp_codec, ssrc, &rid);
+                    assert!(!new_entry);
+
+                    let track_id = receiver.track().track_id().to_owned();
+
+                    // Get RTX and FEC SSRCs from coding parameters
+                    let (rtx_ssrc, fec_ssrc) = receiver
+                        .get_coding_parameters()
+                        .iter()
+                        .find(|c| c.ssrc == Some(ssrc))
+                        .map(|c| {
+                            (
+                                c.rtx.as_ref().map(|r| r.ssrc),
+                                c.fec.as_ref().map(|f| f.ssrc),
+                            )
+                        })
+                        .unwrap_or((None, None));
+
+                    // Create inbound stream accumulator before firing OnOpen event
+                    self.stats.get_or_create_inbound_rtp_streams(
+                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc,
+                    );
+
+                    // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
+                    self.ctx
+                        .event_outs
+                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                            RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(
+                                RTCTrackEventInit {
+                                    receiver_id: RTCRtpReceiverId(id),
+                                    track_id: track_id.clone(),
+                                    stream_ids: vec![receiver.track().stream_id().to_owned()],
+                                    rid: Some(rid),
+                                },
+                            )),
+                        ));
+                    return Some(track_id);
                 }
-
-                let parameters = receiver.get_parameters(self.media_engine);
-                RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                    self.interceptor,
-                    true,
-                    rtp_header.ssrc,
-                    codec.payload_type,
-                    &codec.rtp_codec,
-                    &parameters.rtp_parameters.header_extensions,
-                );
-
-                let new_entry =
-                    receiver
-                        .track_mut()
-                        .set_codec_ssrc_by_rid(codec.rtp_codec, ssrc, &rid);
-                assert!(!new_entry);
-
-                // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
-                            receiver_id: RTCRtpReceiverId(id),
-                            track_id: receiver.track().track_id().to_owned(),
-                            stream_ids: vec![receiver.track().stream_id().to_owned()],
-                            rid: Some(rid),
-                        })),
-                    ));
-                return Some(receiver.track().track_id().to_owned());
             }
         }
         None
@@ -455,53 +523,70 @@ where
             return None;
         }
 
-        if let Some(transceiver) = self.rtp_transceivers.first_mut()
-            && let Some(receiver) = transceiver.receiver_mut()
-            && let Some(codec) = receiver
-                .get_codec_preferences()
-                .iter()
-                .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
-                .cloned()
-        {
-            let receive_codings = vec![RTCRtpCodingParameters {
-                rid: "".to_string(),
-                ssrc: Some(rtp_header.ssrc),
-                rtx: None,
-                fec: None,
-            }];
-            receiver.set_coding_parameters(receive_codings);
+        if let Some(transceiver) = self.rtp_transceivers.first_mut() {
+            // Get kind and mid before borrowing receiver mutably
+            let kind = transceiver.kind();
+            let mid = transceiver.mid().clone().unwrap_or_default();
 
-            let parameters = receiver.get_parameters(self.media_engine);
-            RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                self.interceptor,
-                true,
-                rtp_header.ssrc,
-                codec.payload_type,
-                &codec.rtp_codec,
-                &parameters.rtp_parameters.header_extensions,
-            );
+            if let Some(receiver) = transceiver.receiver_mut()
+                && let Some(codec) = receiver
+                    .get_codec_preferences()
+                    .iter()
+                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    .cloned()
+            {
+                let receive_codings = vec![RTCRtpCodingParameters {
+                    rid: "".to_string(),
+                    ssrc: Some(rtp_header.ssrc),
+                    rtx: None,
+                    fec: None,
+                }];
+                receiver.set_coding_parameters(receive_codings);
 
-            // assert it inserts a new entry
-            let new_entry = receiver
-                .track_mut()
-                .set_codec_by_ssrc(codec.rtp_codec, rtp_header.ssrc);
-            assert!(new_entry);
+                let parameters = receiver.get_parameters(self.media_engine);
+                RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                    self.interceptor,
+                    true,
+                    rtp_header.ssrc,
+                    codec.payload_type,
+                    &codec.rtp_codec,
+                    &parameters.rtp_parameters.header_extensions,
+                );
 
-            // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-            self.ctx
-                .event_outs
-                .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
-                        receiver_id: RTCRtpReceiverId(0),
-                        track_id: receiver.track().track_id().to_owned(),
-                        stream_ids: vec![receiver.track().stream_id().to_owned()],
-                        rid: None,
-                    })),
-                ));
-            Some(receiver.track().track_id().to_owned())
-        } else {
-            None
+                // assert it inserts a new entry
+                let new_entry = receiver
+                    .track_mut()
+                    .set_codec_by_ssrc(codec.rtp_codec, rtp_header.ssrc);
+                assert!(new_entry);
+
+                let track_id = receiver.track().track_id().to_owned();
+
+                // Create inbound stream accumulator before firing OnOpen event
+                // Note: undeclared SSRC case doesn't have RTX/FEC info
+                self.stats.get_or_create_inbound_rtp_streams(
+                    rtp_header.ssrc,
+                    kind,
+                    &track_id,
+                    &mid,
+                    None,
+                    None,
+                );
+
+                // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
+                self.ctx
+                    .event_outs
+                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
+                            receiver_id: RTCRtpReceiverId(0),
+                            track_id: track_id.clone(),
+                            stream_ids: vec![receiver.track().stream_id().to_owned()],
+                            rid: None,
+                        })),
+                    ));
+                return Some(track_id);
+            }
         }
+        None
     }
 
     fn get_rtp_header_extension_ids(

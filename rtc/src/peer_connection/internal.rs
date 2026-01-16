@@ -454,12 +454,47 @@ where
     }
 
     fn start_rtp_senders(&mut self) -> Result<()> {
+        // Collect SSRCs, kinds, mids, rids, encoding indices, and rtx_ssrc for outbound stream accumulators
+        // We do this in two phases to avoid borrow conflicts
+        let mut outbound_streams_to_create: Vec<(
+            u32,
+            RtpCodecKind,
+            String,
+            String,
+            u32,
+            Option<u32>,
+        )> = Vec::new();
+
         for transceiver in &mut self.rtp_transceivers {
+            // Get kind and mid before mutable borrow of sender
+            let kind = transceiver.kind();
+            let mid = transceiver.mid().clone().unwrap_or_default();
+
             if let Some(sender) = transceiver.sender_mut()
                 && sender.is_negotiated()
                 && !sender.has_sent()
                 && !sender.track().codings().is_empty()
             {
+                // Collect SSRCs for stats accumulator creation
+                for (encoding_index, coding) in sender.track().codings().iter().enumerate() {
+                    if let Some(ssrc) = coding.rtp_coding_parameters.ssrc {
+                        let rid = coding.rtp_coding_parameters.rid.clone();
+                        let rtx_ssrc = coding
+                            .rtp_coding_parameters
+                            .rtx
+                            .as_ref()
+                            .map(|rtx| rtx.ssrc);
+                        outbound_streams_to_create.push((
+                            ssrc,
+                            kind,
+                            mid.clone(),
+                            rid,
+                            encoding_index as u32,
+                            rtx_ssrc,
+                        ));
+                    }
+                }
+
                 sender.interceptor_local_streams_op(
                     &self.configuration.media_engine,
                     &mut self.configuration.interceptor,
@@ -468,6 +503,20 @@ where
 
                 sender.set_sent();
             }
+        }
+
+        // Create outbound stream accumulators
+        for (ssrc, kind, mid, rid, encoding_index, rtx_ssrc) in outbound_streams_to_create {
+            self.pipeline_context
+                .stats
+                .get_or_create_outbound_rtp_streams(
+                    ssrc,
+                    kind,
+                    &mid,
+                    &rid,
+                    encoding_index,
+                    rtx_ssrc,
+                );
         }
 
         Ok(())

@@ -124,10 +124,10 @@ pub struct InboundRtpStreamAccumulator {
 
 impl InboundRtpStreamAccumulator {
     /// Called when an RTP packet is received.
-    pub fn on_rtp_received(&mut self, payload_bytes: usize, header_bytes: usize, now: Instant) {
+    pub fn on_rtp_received(&mut self, header_bytes: usize, payload_bytes: usize, now: Instant) {
         self.packets_received += 1;
-        self.bytes_received += payload_bytes as u64;
         self.header_bytes_received += header_bytes as u64;
+        self.bytes_received += payload_bytes as u64;
         self.last_packet_received_timestamp = Some(now);
     }
 

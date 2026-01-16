@@ -105,22 +105,11 @@ pub struct OutboundRtpStreamAccumulator {
 
 impl OutboundRtpStreamAccumulator {
     /// Called when an RTP packet is sent.
-    pub fn on_rtp_sent(
-        &mut self,
-        payload_bytes: usize,
-        header_bytes: usize,
-        is_retransmit: bool,
-        now: Instant,
-    ) {
+    pub fn on_rtp_sent(&mut self, header_bytes: usize, payload_bytes: usize, now: Instant) {
         self.packets_sent += 1;
-        self.bytes_sent += payload_bytes as u64;
         self.header_bytes_sent += header_bytes as u64;
+        self.bytes_sent += payload_bytes as u64;
         self.last_packet_sent_timestamp = Some(now);
-
-        if is_retransmit {
-            self.retransmitted_packets_sent += 1;
-            self.retransmitted_bytes_sent += payload_bytes as u64;
-        }
     }
 
     /// Called when a NACK is received.
@@ -136,6 +125,12 @@ impl OutboundRtpStreamAccumulator {
     /// Called when a PLI is received.
     pub fn on_pli_received(&mut self) {
         self.pli_count += 1;
+    }
+
+    /// Called when an RTX packet is sent.
+    pub fn on_rtx_sent(&mut self, bytes: usize) {
+        self.retransmitted_packets_sent += 1;
+        self.retransmitted_bytes_sent += bytes as u64;
     }
 
     /// Called when RTCP Receiver Report is received from remote.
