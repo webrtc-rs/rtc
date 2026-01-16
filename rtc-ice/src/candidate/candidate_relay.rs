@@ -10,6 +10,8 @@ pub struct CandidateRelayConfig {
 
     pub rel_addr: String,
     pub rel_port: u16,
+
+    pub url: Option<String>,
 }
 
 impl CandidateRelayConfig {
@@ -40,6 +42,7 @@ impl CandidateRelayConfig {
                 address: self.rel_addr,
                 port: self.rel_port,
             }),
+            url: self.url,
             ..Candidate::default()
         })
     }

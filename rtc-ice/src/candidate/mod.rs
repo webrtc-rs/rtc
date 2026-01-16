@@ -147,6 +147,8 @@ pub struct Candidate {
     pub(crate) priority_override: u32,
 
     pub(crate) network: String,
+
+    pub(crate) url: Option<String>,
 }
 
 impl Default for Candidate {
@@ -170,6 +172,8 @@ impl Default for Candidate {
             foundation_override: String::new(),
             priority_override: 0,
             network: String::new(),
+
+            url: None,
         }
     }
 }
@@ -285,6 +289,10 @@ impl Candidate {
 
     pub fn tcp_type(&self) -> TcpType {
         self.tcp_type
+    }
+
+    pub fn url(&self) -> Option<&str> {
+        self.url.as_deref()
     }
 
     /// Returns the string representation of the ICECandidate.
@@ -512,6 +520,7 @@ pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
                 },
                 rel_addr,
                 rel_port,
+                url: None,
             };
             config.new_candidate_server_reflexive()
         }
@@ -545,6 +554,7 @@ pub fn unmarshal_candidate(raw: &str) -> Result<Candidate> {
                 },
                 rel_addr,
                 rel_port,
+                url: None,
             };
             config.new_candidate_relay()
         }

@@ -953,6 +953,71 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 **DataChannelStatsAccumulator Coverage: 8/8 fields = 100%** ✅
 
+#### 6.3.5 IceCandidateAccumulator
+
+| Field | Type | Collected | Handler/Location | Notes |
+|-------|------|-----------|------------------|-------|
+| `transport_id` | String | ✅ | mod.rs | From transport stats |
+| `address` | Option<String> | ✅ | mod.rs | From RTCIceCandidate |
+| `port` | u16 | ✅ | mod.rs | From RTCIceCandidate |
+| `protocol` | String | ✅ | mod.rs | From RTCIceCandidate |
+| `candidate_type` | RTCIceCandidateType | ✅ | mod.rs | From RTCIceCandidate |
+| `priority` | u16 | ✅ | mod.rs | From RTCIceCandidate (high 16 bits) |
+| `url` | String | ✅ | mod.rs | From `RTCIceCandidateInit.url` for local srflx/relay |
+| `relay_protocol` | RTCIceServerTransportProtocol | ✅ | mod.rs | From RTCIceCandidate |
+| `foundation` | String | ✅ | mod.rs | From RTCIceCandidate |
+| `related_address` | String | ✅ | mod.rs | From RTCIceCandidate |
+| `related_port` | u16 | ✅ | mod.rs | From RTCIceCandidate |
+| `username_fragment` | String | ✅ | mod.rs | From ICE transport credentials |
+| `tcp_type` | RTCIceTcpCandidateType | ✅ | mod.rs | From RTCIceCandidate |
+
+**IceCandidateAccumulator Coverage: 13/13 fields = 100%** ✅
+
+- Candidates are registered via `add_remote_candidate()` and `add_local_candidate()` methods
+- **`url` field**: Per W3C spec, this field is only valid for local candidates of type "srflx" or "relay" (the URL of the STUN/TURN server). For remote candidates, this property MUST NOT be present. The application provides this URL via the `RTCIceCandidateInit.url` field when calling `add_local_candidate()`.
+
+#### 6.3.6 IceCandidatePairAccumulator
+
+| Field | Type | Collected | Source | Notes |
+|-------|------|-----------|--------|-------|
+| `local_candidate_id` | String | ❌ | ICE Agent | Not populated |
+| `remote_candidate_id` | String | ❌ | ICE Agent | Not populated |
+| `packets_sent` | u64 | ❌ | ICE Handler | `on_packet_sent()` not called |
+| `packets_received` | u64 | ❌ | ICE Handler | `on_packet_received()` not called |
+| `bytes_sent` | u64 | ❌ | ICE Handler | `on_packet_sent()` not called |
+| `bytes_received` | u64 | ❌ | ICE Handler | `on_packet_received()` not called |
+| `last_packet_sent_timestamp` | Option\<Instant\> | ❌ | ICE Handler | `on_packet_sent()` not called |
+| `last_packet_received_timestamp` | Option\<Instant\> | ❌ | ICE Handler | `on_packet_received()` not called |
+| `total_round_trip_time` | f64 | ❌ | STUN | `on_rtt_measured()` not called |
+| `current_round_trip_time` | f64 | ❌ | STUN | `on_rtt_measured()` not called |
+| `requests_sent` | u64 | ❌ | STUN | `on_stun_request_sent()` not called |
+| `requests_received` | u64 | ❌ | STUN | `on_stun_request_received()` not called |
+| `responses_sent` | u64 | ❌ | STUN | `on_stun_response_sent()` not called |
+| `responses_received` | u64 | ❌ | STUN | `on_stun_response_received()` not called |
+| `consent_requests_sent` | u64 | ❌ | STUN | `on_consent_request_sent()` not called |
+| `packets_discarded_on_send` | u32 | ❌ | ICE Handler | `on_packet_discarded()` not called |
+| `bytes_discarded_on_send` | u32 | ❌ | ICE Handler | `on_packet_discarded()` not called |
+| `available_outgoing_bitrate` | f64 | ❌ | BWE/TWCC | Requires congestion control integration |
+| `available_incoming_bitrate` | f64 | ❌ | BWE/TWCC | Requires congestion control integration |
+| `state` | RTCStatsIceCandidatePairState | ❌ | ICE Agent | Not populated |
+| `nominated` | bool | ❌ | ICE Agent | Not populated |
+
+**IceCandidatePairAccumulator Coverage: 0/21 fields = 0%** ❌
+
+**Current Status:**
+- The `IceCandidatePairAccumulator` struct and all its methods (`on_packet_sent()`, `on_rtt_measured()`, etc.) are fully implemented
+- `get_or_create_candidate_pair()` helper exists but is never called
+- No candidate pairs are registered or updated during ICE operations
+- The selected candidate pair ID is tracked in `TransportStatsAccumulator.selected_candidate_pair_id`, but actual `IceCandidatePairAccumulator` entries are never created
+
+**Ice Library Support:**
+- `Agent::get_candidate_pairs_stats()` exists but only returns `state`, `nominated`, and candidate IDs
+- Packet/byte counters, RTT, and STUN transaction stats are not tracked in ice library's `CandidatePair` struct
+
+**Implementation Options:**
+1. **Enhance rtc-ice**: Add stats tracking to `CandidatePair` struct and expose via events/API
+2. **Track at RTC layer**: Intercept packets in ICE handler to count bytes/packets per pair
+
 ### 6.4 Coverage Summary by Category
 
 | Category                 | Implemented | Not Implemented | Coverage |
@@ -961,8 +1026,8 @@ This section provides detailed field-by-field coverage analysis for each accumul
 | **Certificate**          | 4           | 0               | 100%     |
 | **PeerConnection**       | 2           | 0               | 100%     |
 | **DataChannel**          | 8           | 0               | 100%     |
-| **ICE Candidates**       | 0           | ~10             | 0%       |
-| **ICE Candidate Pairs**  | 1 (pair_id) | 7               | ~12%     |
+| **ICE Candidates**       | 13          | 0               | 100%     |
+| **ICE Candidate Pairs**  | 0           | 21              | 0%       |
 | **Inbound RTP Stream**   | 1 (SR)      | 8               | ~11%     |
 | **Outbound RTP Stream**  | 1 (RR)      | 6               | ~14%     |
 | **Codec**                | 0           | 5               | 0%       |
@@ -970,8 +1035,8 @@ This section provides detailed field-by-field coverage analysis for each accumul
 
 ### 6.5 Priority Gaps for Future Implementation
 
-1. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
-2. **ICE candidate population** - Candidates never added to accumulators
+1. **ICE candidate pair stats** - No candidate pairs registered, no counters tracked (0% coverage)
+2. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
 3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
 4. **Codec stats** - Not populated from SDP/MediaEngine
 

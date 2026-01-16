@@ -1431,9 +1431,7 @@ where
         };
 
         if !candidate_value.is_empty() {
-            let candidate: Candidate = unmarshal_candidate(candidate_value)?;
-
-            self.ice_transport_mut().add_remote_candidate(candidate)?;
+            self.add_ice_remote_candidate(candidate_value)?;
         }
 
         Ok(())
@@ -1446,7 +1444,9 @@ where
     ///
     /// # Arguments
     ///
-    /// * `local_candidate` - The ICE candidate initialization data.
+    /// * `local_candidate` - The ICE candidate initialization data. For candidates of
+    ///   type "srflx" (server reflexive) or "relay", the `url` field should contain
+    ///   the STUN/TURN server URL used to gather the candidate.
     ///
     /// # Errors
     ///
@@ -1458,9 +1458,7 @@ where
         };
 
         if !candidate_value.is_empty() {
-            let candidate: Candidate = unmarshal_candidate(candidate_value)?;
-
-            self.ice_transport_mut().add_local_candidate(candidate)?;
+            self.add_ice_local_candidate(candidate_value, local_candidate.url.as_deref())?;
         }
 
         Ok(())

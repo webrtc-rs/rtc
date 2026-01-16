@@ -6,11 +6,14 @@ use crate::peer_connection::sdp::{
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
+use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
+use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::rtp_transceiver::RTCRtpTransceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
+use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
@@ -913,6 +916,84 @@ where
 
         self.update_connection_state(false);
 
+        Ok(())
+    }
+
+    /// Converts an RTCIceCandidate to an IceCandidateAccumulator for stats collection.
+    ///
+    /// # Arguments
+    ///
+    /// * `candidate` - The ICE candidate to convert.
+    /// * `username_fragment` - The ICE username fragment.
+    /// * `url` - Optional STUN/TURN server URL. Per W3C spec, this should only be
+    ///   provided for local candidates of type "srflx" or "relay".
+    pub(super) fn candidate_to_accumulator(
+        &self,
+        candidate: &RTCIceCandidate,
+        username_fragment: &str,
+        url: Option<&str>,
+    ) -> IceCandidateAccumulator {
+        // Per W3C spec, URL is only valid for local srflx/relay candidates
+        let url_for_stats = match candidate.typ {
+            RTCIceCandidateType::Srflx | RTCIceCandidateType::Relay => {
+                url.map(|s| s.to_string()).unwrap_or_default()
+            }
+            _ => String::new(),
+        };
+
+        IceCandidateAccumulator {
+            transport_id: self.pipeline_context.stats.transport.transport_id.clone(),
+            address: if candidate.address.is_empty() {
+                None
+            } else {
+                Some(candidate.address.clone())
+            },
+            port: candidate.port,
+            protocol: candidate.protocol.to_string(),
+            candidate_type: candidate.typ,
+            priority: (candidate.priority >> 16) as u16, // Take high 16 bits for stats priority
+            url: url_for_stats,
+            relay_protocol: candidate.relay_protocol,
+            foundation: candidate.foundation.clone(),
+            related_address: candidate.related_address.clone(),
+            related_port: candidate.related_port,
+            username_fragment: username_fragment.to_string(),
+            tcp_type: candidate.tcp_type,
+        }
+    }
+
+    pub(super) fn add_ice_remote_candidate(&mut self, candidate_value: &str) -> Result<()> {
+        let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+        // Register remote candidate with stats accumulator
+        // Per W3C spec, URL must NOT be present for remote candidates
+        let rtc_candidate: RTCIceCandidate = (&candidate).into();
+        let candidate_id = format!("RTCRemoteIceCandidate_{}", rtc_candidate.stats_id);
+        let (ufrag, _) = self.ice_transport().get_remote_user_credentials();
+        let accumulator = self.candidate_to_accumulator(&rtc_candidate, ufrag, None);
+        self.stats_mut()
+            .register_remote_candidate(candidate_id, accumulator);
+
+        self.ice_transport_mut().add_remote_candidate(candidate)?;
+        Ok(())
+    }
+
+    pub(super) fn add_ice_local_candidate(
+        &mut self,
+        candidate_value: &str,
+        url: Option<&str>,
+    ) -> Result<()> {
+        let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+
+        // Register local candidate with stats accumulator
+        let rtc_candidate: RTCIceCandidate = (&candidate).into();
+        let candidate_id = format!("RTCLocalIceCandidate_{}", rtc_candidate.stats_id);
+        let (ufrag, _) = self.ice_transport().get_local_user_credentials();
+        let accumulator = self.candidate_to_accumulator(&rtc_candidate, ufrag, url);
+        self.stats_mut()
+            .register_local_candidate(candidate_id, accumulator);
+
+        self.ice_transport_mut().add_local_candidate(candidate)?;
         Ok(())
     }
 }

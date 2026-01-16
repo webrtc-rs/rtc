@@ -85,6 +85,7 @@ pub struct RTCIceCandidate {
     pub related_port: u16,
     pub tcp_type: RTCIceTcpCandidateType,
     pub relay_protocol: RTCIceServerTransportProtocol,
+    pub url: Option<String>,
 }
 
 /// Conversion for ice_candidates
@@ -117,6 +118,7 @@ impl From<&Candidate> for RTCIceCandidate {
             related_address,
             related_port,
             relay_protocol: Default::default(),
+            url: c.url().map(|u| u.to_string()),
         }
     }
 }
@@ -147,6 +149,7 @@ impl RTCIceCandidate {
                     base_config,
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
+                    url: self.url.clone(),
                 };
                 config.new_candidate_server_reflexive()?
             }
@@ -163,6 +166,7 @@ impl RTCIceCandidate {
                     base_config,
                     rel_addr: self.related_address.clone(),
                     rel_port: self.related_port,
+                    url: self.url.clone(),
                 };
                 config.new_candidate_relay()?
             }
@@ -182,6 +186,7 @@ impl RTCIceCandidate {
             sdp_mid: Some("".to_owned()),
             sdp_mline_index: Some(0u16),
             username_fragment: None,
+            url: None,
         })
     }
 }
@@ -205,6 +210,17 @@ pub struct RTCIceCandidateInit {
     #[serde(rename = "sdpMLineIndex")]
     pub sdp_mline_index: Option<u16>,
     pub username_fragment: Option<String>,
+    /// The URL of the STUN or TURN server used to gather this candidate.
+    ///
+    /// Per W3C spec, this field is only meaningful for local candidates of type
+    /// "srflx" (server reflexive) or "relay". For other candidate types, this
+    /// field should be `None`.
+    ///
+    /// This is a sansio extension - since gathering happens externally in the
+    /// sansio architecture, the application must provide this URL when adding
+    /// local candidates that were gathered from STUN/TURN servers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[cfg(test)]
@@ -220,6 +236,7 @@ mod test {
                     sdp_mid: Some("0".to_string()),
                     sdp_mline_index: Some(0),
                     username_fragment: Some("def".to_string()),
+                    url: None,
                 },
                 r#"{"candidate":"candidate:abc123","sdpMid":"0","sdpMLineIndex":0,"usernameFragment":"def"}"#,
             ),
@@ -229,8 +246,19 @@ mod test {
                     sdp_mid: None,
                     sdp_mline_index: None,
                     username_fragment: None,
+                    url: None,
                 },
                 r#"{"candidate":"candidate:abc123","sdpMid":null,"sdpMLineIndex":null,"usernameFragment":null}"#,
+            ),
+            (
+                RTCIceCandidateInit {
+                    candidate: "candidate:relay123".to_string(),
+                    sdp_mid: Some("0".to_string()),
+                    sdp_mline_index: Some(0),
+                    username_fragment: None,
+                    url: Some("turn:turn.example.com:3478".to_string()),
+                },
+                r#"{"candidate":"candidate:relay123","sdpMid":"0","sdpMLineIndex":0,"usernameFragment":null,"url":"turn:turn.example.com:3478"}"#,
             ),
         ];
 

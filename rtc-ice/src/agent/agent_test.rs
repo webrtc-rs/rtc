@@ -72,6 +72,7 @@ fn test_pair_priority() -> Result<()> {
         },
         rel_addr: "4.3.2.1".to_owned(),
         rel_port: 43212,
+        ..Default::default()
     };
 
     let srflx_remote = srflx_config.new_candidate_server_reflexive()?;
@@ -86,6 +87,7 @@ fn test_pair_priority() -> Result<()> {
         },
         rel_addr: "4.3.2.1".to_owned(),
         rel_port: 43211,
+        ..Default::default()
     };
 
     let prflx_remote = prflx_config.new_candidate_peer_reflexive()?;

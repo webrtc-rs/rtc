@@ -9,6 +9,7 @@ mod certificate;
 mod codec;
 mod data_channel;
 mod ice_candidate;
+mod ice_candidate_pair;
 mod media;
 mod peer_connection;
 mod rtp_stream;
@@ -17,9 +18,8 @@ mod transport;
 pub use certificate::CertificateStatsAccumulator;
 pub use codec::CodecStatsAccumulator;
 pub use data_channel::DataChannelStatsAccumulator;
-pub use ice_candidate::{
-    IceCandidateAccumulator, IceCandidatePairAccumulator, IceCandidatePairCollection,
-};
+pub use ice_candidate::IceCandidateAccumulator;
+pub use ice_candidate_pair::IceCandidatePairAccumulator;
 pub use media::app_provided::*;
 pub use media::audio_playout::AudioPlayoutStatsAccumulator;
 pub use media::media_source::MediaSourceStatsAccumulator;
@@ -60,7 +60,7 @@ pub struct RTCStatsAccumulator {
     pub transport: TransportStatsAccumulator,
 
     /// ICE candidate pairs keyed by pair ID.
-    pub ice_candidate_pairs: IceCandidatePairCollection,
+    pub ice_candidate_pairs: HashMap<String, IceCandidatePairAccumulator>,
 
     /// Local ICE candidates keyed by candidate ID.
     pub local_candidates: HashMap<String, IceCandidateAccumulator>,
@@ -120,7 +120,7 @@ impl RTCStatsAccumulator {
         entries.push(RTCStatsReportEntry::Transport(self.transport.snapshot(now)));
 
         // ICE candidate pair stats
-        for (id, pair) in &self.ice_candidate_pairs.pairs {
+        for (id, pair) in &self.ice_candidate_pairs {
             entries.push(RTCStatsReportEntry::IceCandidatePair(
                 pair.snapshot(now, id),
             ));
@@ -257,7 +257,9 @@ impl RTCStatsAccumulator {
         &mut self,
         pair_id: &str,
     ) -> &mut IceCandidatePairAccumulator {
-        self.ice_candidate_pairs.get_or_create(pair_id)
+        self.ice_candidate_pairs
+            .entry(pair_id.to_string())
+            .or_default()
     }
 
     /// Registers a local ICE candidate.
