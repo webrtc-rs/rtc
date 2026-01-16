@@ -135,7 +135,10 @@ where
     */
 
     pub(crate) fn get_demuxer_handler(&mut self) -> DemuxerHandler<'_> {
-        DemuxerHandler::new(&mut self.pipeline_context.demuxer_handler_context)
+        DemuxerHandler::new(
+            &mut self.pipeline_context.demuxer_handler_context,
+            &mut self.pipeline_context.stats,
+        )
     }
 
     pub(crate) fn get_ice_handler(&mut self) -> IceHandler<'_> {

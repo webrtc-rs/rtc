@@ -6,6 +6,7 @@ use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet, TaggedPacket};
 use log::{debug, error, trace};
+use rtcp::header::{FORMAT_CCFB, PacketType};
 use rtcp::receiver_report::ReceiverReport;
 use rtcp::sender_report::SenderReport;
 use shared::error::{Error, Result};
@@ -51,9 +52,21 @@ where
         "InterceptorHandler"
     }
 
-    /// Process RTCP packets and update stats
-    fn process_rtcp_for_stats(&mut self, rtcp_packets: &[Box<dyn rtcp::Packet>], now: Instant) {
+    /// Process incoming RTCP packets and update stats
+    fn process_read_rtcp_for_stats(
+        &mut self,
+        rtcp_packets: &[Box<dyn rtcp::Packet>],
+        now: Instant,
+    ) {
         for packet in rtcp_packets {
+            // Check for CCFB (Congestion Control Feedback) packets: PT=205, FMT=11
+            let header = packet.header();
+            if header.packet_type == PacketType::TransportSpecificFeedback
+                && header.count == FORMAT_CCFB
+            {
+                self.stats.transport.on_ccfb_received();
+            }
+
             // Try to downcast to SenderReport
             if let Some(sr) = packet.as_any().downcast_ref::<SenderReport>() {
                 // SR contains info about the remote sender
@@ -82,6 +95,19 @@ where
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Process outgoing RTCP packets and update stats
+    fn process_write_rtcp_for_stats(&mut self, rtcp_packets: &[Box<dyn rtcp::Packet>]) {
+        for packet in rtcp_packets {
+            // Check for CCFB (Congestion Control Feedback) packets: PT=205, FMT=11
+            let header = packet.header();
+            if header.packet_type == PacketType::TransportSpecificFeedback
+                && header.count == FORMAT_CCFB
+            {
+                self.stats.transport.on_ccfb_sent();
             }
         }
     }
@@ -115,7 +141,7 @@ where
                 &msg.message
             {
                 // Process RTCP packets for stats (SR/RR parsing)
-                self.process_rtcp_for_stats(rtcp_packets, msg.now);
+                self.process_read_rtcp_for_stats(rtcp_packets, msg.now);
 
                 // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
                 // just add a new interceptor to forward it by using self.interceptor.poll_read()
@@ -177,6 +203,11 @@ where
     fn poll_write(&mut self) -> Option<Self::Wout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_write() {
+                // Process outgoing RTCP packets for stats
+                if let Packet::Rtcp(rtcp_packets) = &packet.message {
+                    self.process_write_rtcp_for_stats(rtcp_packets);
+                }
+
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: packet.now,
                     transport: packet.transport,

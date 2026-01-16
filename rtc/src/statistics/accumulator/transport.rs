@@ -11,7 +11,7 @@ use std::time::Instant;
 ///
 /// This struct tracks packet/byte counters, ICE/DTLS state, and
 /// security parameters for the transport layer.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TransportStatsAccumulator {
     /// Unique identifier for this transport.
     pub transport_id: String,
@@ -146,6 +146,32 @@ impl TransportStatsAccumulator {
             selected_candidate_pair_changes: self.selected_candidate_pair_changes,
             ccfb_messages_sent: self.ccfb_messages_sent,
             ccfb_messages_received: self.ccfb_messages_received,
+        }
+    }
+}
+
+impl Default for TransportStatsAccumulator {
+    fn default() -> Self {
+        Self {
+            transport_id: "RTCTransport_0".to_string(),
+            packets_sent: 0,
+            packets_received: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
+            ice_role: RTCIceRole::default(),
+            ice_local_username_fragment: String::new(),
+            ice_state: RTCIceTransportState::default(),
+            dtls_state: RTCDtlsTransportState::default(),
+            dtls_role: RTCDtlsRole::default(),
+            tls_version: String::new(),
+            dtls_cipher: String::new(),
+            srtp_cipher: String::new(),
+            selected_candidate_pair_id: String::new(),
+            selected_candidate_pair_changes: 0,
+            local_certificate_id: String::new(),
+            remote_certificate_id: String::new(),
+            ccfb_messages_sent: 0,
+            ccfb_messages_received: 0,
         }
     }
 }

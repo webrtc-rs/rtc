@@ -37,6 +37,8 @@ pub const FORMAT_REMB: u8 = 15;
 /// Transport and Payload specific feedback messages overload the count field to act as a message type. those are listed here.
 /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#page-5>
 pub const FORMAT_TCC: u8 = 15;
+/// FMT value for CCFB (Congestion Control Feedback) per RFC 8888
+pub const FORMAT_CCFB: u8 = 11;
 
 impl std::fmt::Display for PacketType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

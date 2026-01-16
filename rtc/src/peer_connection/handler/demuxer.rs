@@ -3,6 +3,7 @@ use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, RTPMessage, STUNMessage, TaggedRTCMessageInternal,
 };
 
+use crate::statistics::accumulator::RTCStatsAccumulator;
 use log::{debug, error};
 use shared::error::Error;
 use std::collections::VecDeque;
@@ -52,11 +53,15 @@ pub(crate) struct DemuxerHandlerContext {
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
 pub(crate) struct DemuxerHandler<'a> {
     ctx: &'a mut DemuxerHandlerContext,
+    stats: &'a mut RTCStatsAccumulator,
 }
 
 impl<'a> DemuxerHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut DemuxerHandlerContext) -> Self {
-        DemuxerHandler { ctx }
+    pub(crate) fn new(
+        ctx: &'a mut DemuxerHandlerContext,
+        stats: &'a mut RTCStatsAccumulator,
+    ) -> Self {
+        DemuxerHandler { ctx, stats }
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -75,6 +80,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<(), Self::Error> {
         if let RTCMessageInternal::Raw(message) = msg.message {
+            // Update transport stats for received packet
+            self.stats.transport.on_packet_received(message.len());
+
             if message.is_empty() {
                 error!("drop invalid packet due to zero length");
             } else if match_dtls(&message) {
@@ -112,6 +120,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             | RTCMessageInternal::Stun(STUNMessage::Raw(message))
             | RTCMessageInternal::Dtls(DTLSMessage::Raw(message))
             | RTCMessageInternal::Rtp(RTPMessage::Raw(message)) => {
+                // Update transport stats for sent packet
+                self.stats.transport.on_packet_sent(message.len());
+
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,

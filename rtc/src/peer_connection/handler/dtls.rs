@@ -7,11 +7,12 @@ use crate::peer_connection::message::internal::{
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use crate::statistics::accumulator::RTCStatsAccumulator;
+use crate::statistics::accumulator::{CertificateStatsAccumulator, RTCStatsAccumulator};
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, warn};
+use sha2::{Digest, Sha256};
 use shared::TransportContext;
 use shared::error::{Error, Result};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
@@ -56,7 +57,12 @@ impl<'a> DtlsHandler<'a> {
     }
 
     /// Update stats when DTLS handshake completes
-    fn update_dtls_stats_from_profile(&mut self, srtp_profile: SrtpProtectionProfile) {
+    fn update_dtls_stats_from_profile(
+        &mut self,
+        srtp_profile: SrtpProtectionProfile,
+        peer_certificates: &[Vec<u8>],
+        dtls_cipher: Option<String>,
+    ) {
         // Update transport DTLS state
         self.stats
             .transport
@@ -78,13 +84,63 @@ impl<'a> DtlsHandler<'a> {
         // Update TLS version
         self.stats.transport.tls_version = "DTLS 1.2".to_string();
 
-        // Update DTLS cipher from the connection state if available
-        // Note: The dtls crate state may not expose cipher suite directly,
-        // so we use a placeholder. The actual cipher would need to be extracted
-        // from the dtls handshake state if available.
-        if self.stats.transport.dtls_cipher.is_empty() {
-            self.stats.transport.dtls_cipher =
-                "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string();
+        // Update DTLS cipher from the negotiated cipher suite
+        if let Some(cipher) = dtls_cipher {
+            self.stats.transport.dtls_cipher = cipher;
+        }
+
+        // Register local certificate and set local_certificate_id
+        if let Some(local_cert) = self.ctx.dtls_transport.certificates.first() {
+            let fingerprints = local_cert.get_fingerprints();
+            if let Some(fp) = fingerprints.first() {
+                let cert_id = local_cert.stats_id.clone();
+
+                // Register certificate in accumulator
+                // Use hex encoding for certificate (base64 would need additional dependency)
+                if let Some(der) = local_cert.dtls_certificate.certificate.first() {
+                    self.stats.register_certificate(
+                        cert_id.clone(),
+                        CertificateStatsAccumulator {
+                            fingerprint: fp.value.clone(),
+                            fingerprint_algorithm: fp.algorithm.clone(),
+                            base64_certificate: hex::encode(der.as_ref()),
+                            issuer_certificate_id: String::new(),
+                        },
+                    );
+                }
+
+                // Set local certificate ID in transport stats
+                self.stats.transport.local_certificate_id = cert_id;
+            }
+        }
+
+        // Register remote certificate and set remote_certificate_id
+        if let Some(peer_cert_der) = peer_certificates.first() {
+            // Compute fingerprint from peer certificate
+            let mut hasher = Sha256::new();
+            hasher.update(peer_cert_der);
+            let hash = hasher.finalize();
+            let fingerprint: String = hash
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(":");
+
+            let cert_id = format!("remote-certificate-{}", &fingerprint[..8]);
+
+            // Register remote certificate in accumulator
+            self.stats.register_certificate(
+                cert_id.clone(),
+                CertificateStatsAccumulator {
+                    fingerprint,
+                    fingerprint_algorithm: "sha-256".to_string(),
+                    base64_certificate: hex::encode(peer_cert_der),
+                    issuer_certificate_id: String::new(),
+                },
+            );
+
+            // Set remote certificate ID in transport stats
+            self.stats.transport.remote_certificate_id = cert_id;
         }
     }
 }
@@ -105,6 +161,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             let mut messages = vec![];
             let mut srtp_contexts = None;
             let mut srtp_profile_for_stats: Option<SrtpProtectionProfile> = None;
+            let mut peer_certificates_for_stats: Vec<Vec<u8>> = vec![];
+            let mut dtls_cipher_for_stats: Option<String> = None;
 
             let dtls_endpoint = self
                 .ctx
@@ -128,6 +186,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
                             // Save profile for stats update after borrow ends
                             srtp_profile_for_stats = Some(state.srtp_protection_profile());
+
+                            // Save peer certificates for stats
+                            peer_certificates_for_stats = state.peer_certificates.clone();
+
+                            // Save DTLS cipher suite for stats
+                            dtls_cipher_for_stats = state.cipher_suite().map(|cs| cs.to_string());
 
                             let (local_srtp_context, remote_srtp_context) =
                                 DtlsHandler::update_srtp_contexts(
@@ -172,7 +236,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
             // Update stats after dtls_endpoint borrow ends
             if let Some(srtp_profile) = srtp_profile_for_stats {
-                self.update_dtls_stats_from_profile(srtp_profile);
+                self.update_dtls_stats_from_profile(
+                    srtp_profile,
+                    &peer_certificates_for_stats,
+                    dtls_cipher_for_stats,
+                );
             }
 
             for message in messages {

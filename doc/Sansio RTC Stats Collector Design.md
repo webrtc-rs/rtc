@@ -1353,12 +1353,17 @@ where
 
 #### Handler Stats Coverage Analysis
 
+##### Demuxer Handler (`demuxer.rs`)
+
+| Accumulator Method                    | Called | Location       | Notes            |
+|---------------------------------------|--------|----------------|------------------|
+| `transport.on_packet_received(bytes)` | ✅      | `handle_read`  | Raw packet bytes |
+| `transport.on_packet_sent(bytes)`     | ✅      | `handle_write` | Raw packet bytes |
+
 ##### ICE Handler (`ice.rs`)
 
 | Accumulator Method                                | Called | Location       | Notes                        |
 |---------------------------------------------------|--------|----------------|------------------------------|
-| `transport.on_packet_received(bytes)`             | ✅      | `handle_read`  | Raw packet bytes             |
-| `transport.on_packet_sent(bytes)`                 | ✅      | `handle_write` | Raw packet bytes             |
 | `transport.on_ice_state_changed(state)`           | ✅      | `poll_event`   | On ConnectionStateChange     |
 | `transport.on_selected_candidate_pair_changed()`  | ✅      | `poll_event`   | On SelectedCandidatePairChange |
 | `ice_candidate_pairs.on_packet_sent()`            | ❌      | -              | Not implemented              |
@@ -1368,6 +1373,10 @@ where
 | `local_candidates` population                     | ❌      | -              | Not implemented              |
 | `remote_candidates` population                    | ❌      | -              | Not implemented              |
 
+**Note:** `ice_role` and `ice_local_username_fragment` are updated via helper methods in `internal.rs`:
+- `ice_role` is set in `start_transports()` during initial connection setup
+- `ice_local_username_fragment` is set in `ice_restart()` after ICE restart, reading from agent
+
 ##### DTLS Handler (`dtls.rs`)
 
 | Accumulator Method                          | Called | Location                       | Notes                   |
@@ -1376,23 +1385,30 @@ where
 | `transport.dtls_role`                       | ✅      | `update_dtls_stats_from_profile` | Direct assignment     |
 | `transport.srtp_cipher`                     | ✅      | `update_dtls_stats_from_profile` | From SRTP profile     |
 | `transport.tls_version`                     | ✅      | `update_dtls_stats_from_profile` | Hardcoded "DTLS 1.2"  |
-| `transport.dtls_cipher`                     | ✅      | `update_dtls_stats_from_profile` | Placeholder value     |
-| `certificates` population                   | ❌      | -                              | Fingerprints not extracted |
+| `transport.dtls_cipher`                     | ✅      | `update_dtls_stats_from_profile` | From `state.cipher_suite()` |
+| `transport.local_certificate_id`            | ✅      | `update_dtls_stats_from_profile` | From RTCCertificate.stats_id |
+| `transport.remote_certificate_id`           | ✅      | `update_dtls_stats_from_profile` | From peer cert fingerprint |
+| `register_certificate()` (local)            | ✅      | `update_dtls_stats_from_profile` | DER + fingerprint     |
+| `register_certificate()` (remote)           | ✅      | `update_dtls_stats_from_profile` | DER + SHA-256 fingerprint |
+
+**DTLS Handler: 100% Complete** ✅
 
 ##### Interceptor Handler (`interceptor.rs`)
 
-| Accumulator Method                        | Called | Location                | Notes                      |
-|-------------------------------------------|--------|-------------------------|----------------------------|
-| `rtp_streams.inbound.on_rtcp_sr_received()` | ✅    | `process_rtcp_for_stats` | From RTCP SR              |
-| `rtp_streams.outbound.on_rtcp_rr_received()`| ✅    | `process_rtcp_for_stats` | From RTCP RR              |
-| `rtp_streams.inbound.on_rtp_received()`   | ❌      | -                       | RTP packet stats not tracked |
-| `rtp_streams.outbound.on_rtp_sent()`      | ❌      | -                       | RTP packet stats not tracked |
-| `rtp_streams.inbound.on_nack_sent()`      | ❌      | -                       | RTCP feedback not tracked |
-| `rtp_streams.inbound.on_pli_sent()`       | ❌      | -                       | RTCP feedback not tracked |
-| `rtp_streams.inbound.on_fir_sent()`       | ❌      | -                       | RTCP feedback not tracked |
-| `rtp_streams.outbound.on_nack_received()` | ❌      | -                       | RTCP feedback not tracked |
-| `rtp_streams.outbound.on_pli_received()`  | ❌      | -                       | RTCP feedback not tracked |
-| `rtp_streams.outbound.on_fir_received()`  | ❌      | -                       | RTCP feedback not tracked |
+| Accumulator Method                        | Called | Location                     | Notes                      |
+|-------------------------------------------|--------|------------------------------|----------------------------|
+| `rtp_streams.inbound.on_rtcp_sr_received()` | ✅    | `process_read_rtcp_for_stats` | From RTCP SR              |
+| `rtp_streams.outbound.on_rtcp_rr_received()`| ✅    | `process_read_rtcp_for_stats` | From RTCP RR              |
+| `transport.on_ccfb_received()`            | ✅      | `process_read_rtcp_for_stats` | PT=205, FMT=11 per RFC 8888 |
+| `transport.on_ccfb_sent()`                | ✅      | `process_write_rtcp_for_stats`| PT=205, FMT=11 per RFC 8888 |
+| `rtp_streams.inbound.on_rtp_received()`   | ❌      | -                            | RTP packet stats not tracked |
+| `rtp_streams.outbound.on_rtp_sent()`      | ❌      | -                            | RTP packet stats not tracked |
+| `rtp_streams.inbound.on_nack_sent()`      | ❌      | -                            | RTCP feedback not tracked |
+| `rtp_streams.inbound.on_pli_sent()`       | ❌      | -                            | RTCP feedback not tracked |
+| `rtp_streams.inbound.on_fir_sent()`       | ❌      | -                            | RTCP feedback not tracked |
+| `rtp_streams.outbound.on_nack_received()` | ❌      | -                            | RTCP feedback not tracked |
+| `rtp_streams.outbound.on_pli_received()`  | ❌      | -                            | RTCP feedback not tracked |
+| `rtp_streams.outbound.on_fir_received()`  | ❌      | -                            | RTCP feedback not tracked |
 
 ##### DataChannel Handler (`datachannel.rs`)
 
@@ -1419,14 +1435,46 @@ where
 |--------------------|--------|----------|---------------------------------|
 | (not wired)        | ❌      | -        | Stats not passed to this handler |
 
+#### Accumulator Field Coverage Analysis
+
+##### TransportStatsAccumulator
+
+| Field | Type | Collected | Handler/Location | Method/Line | Notes |
+|-------|------|-----------|------------------|-------------|-------|
+| `transport_id` | String | ✅ | Default impl | transport.rs:156 | Initialized as "RTCTransport_0" |
+| `packets_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
+| `packets_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
+| `bytes_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
+| `bytes_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
+| `ice_role` | RTCIceRole | ✅ | internal.rs | internal.rs:904 | In `start_transports()` |
+| `ice_local_username_fragment` | String | ✅ | internal.rs | internal.rs:891 | In `ice_restart()`, reads from agent |
+| `ice_state` | RTCIceTransportState | ✅ | ICE | ice.rs:140 | `on_ice_state_changed()` |
+| `dtls_state` | RTCDtlsTransportState | ✅ | DTLS | dtls.rs:68 | `on_dtls_state_changed()` |
+| `dtls_role` | RTCDtlsRole | ✅ | DTLS | dtls.rs:71 | Direct assignment |
+| `tls_version` | String | ✅ | DTLS | dtls.rs:84 | Hardcoded "DTLS 1.2" |
+| `dtls_cipher` | String | ✅ | DTLS | dtls.rs:88-89 | From `state.cipher_suite()` |
+| `srtp_cipher` | String | ✅ | DTLS | dtls.rs:81 | From SRTP profile |
+| `selected_candidate_pair_id` | String | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
+| `selected_candidate_pair_changes` | u32 | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
+| `local_certificate_id` | String | ✅ | DTLS | dtls.rs:114 | From RTCCertificate.stats_id |
+| `remote_certificate_id` | String | ✅ | DTLS | dtls.rs:144 | From peer cert fingerprint |
+| `ccfb_messages_sent` | u32 | ✅ | Interceptor | interceptor.rs:99-108 | `process_write_rtcp_for_stats()` |
+| `ccfb_messages_received` | u32 | ✅ | Interceptor | interceptor.rs:58-64 | `process_read_rtcp_for_stats()` |
+
+**TransportStatsAccumulator Coverage: 19/19 fields = 100%** ✅
+
+| Status | Count | Fields |
+|--------|-------|--------|
+| ✅ Fully Collected | 19 | transport_id, packets_sent/received, bytes_sent/received, ice_role, ice_local_username_fragment, ice_state, dtls_state, dtls_role, tls_version, dtls_cipher, srtp_cipher, selected_candidate_pair_id/changes, local/remote_certificate_id, ccfb_messages_sent/received |
+
 #### Coverage Summary by Stats Category
 
 | Category                 | Implemented | Not Implemented | Coverage |
 |--------------------------|-------------|-----------------|----------|
-| **Transport (bytes/state)** | 5        | 0               | 100%     |
+| **Transport (bytes/state)** | 19       | 0               | 100%     |
 | **ICE Candidates**       | 0           | ~10             | 0%       |
 | **ICE Candidate Pairs**  | 1 (pair_id) | 7               | ~12%     |
-| **DTLS/Certificates**    | 5           | 2               | ~70%     |
+| **DTLS/Certificates**    | 7           | 0               | 100%     |
 | **Inbound RTP Stream**   | 1 (SR)      | 8               | ~11%     |
 | **Outbound RTP Stream**  | 1 (RR)      | 6               | ~14%     |
 | **DataChannel**          | 6           | 0               | 100%     |
@@ -1440,7 +1488,7 @@ where
 2. **ICE candidate population** - Candidates never added to accumulators
 3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
 4. **Codec stats** - Not populated from SDP/MediaEngine
-5. **Certificate stats** - Fingerprints not extracted from DTLS handshake
+5. **TWCC/congestion control** - ccfb_messages_sent/received not tracked
 
 ### Phase 5: Application Integration APIs ✅ COMPLETED (as part of Phase 1)
 

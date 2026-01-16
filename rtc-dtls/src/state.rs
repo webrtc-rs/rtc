@@ -231,6 +231,10 @@ impl State {
     pub fn is_client(&self) -> bool {
         self.is_client
     }
+
+    pub fn cipher_suite(&self) -> Option<&dyn CipherSuite> {
+        self.cipher_suite.as_deref()
+    }
 }
 
 impl KeyingMaterialExporter for State {

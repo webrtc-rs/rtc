@@ -601,25 +601,7 @@ where
             || options.take().is_some_and(|options| options.ice_restart);
 
         if is_ice_restart_requested {
-            let (local_ufrag, local_pwd, keep_local_candidates) = (
-                self.configuration
-                    .setting_engine
-                    .candidates
-                    .username_fragment
-                    .clone(),
-                self.configuration
-                    .setting_engine
-                    .candidates
-                    .password
-                    .clone(),
-                !self
-                    .configuration
-                    .setting_engine
-                    .candidates
-                    .discard_local_candidates_during_ice_restart,
-            );
-            self.ice_transport_mut()
-                .restart(local_ufrag, local_pwd, keep_local_candidates)?;
+            self.ice_restart()?;
         }
 
         // include unmatched local transceivers
@@ -1313,28 +1295,8 @@ where
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
 
                 if !we_offer {
-                    let (local_ufrag, local_pwd, keep_local_candidates) = (
-                        self.configuration
-                            .setting_engine
-                            .candidates
-                            .username_fragment
-                            .clone(),
-                        self.configuration
-                            .setting_engine
-                            .candidates
-                            .password
-                            .clone(),
-                        !self
-                            .configuration
-                            .setting_engine
-                            .candidates
-                            .discard_local_candidates_during_ice_restart,
-                    );
-                    self.ice_transport_mut().restart(
-                        local_ufrag,
-                        local_pwd,
-                        keep_local_candidates,
-                    )?;
+                    // Update stats with new ICE credentials after restart (may have been generated)
+                    self.ice_restart()?;
                 }
 
                 self.ice_transport_mut()
@@ -1367,19 +1329,14 @@ where
                 log::trace!(
                     "start_transports: local_ice_role={local_ice_role}, remote_dtls_role={remote_dtls_role}"
                 );
-                // Start the ice transport
-                self.ice_transport_mut().start(
+
+                self.start_transports(
                     local_ice_role,
                     RTCIceParameters {
                         username_fragment: remote_ufrag,
                         password: remote_pwd,
                         ice_lite: remote_is_lite,
                     },
-                )?;
-
-                // Start the dtls transport
-                self.dtls_transport_mut().start(
-                    local_ice_role,
                     DTLSParameters {
                         role: remote_dtls_role,
                         fingerprints: vec![RTCDtlsFingerprint {
@@ -1388,8 +1345,6 @@ where
                         }],
                     },
                 )?;
-
-                self.update_connection_state(false);
             }
 
             if we_offer

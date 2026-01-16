@@ -860,4 +860,59 @@ where
     pub(crate) fn stats_mut(&mut self) -> &mut RTCStatsAccumulator {
         &mut self.pipeline_context.stats
     }
+
+    /// Updates stats after ICE restart with the new credentials from the agent.
+    pub(super) fn ice_restart(&mut self) -> Result<()> {
+        let (local_ufrag, local_pwd, keep_local_candidates) = (
+            self.configuration
+                .setting_engine
+                .candidates
+                .username_fragment
+                .clone(),
+            self.configuration
+                .setting_engine
+                .candidates
+                .password
+                .clone(),
+            !self
+                .configuration
+                .setting_engine
+                .candidates
+                .discard_local_candidates_during_ice_restart,
+        );
+        self.ice_transport_mut()
+            .restart(local_ufrag, local_pwd, keep_local_candidates)?;
+
+        // Update stats with new ICE credentials after restart
+        if let Ok(params) = self.ice_transport().get_local_parameters() {
+            self.pipeline_context
+                .stats
+                .transport
+                .ice_local_username_fragment = params.username_fragment;
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn start_transports(
+        &mut self,
+        local_ice_role: RTCIceRole,
+        remote_ice_parameters: RTCIceParameters,
+        remote_dtls_parameters: DTLSParameters,
+    ) -> Result<()> {
+        // Update ICE role (may change after ICE restart if peer roles swap)
+        self.pipeline_context.stats.transport.ice_role = local_ice_role;
+
+        // Start the ice transport
+        self.ice_transport_mut()
+            .start(local_ice_role, remote_ice_parameters)?;
+
+        // Start the dtls transport
+        self.dtls_transport_mut()
+            .start(local_ice_role, remote_dtls_parameters)?;
+
+        self.update_connection_state(false);
+
+        Ok(())
+    }
 }

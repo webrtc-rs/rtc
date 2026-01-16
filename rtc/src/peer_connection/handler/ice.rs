@@ -74,11 +74,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
 
-            // Update transport stats for received packet
-            if let RTCMessageInternal::Raw(ref raw) = msg.message {
-                self.stats.transport.on_packet_received(raw.len());
-            }
-
             // When ICE restarts and the selected candidate pair changes,
             // WebRTC treats this as a path migration, and DTLS continues unchanged, bound to the ICE transport, not to a fixed 5-tuple.
             // Use default for transport to make DTLS tunneled
@@ -104,11 +99,6 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             msg.transport.local_addr = local.addr();
             msg.transport.peer_addr = remote.addr();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
-
-            // Update transport stats for sent packet
-            if let RTCMessageInternal::Raw(ref raw) = msg.message {
-                self.stats.transport.on_packet_sent(raw.len());
-            }
 
             self.ctx.write_outs.push_back(msg);
         } else {
