@@ -15,6 +15,11 @@
 4. [File Structure](#4-file-structure)
 5. [Accumulator Types](#5-accumulator-types)
 6. [Coverage Analysis](#6-coverage-analysis)
+   - [6.1 Coverage Summary Table](#61-coverage-summary-table)
+   - [6.2 Fields Requiring Application Input](#62-fields-requiring-application-input)
+   - [6.3 Accumulator Field Coverage](#63-accumulator-field-coverage)
+   - [6.4 Coverage Summary by Category](#64-coverage-summary-by-category)
+   - [6.5 Priority Gaps for Future Implementation](#65-priority-gaps-for-future-implementation)
 7. [Handler Integration](#7-handler-integration)
 8. [Public API](#8-public-api)
 9. [Application Integration APIs](#9-application-integration-apis)
@@ -168,19 +173,23 @@ src/statistics/
 ├── report.rs                  # RTCStatsReport and RTCStatsReportEntry
 ├── accumulator/               # Stats accumulation layer
 │   ├── mod.rs                 # RTCStatsAccumulator (master accumulator)
-│   ├── ice.rs                 # IceCandidateAccumulator, IceCandidatePairAccumulator
+│   ├── ice_candidate.rs       # IceCandidateAccumulator, IceCandidatePairAccumulator
 │   ├── transport.rs           # TransportStatsAccumulator
 │   ├── certificate.rs         # CertificateStatsAccumulator
-│   ├── rtp_stream.rs          # InboundRtpStreamAccumulator, OutboundRtpStreamAccumulator
-│   ├── data_channel.rs        # DataChannelStatsAccumulator
 │   ├── codec.rs               # CodecStatsAccumulator
+│   ├── data_channel.rs        # DataChannelStatsAccumulator
 │   ├── peer_connection.rs     # PeerConnectionStatsAccumulator
-│   ├── media_source.rs        # MediaSourceStatsAccumulator
-│   ├── audio_playout.rs       # AudioPlayoutStatsAccumulator
-│   └── app_provided.rs        # Application-provided stats update types
+│   ├── rtp_stream/            # RTP stream accumulators
+│   │   ├── mod.rs             # RtpStreamStatsCollection
+│   │   ├── inbound.rs         # InboundRtpStreamAccumulator
+│   │   └── outbound.rs        # OutboundRtpStreamAccumulator
+│   └── media/                 # Media-related accumulators
+│       ├── mod.rs             # Module exports
+│       ├── media_source.rs    # MediaSourceStatsAccumulator
+│       ├── audio_playout.rs   # AudioPlayoutStatsAccumulator
+│       └── app_provided.rs    # Application-provided stats update types
 └── stats/                     # W3C WebRTC Stats API types
     ├── mod.rs                 # RTCStatsType, RTCStats, RTCStatsId, RTCQualityLimitationReason
-    ├── audio_playout.rs       # RTCAudioPlayoutStats
     ├── certificate.rs         # RTCCertificateStats
     ├── codec.rs               # RTCCodecStats
     ├── data_channel.rs        # RTCDataChannelStats
@@ -196,11 +205,12 @@ src/statistics/
     │   ├── sent.rs            # RTCSentRtpStreamStats
     │   ├── remote_inbound.rs  # RTCRemoteInboundRtpStreamStats
     │   └── remote_outbound.rs # RTCRemoteOutboundRtpStreamStats
-    └── source/                # Media source stats
-        ├── mod.rs
-        ├── media.rs           # RTCMediaSourceStats
-        ├── audio.rs           # RTCAudioSourceStats
-        └── video.rs           # RTCVideoSourceStats
+    └── media/                 # Media source and playout stats
+        ├── mod.rs             # Module exports
+        ├── media_source.rs    # RTCMediaSourceStats
+        ├── audio_source.rs    # RTCAudioSourceStats
+        ├── video_source.rs    # RTCVideoSourceStats
+        └── audio_playout.rs   # RTCAudioPlayoutStats
 ```
 
 ---
@@ -878,6 +888,93 @@ The following fields cannot be tracked by sansio RTC and require application inp
 - `synthesized_samples_duration`, `synthesized_samples_events`
 - `total_playout_delay`, `jitter_buffer_delay`
 
+### 6.3 Accumulator Field Coverage
+
+This section provides detailed field-by-field coverage analysis for each accumulator type.
+
+#### 6.3.1 TransportStatsAccumulator
+
+| Field | Type | Collected | Handler/Location | Method/Line | Notes |
+|-------|------|-----------|------------------|-------------|-------|
+| `transport_id` | String | ✅ | Default impl | transport.rs:156 | Initialized as "RTCTransport_0" |
+| `packets_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
+| `packets_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
+| `bytes_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
+| `bytes_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
+| `ice_role` | RTCIceRole | ✅ | internal.rs | internal.rs:904 | In `start_transports()` |
+| `ice_local_username_fragment` | String | ✅ | internal.rs | internal.rs:891 | In `ice_restart()`, reads from agent |
+| `ice_state` | RTCIceTransportState | ✅ | ICE | ice.rs:140 | `on_ice_state_changed()` |
+| `dtls_state` | RTCDtlsTransportState | ✅ | DTLS | dtls.rs:68 | `on_dtls_state_changed()` |
+| `dtls_role` | RTCDtlsRole | ✅ | DTLS | dtls.rs:71 | Direct assignment |
+| `tls_version` | String | ✅ | DTLS | dtls.rs:84 | Hardcoded "DTLS 1.2" |
+| `dtls_cipher` | String | ✅ | DTLS | dtls.rs:88-89 | From `state.cipher_suite()` |
+| `srtp_cipher` | String | ✅ | DTLS | dtls.rs:81 | From SRTP profile |
+| `selected_candidate_pair_id` | String | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
+| `selected_candidate_pair_changes` | u32 | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
+| `local_certificate_id` | String | ✅ | DTLS | dtls.rs:114 | From RTCCertificate.stats_id |
+| `remote_certificate_id` | String | ✅ | DTLS | dtls.rs:144 | From peer cert fingerprint |
+| `ccfb_messages_sent` | u32 | ✅ | Interceptor | interceptor.rs:99-108 | `process_write_rtcp_for_stats()` |
+| `ccfb_messages_received` | u32 | ✅ | Interceptor | interceptor.rs:58-64 | `process_read_rtcp_for_stats()` |
+
+**TransportStatsAccumulator Coverage: 19/19 fields = 100%** ✅
+
+#### 6.3.2 CertificateStatsAccumulator
+
+| Field | Type | Collected | Handler/Location | Notes |
+|-------|------|-----------|------------------|-------|
+| `fingerprint` | String | ✅ | DTLS | dtls.rs:104,135 | From certificate fingerprint |
+| `fingerprint_algorithm` | String | ✅ | DTLS | dtls.rs:105,136 | e.g., "sha-256" |
+| `base64_certificate` | String | ✅ | DTLS | dtls.rs:106,137 | Hex-encoded DER |
+| `issuer_certificate_id` | String | ✅ | DTLS | dtls.rs:107,138 | Empty for self-signed |
+
+**CertificateStatsAccumulator Coverage: 4/4 fields = 100%** ✅
+
+#### 6.3.3 PeerConnectionStatsAccumulator
+
+| Field | Type | Collected | Handler/Location | Notes |
+|-------|------|-----------|------------------|-------|
+| `data_channels_opened` | u32 | ✅ | DataChannel | datachannel.rs | `on_data_channel_opened()` |
+| `data_channels_closed` | u32 | ✅ | DataChannel | datachannel.rs | `on_data_channel_closed()` |
+
+**PeerConnectionStatsAccumulator Coverage: 2/2 fields = 100%** ✅
+
+#### 6.3.4 DataChannelStatsAccumulator
+
+| Field | Type | Collected | Handler/Location | Notes |
+|-------|------|-----------|------------------|-------|
+| `data_channel_identifier` | u16 | ✅ | DataChannel | On channel creation |
+| `label` | String | ✅ | DataChannel | On channel creation |
+| `protocol` | String | ✅ | DataChannel | On channel creation |
+| `state` | RTCDataChannelState | ✅ | DataChannel | `on_state_changed()` |
+| `messages_sent` | u32 | ✅ | DataChannel | `on_message_sent()` |
+| `bytes_sent` | u64 | ✅ | DataChannel | `on_message_sent()` |
+| `messages_received` | u32 | ✅ | DataChannel | `on_message_received()` |
+| `bytes_received` | u64 | ✅ | DataChannel | `on_message_received()` |
+
+**DataChannelStatsAccumulator Coverage: 8/8 fields = 100%** ✅
+
+### 6.4 Coverage Summary by Category
+
+| Category                 | Implemented | Not Implemented | Coverage |
+|--------------------------|-------------|-----------------|----------|
+| **Transport**            | 19          | 0               | 100%     |
+| **Certificate**          | 4           | 0               | 100%     |
+| **PeerConnection**       | 2           | 0               | 100%     |
+| **DataChannel**          | 8           | 0               | 100%     |
+| **ICE Candidates**       | 0           | ~10             | 0%       |
+| **ICE Candidate Pairs**  | 1 (pair_id) | 7               | ~12%     |
+| **Inbound RTP Stream**   | 1 (SR)      | 8               | ~11%     |
+| **Outbound RTP Stream**  | 1 (RR)      | 6               | ~14%     |
+| **Codec**                | 0           | 5               | 0%       |
+| **MediaSource**          | 0           | -               | App API  |
+
+### 6.5 Priority Gaps for Future Implementation
+
+1. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
+2. **ICE candidate population** - Candidates never added to accumulators
+3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
+4. **Codec stats** - Not populated from SDP/MediaEngine
+
 ---
 
 ## 7. Handler Integration
@@ -1434,61 +1531,6 @@ where
 | Accumulator Method | Called | Location | Notes                           |
 |--------------------|--------|----------|---------------------------------|
 | (not wired)        | ❌      | -        | Stats not passed to this handler |
-
-#### Accumulator Field Coverage Analysis
-
-##### TransportStatsAccumulator
-
-| Field | Type | Collected | Handler/Location | Method/Line | Notes |
-|-------|------|-----------|------------------|-------------|-------|
-| `transport_id` | String | ✅ | Default impl | transport.rs:156 | Initialized as "RTCTransport_0" |
-| `packets_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
-| `packets_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
-| `bytes_sent` | u64 | ✅ | Demuxer | demuxer.rs:124 | `on_packet_sent()` |
-| `bytes_received` | u64 | ✅ | Demuxer | demuxer.rs:84 | `on_packet_received()` |
-| `ice_role` | RTCIceRole | ✅ | internal.rs | internal.rs:904 | In `start_transports()` |
-| `ice_local_username_fragment` | String | ✅ | internal.rs | internal.rs:891 | In `ice_restart()`, reads from agent |
-| `ice_state` | RTCIceTransportState | ✅ | ICE | ice.rs:140 | `on_ice_state_changed()` |
-| `dtls_state` | RTCDtlsTransportState | ✅ | DTLS | dtls.rs:68 | `on_dtls_state_changed()` |
-| `dtls_role` | RTCDtlsRole | ✅ | DTLS | dtls.rs:71 | Direct assignment |
-| `tls_version` | String | ✅ | DTLS | dtls.rs:84 | Hardcoded "DTLS 1.2" |
-| `dtls_cipher` | String | ✅ | DTLS | dtls.rs:88-89 | From `state.cipher_suite()` |
-| `srtp_cipher` | String | ✅ | DTLS | dtls.rs:81 | From SRTP profile |
-| `selected_candidate_pair_id` | String | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
-| `selected_candidate_pair_changes` | u32 | ✅ | ICE | ice.rs:161 | `on_selected_candidate_pair_changed()` |
-| `local_certificate_id` | String | ✅ | DTLS | dtls.rs:114 | From RTCCertificate.stats_id |
-| `remote_certificate_id` | String | ✅ | DTLS | dtls.rs:144 | From peer cert fingerprint |
-| `ccfb_messages_sent` | u32 | ✅ | Interceptor | interceptor.rs:99-108 | `process_write_rtcp_for_stats()` |
-| `ccfb_messages_received` | u32 | ✅ | Interceptor | interceptor.rs:58-64 | `process_read_rtcp_for_stats()` |
-
-**TransportStatsAccumulator Coverage: 19/19 fields = 100%** ✅
-
-| Status | Count | Fields |
-|--------|-------|--------|
-| ✅ Fully Collected | 19 | transport_id, packets_sent/received, bytes_sent/received, ice_role, ice_local_username_fragment, ice_state, dtls_state, dtls_role, tls_version, dtls_cipher, srtp_cipher, selected_candidate_pair_id/changes, local/remote_certificate_id, ccfb_messages_sent/received |
-
-#### Coverage Summary by Stats Category
-
-| Category                 | Implemented | Not Implemented | Coverage |
-|--------------------------|-------------|-----------------|----------|
-| **Transport (bytes/state)** | 19       | 0               | 100%     |
-| **ICE Candidates**       | 0           | ~10             | 0%       |
-| **ICE Candidate Pairs**  | 1 (pair_id) | 7               | ~12%     |
-| **DTLS/Certificates**    | 7           | 0               | 100%     |
-| **Inbound RTP Stream**   | 1 (SR)      | 8               | ~11%     |
-| **Outbound RTP Stream**  | 1 (RR)      | 6               | ~14%     |
-| **DataChannel**          | 6           | 0               | 100%     |
-| **PeerConnection**       | 2           | 0               | 100%     |
-| **Codec**                | 0           | 5               | 0%       |
-| **MediaSource**          | 0           | -               | App API  |
-
-#### Priority Gaps for Future Implementation
-
-1. **RTP packet-level stats** - `on_rtp_received()` / `on_rtp_sent()` not called anywhere
-2. **ICE candidate population** - Candidates never added to accumulators
-3. **RTCP feedback tracking** - NACK/PLI/FIR counts not tracked
-4. **Codec stats** - Not populated from SDP/MediaEngine
-5. **TWCC/congestion control** - ccfb_messages_sent/received not tracked
 
 ### Phase 5: Application Integration APIs ✅ COMPLETED (as part of Phase 1)
 
