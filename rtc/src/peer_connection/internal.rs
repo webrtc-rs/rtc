@@ -996,4 +996,39 @@ where
         self.ice_transport_mut().add_local_candidate(candidate)?;
         Ok(())
     }
+
+    /// Update STUN transaction stats from the ICE agent to the stats accumulator.
+    ///
+    /// This is called automatically by `get_stats()` to ensure ICE candidate pair
+    /// statistics (RTT, requests/responses sent/received) are up to date.
+    pub(super) fn update_ice_agent_stats(&mut self) {
+        if let Some(pair_id) = self
+            .pipeline_context
+            .ice_handler_context
+            .ice_transport
+            .agent
+            .get_selected_candidate_pair_id()
+        {
+            // Get candidate pair stats from the ice agent
+            for cp_stats in self
+                .pipeline_context
+                .ice_handler_context
+                .ice_transport
+                .agent
+                .get_candidate_pairs_stats()
+            {
+                let ice_pair_id = format!(
+                    "RTCIceCandidatePair_{}_{}",
+                    cp_stats.local_candidate_id, cp_stats.remote_candidate_id
+                );
+                if ice_pair_id == pair_id {
+                    // Sync STUN stats from ice agent to RTC accumulator
+                    self.pipeline_context
+                        .stats
+                        .update_ice_agent_stats(&pair_id, &cp_stats);
+                    break;
+                }
+            }
+        }
+    }
 }

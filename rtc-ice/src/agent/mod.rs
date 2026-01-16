@@ -587,6 +587,20 @@ impl Agent {
     }
 
     /// Returns the selected pair (local_candidate, remote_candidate) or none
+    pub fn get_selected_candidate_pair_id(&self) -> Option<String> {
+        if let Some(pair_index) = self.get_selected_pair() {
+            let candidate_pair = &self.candidate_pairs[pair_index];
+            Some(format!(
+                "RTCIceCandidatePair_{}_{}",
+                self.local_candidates[candidate_pair.local_index].id(),
+                self.remote_candidates[candidate_pair.remote_index].id()
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the selected pair (local_candidate, remote_candidate) or none
     pub fn get_selected_candidate_pair(&self) -> Option<(&Candidate, &Candidate)> {
         if let Some(pair_index) = self.get_selected_pair() {
             let candidate_pair = &self.candidate_pairs[pair_index];
@@ -866,16 +880,18 @@ impl Agent {
     /// if no packet has been sent on that pair in the last keepaliveInterval.
     /// Note: the caller should hold the agent lock.
     pub(crate) fn check_keepalive(&mut self) {
-        let (local_index, remote_index) = {
+        let (local_index, remote_index, pair_index) = {
             self.selected_pair
                 .as_ref()
-                .map_or((None, None), |&pair_index| {
+                .map_or((None, None, None), |&pair_index| {
                     let p = &self.candidate_pairs[pair_index];
-                    (Some(p.local_index), Some(p.remote_index))
+                    (Some(p.local_index), Some(p.remote_index), Some(pair_index))
                 })
         };
 
-        if let (Some(local_index), Some(remote_index)) = (local_index, remote_index) {
+        if let (Some(local_index), Some(remote_index), Some(pair_index)) =
+            (local_index, remote_index, pair_index)
+        {
             let last_sent =
                 Instant::now().duration_since(self.local_candidates[local_index].last_sent());
 
@@ -888,6 +904,8 @@ impl Agent {
             {
                 // we use binding request instead of indication to support refresh consent schemas
                 // see https://tools.ietf.org/html/rfc7675
+                // Track consent request sent
+                self.candidate_pairs[pair_index].on_consent_request_sent();
                 self.ping_candidate(local_index, remote_index);
             }
         }
@@ -965,6 +983,11 @@ impl Agent {
             is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
         });
 
+        // Track request sent on the candidate pair
+        if let Some(pair_index) = self.find_pair(local_index, remote_index) {
+            self.candidate_pairs[pair_index].on_request_sent();
+        }
+
         self.send_stun(m, local_index, remote_index);
     }
 
@@ -999,6 +1022,10 @@ impl Agent {
                 err
             );
         } else {
+            // Track response sent on the candidate pair
+            if let Some(pair_index) = self.find_pair(local_index, remote_index) {
+                self.candidate_pairs[pair_index].on_response_sent();
+            }
             self.send_stun(&out, local_index, remote_index);
         }
     }
@@ -1056,6 +1083,7 @@ impl Agent {
     /// Processes STUN traffic from a remote candidate.
     pub(crate) fn handle_inbound(
         &mut self,
+        now: Instant,
         m: &mut Message,
         local_index: usize,
         remote_addr: SocketAddr,
@@ -1120,7 +1148,7 @@ impl Agent {
             }
 
             if let Some(remote_index) = &remote_candidate_index {
-                self.handle_success_response(m, local_index, *remote_index, remote_addr);
+                self.handle_success_response(now, m, local_index, *remote_index, remote_addr);
             } else {
                 warn!(
                     "[{}]: discard success message from ({}), no such remote",
@@ -1271,7 +1299,7 @@ impl Agent {
                 );
                 Err(err)
             } else {
-                self.handle_inbound(&mut m, local_index, msg.transport.peer_addr)
+                self.handle_inbound(msg.now, &mut m, local_index, msg.transport.peer_addr)
             }
         } else {
             if !self.validate_non_stun_traffic(msg.transport.peer_addr) {

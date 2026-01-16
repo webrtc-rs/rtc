@@ -32,6 +32,7 @@ use crate::data_channel::RTCDataChannelId;
 use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
+use ice::CandidatePairStats;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -365,5 +366,25 @@ impl RTCStatsAccumulator {
             playout.total_playout_delay = stats.total_playout_delay;
             playout.total_samples_count = stats.total_samples_count;
         }
+    }
+
+    /// Updates STUN transaction stats from the ice agent's CandidatePairStats to the RTC accumulator.
+    ///
+    /// This method merges the STUN-level stats (requests, responses, RTT) from the ice agent
+    /// with the application-level stats (packets, bytes) tracked at the RTC layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `pair_id` - The ID of the candidate pair to sync
+    /// * `cp_stats.` - CandidatePairStats
+    pub fn update_ice_agent_stats(&mut self, pair_id: &str, cp_stats: &CandidatePairStats) {
+        let pair = self.get_or_create_candidate_pair(pair_id);
+        pair.requests_sent = cp_stats.requests_sent;
+        pair.requests_received = cp_stats.requests_received;
+        pair.responses_sent = cp_stats.responses_sent;
+        pair.responses_received = cp_stats.responses_received;
+        pair.consent_requests_sent = cp_stats.consent_requests_sent;
+        pair.total_round_trip_time = cp_stats.total_round_trip_time;
+        pair.current_round_trip_time = cp_stats.current_round_trip_time;
     }
 }

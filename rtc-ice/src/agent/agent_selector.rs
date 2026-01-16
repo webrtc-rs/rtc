@@ -17,6 +17,7 @@ trait ControllingSelector {
     fn ping_candidate(&mut self, local_index: usize, remote_index: usize);
     fn handle_success_response(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -31,6 +32,7 @@ trait ControlledSelector {
     fn ping_candidate(&mut self, local_index: usize, remote_index: usize);
     fn handle_success_response(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -170,6 +172,7 @@ impl Agent {
 
     pub(crate) fn handle_success_response(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -178,6 +181,7 @@ impl Agent {
         if self.is_controlling {
             ControllingSelector::handle_success_response(
                 self,
+                now,
                 m,
                 local_index,
                 remote_index,
@@ -186,6 +190,7 @@ impl Agent {
         } else {
             ControlledSelector::handle_success_response(
                 self,
+                now,
                 m,
                 local_index,
                 remote_index,
@@ -292,6 +297,7 @@ impl ControllingSelector for Agent {
 
     fn handle_success_response(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -319,14 +325,20 @@ impl ControllingSelector for Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
+
+                // Calculate RTT and track response received
+                let rtt = now.duration_since(pending_request.timestamp);
+                p.on_response_received(rtt);
+
                 trace!(
-                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {}), p.state: {}, isUseCandidate: {}, {}",
+                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {}), p.state: {}, isUseCandidate: {}, {}, rtt: {:.3}ms",
                     *p,
                     self.local_candidates[p.local_index].addr(),
                     self.remote_candidates[p.remote_index].addr(),
                     p.state,
                     pending_request.is_use_candidate,
-                    selected_pair_is_none
+                    selected_pair_is_none,
+                    rtt.as_millis()
                 );
                 if pending_request.is_use_candidate && selected_pair_is_none {
                     self.set_selected_pair(Some(pair_index));
@@ -348,6 +360,9 @@ impl ControllingSelector for Agent {
         trace!("controllingSelector: sendBindingSuccess");
 
         if let Some(pair_index) = self.find_pair(local_index, remote_index) {
+            // Track request received on the candidate pair
+            self.candidate_pairs[pair_index].on_request_received();
+
             let p = &self.candidate_pairs[pair_index];
             let nominated_pair_is_none = self.nominated_pair.is_none();
 
@@ -385,6 +400,10 @@ impl ControllingSelector for Agent {
         } else {
             trace!("controllingSelector: addPair");
             self.add_pair(local_index, remote_index);
+            // Track request received on newly created pair
+            if let Some(pair_index) = self.find_pair(local_index, remote_index) {
+                self.candidate_pairs[pair_index].on_request_received();
+            }
         }
     }
 }
@@ -439,6 +458,7 @@ impl ControlledSelector for Agent {
 
     fn handle_success_response(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -471,11 +491,17 @@ impl ControlledSelector for Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 let p = &mut self.candidate_pairs[pair_index];
                 p.state = CandidatePairState::Succeeded;
+
+                // Calculate RTT and track response received
+                let rtt = now.duration_since(pending_request.timestamp);
+                p.on_response_received(rtt);
+
                 trace!(
-                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {})",
+                    "Found valid candidate pair: {} (local_addr {} <-> remote_addr {}), rtt: {:.3}ms",
                     *p,
                     self.local_candidates[p.local_index].addr(),
                     self.remote_candidates[p.remote_index].addr(),
+                    rtt.as_millis()
                 );
             } else {
                 // This shouldn't happen
@@ -495,6 +521,9 @@ impl ControlledSelector for Agent {
         }
 
         if let Some(pair_index) = self.find_pair(local_index, remote_index) {
+            // Track request received on the candidate pair
+            self.candidate_pairs[pair_index].on_request_received();
+
             let p = &self.candidate_pairs[pair_index];
             let use_candidate = m.contains(ATTR_USE_CANDIDATE);
             if use_candidate {

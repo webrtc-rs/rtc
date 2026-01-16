@@ -221,6 +221,15 @@ impl Agent {
                 remote_candidate_id: self.remote_candidates[cp.remote_index].id(),
                 state: cp.state,
                 nominated: cp.nominated,
+                // STUN transaction stats
+                requests_sent: cp.requests_sent,
+                requests_received: cp.requests_received,
+                responses_sent: cp.responses_sent,
+                responses_received: cp.responses_received,
+                consent_requests_sent: cp.consent_requests_sent,
+                // RTT tracking (convert Duration to seconds as f64)
+                total_round_trip_time: cp.total_round_trip_time.as_secs_f64(),
+                current_round_trip_time: cp.current_round_trip_time.as_secs_f64(),
                 ..CandidatePairStats::default()
             };
             res.push(stat);

@@ -1,5 +1,6 @@
 use super::RTCStats;
 use ::serde::{Deserialize, Serialize};
+use ice::candidate::candidate_pair::CandidatePairState;
 use shared::serde::instant_to_epoch;
 use std::time::Instant;
 
@@ -18,6 +19,18 @@ pub enum RTCStatsIceCandidatePairState {
     Failed,
     #[serde(rename = "succeeded")]
     Succeeded,
+}
+
+impl From<CandidatePairState> for RTCStatsIceCandidatePairState {
+    fn from(state: CandidatePairState) -> Self {
+        match state {
+            CandidatePairState::Unspecified => RTCStatsIceCandidatePairState::Unspecified,
+            CandidatePairState::Waiting => RTCStatsIceCandidatePairState::Waiting,
+            CandidatePairState::InProgress => RTCStatsIceCandidatePairState::InProgress,
+            CandidatePairState::Failed => RTCStatsIceCandidatePairState::Failed,
+            CandidatePairState::Succeeded => RTCStatsIceCandidatePairState::Succeeded,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

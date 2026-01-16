@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::Duration;
 
 /// Represent the ICE candidate pair state.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +64,24 @@ pub struct CandidatePair {
     pub(crate) binding_request_count: u16,
     pub(crate) state: CandidatePairState,
     pub(crate) nominated: bool,
+
+    // STUN transaction stats
+    /// Total number of STUN connectivity check requests sent (not including retransmissions).
+    pub(crate) requests_sent: u64,
+    /// Total number of STUN connectivity check requests received.
+    pub(crate) requests_received: u64,
+    /// Total number of STUN connectivity check responses sent.
+    pub(crate) responses_sent: u64,
+    /// Total number of STUN connectivity check responses received.
+    pub(crate) responses_received: u64,
+    /// Total number of consent freshness requests sent.
+    pub(crate) consent_requests_sent: u64,
+
+    // RTT tracking
+    /// Sum of all round trip time measurements.
+    pub(crate) total_round_trip_time: Duration,
+    /// Latest round trip time measured.
+    pub(crate) current_round_trip_time: Duration,
 }
 
 impl fmt::Debug for CandidatePair {
@@ -117,6 +136,15 @@ impl CandidatePair {
             state: CandidatePairState::Waiting,
             binding_request_count: 0,
             nominated: false,
+            // STUN transaction stats
+            requests_sent: 0,
+            requests_received: 0,
+            responses_sent: 0,
+            responses_received: 0,
+            consent_requests_sent: 0,
+            // RTT tracking
+            total_round_trip_time: Duration::ZERO,
+            current_round_trip_time: Duration::ZERO,
         }
     }
 
@@ -137,5 +165,33 @@ impl CandidatePair {
         ((1 << 32_u64) - 1) * u64::from(std::cmp::min(g, d))
             + 2 * u64::from(std::cmp::max(g, d))
             + u64::from(g > d)
+    }
+
+    /// Called when a STUN binding request is sent.
+    pub fn on_request_sent(&mut self) {
+        self.requests_sent += 1;
+    }
+
+    /// Called when a STUN binding request is received.
+    pub fn on_request_received(&mut self) {
+        self.requests_received += 1;
+    }
+
+    /// Called when a STUN binding success response is sent.
+    pub fn on_response_sent(&mut self) {
+        self.responses_sent += 1;
+    }
+
+    /// Called when a STUN binding success response is received.
+    /// Also updates RTT measurements.
+    pub fn on_response_received(&mut self, rtt: Duration) {
+        self.responses_received += 1;
+        self.current_round_trip_time = rtt;
+        self.total_round_trip_time += rtt;
+    }
+
+    /// Called when a consent freshness request is sent (keepalive).
+    pub fn on_consent_request_sent(&mut self) {
+        self.consent_requests_sent += 1;
     }
 }

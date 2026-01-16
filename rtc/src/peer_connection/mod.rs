@@ -1988,7 +1988,7 @@ where
     /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
     /// // Get stats with current timestamp
     /// let report = pc.get_stats(Instant::now());
@@ -2009,7 +2009,9 @@ where
     /// # Specification
     ///
     /// See [getStats](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getstats)
-    pub fn get_stats(&self, now: std::time::Instant) -> RTCStatsReport {
+    pub fn get_stats(&mut self, now: std::time::Instant) -> RTCStatsReport {
+        // Update ICE agent stats before taking snapshot
+        self.update_ice_agent_stats();
         self.pipeline_context.stats.snapshot(now)
     }
 }

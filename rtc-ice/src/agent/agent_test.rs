@@ -267,7 +267,7 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
     ])?;
 
     {
-        a.handle_inbound(&mut msg, local, remote_addr)?;
+        a.handle_inbound(Instant::now(), &mut msg, local, remote_addr)?;
 
         // length of remote candidate list must be one now
         assert_eq!(
@@ -347,7 +347,7 @@ fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
         Box::new(FINGERPRINT),
     ])?;
 
-    let result = a.handle_inbound(&mut msg, local_index, remote_addr);
+    let result = a.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr);
     assert!(result.is_err());
 
     assert_eq!(

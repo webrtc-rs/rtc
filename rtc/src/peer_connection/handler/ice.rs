@@ -5,6 +5,7 @@ use crate::peer_connection::message::internal::{
 };
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use crate::statistics::accumulator::RTCStatsAccumulator;
+use crate::statistics::stats::ice_candidate_pair::RTCStatsIceCandidatePairState;
 use log::{debug, trace};
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage};
@@ -64,15 +65,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 transport: msg.transport,
                 message,
             })?;
-        } else if self
+        } else if let Some(pair_id) = self
             .ctx
             .ice_transport
             .agent
-            .get_selected_candidate_pair()
-            .is_some()
+            .get_selected_candidate_pair_id()
         {
             // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
+
+            // Track packets/bytes received on the selected candidate pair
+            let bytes = msg.message.len();
+            let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
+            pair.on_packet_received(bytes, msg.now);
 
             // When ICE restarts and the selected candidate pair changes,
             // WebRTC treats this as a path migration, and DTLS continues unchanged, bound to the ICE transport, not to a fixed 5-tuple.
@@ -99,6 +104,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             msg.transport.local_addr = local.addr();
             msg.transport.peer_addr = remote.addr();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
+
+            // Track packets/bytes sent on the selected candidate pair
+            if let Some(pair_id) = self
+                .ctx
+                .ice_transport
+                .agent
+                .get_selected_candidate_pair_id()
+            {
+                let bytes = msg.message.len();
+                let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
+                pair.on_packet_sent(bytes, msg.now);
+            }
 
             self.ctx.write_outs.push_back(msg);
         } else {
@@ -154,11 +171,23 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         remote.addr()
                     );
 
-                    // Update transport stats for selected candidate pair change
-                    let pair_id = format!("{}_{}", local.foundation(), remote.foundation());
-                    self.stats
-                        .transport
-                        .on_selected_candidate_pair_changed(pair_id);
+                    if let Some(pair_id) = self
+                        .ctx
+                        .ice_transport
+                        .agent
+                        .get_selected_candidate_pair_id()
+                    {
+                        // Create/update the candidate pair accumulator
+                        let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
+                        pair.local_candidate_id = local.id();
+                        pair.remote_candidate_id = remote.id();
+                        pair.nominated = true;
+                        pair.state = RTCStatsIceCandidatePairState::Succeeded;
+                        // Update transport stats for selected candidate pair change
+                        self.stats
+                            .transport
+                            .on_selected_candidate_pair_changed(pair_id);
+                    }
 
                     self.ctx
                         .event_outs
