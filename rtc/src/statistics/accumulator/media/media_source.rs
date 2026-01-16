@@ -1,9 +1,9 @@
 //! Media source statistics accumulator.
 
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
-use crate::statistics::stats::source::audio::RTCAudioSourceStats;
-use crate::statistics::stats::source::media::RTCMediaSourceStats;
-use crate::statistics::stats::source::video::RTCVideoSourceStats;
+use crate::statistics::stats::media::audio_source::RTCAudioSourceStats;
+use crate::statistics::stats::media::media_source::RTCMediaSourceStats;
+use crate::statistics::stats::media::video_source::RTCVideoSourceStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
 use std::time::Instant;
 

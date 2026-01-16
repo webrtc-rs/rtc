@@ -23,6 +23,7 @@ pub enum RTCStatsIceCandidatePairState {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCIceCandidatePairStats {
+    /// General Stats Fields
     pub stats: RTCStats,
 
     pub transport_id: String,

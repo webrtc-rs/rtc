@@ -1,7 +1,7 @@
 //! Audio playout statistics accumulator.
 
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
-use crate::statistics::stats::audio_playout::RTCAudioPlayoutStats;
+use crate::statistics::stats::media::audio_playout::RTCAudioPlayoutStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
 use std::time::Instant;
 

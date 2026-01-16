@@ -4,19 +4,19 @@
 //! of `getStats()` and contains a collection of statistics objects.
 
 use crate::statistics::stats::RTCStatsType;
-use crate::statistics::stats::audio_playout::RTCAudioPlayoutStats;
 use crate::statistics::stats::certificate::RTCCertificateStats;
 use crate::statistics::stats::codec::RTCCodecStats;
 use crate::statistics::stats::data_channel::RTCDataChannelStats;
 use crate::statistics::stats::ice_candidate::RTCIceCandidateStats;
 use crate::statistics::stats::ice_candidate_pair::RTCIceCandidatePairStats;
+use crate::statistics::stats::media::audio_playout::RTCAudioPlayoutStats;
+use crate::statistics::stats::media::audio_source::RTCAudioSourceStats;
+use crate::statistics::stats::media::video_source::RTCVideoSourceStats;
 use crate::statistics::stats::peer_connection::RTCPeerConnectionStats;
 use crate::statistics::stats::rtp_stream::inbound::RTCInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::outbound::RTCOutboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::remote_inbound::RTCRemoteInboundRtpStreamStats;
-use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteInboundRtpStreamStats as RTCRemoteOutboundRtpStreamStats;
-use crate::statistics::stats::source::audio::RTCAudioSourceStats;
-use crate::statistics::stats::source::video::RTCVideoSourceStats;
+use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::transport::RTCTransportStats;
 use std::collections::HashMap;
 

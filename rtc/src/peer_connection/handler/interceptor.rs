@@ -60,8 +60,7 @@ where
                 // Update inbound stream stats with remote sender info
                 let stream = self
                     .stats
-                    .rtp_streams
-                    .get_or_create_inbound(sr.ssrc, RtpCodecKind::Video);
+                    .get_or_create_inbound_rtp_streams(sr.ssrc, RtpCodecKind::Video);
                 stream.on_rtcp_sr_received(sr.packet_count as u64, sr.octet_count as u64, now);
             }
 
@@ -69,7 +68,7 @@ where
             if let Some(rr) = packet.as_any().downcast_ref::<ReceiverReport>() {
                 // RR contains info about how the remote receiver is receiving our stream
                 for report in &rr.reports {
-                    if let Some(stream) = self.stats.rtp_streams.outbound.get_mut(&report.ssrc) {
+                    if let Some(stream) = self.stats.outbound_rtp_streams.get_mut(&report.ssrc) {
                         // Calculate jitter in seconds (jitter is in timestamp units, divide by typical clock rate)
                         let jitter_seconds = report.jitter as f64 / 90000.0; // Assume 90kHz for video
                         let fraction_lost = report.fraction_lost as f64 / 256.0;

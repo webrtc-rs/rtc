@@ -1,4 +1,4 @@
-use super::media::RTCMediaSourceStats;
+use super::media_source::RTCMediaSourceStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

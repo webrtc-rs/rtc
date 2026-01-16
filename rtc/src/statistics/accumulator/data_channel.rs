@@ -11,7 +11,7 @@ use std::time::Instant;
 #[derive(Debug, Default)]
 pub struct DataChannelStatsAccumulator {
     /// The data channel identifier.
-    pub id: u16,
+    pub data_channel_identifier: u16,
     /// The label assigned to the data channel.
     pub label: String,
     /// The sub-protocol name.
@@ -56,9 +56,9 @@ impl DataChannelStatsAccumulator {
                 typ: RTCStatsType::DataChannel,
                 id: stats_id.to_string(),
             },
+            data_channel_identifier: self.data_channel_identifier,
             label: self.label.clone(),
             protocol: self.protocol.clone(),
-            data_channel_identifier: self.id,
             state: self.state,
             messages_sent: self.messages_sent,
             bytes_sent: self.bytes_sent,

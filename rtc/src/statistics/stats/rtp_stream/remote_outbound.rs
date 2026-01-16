@@ -5,7 +5,7 @@ use std::time::Instant;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RTCRemoteInboundRtpStreamStats {
+pub struct RTCRemoteOutboundRtpStreamStats {
     pub sent_rtp_stream_stats: RTCSentRtpStreamStats,
 
     pub local_id: String,

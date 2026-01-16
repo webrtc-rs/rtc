@@ -6,15 +6,14 @@ use ::serde::{Deserialize, Serialize};
 use shared::serde::instant_to_epoch;
 use std::time::Instant;
 
-pub mod audio_playout;
 pub mod certificate;
 pub mod codec;
 pub mod data_channel;
 pub mod ice_candidate;
 pub mod ice_candidate_pair;
+pub mod media;
 pub mod peer_connection;
 pub mod rtp_stream;
-pub mod source;
 pub mod transport;
 
 /// The type of statistics object.

@@ -5,28 +5,27 @@
 //! handler pipeline, and snapshots can be taken at any time to produce
 //! immutable stats reports.
 
-mod app_provided;
-mod audio_playout;
 mod certificate;
 mod codec;
 mod data_channel;
-mod ice;
-mod media_source;
+mod ice_candidate;
+mod media;
 mod peer_connection;
 mod rtp_stream;
 mod transport;
 
-pub use app_provided::*;
-pub use audio_playout::AudioPlayoutStatsAccumulator;
 pub use certificate::CertificateStatsAccumulator;
 pub use codec::CodecStatsAccumulator;
 pub use data_channel::DataChannelStatsAccumulator;
-pub use ice::{IceCandidateAccumulator, IceCandidatePairAccumulator, IceCandidatePairCollection};
-pub use media_source::MediaSourceStatsAccumulator;
-pub use peer_connection::PeerConnectionStatsAccumulator;
-pub use rtp_stream::{
-    InboundRtpStreamAccumulator, OutboundRtpStreamAccumulator, RtpStreamStatsCollection,
+pub use ice_candidate::{
+    IceCandidateAccumulator, IceCandidatePairAccumulator, IceCandidatePairCollection,
 };
+pub use media::app_provided::*;
+pub use media::audio_playout::AudioPlayoutStatsAccumulator;
+pub use media::media_source::MediaSourceStatsAccumulator;
+pub use peer_connection::PeerConnectionStatsAccumulator;
+pub use rtp_stream::inbound::InboundRtpStreamAccumulator;
+pub use rtp_stream::outbound::OutboundRtpStreamAccumulator;
 pub use transport::TransportStatsAccumulator;
 
 use crate::data_channel::RTCDataChannelId;
@@ -78,8 +77,11 @@ pub struct RTCStatsAccumulator {
     /// Data channel stats keyed by channel ID.
     pub data_channels: HashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
 
-    /// RTP stream stats (inbound and outbound).
-    pub rtp_streams: RtpStreamStatsCollection,
+    /// Inbound RTP stream accumulators keyed by SSRC.
+    pub inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,
+
+    /// Outbound RTP stream accumulators keyed by SSRC.
+    pub outbound_rtp_streams: HashMap<SSRC, OutboundRtpStreamAccumulator>,
 
     /// Media source stats keyed by track ID.
     pub media_sources: HashMap<String, MediaSourceStatsAccumulator>,
@@ -156,7 +158,7 @@ impl RTCStatsAccumulator {
         }
 
         // Inbound RTP stream stats
-        for (ssrc, stream) in &self.rtp_streams.inbound {
+        for (ssrc, stream) in &self.inbound_rtp_streams {
             let id = format!("RTCInboundRTPStream_{}_{}", stream.kind, ssrc);
             entries.push(RTCStatsReportEntry::InboundRtp(stream.snapshot(now, &id)));
             // Also add remote outbound stats derived from RTCP SR
@@ -166,7 +168,7 @@ impl RTCStatsAccumulator {
         }
 
         // Outbound RTP stream stats
-        for (ssrc, stream) in &self.rtp_streams.outbound {
+        for (ssrc, stream) in &self.outbound_rtp_streams {
             let id = format!("RTCOutboundRTPStream_{}_{}", stream.kind, ssrc);
             entries.push(RTCStatsReportEntry::OutboundRtp(stream.snapshot(now, &id)));
             // Also add remote inbound stats derived from RTCP RR
@@ -204,22 +206,37 @@ impl RTCStatsAccumulator {
     // Convenience methods for updating stats
     // ========================================================================
 
-    /// Gets or creates an inbound RTP stream accumulator.
-    pub fn get_or_create_inbound_rtp(
+    /// Gets or creates an inbound stream accumulator for the given SSRC.
+    pub fn get_or_create_inbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
     ) -> &mut InboundRtpStreamAccumulator {
-        self.rtp_streams.get_or_create_inbound(ssrc, kind)
+        self.inbound_rtp_streams
+            .entry(ssrc)
+            .or_insert_with(|| InboundRtpStreamAccumulator {
+                ssrc,
+                kind,
+                transport_id: "transport".to_string(),
+                ..Default::default()
+            })
     }
 
-    /// Gets or creates an outbound RTP stream accumulator.
-    pub fn get_or_create_outbound_rtp(
+    /// Gets or creates an outbound stream accumulator for the given SSRC.
+    pub fn get_or_create_outbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
     ) -> &mut OutboundRtpStreamAccumulator {
-        self.rtp_streams.get_or_create_outbound(ssrc, kind)
+        self.outbound_rtp_streams
+            .entry(ssrc)
+            .or_insert_with(|| OutboundRtpStreamAccumulator {
+                ssrc,
+                kind,
+                transport_id: "transport".to_string(),
+                active: true,
+                ..Default::default()
+            })
     }
 
     /// Gets or creates a data channel accumulator.
@@ -230,7 +247,7 @@ impl RTCStatsAccumulator {
         self.data_channels
             .entry(id)
             .or_insert_with(|| DataChannelStatsAccumulator {
-                id,
+                data_channel_identifier: id,
                 ..Default::default()
             })
     }
@@ -297,21 +314,21 @@ impl RTCStatsAccumulator {
 
     /// Updates decoder stats for an inbound video stream.
     pub fn update_decoder_stats(&mut self, ssrc: SSRC, stats: DecoderStatsUpdate) {
-        if let Some(stream) = self.rtp_streams.inbound.get_mut(&ssrc) {
+        if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
             stream.decoder_stats = Some(stats);
         }
     }
 
     /// Updates encoder stats for an outbound video stream.
     pub fn update_encoder_stats(&mut self, ssrc: SSRC, stats: EncoderStatsUpdate) {
-        if let Some(stream) = self.rtp_streams.outbound.get_mut(&ssrc) {
+        if let Some(stream) = self.outbound_rtp_streams.get_mut(&ssrc) {
             stream.encoder_stats = Some(stats);
         }
     }
 
     /// Updates audio receiver stats for an inbound audio stream.
     pub fn update_audio_receiver_stats(&mut self, ssrc: SSRC, stats: AudioReceiverStatsUpdate) {
-        if let Some(stream) = self.rtp_streams.inbound.get_mut(&ssrc) {
+        if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
             stream.audio_receiver_stats = Some(stats);
         }
     }
