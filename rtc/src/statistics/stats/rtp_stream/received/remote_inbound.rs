@@ -1,4 +1,4 @@
-use super::received::RTCReceivedRtpStreamStats;
+use super::RTCReceivedRtpStreamStats;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

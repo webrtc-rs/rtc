@@ -1,4 +1,4 @@
-use super::received::RTCReceivedRtpStreamStats;
+use super::RTCReceivedRtpStreamStats;
 use ::serde::{Deserialize, Serialize};
 use shared::serde::instant_to_epoch;
 use std::time::Instant;

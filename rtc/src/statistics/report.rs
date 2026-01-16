@@ -13,10 +13,10 @@ use crate::statistics::stats::media::audio_playout::RTCAudioPlayoutStats;
 use crate::statistics::stats::media::audio_source::RTCAudioSourceStats;
 use crate::statistics::stats::media::video_source::RTCVideoSourceStats;
 use crate::statistics::stats::peer_connection::RTCPeerConnectionStats;
-use crate::statistics::stats::rtp_stream::inbound::RTCInboundRtpStreamStats;
-use crate::statistics::stats::rtp_stream::outbound::RTCOutboundRtpStreamStats;
-use crate::statistics::stats::rtp_stream::remote_inbound::RTCRemoteInboundRtpStreamStats;
-use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteOutboundRtpStreamStats;
+use crate::statistics::stats::rtp_stream::received::inbound::RTCInboundRtpStreamStats;
+use crate::statistics::stats::rtp_stream::received::remote_inbound::RTCRemoteInboundRtpStreamStats;
+use crate::statistics::stats::rtp_stream::sent::outbound::RTCOutboundRtpStreamStats;
+use crate::statistics::stats::rtp_stream::sent::remote_outbound::RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::transport::RTCTransportStats;
 use std::collections::HashMap;
 

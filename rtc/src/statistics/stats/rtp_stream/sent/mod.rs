@@ -1,6 +1,9 @@
 use super::RTCRtpStreamStats;
 use serde::{Deserialize, Serialize};
 
+pub mod outbound;
+pub mod remote_outbound;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCSentRtpStreamStats {

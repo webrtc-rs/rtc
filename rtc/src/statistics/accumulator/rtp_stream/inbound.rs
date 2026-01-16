@@ -2,10 +2,10 @@ use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::accumulator::{AudioReceiverStatsUpdate, DecoderStatsUpdate};
 use crate::statistics::stats::rtp_stream::RTCRtpStreamStats;
-use crate::statistics::stats::rtp_stream::inbound::RTCInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::received::RTCReceivedRtpStreamStats;
-use crate::statistics::stats::rtp_stream::remote_outbound::RTCRemoteOutboundRtpStreamStats;
+use crate::statistics::stats::rtp_stream::received::inbound::RTCInboundRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::RTCSentRtpStreamStats;
+use crate::statistics::stats::rtp_stream::sent::remote_outbound::RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
 use std::time::Instant;
 

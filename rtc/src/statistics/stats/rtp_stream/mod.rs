@@ -3,11 +3,7 @@ use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use serde::{Deserialize, Serialize};
 
-pub mod inbound;
-pub mod outbound;
 pub mod received;
-pub mod remote_inbound;
-pub mod remote_outbound;
 pub mod sent;
 
 #[derive(Debug, Serialize, Deserialize)]

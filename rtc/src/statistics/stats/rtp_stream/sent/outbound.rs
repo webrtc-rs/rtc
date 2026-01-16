@@ -1,5 +1,5 @@
-use super::super::RTCQualityLimitationReason;
-use super::sent::RTCSentRtpStreamStats;
+use super::super::super::RTCQualityLimitationReason;
+use super::RTCSentRtpStreamStats;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
