@@ -6,6 +6,7 @@ use std::time::Instant;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCInboundRtpStreamStats {
+    #[serde(flatten)]
     pub received_rtp_stream_stats: RTCReceivedRtpStreamStats,
 
     pub track_identifier: String,

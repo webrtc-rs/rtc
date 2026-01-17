@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCAudioSourceStats {
+    #[serde(flatten)]
     pub media_source_stats: RTCMediaSourceStats,
 
     pub audio_level: f64,

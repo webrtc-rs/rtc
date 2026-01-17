@@ -175,3 +175,189 @@ impl Default for TransportStatsAccumulator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default() {
+        let acc = TransportStatsAccumulator::default();
+        assert_eq!(acc.transport_id, "RTCTransport");
+        assert_eq!(acc.packets_sent, 0);
+        assert_eq!(acc.packets_received, 0);
+        assert_eq!(acc.bytes_sent, 0);
+        assert_eq!(acc.bytes_received, 0);
+        assert_eq!(acc.selected_candidate_pair_changes, 0);
+        assert_eq!(acc.ccfb_messages_sent, 0);
+        assert_eq!(acc.ccfb_messages_received, 0);
+    }
+
+    #[test]
+    fn test_on_packet_sent() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_packet_sent(100);
+        assert_eq!(acc.packets_sent, 1);
+        assert_eq!(acc.bytes_sent, 100);
+
+        acc.on_packet_sent(200);
+        assert_eq!(acc.packets_sent, 2);
+        assert_eq!(acc.bytes_sent, 300);
+    }
+
+    #[test]
+    fn test_on_packet_received() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_packet_received(150);
+        assert_eq!(acc.packets_received, 1);
+        assert_eq!(acc.bytes_received, 150);
+
+        acc.on_packet_received(250);
+        assert_eq!(acc.packets_received, 2);
+        assert_eq!(acc.bytes_received, 400);
+    }
+
+    #[test]
+    fn test_on_selected_candidate_pair_changed() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_selected_candidate_pair_changed("pair_1".to_string());
+        assert_eq!(acc.selected_candidate_pair_id, "pair_1");
+        assert_eq!(acc.selected_candidate_pair_changes, 1);
+
+        acc.on_selected_candidate_pair_changed("pair_2".to_string());
+        assert_eq!(acc.selected_candidate_pair_id, "pair_2");
+        assert_eq!(acc.selected_candidate_pair_changes, 2);
+    }
+
+    #[test]
+    fn test_on_ice_state_changed() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_ice_state_changed(RTCIceTransportState::Checking);
+        assert_eq!(acc.ice_state, RTCIceTransportState::Checking);
+
+        acc.on_ice_state_changed(RTCIceTransportState::Connected);
+        assert_eq!(acc.ice_state, RTCIceTransportState::Connected);
+
+        acc.on_ice_state_changed(RTCIceTransportState::Completed);
+        assert_eq!(acc.ice_state, RTCIceTransportState::Completed);
+    }
+
+    #[test]
+    fn test_on_dtls_state_changed() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_dtls_state_changed(RTCDtlsTransportState::Connecting);
+        assert_eq!(acc.dtls_state, RTCDtlsTransportState::Connecting);
+
+        acc.on_dtls_state_changed(RTCDtlsTransportState::Connected);
+        assert_eq!(acc.dtls_state, RTCDtlsTransportState::Connected);
+    }
+
+    #[test]
+    fn test_on_dtls_handshake_complete() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_dtls_handshake_complete(
+            "DTLS 1.2".to_string(),
+            "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string(),
+            "SRTP_AES128_CM_HMAC_SHA1_80".to_string(),
+            RTCDtlsRole::Client,
+        );
+
+        assert_eq!(acc.tls_version, "DTLS 1.2");
+        assert_eq!(acc.dtls_cipher, "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256");
+        assert_eq!(acc.srtp_cipher, "SRTP_AES128_CM_HMAC_SHA1_80");
+        assert_eq!(acc.dtls_role, RTCDtlsRole::Client);
+    }
+
+    #[test]
+    fn test_on_ccfb_sent_received() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_ccfb_sent();
+        acc.on_ccfb_sent();
+        assert_eq!(acc.ccfb_messages_sent, 2);
+
+        acc.on_ccfb_received();
+        assert_eq!(acc.ccfb_messages_received, 1);
+    }
+
+    #[test]
+    fn test_bidirectional_traffic() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        // Simulate traffic flow
+        acc.on_packet_sent(100);
+        acc.on_packet_received(80);
+        acc.on_packet_sent(200);
+        acc.on_packet_received(150);
+        acc.on_packet_sent(50);
+        acc.on_packet_received(120);
+
+        assert_eq!(acc.packets_sent, 3);
+        assert_eq!(acc.bytes_sent, 350);
+        assert_eq!(acc.packets_received, 3);
+        assert_eq!(acc.bytes_received, 350);
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let mut acc = TransportStatsAccumulator::default();
+        acc.transport_id = "RTCTransport_0".to_string();
+        acc.on_packet_sent(100);
+        acc.on_packet_received(80);
+        acc.on_ice_state_changed(RTCIceTransportState::Connected);
+        acc.on_dtls_state_changed(RTCDtlsTransportState::Connected);
+        acc.on_dtls_handshake_complete(
+            "DTLS 1.2".to_string(),
+            "AES_GCM".to_string(),
+            "SRTP_AES".to_string(),
+            RTCDtlsRole::Server,
+        );
+        acc.on_selected_candidate_pair_changed("pair_1".to_string());
+        acc.on_ccfb_sent();
+        acc.on_ccfb_received();
+
+        let now = Instant::now();
+        let stats = acc.snapshot(now);
+
+        assert_eq!(stats.stats.id, "RTCTransport_0");
+        assert_eq!(stats.stats.typ, RTCStatsType::Transport);
+        assert_eq!(stats.stats.timestamp, now);
+        assert_eq!(stats.packets_sent, 1);
+        assert_eq!(stats.bytes_sent, 100);
+        assert_eq!(stats.packets_received, 1);
+        assert_eq!(stats.bytes_received, 80);
+        assert_eq!(stats.ice_state, RTCIceTransportState::Connected);
+        assert_eq!(stats.dtls_state, RTCDtlsTransportState::Connected);
+        assert_eq!(stats.tls_version, "DTLS 1.2");
+        assert_eq!(stats.dtls_cipher, "AES_GCM");
+        assert_eq!(stats.srtp_cipher, "SRTP_AES");
+        assert_eq!(stats.dtls_role, RTCDtlsRole::Server);
+        assert_eq!(stats.selected_candidate_pair_id, "pair_1");
+        assert_eq!(stats.selected_candidate_pair_changes, 1);
+        assert_eq!(stats.ccfb_messages_sent, 1);
+        assert_eq!(stats.ccfb_messages_received, 1);
+    }
+
+    #[test]
+    fn test_snapshot_json_serialization() {
+        let mut acc = TransportStatsAccumulator::default();
+        acc.on_packet_sent(500);
+        acc.on_packet_received(400);
+
+        let now = Instant::now();
+        let stats = acc.snapshot(now);
+
+        let json = serde_json::to_string(&stats).expect("should serialize");
+        assert!(json.contains("\"packetsSent\":1"));
+        assert!(json.contains("\"bytesSent\":500"));
+        assert!(json.contains("\"packetsReceived\":1"));
+        assert!(json.contains("\"bytesReceived\":400"));
+        assert!(json.contains("\"type\":\"transport\""));
+    }
+}

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RTCIceCandidateStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     /// The transport ID this candidate belongs to.

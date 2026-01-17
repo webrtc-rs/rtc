@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RTCCodecStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     /// The RTP payload type for this codec.

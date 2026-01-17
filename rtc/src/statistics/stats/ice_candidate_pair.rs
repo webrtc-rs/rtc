@@ -37,6 +37,7 @@ impl From<CandidatePairState> for RTCStatsIceCandidatePairState {
 #[serde(rename_all = "camelCase")]
 pub struct RTCIceCandidatePairStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     /// The transport ID this candidate belongs to.

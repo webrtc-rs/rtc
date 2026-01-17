@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RTCCertificateStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     /// The certificate fingerprint.

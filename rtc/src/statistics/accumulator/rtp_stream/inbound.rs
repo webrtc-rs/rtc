@@ -379,3 +379,252 @@ impl InboundRtpStreamAccumulator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default() {
+        let acc = InboundRtpStreamAccumulator::default();
+        assert_eq!(acc.ssrc, 0);
+        assert_eq!(acc.packets_received, 0);
+        assert_eq!(acc.bytes_received, 0);
+        assert_eq!(acc.header_bytes_received, 0);
+        assert_eq!(acc.packets_lost, 0);
+        assert_eq!(acc.jitter, 0.0);
+        assert_eq!(acc.nack_count, 0);
+        assert_eq!(acc.fir_count, 0);
+        assert_eq!(acc.pli_count, 0);
+        assert_eq!(acc.frames_received, 0);
+        assert_eq!(acc.frames_dropped, 0);
+        assert_eq!(acc.fec_packets_received, 0);
+        assert_eq!(acc.retransmitted_packets_received, 0);
+    }
+
+    #[test]
+    fn test_on_rtp_received() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+        let now = Instant::now();
+
+        acc.on_rtp_received(12, 1188, now);
+        assert_eq!(acc.packets_received, 1);
+        assert_eq!(acc.header_bytes_received, 12);
+        assert_eq!(acc.bytes_received, 1188);
+        assert_eq!(acc.last_packet_received_timestamp, Some(now));
+
+        let later = now + std::time::Duration::from_millis(20);
+        acc.on_rtp_received(12, 1000, later);
+        assert_eq!(acc.packets_received, 2);
+        assert_eq!(acc.header_bytes_received, 24);
+        assert_eq!(acc.bytes_received, 2188);
+        assert_eq!(acc.last_packet_received_timestamp, Some(later));
+    }
+
+    #[test]
+    fn test_on_rtcp_rr_generated() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+
+        acc.on_rtcp_rr_generated(10, 0.005);
+        assert_eq!(acc.packets_lost, 10);
+        assert_eq!(acc.jitter, 0.005);
+
+        // Update with new values
+        acc.on_rtcp_rr_generated(15, 0.008);
+        assert_eq!(acc.packets_lost, 15);
+        assert_eq!(acc.jitter, 0.008);
+    }
+
+    #[test]
+    fn test_rtcp_feedback_counters() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+
+        acc.on_nack_sent();
+        acc.on_nack_sent();
+        assert_eq!(acc.nack_count, 2);
+
+        acc.on_fir_sent();
+        assert_eq!(acc.fir_count, 1);
+
+        acc.on_pli_sent();
+        acc.on_pli_sent();
+        acc.on_pli_sent();
+        assert_eq!(acc.pli_count, 3);
+    }
+
+    #[test]
+    fn test_on_rtcp_sr_received() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+        let now = Instant::now();
+
+        acc.on_rtcp_sr_received(1000, 1_000_000, now);
+        assert_eq!(acc.remote_packets_sent, 1000);
+        assert_eq!(acc.remote_bytes_sent, 1_000_000);
+        assert_eq!(acc.remote_timestamp, Some(now));
+        assert_eq!(acc.reports_received, 1);
+
+        let later = now + std::time::Duration::from_secs(5);
+        acc.on_rtcp_sr_received(2000, 2_000_000, later);
+        assert_eq!(acc.remote_packets_sent, 2000);
+        assert_eq!(acc.remote_bytes_sent, 2_000_000);
+        assert_eq!(acc.remote_timestamp, Some(later));
+        assert_eq!(acc.reports_received, 2);
+    }
+
+    #[test]
+    fn test_frame_tracking() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+
+        acc.on_frame_received();
+        acc.on_frame_received();
+        acc.on_frame_received();
+        assert_eq!(acc.frames_received, 3);
+
+        acc.on_frame_dropped();
+        assert_eq!(acc.frames_dropped, 1);
+    }
+
+    #[test]
+    fn test_rtx_and_fec_received() {
+        let mut acc = InboundRtpStreamAccumulator::default();
+
+        acc.on_rtx_received(500);
+        acc.on_rtx_received(600);
+        assert_eq!(acc.retransmitted_packets_received, 2);
+        assert_eq!(acc.retransmitted_bytes_received, 1100);
+
+        acc.on_fec_received(200);
+        acc.on_fec_received(300);
+        acc.on_fec_received(250);
+        assert_eq!(acc.fec_packets_received, 3);
+        assert_eq!(acc.fec_bytes_received, 750);
+    }
+
+    #[test]
+    fn test_full_inbound_stream_flow() {
+        let mut acc = InboundRtpStreamAccumulator {
+            ssrc: 12345678,
+            kind: RtpCodecKind::Video,
+            transport_id: "RTCTransport_0".to_string(),
+            codec_id: "RTCCodec_video_96".to_string(),
+            track_identifier: "video-track-1".to_string(),
+            mid: "0".to_string(),
+            rtx_ssrc: Some(12345679),
+            ..Default::default()
+        };
+
+        let now = Instant::now();
+
+        // Receive RTP packets
+        for i in 0..100 {
+            acc.on_rtp_received(12, 1200, now + std::time::Duration::from_millis(i * 33));
+        }
+
+        // Some frames received
+        for _ in 0..30 {
+            acc.on_frame_received();
+        }
+
+        // A few packets lost, generate RR
+        acc.on_rtcp_rr_generated(5, 0.003);
+
+        // Request retransmission
+        acc.on_nack_sent();
+
+        // Receive RTX
+        acc.on_rtx_received(1200);
+
+        // Receive SR from remote
+        acc.on_rtcp_sr_received(100, 120000, now);
+
+        assert_eq!(acc.packets_received, 100);
+        assert_eq!(acc.bytes_received, 120000);
+        assert_eq!(acc.frames_received, 30);
+        assert_eq!(acc.packets_lost, 5);
+        assert_eq!(acc.jitter, 0.003);
+        assert_eq!(acc.nack_count, 1);
+        assert_eq!(acc.retransmitted_packets_received, 1);
+        assert_eq!(acc.retransmitted_bytes_received, 1200);
+        assert_eq!(acc.remote_packets_sent, 100);
+        assert_eq!(acc.reports_received, 1);
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let now = Instant::now();
+        let mut acc = InboundRtpStreamAccumulator {
+            ssrc: 11111111,
+            kind: RtpCodecKind::Audio,
+            transport_id: "RTCTransport_0".to_string(),
+            codec_id: "RTCCodec_audio_111".to_string(),
+            track_identifier: "audio-track".to_string(),
+            mid: "1".to_string(),
+            ..Default::default()
+        };
+
+        acc.on_rtp_received(12, 160, now);
+        acc.on_rtp_received(12, 160, now);
+        acc.on_rtcp_rr_generated(0, 0.001);
+
+        let stats = acc.snapshot(now, "RTCInboundRTPStream_audio_11111111");
+
+        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.stats.id, "RTCInboundRTPStream_audio_11111111");
+        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::InboundRTP);
+        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.ssrc, 11111111);
+        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.kind, RtpCodecKind::Audio);
+        assert_eq!(stats.received_rtp_stream_stats.packets_received, 2);
+        assert_eq!(stats.bytes_received, 320);
+        assert_eq!(stats.header_bytes_received, 24);
+        assert_eq!(stats.received_rtp_stream_stats.jitter, 0.001);
+        assert_eq!(stats.track_identifier, "audio-track");
+        assert_eq!(stats.mid, "1");
+    }
+
+    #[test]
+    fn test_snapshot_remote() {
+        let now = Instant::now();
+        let mut acc = InboundRtpStreamAccumulator {
+            ssrc: 22222222,
+            kind: RtpCodecKind::Video,
+            transport_id: "RTCTransport_0".to_string(),
+            codec_id: "RTCCodec_video_96".to_string(),
+            ..Default::default()
+        };
+
+        acc.on_rtcp_sr_received(500, 600000, now);
+        acc.on_rtcp_sr_received(1000, 1200000, now);
+
+        let remote_stats = acc.snapshot_remote(now);
+
+        assert_eq!(remote_stats.sent_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::RemoteOutboundRTP);
+        assert_eq!(remote_stats.sent_rtp_stream_stats.rtp_stream_stats.ssrc, 22222222);
+        assert_eq!(remote_stats.sent_rtp_stream_stats.packets_sent, 1000);
+        assert_eq!(remote_stats.sent_rtp_stream_stats.bytes_sent, 1200000);
+        assert_eq!(remote_stats.reports_sent, 2);
+        assert!(remote_stats.local_id.contains("RTCInboundRTPStream"));
+    }
+
+    #[test]
+    fn test_snapshot_json_serialization() {
+        let now = Instant::now();
+        let mut acc = InboundRtpStreamAccumulator {
+            ssrc: 33333333,
+            kind: RtpCodecKind::Video,
+            ..Default::default()
+        };
+
+        acc.on_rtp_received(12, 1200, now);
+        acc.on_frame_received();
+        acc.on_nack_sent();
+
+        let stats = acc.snapshot(now, "RTCInboundRTPStream_video_33333333");
+
+        let json = serde_json::to_string(&stats).expect("should serialize");
+        assert!(json.contains("\"ssrc\":33333333"));
+        assert!(json.contains("\"packetsReceived\":1"));
+        assert!(json.contains("\"bytesReceived\":1200"));
+        assert!(json.contains("\"framesReceived\":1"));
+        assert!(json.contains("\"nackCount\":1"));
+        assert!(json.contains("\"type\":\"inbound-rtp\""));
+    }
+}

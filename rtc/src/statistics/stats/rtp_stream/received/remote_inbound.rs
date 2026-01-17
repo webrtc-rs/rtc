@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCRemoteInboundRtpStreamStats {
+    #[serde(flatten)]
     pub received_rtp_stream_stats: RTCReceivedRtpStreamStats,
 
     pub local_id: String,

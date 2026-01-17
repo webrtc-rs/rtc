@@ -101,3 +101,188 @@ impl CodecStatsAccumulator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default() {
+        let acc = CodecStatsAccumulator::default();
+        assert_eq!(acc.payload_type, 0);
+        assert_eq!(acc.mime_type, "");
+        assert_eq!(acc.channels, 0);
+        assert_eq!(acc.clock_rate, 0);
+        assert_eq!(acc.sdp_fmtp_line, "");
+    }
+
+    #[test]
+    fn test_codec_direction_display() {
+        assert_eq!(format!("{}", CodecDirection::Send), "send");
+        assert_eq!(format!("{}", CodecDirection::Receive), "recv");
+    }
+
+    #[test]
+    fn test_codec_direction_equality() {
+        assert_eq!(CodecDirection::Send, CodecDirection::Send);
+        assert_eq!(CodecDirection::Receive, CodecDirection::Receive);
+        assert_ne!(CodecDirection::Send, CodecDirection::Receive);
+    }
+
+    #[test]
+    fn test_generate_id_send() {
+        let id = CodecStatsAccumulator::generate_id("RTCTransport_0", CodecDirection::Send, 96);
+        assert_eq!(id, "RTCCodec_RTCTransport_0_send_PT96");
+    }
+
+    #[test]
+    fn test_generate_id_receive() {
+        let id = CodecStatsAccumulator::generate_id("RTCTransport_0", CodecDirection::Receive, 111);
+        assert_eq!(id, "RTCCodec_RTCTransport_0_recv_PT111");
+    }
+
+    #[test]
+    fn test_from_codec() {
+        let codec = RTCRtpCodec {
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_string(),
+            ..Default::default()
+        };
+
+        let acc = CodecStatsAccumulator::from_codec(&codec, 96);
+
+        assert_eq!(acc.payload_type, 96);
+        assert_eq!(acc.mime_type, "video/VP8");
+        assert_eq!(acc.clock_rate, 90000);
+        assert_eq!(acc.channels, 0);
+    }
+
+    #[test]
+    fn test_from_codec_audio_with_fmtp() {
+        let codec = RTCRtpCodec {
+            mime_type: "audio/opus".to_string(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "minptime=10;useinbandfec=1".to_string(),
+            ..Default::default()
+        };
+
+        let acc = CodecStatsAccumulator::from_codec(&codec, 111);
+
+        assert_eq!(acc.payload_type, 111);
+        assert_eq!(acc.mime_type, "audio/opus");
+        assert_eq!(acc.clock_rate, 48000);
+        assert_eq!(acc.channels, 2);
+        assert_eq!(acc.sdp_fmtp_line, "minptime=10;useinbandfec=1");
+    }
+
+    #[test]
+    fn test_snapshot_video_codec() {
+        let now = Instant::now();
+        let acc = CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/H264".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_string(),
+        };
+
+        let stats = acc.snapshot(now, "RTCCodec_RTCTransport_0_send_PT96");
+
+        assert_eq!(stats.stats.id, "RTCCodec_RTCTransport_0_send_PT96");
+        assert_eq!(stats.stats.typ, RTCStatsType::Codec);
+        assert_eq!(stats.stats.timestamp, now);
+        assert_eq!(stats.payload_type, 96);
+        assert_eq!(stats.mime_type, "video/H264");
+        assert_eq!(stats.clock_rate, 90000);
+        assert_eq!(stats.channels, 0);
+        assert!(stats.sdp_fmtp_line.contains("profile-level-id=42e01f"));
+    }
+
+    #[test]
+    fn test_snapshot_audio_codec() {
+        let now = Instant::now();
+        let acc = CodecStatsAccumulator {
+            payload_type: 111,
+            mime_type: "audio/opus".to_string(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "minptime=10;useinbandfec=1".to_string(),
+        };
+
+        let stats = acc.snapshot(now, "RTCCodec_RTCTransport_0_recv_PT111");
+
+        assert_eq!(stats.stats.id, "RTCCodec_RTCTransport_0_recv_PT111");
+        assert_eq!(stats.payload_type, 111);
+        assert_eq!(stats.mime_type, "audio/opus");
+        assert_eq!(stats.clock_rate, 48000);
+        assert_eq!(stats.channels, 2);
+    }
+
+    #[test]
+    fn test_clone() {
+        let acc = CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/VP9".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "profile-id=0".to_string(),
+        };
+
+        let cloned = acc.clone();
+
+        assert_eq!(cloned.payload_type, acc.payload_type);
+        assert_eq!(cloned.mime_type, acc.mime_type);
+        assert_eq!(cloned.clock_rate, acc.clock_rate);
+        assert_eq!(cloned.sdp_fmtp_line, acc.sdp_fmtp_line);
+    }
+
+    #[test]
+    fn test_snapshot_json_serialization() {
+        let now = Instant::now();
+        let acc = CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_string(),
+        };
+
+        let stats = acc.snapshot(now, "RTCCodec_test");
+
+        let json = serde_json::to_string(&stats).expect("should serialize");
+        assert!(json.contains("\"payloadType\":96"));
+        assert!(json.contains("\"mimeType\":\"video/VP8\""));
+        assert!(json.contains("\"clockRate\":90000"));
+        assert!(json.contains("\"type\":\"codec\""));
+    }
+
+    #[test]
+    fn test_different_payload_types_same_codec() {
+        // Same codec can have different payload types in different sessions
+        let acc1 = CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_string(),
+        };
+
+        let acc2 = CodecStatsAccumulator {
+            payload_type: 100,
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_string(),
+        };
+
+        assert_ne!(acc1.payload_type, acc2.payload_type);
+        assert_eq!(acc1.mime_type, acc2.mime_type);
+
+        let id1 = CodecStatsAccumulator::generate_id("t", CodecDirection::Send, acc1.payload_type);
+        let id2 = CodecStatsAccumulator::generate_id("t", CodecDirection::Send, acc2.payload_type);
+        assert_ne!(id1, id2);
+    }
+}

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCMediaSourceStats {
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     pub track_id: String,

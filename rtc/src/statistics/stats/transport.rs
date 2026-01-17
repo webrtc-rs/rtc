@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RTCTransportStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     // Packet/byte counters

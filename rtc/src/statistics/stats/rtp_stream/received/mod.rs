@@ -7,6 +7,7 @@ pub mod remote_inbound;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCReceivedRtpStreamStats {
+    #[serde(flatten)]
     pub rtp_stream_stats: RTCRtpStreamStats,
 
     pub packets_received: u64,

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RTCPeerConnectionStats {
     /// General Stats Fields
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     /// Total number of data channels opened.

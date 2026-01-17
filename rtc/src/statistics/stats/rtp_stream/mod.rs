@@ -9,6 +9,7 @@ pub mod sent;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCRtpStreamStats {
+    #[serde(flatten)]
     pub stats: RTCStats,
 
     pub ssrc: SSRC,

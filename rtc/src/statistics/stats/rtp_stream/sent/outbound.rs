@@ -6,6 +6,7 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCOutboundRtpStreamStats {
+    #[serde(flatten)]
     pub sent_rtp_stream_stats: RTCSentRtpStreamStats,
 
     pub mid: String,
