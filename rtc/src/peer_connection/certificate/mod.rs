@@ -191,8 +191,6 @@ use ring::rsa;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
-//TODO:use crate::statistics::stats_collector::StatsCollector;
-//TODO:use crate::statistics::{CertificateStats, StatsReportType};
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;

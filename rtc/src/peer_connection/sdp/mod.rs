@@ -1366,7 +1366,6 @@ pub(crate) fn rtp_extensions_from_media_description(
 /// and increments session version by one.
 /// <https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-25#section-5.2.2>
 pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription) {
-    //TODO: if atomic.CompareAndSwapUint64(&origin.SessionVersion, 0, d.Origin.SessionVersion)
     if origin.session_version == 0 {
         // store
         origin.session_version = d.origin.session_version;
