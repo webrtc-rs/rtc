@@ -252,7 +252,11 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
         {
             dc.send_text(message_content.to_string())?;
             offer_messages_sent += 1;
-            log::info!("[Offer] Sent message {}/{}", offer_messages_sent, messages_to_send);
+            log::info!(
+                "[Offer] Sent message {}/{}",
+                offer_messages_sent,
+                messages_to_send
+            );
         }
 
         // Check if test is complete
@@ -401,10 +405,7 @@ async fn test_ice_tcp_passive_accepts_connection() -> Result<()> {
 
     // Verify addresses match
     assert_eq!(peer_addr, active_local);
-    assert_eq!(
-        accepted_stream.peer_addr()?,
-        active_local
-    );
+    assert_eq!(accepted_stream.peer_addr()?, active_local);
 
     // Test TCP framing round-trip
     let test_message = b"Test STUN binding request";
@@ -561,7 +562,9 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
         // Process events
         while let Some(event) = runner.offer_pc.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::Connected) => {
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(
+                    RTCPeerConnectionState::Connected,
+                ) => {
                     offer_connected = true;
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
@@ -572,7 +575,9 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
         }
         while let Some(event) = runner.answer_pc.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::Connected) => {
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(
+                    RTCPeerConnectionState::Connected,
+                ) => {
                     answer_connected = true;
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
@@ -620,11 +625,18 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
         }
 
         // Handle timeouts and I/O
-        let next_timeout = runner.offer_pc.poll_timeout()
+        let next_timeout = runner
+            .offer_pc
+            .poll_timeout()
             .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION)
-            .min(runner.answer_pc.poll_timeout()
-                .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION));
-        let delay = next_timeout.saturating_duration_since(Instant::now())
+            .min(
+                runner
+                    .answer_pc
+                    .poll_timeout()
+                    .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION),
+            );
+        let delay = next_timeout
+            .saturating_duration_since(Instant::now())
             .min(Duration::from_millis(10));
 
         if delay.is_zero() {
@@ -704,8 +716,14 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
 
     assert!(offer_connected, "Offer should be connected");
     assert!(answer_connected, "Answer should be connected");
-    assert!(offer_received >= messages_each, "Offer should receive messages");
-    assert!(answer_received >= messages_each, "Answer should receive messages");
+    assert!(
+        offer_received >= messages_each,
+        "Offer should receive messages"
+    );
+    assert!(
+        answer_received >= messages_each,
+        "Answer should receive messages"
+    );
 
     runner.offer_pc.close()?;
     runner.answer_pc.close()?;

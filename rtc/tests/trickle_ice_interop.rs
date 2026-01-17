@@ -208,9 +208,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
         sdp_mline_index: Some(0),
         username_fragment: None,
     };
-    webrtc_pc
-        .add_ice_candidate(webrtc_remote_candidate)
-        .await?;
+    webrtc_pc.add_ice_candidate(webrtc_remote_candidate).await?;
     log::info!("WebRTC added remote candidate (trickle from RTC)");
 
     // Wait for webrtc ICE gathering to complete
@@ -222,7 +220,10 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
         log::info!("WebRTC ICE gathering complete, adding candidates to RTC");
 
         for line in local_desc.sdp.lines() {
-            if line.starts_with("a=candidate:") && line.contains("typ host") && line.contains(" udp ") {
+            if line.starts_with("a=candidate:")
+                && line.contains("typ host")
+                && line.contains(" udp ")
+            {
                 let candidate_str = line.strip_prefix("a=").unwrap_or(line);
                 let remote_candidate = rtc::peer_connection::transport::RTCIceCandidateInit {
                     candidate: candidate_str.to_string(),
@@ -501,9 +502,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
         sdp_mline_index: Some(0),
         username_fragment: None,
     };
-    webrtc_pc
-        .add_ice_candidate(webrtc_remote_candidate)
-        .await?;
+    webrtc_pc.add_ice_candidate(webrtc_remote_candidate).await?;
     log::info!("WebRTC added remote candidate (trickle from RTC)");
 
     // Wait for webrtc ICE gathering and add candidates to RTC
@@ -515,7 +514,10 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
         log::info!("WebRTC ICE gathering complete, adding candidates to RTC");
 
         for line in local_desc.sdp.lines() {
-            if line.starts_with("a=candidate:") && line.contains("typ host") && line.contains(" udp ") {
+            if line.starts_with("a=candidate:")
+                && line.contains("typ host")
+                && line.contains(" udp ")
+            {
                 let candidate_str = line.strip_prefix("a=").unwrap_or(line);
                 let remote_candidate = rtc::peer_connection::transport::RTCIceCandidateInit {
                     candidate: candidate_str.to_string(),

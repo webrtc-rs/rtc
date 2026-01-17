@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use rtc::ice::mdns::MulticastDnsMode;
-use rtc::mdns::{MulticastSocket, MDNS_PORT};
+use rtc::mdns::{MDNS_PORT, MulticastSocket};
 use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
@@ -202,16 +202,18 @@ async fn run_rtc_event_loop(
     while let Some(message) = rtc_pc.poll_read() {
         if let RTCMessage::DataChannelMessage(channel_id, data_channel_message) = message {
             let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
-            log::info!("RTC received message on channel {}: '{}'", channel_id, msg_str);
+            log::info!(
+                "RTC received message on channel {}: '{}'",
+                channel_id,
+                msg_str
+            );
 
             {
                 let mut rtc_msgs = rtc_received_messages.lock().await;
                 rtc_msgs.push(msg_str.clone());
             }
 
-            if echo_messages
-                && let Some(mut dc) = rtc_pc.data_channel(channel_id)
-            {
+            if echo_messages && let Some(mut dc) = rtc_pc.data_channel(channel_id) {
                 log::info!("RTC echoing message back: '{}'", msg_str);
                 dc.send_text(msg_str)?;
             }
@@ -508,8 +510,7 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
     let local_addr = pc_socket.local_addr()?;
     let mdns_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
-    let mut rtc_pc =
-        create_rtc_peer_with_mdns(local_addr, MulticastDnsMode::QueryAndGather, true)?;
+    let mut rtc_pc = create_rtc_peer_with_mdns(local_addr, MulticastDnsMode::QueryAndGather, true)?;
     log::info!(
         "Created RTC peer with QueryAndGather mDNS mode, local name: {}",
         MDNS_LOCAL_NAME
@@ -707,8 +708,9 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
         .expect("local description should be set");
 
     // Set answer on RTC
-    let rtc_answer =
-        rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp.clone())?;
+    let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
+        answer_with_candidates.sdp.clone(),
+    )?;
     rtc_pc.set_remote_description(rtc_answer)?;
 
     let mut rtc_connected = false;
@@ -879,8 +881,9 @@ async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> 
         .await
         .expect("local description should be set");
 
-    let rtc_answer =
-        rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp.clone())?;
+    let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
+        answer_with_candidates.sdp.clone(),
+    )?;
     rtc_pc.set_remote_description(rtc_answer)?;
 
     let mut rtc_connected = false;
@@ -930,9 +933,7 @@ async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> 
                     .iter()
                     .any(|m| m == "Hello from RTC offerer (QueryAndGather)!")
             {
-                log::info!(
-                    "Test passed: RTC offerer with QueryAndGather mode working correctly"
-                );
+                log::info!("Test passed: RTC offerer with QueryAndGather mode working correctly");
                 webrtc_pc.close().await?;
                 rtc_pc.close()?;
                 return Ok(());

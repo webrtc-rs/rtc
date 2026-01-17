@@ -26,9 +26,11 @@ use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
-use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer};
-use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
+use rtc::peer_connection::transport::{
+    CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
+};
 use rtc::rtp_transceiver::RTCRtpTransceiverInit;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
 use rtc::shared::error::Error;
 
 use webrtc::api::APIBuilder;
@@ -269,9 +271,8 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
     rtc_pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
 
     // Set remote description (offer)
-    let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(
-        offer_with_candidates.sdp.clone(),
-    )?;
+    let rtc_offer =
+        rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_with_candidates.sdp.clone())?;
     rtc_pc.set_remote_description(rtc_offer)?;
 
     // Create and set answer
