@@ -85,15 +85,15 @@ The sans-I/O architecture uses a simple event loop with six core methods:
 
 1. **`poll_write()`** - Get outgoing network packets to send via UDP
 2. **`poll_event()`** - Process connection state changes and notifications
-3. **`poll_read()`** - Get incoming application messages (RTP, RTCP, data)
+3. **`poll_read()`** - Get incoming application messages (RTP, RTCP, Data)
 4. **`poll_timeout()`** - Get next timer deadline for retransmissions/keepalives
 5. **`handle_read()`** - Feed incoming network packets into the connection
 6. **`handle_timeout()`** - Notify about timer expiration
 
 Additional methods for external control:
 
-* handle_write() - Queue application messages (RTP/RTCP/data) for sending
-* handle_event() - Inject external events into the connection
+* **`handle_write()`** - Queue application messages (RTP/RTCP/Data) for sending
+* **`handle_event()`** - Inject external events into the connection
 
 ### Event Loop Example
 
@@ -223,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - ✅ **Data Channels** - Bidirectional peer-to-peer data transfer
 - ✅ **Media Tracks** - Audio/video transmission
 - ✅ **Trickle ICE** - Progressive candidate gathering
-- ✅ **Simulcast & SVC** - Scalable video coding
+- ✅ **Simulcast & SVC** - Simulcast and scalable video coding
 
 ## Examples
 
@@ -242,6 +242,8 @@ The repository includes comprehensive examples demonstrating various use cases:
   simulcast encodings in one track
 - [broadcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/broadcast) - Broadcast a video to multiple
   peers
+- [stats](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/stats) - Gives statistical
+  information about a PeerConnection
 
 Run an example:
 
