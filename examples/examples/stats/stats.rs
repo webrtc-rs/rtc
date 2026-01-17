@@ -331,9 +331,7 @@ async fn run(
 
                 // Print peer connection stats
                 if let Some(pc_stats) = report.peer_connection() {
-                    println!("Peer Connection Stats:");
-                    println!("  Data channels opened: {}", pc_stats.data_channels_opened);
-                    println!("  Data channels closed: {}", pc_stats.data_channels_closed);
+                    println!("{}", serde_json::to_string_pretty(pc_stats)?);
                 }
 
                 // Print inbound RTP stream stats
@@ -343,37 +341,18 @@ async fn run(
                         .map(|s| s.as_str())
                         .unwrap_or("unknown");
                     println!("\nInbound RTP Stats for: {}", codec);
-                    println!(
-                        "  SSRC: {}",
-                        inbound_stats
-                            .received_rtp_stream_stats
-                            .rtp_stream_stats
-                            .ssrc
-                    );
-                    println!(
-                        "  Packets Received: {}",
-                        inbound_stats.received_rtp_stream_stats.packets_received
-                    );
-                    println!("  Bytes Received: {}", inbound_stats.bytes_received);
-                    println!(
-                        "  Packets Lost: {}",
-                        inbound_stats.received_rtp_stream_stats.packets_lost
-                    );
-                    println!(
-                        "  Jitter: {}",
-                        inbound_stats.received_rtp_stream_stats.jitter
-                    );
+                    println!("{}", serde_json::to_string_pretty(inbound_stats)?);
                 }
 
                 // Print ICE candidate stats (only remote candidates)
                 for entry in report.iter_by_type(RTCStatsType::RemoteCandidate) {
-                    if let rtc::statistics::report::RTCStatsReportEntry::RemoteCandidate(stat) =
-                        entry
+                    if let rtc::statistics::report::RTCStatsReportEntry::RemoteCandidate(
+                        cand_stats,
+                    ) = entry
                     {
                         println!(
-                            "\nRemote Candidate: IP({}) Port({})",
-                            stat.address.as_deref().unwrap_or("unknown"),
-                            stat.port
+                            "\nRemote Candidate:\n{}",
+                            serde_json::to_string_pretty(cand_stats)?
                         );
                     }
                 }
