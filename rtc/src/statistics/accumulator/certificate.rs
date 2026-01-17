@@ -65,7 +65,10 @@ mod tests {
         assert_eq!(stats.stats.id, "RTCCertificate_local");
         assert_eq!(stats.stats.typ, RTCStatsType::Certificate);
         assert_eq!(stats.stats.timestamp, now);
-        assert_eq!(stats.fingerprint, "AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90");
+        assert_eq!(
+            stats.fingerprint,
+            "AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90"
+        );
         assert_eq!(stats.fingerprint_algorithm, "sha-256");
         assert_eq!(stats.base64_certificate, "MIIBkTCB+wIJAKHBfH...");
         assert_eq!(stats.issuer_certificate_id, "");

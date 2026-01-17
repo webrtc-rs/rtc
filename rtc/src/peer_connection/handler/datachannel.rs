@@ -93,12 +93,26 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 // Track data channel opened
                 self.stats.peer_connection.on_data_channel_opened();
                 // Initialize data channel stats
-                let dc_stats = self.stats.get_or_create_data_channel(stream_id);
-                dc_stats.on_state_changed(RTCDataChannelState::Open);
+                self.stats
+                    .get_or_create_data_channel(
+                        stream_id,
+                        &data_channel_internal.label,
+                        &data_channel_internal.protocol,
+                    )
+                    .on_state_changed(RTCDataChannelState::Open);
 
                 self.data_channels
                     .insert(message.stream_id, data_channel_internal);
             }
+
+            // Get label/protocol before taking mutable borrow for the loop
+            let (label, protocol) = {
+                let dc = self
+                    .data_channels
+                    .get(&stream_id)
+                    .ok_or(Error::ErrDataChannelNotExisted)?;
+                (dc.label.clone(), dc.protocol.clone())
+            };
 
             let data_channel = self
                 .data_channels
@@ -114,7 +128,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
                 // Track received message stats
                 self.stats
-                    .get_or_create_data_channel(stream_id)
+                    .get_or_create_data_channel(stream_id, &label, &protocol)
                     .on_message_received(payload_len);
 
                 self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
@@ -165,6 +179,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 let data_len = data.len();
                 let channel_id = message.data_channel_id;
 
+                // Get label/protocol before taking mutable borrow
+                let dc_internal = self
+                    .data_channels
+                    .get(&channel_id)
+                    .ok_or(Error::ErrDataChannelNotExisted)?;
+                let label = dc_internal.label.clone();
+                let protocol = dc_internal.protocol.clone();
+
                 let data_channel = self
                     .data_channels
                     .get_mut(&channel_id)
@@ -181,7 +203,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
                 // Track sent message stats
                 self.stats
-                    .get_or_create_data_channel(channel_id)
+                    .get_or_create_data_channel(channel_id, &label, &protocol)
                     .on_message_sent(data_len);
 
                 while let Some(data_channel_message) = data_channel.poll_write() {
@@ -248,10 +270,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
                         // Track data channel opened (initiator side)
                         self.stats.peer_connection.on_data_channel_opened();
-                        let dc_stats = self
-                            .stats
-                            .get_or_create_data_channel(data_channel_internal.id);
-                        dc_stats.on_state_changed(RTCDataChannelState::Open);
+                        self.stats
+                            .get_or_create_data_channel(
+                                data_channel_internal.id,
+                                &data_channel_internal.label,
+                                &data_channel_internal.protocol,
+                            )
+                            .on_state_changed(RTCDataChannelState::Open);
 
                         while let Some(data_channel_message) = data_channel.poll_write() {
                             debug!("send data channel message from handle_event");

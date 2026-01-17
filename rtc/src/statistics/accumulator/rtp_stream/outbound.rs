@@ -445,10 +445,19 @@ mod tests {
 
         let stats = acc.snapshot(now, "RTCOutboundRTPStream_audio_44444444");
 
-        assert_eq!(stats.sent_rtp_stream_stats.rtp_stream_stats.stats.id, "RTCOutboundRTPStream_audio_44444444");
-        assert_eq!(stats.sent_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::OutboundRTP);
+        assert_eq!(
+            stats.sent_rtp_stream_stats.rtp_stream_stats.stats.id,
+            "RTCOutboundRTPStream_audio_44444444"
+        );
+        assert_eq!(
+            stats.sent_rtp_stream_stats.rtp_stream_stats.stats.typ,
+            RTCStatsType::OutboundRTP
+        );
         assert_eq!(stats.sent_rtp_stream_stats.rtp_stream_stats.ssrc, 44444444);
-        assert_eq!(stats.sent_rtp_stream_stats.rtp_stream_stats.kind, RtpCodecKind::Audio);
+        assert_eq!(
+            stats.sent_rtp_stream_stats.rtp_stream_stats.kind,
+            RtpCodecKind::Audio
+        );
         assert_eq!(stats.sent_rtp_stream_stats.packets_sent, 2);
         assert_eq!(stats.sent_rtp_stream_stats.bytes_sent, 320);
         assert_eq!(stats.header_bytes_sent, 24);
@@ -472,9 +481,22 @@ mod tests {
 
         let remote_stats = acc.snapshot_remote(now);
 
-        assert_eq!(remote_stats.received_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::RemoteInboundRTP);
-        assert_eq!(remote_stats.received_rtp_stream_stats.rtp_stream_stats.ssrc, 55555555);
-        assert_eq!(remote_stats.received_rtp_stream_stats.packets_received, 1000);
+        assert_eq!(
+            remote_stats
+                .received_rtp_stream_stats
+                .rtp_stream_stats
+                .stats
+                .typ,
+            RTCStatsType::RemoteInboundRTP
+        );
+        assert_eq!(
+            remote_stats.received_rtp_stream_stats.rtp_stream_stats.ssrc,
+            55555555
+        );
+        assert_eq!(
+            remote_stats.received_rtp_stream_stats.packets_received,
+            1000
+        );
         assert_eq!(remote_stats.received_rtp_stream_stats.packets_lost, 20);
         assert_eq!(remote_stats.received_rtp_stream_stats.jitter, 0.004);
         assert_eq!(remote_stats.round_trip_time, 0.030);
@@ -520,7 +542,10 @@ mod tests {
         let now = Instant::now();
         let stats = acc.snapshot(now, "test");
 
-        assert_eq!(stats.quality_limitation_reason, RTCQualityLimitationReason::Bandwidth);
+        assert_eq!(
+            stats.quality_limitation_reason,
+            RTCQualityLimitationReason::Bandwidth
+        );
         assert_eq!(stats.quality_limitation_resolution_changes, 3);
         assert_eq!(stats.target_bitrate, 1_500_000.0);
     }

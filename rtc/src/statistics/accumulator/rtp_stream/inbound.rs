@@ -568,10 +568,22 @@ mod tests {
 
         let stats = acc.snapshot(now, "RTCInboundRTPStream_audio_11111111");
 
-        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.stats.id, "RTCInboundRTPStream_audio_11111111");
-        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::InboundRTP);
-        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.ssrc, 11111111);
-        assert_eq!(stats.received_rtp_stream_stats.rtp_stream_stats.kind, RtpCodecKind::Audio);
+        assert_eq!(
+            stats.received_rtp_stream_stats.rtp_stream_stats.stats.id,
+            "RTCInboundRTPStream_audio_11111111"
+        );
+        assert_eq!(
+            stats.received_rtp_stream_stats.rtp_stream_stats.stats.typ,
+            RTCStatsType::InboundRTP
+        );
+        assert_eq!(
+            stats.received_rtp_stream_stats.rtp_stream_stats.ssrc,
+            11111111
+        );
+        assert_eq!(
+            stats.received_rtp_stream_stats.rtp_stream_stats.kind,
+            RtpCodecKind::Audio
+        );
         assert_eq!(stats.received_rtp_stream_stats.packets_received, 2);
         assert_eq!(stats.bytes_received, 320);
         assert_eq!(stats.header_bytes_received, 24);
@@ -596,8 +608,18 @@ mod tests {
 
         let remote_stats = acc.snapshot_remote(now);
 
-        assert_eq!(remote_stats.sent_rtp_stream_stats.rtp_stream_stats.stats.typ, RTCStatsType::RemoteOutboundRTP);
-        assert_eq!(remote_stats.sent_rtp_stream_stats.rtp_stream_stats.ssrc, 22222222);
+        assert_eq!(
+            remote_stats
+                .sent_rtp_stream_stats
+                .rtp_stream_stats
+                .stats
+                .typ,
+            RTCStatsType::RemoteOutboundRTP
+        );
+        assert_eq!(
+            remote_stats.sent_rtp_stream_stats.rtp_stream_stats.ssrc,
+            22222222
+        );
         assert_eq!(remote_stats.sent_rtp_stream_stats.packets_sent, 1000);
         assert_eq!(remote_stats.sent_rtp_stream_stats.bytes_sent, 1200000);
         assert_eq!(remote_stats.reports_sent, 2);

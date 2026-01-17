@@ -15,18 +15,18 @@ mod peer_connection;
 mod rtp_stream;
 mod transport;
 
-pub use certificate::CertificateStatsAccumulator;
-pub use codec::{CodecDirection, CodecStatsAccumulator};
-pub use data_channel::DataChannelStatsAccumulator;
-pub use ice_candidate::IceCandidateAccumulator;
-pub use ice_candidate_pair::IceCandidatePairAccumulator;
-pub use media::app_provided::*;
-pub use media::audio_playout::AudioPlayoutStatsAccumulator;
-pub use media::media_source::MediaSourceStatsAccumulator;
-pub use peer_connection::PeerConnectionStatsAccumulator;
-pub use rtp_stream::inbound::InboundRtpStreamAccumulator;
-pub use rtp_stream::outbound::OutboundRtpStreamAccumulator;
-pub use transport::TransportStatsAccumulator;
+pub(crate) use certificate::CertificateStatsAccumulator;
+pub(crate) use codec::{CodecDirection, CodecStatsAccumulator};
+pub(crate) use data_channel::DataChannelStatsAccumulator;
+pub(crate) use ice_candidate::IceCandidateAccumulator;
+pub(crate) use ice_candidate_pair::IceCandidatePairAccumulator;
+pub(crate) use media::app_provided::*;
+pub(crate) use media::audio_playout::AudioPlayoutStatsAccumulator;
+pub(crate) use media::media_source::MediaSourceStatsAccumulator;
+pub(crate) use peer_connection::PeerConnectionStatsAccumulator;
+pub(crate) use rtp_stream::inbound::InboundRtpStreamAccumulator;
+pub(crate) use rtp_stream::outbound::OutboundRtpStreamAccumulator;
+pub(crate) use transport::TransportStatsAccumulator;
 
 use crate::data_channel::RTCDataChannelId;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
@@ -53,42 +53,42 @@ use std::time::Instant;
 /// This struct is not thread-safe. It is designed to be owned by the
 /// pipeline context and accessed only from the handler thread.
 #[derive(Debug, Default)]
-pub struct RTCStatsAccumulator {
+pub(crate) struct RTCStatsAccumulator {
     /// Peer connection level stats.
-    pub peer_connection: PeerConnectionStatsAccumulator,
+    pub(crate) peer_connection: PeerConnectionStatsAccumulator,
 
     /// Transport stats (typically one per peer connection).
-    pub transport: TransportStatsAccumulator,
+    pub(crate) transport: TransportStatsAccumulator,
 
     /// ICE candidate pairs keyed by pair ID.
-    pub ice_candidate_pairs: HashMap<String, IceCandidatePairAccumulator>,
+    pub(crate) ice_candidate_pairs: HashMap<String, IceCandidatePairAccumulator>,
 
     /// Local ICE candidates keyed by candidate ID.
-    pub local_candidates: HashMap<String, IceCandidateAccumulator>,
+    pub(crate) local_candidates: HashMap<String, IceCandidateAccumulator>,
 
     /// Remote ICE candidates keyed by candidate ID.
-    pub remote_candidates: HashMap<String, IceCandidateAccumulator>,
+    pub(crate) remote_candidates: HashMap<String, IceCandidateAccumulator>,
 
     /// Certificate stats keyed by fingerprint.
-    pub certificates: HashMap<String, CertificateStatsAccumulator>,
+    pub(crate) certificates: HashMap<String, CertificateStatsAccumulator>,
 
     /// Codec stats keyed by codec ID.
-    pub codecs: HashMap<String, CodecStatsAccumulator>,
+    pub(crate) codecs: HashMap<String, CodecStatsAccumulator>,
 
     /// Data channel stats keyed by channel ID.
-    pub data_channels: HashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
+    pub(crate) data_channels: HashMap<RTCDataChannelId, DataChannelStatsAccumulator>,
 
     /// Inbound RTP stream accumulators keyed by SSRC.
-    pub inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,
+    pub(crate) inbound_rtp_streams: HashMap<SSRC, InboundRtpStreamAccumulator>,
 
     /// Outbound RTP stream accumulators keyed by SSRC.
-    pub outbound_rtp_streams: HashMap<SSRC, OutboundRtpStreamAccumulator>,
+    pub(crate) outbound_rtp_streams: HashMap<SSRC, OutboundRtpStreamAccumulator>,
 
     /// Media source stats keyed by track ID.
-    pub media_sources: HashMap<String, MediaSourceStatsAccumulator>,
+    pub(crate) media_sources: HashMap<String, MediaSourceStatsAccumulator>,
 
     /// Audio playout stats keyed by playout ID.
-    pub audio_playouts: HashMap<String, AudioPlayoutStatsAccumulator>,
+    pub(crate) audio_playouts: HashMap<String, AudioPlayoutStatsAccumulator>,
 
     // Reverse lookup maps for O(1) RTX/FEC SSRC detection
     /// Maps RTX SSRC to primary SSRC for O(1) lookup.
@@ -100,7 +100,7 @@ pub struct RTCStatsAccumulator {
 
 impl RTCStatsAccumulator {
     /// Creates a new empty stats accumulator.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -116,7 +116,7 @@ impl RTCStatsAccumulator {
     /// # Returns
     ///
     /// An `RTCStatsReport` containing snapshots of all accumulated stats.
-    pub fn snapshot(&self, now: Instant) -> RTCStatsReport {
+    pub(crate) fn snapshot(&self, now: Instant) -> RTCStatsReport {
         let mut entries = Vec::new();
 
         // Peer connection stats
@@ -224,7 +224,7 @@ impl RTCStatsAccumulator {
     /// * `mid` - The media stream identification tag from SDP
     /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
     /// * `fec_ssrc` - The FEC SSRC for forward error correction (if available)
-    pub fn get_or_create_inbound_rtp_streams(
+    pub(crate) fn get_or_create_inbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
@@ -266,7 +266,7 @@ impl RTCStatsAccumulator {
     /// * `rid` - The RTP stream ID for simulcast (empty if not simulcast)
     /// * `encoding_index` - The index of this encoding in the simulcast layer order
     /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
-    pub fn get_or_create_outbound_rtp_streams(
+    pub(crate) fn get_or_create_outbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
         kind: RtpCodecKind,
@@ -295,20 +295,30 @@ impl RTCStatsAccumulator {
     }
 
     /// Gets or creates a data channel accumulator.
-    pub fn get_or_create_data_channel(
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The data channel identifier
+    /// * `label` - The label assigned to the data channel
+    /// * `protocol` - The sub-protocol name
+    pub(crate) fn get_or_create_data_channel(
         &mut self,
         id: RTCDataChannelId,
+        label: &str,
+        protocol: &str,
     ) -> &mut DataChannelStatsAccumulator {
         self.data_channels
             .entry(id)
             .or_insert_with(|| DataChannelStatsAccumulator {
                 data_channel_identifier: id,
+                label: label.to_string(),
+                protocol: protocol.to_string(),
                 ..Default::default()
             })
     }
 
     /// Gets or creates an ICE candidate pair accumulator.
-    pub fn get_or_create_candidate_pair(
+    pub(crate) fn get_or_create_candidate_pair(
         &mut self,
         local_id: &str,
         remote_id: &str,
@@ -324,22 +334,22 @@ impl RTCStatsAccumulator {
     }
 
     /// Registers a local ICE candidate.
-    pub fn register_local_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
+    pub(crate) fn register_local_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
         self.local_candidates.insert(id, candidate);
     }
 
     /// Registers a remote ICE candidate.
-    pub fn register_remote_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
+    pub(crate) fn register_remote_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
         self.remote_candidates.insert(id, candidate);
     }
 
     /// Registers a certificate.
-    pub fn register_certificate(&mut self, fingerprint: String, cert: CertificateStatsAccumulator) {
+    pub(crate) fn register_certificate(&mut self, fingerprint: String, cert: CertificateStatsAccumulator) {
         self.certificates.insert(fingerprint, cert);
     }
 
     /// Gets or creates a media source accumulator.
-    pub fn get_or_create_media_source(
+    pub(crate) fn get_or_create_media_source(
         &mut self,
         track_id: &str,
         kind: RtpCodecKind,
@@ -354,7 +364,7 @@ impl RTCStatsAccumulator {
     }
 
     /// Gets or creates an audio playout accumulator.
-    pub fn get_or_create_audio_playout(
+    pub(crate) fn get_or_create_audio_playout(
         &mut self,
         playout_id: &str,
     ) -> &mut AudioPlayoutStatsAccumulator {
@@ -366,7 +376,7 @@ impl RTCStatsAccumulator {
             })
     }
 
-    pub fn on_rtx_packet_sent_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_rtx_packet_sent_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
         if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
             && let Some(stream) = self.outbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -382,7 +392,7 @@ impl RTCStatsAccumulator {
     /// a stream's `rtx_ssrc`. This updates the retransmission stats.
     ///
     /// Returns `true` if the RTX packet was tracked, `false` if no matching stream found.
-    pub fn on_rtx_packet_received_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_rtx_packet_received_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
         if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
             && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -398,7 +408,7 @@ impl RTCStatsAccumulator {
     /// a stream's `fec_ssrc`. This updates the FEC stats.
     ///
     /// Returns `true` if the FEC packet was tracked, `false` if no matching stream found.
-    pub fn on_fec_packet_received_if_fec(&mut self, fec_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_fec_packet_received_if_fec(&mut self, fec_ssrc: SSRC, payload_bytes: usize) -> bool {
         if let Some(primary_ssrc) = self.fec_ssrc_to_primary.get(&fec_ssrc)
             && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -413,28 +423,28 @@ impl RTCStatsAccumulator {
     // ========================================================================
 
     /// Updates decoder stats for an inbound video stream.
-    pub fn update_decoder_stats(&mut self, ssrc: SSRC, stats: DecoderStatsUpdate) {
+    pub(crate) fn update_decoder_stats(&mut self, ssrc: SSRC, stats: DecoderStatsUpdate) {
         if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
             stream.decoder_stats = Some(stats);
         }
     }
 
     /// Updates encoder stats for an outbound video stream.
-    pub fn update_encoder_stats(&mut self, ssrc: SSRC, stats: EncoderStatsUpdate) {
+    pub(crate) fn update_encoder_stats(&mut self, ssrc: SSRC, stats: EncoderStatsUpdate) {
         if let Some(stream) = self.outbound_rtp_streams.get_mut(&ssrc) {
             stream.encoder_stats = Some(stats);
         }
     }
 
     /// Updates audio receiver stats for an inbound audio stream.
-    pub fn update_audio_receiver_stats(&mut self, ssrc: SSRC, stats: AudioReceiverStatsUpdate) {
+    pub(crate) fn update_audio_receiver_stats(&mut self, ssrc: SSRC, stats: AudioReceiverStatsUpdate) {
         if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
             stream.audio_receiver_stats = Some(stats);
         }
     }
 
     /// Updates audio source stats.
-    pub fn update_audio_source_stats(&mut self, track_id: &str, stats: AudioSourceStatsUpdate) {
+    pub(crate) fn update_audio_source_stats(&mut self, track_id: &str, stats: AudioSourceStatsUpdate) {
         if let Some(source) = self.media_sources.get_mut(track_id) {
             source.audio_level = Some(stats.audio_level);
             source.total_audio_energy = Some(stats.total_audio_energy);
@@ -445,7 +455,7 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates video source stats.
-    pub fn update_video_source_stats(&mut self, track_id: &str, stats: VideoSourceStatsUpdate) {
+    pub(crate) fn update_video_source_stats(&mut self, track_id: &str, stats: VideoSourceStatsUpdate) {
         if let Some(source) = self.media_sources.get_mut(track_id) {
             source.width = Some(stats.width);
             source.height = Some(stats.height);
@@ -455,7 +465,7 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates audio playout stats.
-    pub fn update_audio_playout_stats(&mut self, playout_id: &str, stats: AudioPlayoutStatsUpdate) {
+    pub(crate) fn update_audio_playout_stats(&mut self, playout_id: &str, stats: AudioPlayoutStatsUpdate) {
         if let Some(playout) = self.audio_playouts.get_mut(playout_id) {
             playout.synthesized_samples_duration = stats.synthesized_samples_duration;
             playout.synthesized_samples_events = stats.synthesized_samples_events;
@@ -474,7 +484,7 @@ impl RTCStatsAccumulator {
     ///
     /// * `pair_id` - The ID of the candidate pair to sync
     /// * `cp_stats.` - CandidatePairStats
-    pub fn update_ice_agent_stats(
+    pub(crate) fn update_ice_agent_stats(
         &mut self,
         local_id: &str,
         remote_id: &str,
@@ -505,7 +515,7 @@ impl RTCStatsAccumulator {
     /// * `ssrc` - The SSRC of the inbound RTP stream
     /// * `codec` - The codec information
     /// * `payload_type` - The payload type for this codec
-    pub fn register_inbound_codec(
+    pub(crate) fn register_inbound_codec(
         &mut self,
         ssrc: SSRC,
         codec: &RTCRtpCodec,
@@ -540,7 +550,7 @@ impl RTCStatsAccumulator {
     /// * `ssrc` - The SSRC of the outbound RTP stream
     /// * `codec` - The codec information
     /// * `payload_type` - The payload type for this codec
-    pub fn register_outbound_codec(
+    pub(crate) fn register_outbound_codec(
         &mut self,
         ssrc: SSRC,
         codec: &RTCRtpCodec,
@@ -565,7 +575,7 @@ impl RTCStatsAccumulator {
     ///
     /// Per W3C spec, when there is no longer any reference to an RTCCodecStats,
     /// the stats object should be deleted.
-    pub fn cleanup_unreferenced_codecs(&mut self) {
+    pub(crate) fn cleanup_unreferenced_codecs(&mut self) {
         // Collect all referenced codec IDs
         let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
 

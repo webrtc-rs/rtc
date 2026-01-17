@@ -144,7 +144,7 @@ pub struct RTCStatsReport {
 
 impl RTCStatsReport {
     /// Creates a new stats report from a list of entries.
-    pub fn new(entries: Vec<RTCStatsReportEntry>) -> Self {
+    pub(crate) fn new(entries: Vec<RTCStatsReportEntry>) -> Self {
         let mut map = HashMap::new();
         let mut order = Vec::with_capacity(entries.len());
 

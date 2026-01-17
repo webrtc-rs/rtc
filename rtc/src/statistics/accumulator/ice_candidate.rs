@@ -119,7 +119,10 @@ mod tests {
 
         let stats = acc.snapshot_local(now, "RTCIceCandidate_host_udp_192.168.1.100_50000");
 
-        assert_eq!(stats.stats.id, "RTCIceCandidate_host_udp_192.168.1.100_50000");
+        assert_eq!(
+            stats.stats.id,
+            "RTCIceCandidate_host_udp_192.168.1.100_50000"
+        );
         assert_eq!(stats.stats.typ, RTCStatsType::LocalCandidate);
         assert_eq!(stats.stats.timestamp, now);
         assert_eq!(stats.transport_id, "RTCTransport_0");

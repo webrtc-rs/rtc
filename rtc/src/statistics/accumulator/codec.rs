@@ -186,7 +186,8 @@ mod tests {
             mime_type: "video/H264".to_string(),
             clock_rate: 90000,
             channels: 0,
-            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_string(),
+            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
+                .to_string(),
         };
 
         let stats = acc.snapshot(now, "RTCCodec_RTCTransport_0_send_PT96");

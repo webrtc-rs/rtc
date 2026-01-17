@@ -310,6 +310,7 @@ use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// The `RTCPeerConnection` interface represents a WebRTC connection between the local computer
 /// and a remote peer. It provides methods to connect to a remote peer, maintain and monitor
@@ -2009,7 +2010,7 @@ where
     /// # Specification
     ///
     /// See [getStats](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getstats)
-    pub fn get_stats(&mut self, now: std::time::Instant) -> RTCStatsReport {
+    pub fn get_stats(&mut self, now: Instant) -> RTCStatsReport {
         // Update ICE agent stats before taking snapshot
         self.update_ice_agent_stats();
         // Update codec stats from transceivers before taking snapshot
