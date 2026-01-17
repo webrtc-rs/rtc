@@ -16,8 +16,9 @@
 //!
 //! ```ignore
 //! use std::time::Instant;
+//! use rtc::statistics::StatsSelector;
 //!
-//! let report = peer_connection.get_stats(Instant::now());
+//! let report = peer_connection.get_stats(Instant::now(), StatsSelector::None);
 //!
 //! // Access transport statistics
 //! if let Some(transport) = report.transport() {

@@ -117,7 +117,9 @@ impl RTCStatsReportEntry {
 /// # Example
 ///
 /// ```ignore
-/// let report = peer_connection.get_stats(Instant::now());
+/// use rtc::statistics::StatsSelector;
+///
+/// let report = peer_connection.get_stats(Instant::now(), StatsSelector::None);
 ///
 /// // Iterate over all stats
 /// for entry in report.iter() {

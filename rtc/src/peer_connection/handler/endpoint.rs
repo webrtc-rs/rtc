@@ -368,7 +368,7 @@ where
 
                     // Create inbound stream accumulator before firing OnOpen event
                     self.stats.get_or_create_inbound_rtp_streams(
-                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc,
+                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc, id,
                     );
 
                     // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
@@ -486,7 +486,7 @@ where
 
                     // Create inbound stream accumulator before firing OnOpen event
                     self.stats.get_or_create_inbound_rtp_streams(
-                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc,
+                        ssrc, kind, &track_id, &mid, rtx_ssrc, fec_ssrc, id,
                     );
 
                     // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
@@ -570,6 +570,7 @@ where
                     &mid,
                     None,
                     None,
+                    0, // Undeclared SSRC is always for the first transceiver
                 );
 
                 // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream

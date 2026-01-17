@@ -24,6 +24,7 @@ use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use rtc::statistics::StatsSelector;
 use rtc::statistics::stats::RTCStatsType;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -325,7 +326,7 @@ async fn run(
             if ice_connection_state != RTCIceConnectionState::Checking
                 && ice_connection_state != RTCIceConnectionState::New
             {
-                let report = peer_connection.get_stats(now);
+                let report = peer_connection.get_stats(now, StatsSelector::None);
 
                 println!("\n=== WebRTC Stats ===");
 

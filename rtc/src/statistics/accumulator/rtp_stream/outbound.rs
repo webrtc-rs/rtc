@@ -1,3 +1,4 @@
+use crate::rtp_transceiver::RTCRtpTransceiverId;
 use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::accumulator::EncoderStatsUpdate;
@@ -33,6 +34,8 @@ pub struct OutboundRtpStreamAccumulator {
     pub encoding_index: u32,
     /// Reference to the media source stats.
     pub media_source_id: String,
+    /// The transceiver ID that owns this stream (for filtering).
+    pub transceiver_id: RTCRtpTransceiverId,
 
     // Packet counters
     /// Total RTP packets sent.

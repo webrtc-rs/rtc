@@ -299,6 +299,7 @@ use crate::rtp_transceiver::rtp_sender::{
 use crate::rtp_transceiver::{
     RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId, RTCRtpTransceiverInit,
 };
+use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use crate::statistics::report::RTCStatsReport;
 use ::sdp::description::session::Origin;
@@ -1958,28 +1959,31 @@ where
         }
     }
 
-    /// Returns a snapshot of all accumulated statistics.
+    /// Returns a snapshot of accumulated statistics.
     ///
-    /// This method creates an immutable snapshot of all WebRTC statistics
-    /// at the given timestamp. The returned `RTCStatsReport` contains
-    /// statistics for all aspects of the peer connection including:
+    /// This method creates an immutable snapshot of WebRTC statistics
+    /// at the given timestamp. When `selector` is `StatsSelector::None`,
+    /// the returned `RTCStatsReport` contains statistics for all aspects
+    /// of the peer connection. When a sender or receiver is specified,
+    /// only statistics relevant to that sender/receiver are included.
     ///
-    /// - Peer connection stats (data channels opened/closed)
-    /// - Transport stats (packets sent/received, ICE/DTLS state)
-    /// - ICE candidate and candidate pair stats
-    /// - RTP stream stats (inbound and outbound)
-    /// - Codec stats
-    /// - Certificate stats
-    /// - Data channel stats
+    /// # Statistics included by selector
+    ///
+    /// - `StatsSelector::None` - All statistics for the entire connection
+    /// - `StatsSelector::Sender(id)` - Outbound RTP streams for the sender
+    ///   and all referenced stats (transport, codec, remote inbound, etc.)
+    /// - `StatsSelector::Receiver(id)` - Inbound RTP streams for the receiver
+    ///   and all referenced stats (transport, codec, remote outbound, etc.)
     ///
     /// # Arguments
     ///
     /// * `now` - The timestamp to use for all stats in the report. This is
     ///   passed explicitly to support deterministic testing.
+    /// * `selector` - Controls which statistics are included in the report.
     ///
     /// # Returns
     ///
-    /// An `RTCStatsReport` containing snapshots of all accumulated statistics.
+    /// An `RTCStatsReport` containing snapshots of the selected statistics.
     ///
     /// # Example
     ///
@@ -1987,12 +1991,13 @@ where
     /// use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnection;
     /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::statistics::StatsSelector;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
     ///
-    /// // Get stats with current timestamp
-    /// let report = pc.get_stats(Instant::now());
+    /// // Get all stats
+    /// let report = pc.get_stats(Instant::now(), StatsSelector::None);
     ///
     /// // Access peer connection stats
     /// if let Some(pc_stats) = report.peer_connection() {
@@ -2009,12 +2014,15 @@ where
     ///
     /// # Specification
     ///
-    /// See [getStats](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getstats)
-    pub fn get_stats(&mut self, now: Instant) -> RTCStatsReport {
+    /// See [getStats](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getstats) and
+    /// [The stats selection algorithm](https://www.w3.org/TR/webrtc/#the-stats-selection-algorithm)
+    pub fn get_stats(&mut self, now: Instant, selector: StatsSelector) -> RTCStatsReport {
         // Update ICE agent stats before taking snapshot
         self.update_ice_agent_stats();
         // Update codec stats from transceivers before taking snapshot
         self.update_codec_stats();
-        self.pipeline_context.stats.snapshot(now)
+        self.pipeline_context
+            .stats
+            .snapshot_with_selector(now, selector)
     }
 }

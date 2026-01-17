@@ -454,8 +454,9 @@ where
     }
 
     fn start_rtp_senders(&mut self) -> Result<()> {
-        // Collect SSRCs, kinds, mids, rids, encoding indices, and rtx_ssrc for outbound stream accumulators
+        // Collect SSRCs, kinds, mids, rids, encoding indices, rtx_ssrc, and transceiver_id for outbound stream accumulators
         // We do this in two phases to avoid borrow conflicts
+        #[allow(clippy::type_complexity)]
         let mut outbound_streams_to_create: Vec<(
             u32,
             RtpCodecKind,
@@ -463,9 +464,10 @@ where
             String,
             u32,
             Option<u32>,
+            RTCRtpTransceiverId,
         )> = Vec::new();
 
-        for transceiver in &mut self.rtp_transceivers {
+        for (transceiver_id, transceiver) in self.rtp_transceivers.iter_mut().enumerate() {
             // Get kind and mid before mutable borrow of sender
             let kind = transceiver.kind();
             let mid = transceiver.mid().clone().unwrap_or_default();
@@ -491,6 +493,7 @@ where
                             rid,
                             encoding_index as u32,
                             rtx_ssrc,
+                            transceiver_id,
                         ));
                     }
                 }
@@ -506,7 +509,9 @@ where
         }
 
         // Create outbound stream accumulators
-        for (ssrc, kind, mid, rid, encoding_index, rtx_ssrc) in outbound_streams_to_create {
+        for (ssrc, kind, mid, rid, encoding_index, rtx_ssrc, transceiver_id) in
+            outbound_streams_to_create
+        {
             self.pipeline_context
                 .stats
                 .get_or_create_outbound_rtp_streams(
@@ -516,6 +521,7 @@ where
                     &rid,
                     encoding_index,
                     rtx_ssrc,
+                    transceiver_id,
                 );
         }
 

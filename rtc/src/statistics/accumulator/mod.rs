@@ -30,7 +30,8 @@ pub(crate) use transport::TransportStatsAccumulator;
 
 use crate::data_channel::RTCDataChannelId;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
-use crate::rtp_transceiver::{PayloadType, SSRC};
+use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId, SSRC};
+use crate::statistics::StatsSelector;
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use ice::CandidatePairStats;
 use std::collections::HashMap;
@@ -210,6 +211,177 @@ impl RTCStatsAccumulator {
         RTCStatsReport::new(entries)
     }
 
+    /// Creates a snapshot of stats based on the provided selector.
+    ///
+    /// This method implements the W3C stats selection algorithm:
+    /// - If selector is None, returns all stats
+    /// - If selector is Sender, returns outbound RTP streams for that sender
+    ///   and all stats referenced by those streams
+    /// - If selector is Receiver, returns inbound RTP streams for that receiver
+    ///   and all stats referenced by those streams
+    ///
+    /// # Arguments
+    ///
+    /// * `now` - The timestamp to use for all stats in the report
+    /// * `selector` - Controls which statistics are included
+    ///
+    /// # Returns
+    ///
+    /// An `RTCStatsReport` containing the selected statistics.
+    pub(crate) fn snapshot_with_selector(
+        &self,
+        now: Instant,
+        selector: StatsSelector,
+    ) -> RTCStatsReport {
+        match selector {
+            StatsSelector::None => self.snapshot(now),
+            StatsSelector::Sender(sender_id) => self.snapshot_for_sender(now, sender_id.0),
+            StatsSelector::Receiver(receiver_id) => self.snapshot_for_receiver(now, receiver_id.0),
+        }
+    }
+
+    /// Creates a snapshot for a specific sender (outbound streams).
+    fn snapshot_for_sender(
+        &self,
+        now: Instant,
+        transceiver_id: RTCRtpTransceiverId,
+    ) -> RTCStatsReport {
+        use std::collections::HashSet;
+
+        let mut entries = Vec::new();
+        let mut referenced_codec_ids = HashSet::new();
+        let mut has_streams = false;
+
+        // Collect outbound RTP streams for this sender
+        for (ssrc, stream) in &self.outbound_rtp_streams {
+            if stream.transceiver_id == transceiver_id {
+                has_streams = true;
+                let id = format!("RTCOutboundRTPStream_{}_{}", stream.kind, ssrc);
+                entries.push(RTCStatsReportEntry::OutboundRtp(stream.snapshot(now, &id)));
+                // Also add remote inbound stats derived from RTCP RR
+                entries.push(RTCStatsReportEntry::RemoteInboundRtp(
+                    stream.snapshot_remote(now),
+                ));
+                // Track referenced codec
+                if !stream.codec_id.is_empty() {
+                    referenced_codec_ids.insert(stream.codec_id.clone());
+                }
+            }
+        }
+
+        // Add referenced stats if we have any streams
+        if has_streams {
+            // Transport stats (always included as streams reference it)
+            entries.push(RTCStatsReportEntry::Transport(self.transport.snapshot(now)));
+
+            // Referenced codec stats
+            for (id, codec) in &self.codecs {
+                if referenced_codec_ids.contains(id) {
+                    entries.push(RTCStatsReportEntry::Codec(codec.snapshot(now, id)));
+                }
+            }
+
+            // ICE candidate pair stats (referenced by transport)
+            for (id, pair) in &self.ice_candidate_pairs {
+                entries.push(RTCStatsReportEntry::IceCandidatePair(
+                    pair.snapshot(now, id),
+                ));
+            }
+
+            // Local ICE candidate stats
+            for (id, candidate) in &self.local_candidates {
+                entries.push(RTCStatsReportEntry::LocalCandidate(
+                    candidate.snapshot_local(now, id),
+                ));
+            }
+
+            // Remote ICE candidate stats
+            for (id, candidate) in &self.remote_candidates {
+                entries.push(RTCStatsReportEntry::RemoteCandidate(
+                    candidate.snapshot_remote(now, id),
+                ));
+            }
+
+            // Certificate stats (referenced by transport)
+            for (id, cert) in &self.certificates {
+                entries.push(RTCStatsReportEntry::Certificate(cert.snapshot(now, id)));
+            }
+        }
+
+        RTCStatsReport::new(entries)
+    }
+
+    /// Creates a snapshot for a specific receiver (inbound streams).
+    fn snapshot_for_receiver(
+        &self,
+        now: Instant,
+        transceiver_id: RTCRtpTransceiverId,
+    ) -> RTCStatsReport {
+        use std::collections::HashSet;
+
+        let mut entries = Vec::new();
+        let mut referenced_codec_ids = HashSet::new();
+        let mut has_streams = false;
+
+        // Collect inbound RTP streams for this receiver
+        for (ssrc, stream) in &self.inbound_rtp_streams {
+            if stream.transceiver_id == transceiver_id {
+                has_streams = true;
+                let id = format!("RTCInboundRTPStream_{}_{}", stream.kind, ssrc);
+                entries.push(RTCStatsReportEntry::InboundRtp(stream.snapshot(now, &id)));
+                // Also add remote outbound stats derived from RTCP SR
+                entries.push(RTCStatsReportEntry::RemoteOutboundRtp(
+                    stream.snapshot_remote(now),
+                ));
+                // Track referenced codec
+                if !stream.codec_id.is_empty() {
+                    referenced_codec_ids.insert(stream.codec_id.clone());
+                }
+            }
+        }
+
+        // Add referenced stats if we have any streams
+        if has_streams {
+            // Transport stats (always included as streams reference it)
+            entries.push(RTCStatsReportEntry::Transport(self.transport.snapshot(now)));
+
+            // Referenced codec stats
+            for (id, codec) in &self.codecs {
+                if referenced_codec_ids.contains(id) {
+                    entries.push(RTCStatsReportEntry::Codec(codec.snapshot(now, id)));
+                }
+            }
+
+            // ICE candidate pair stats (referenced by transport)
+            for (id, pair) in &self.ice_candidate_pairs {
+                entries.push(RTCStatsReportEntry::IceCandidatePair(
+                    pair.snapshot(now, id),
+                ));
+            }
+
+            // Local ICE candidate stats
+            for (id, candidate) in &self.local_candidates {
+                entries.push(RTCStatsReportEntry::LocalCandidate(
+                    candidate.snapshot_local(now, id),
+                ));
+            }
+
+            // Remote ICE candidate stats
+            for (id, candidate) in &self.remote_candidates {
+                entries.push(RTCStatsReportEntry::RemoteCandidate(
+                    candidate.snapshot_remote(now, id),
+                ));
+            }
+
+            // Certificate stats (referenced by transport)
+            for (id, cert) in &self.certificates {
+                entries.push(RTCStatsReportEntry::Certificate(cert.snapshot(now, id)));
+            }
+        }
+
+        RTCStatsReport::new(entries)
+    }
+
     // ========================================================================
     // Convenience methods for updating stats
     // ========================================================================
@@ -224,6 +396,8 @@ impl RTCStatsAccumulator {
     /// * `mid` - The media stream identification tag from SDP
     /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
     /// * `fec_ssrc` - The FEC SSRC for forward error correction (if available)
+    /// * `transceiver_id` - The transceiver ID that owns this stream
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_or_create_inbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
@@ -232,6 +406,7 @@ impl RTCStatsAccumulator {
         mid: &str,
         rtx_ssrc: Option<u32>,
         fec_ssrc: Option<u32>,
+        transceiver_id: RTCRtpTransceiverId,
     ) -> &mut InboundRtpStreamAccumulator {
         // Populate reverse lookup maps for O(1) RTX/FEC detection
         if let Some(rtx) = rtx_ssrc {
@@ -252,6 +427,7 @@ impl RTCStatsAccumulator {
                 mid: mid.to_string(),
                 rtx_ssrc,
                 fec_ssrc,
+                transceiver_id,
                 ..Default::default()
             })
     }
@@ -266,6 +442,8 @@ impl RTCStatsAccumulator {
     /// * `rid` - The RTP stream ID for simulcast (empty if not simulcast)
     /// * `encoding_index` - The index of this encoding in the simulcast layer order
     /// * `rtx_ssrc` - The RTX SSRC for retransmissions (if available)
+    /// * `transceiver_id` - The transceiver ID that owns this stream
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_or_create_outbound_rtp_streams(
         &mut self,
         ssrc: SSRC,
@@ -274,6 +452,7 @@ impl RTCStatsAccumulator {
         rid: &str,
         encoding_index: u32,
         rtx_ssrc: Option<u32>,
+        transceiver_id: RTCRtpTransceiverId,
     ) -> &mut OutboundRtpStreamAccumulator {
         if let Some(rtx) = rtx_ssrc {
             self.rtx_ssrc_to_primary.insert(rtx, ssrc);
@@ -289,6 +468,7 @@ impl RTCStatsAccumulator {
                 rid: rid.to_string(),
                 encoding_index,
                 rtx_ssrc,
+                transceiver_id,
                 active: true,
                 ..Default::default()
             })
@@ -334,17 +514,29 @@ impl RTCStatsAccumulator {
     }
 
     /// Registers a local ICE candidate.
-    pub(crate) fn register_local_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
+    pub(crate) fn register_local_candidate(
+        &mut self,
+        id: String,
+        candidate: IceCandidateAccumulator,
+    ) {
         self.local_candidates.insert(id, candidate);
     }
 
     /// Registers a remote ICE candidate.
-    pub(crate) fn register_remote_candidate(&mut self, id: String, candidate: IceCandidateAccumulator) {
+    pub(crate) fn register_remote_candidate(
+        &mut self,
+        id: String,
+        candidate: IceCandidateAccumulator,
+    ) {
         self.remote_candidates.insert(id, candidate);
     }
 
     /// Registers a certificate.
-    pub(crate) fn register_certificate(&mut self, fingerprint: String, cert: CertificateStatsAccumulator) {
+    pub(crate) fn register_certificate(
+        &mut self,
+        fingerprint: String,
+        cert: CertificateStatsAccumulator,
+    ) {
         self.certificates.insert(fingerprint, cert);
     }
 
@@ -376,7 +568,11 @@ impl RTCStatsAccumulator {
             })
     }
 
-    pub(crate) fn on_rtx_packet_sent_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_rtx_packet_sent_if_rtx(
+        &mut self,
+        rtx_ssrc: SSRC,
+        payload_bytes: usize,
+    ) -> bool {
         if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
             && let Some(stream) = self.outbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -392,7 +588,11 @@ impl RTCStatsAccumulator {
     /// a stream's `rtx_ssrc`. This updates the retransmission stats.
     ///
     /// Returns `true` if the RTX packet was tracked, `false` if no matching stream found.
-    pub(crate) fn on_rtx_packet_received_if_rtx(&mut self, rtx_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_rtx_packet_received_if_rtx(
+        &mut self,
+        rtx_ssrc: SSRC,
+        payload_bytes: usize,
+    ) -> bool {
         if let Some(primary_ssrc) = self.rtx_ssrc_to_primary.get(&rtx_ssrc)
             && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -408,7 +608,11 @@ impl RTCStatsAccumulator {
     /// a stream's `fec_ssrc`. This updates the FEC stats.
     ///
     /// Returns `true` if the FEC packet was tracked, `false` if no matching stream found.
-    pub(crate) fn on_fec_packet_received_if_fec(&mut self, fec_ssrc: SSRC, payload_bytes: usize) -> bool {
+    pub(crate) fn on_fec_packet_received_if_fec(
+        &mut self,
+        fec_ssrc: SSRC,
+        payload_bytes: usize,
+    ) -> bool {
         if let Some(primary_ssrc) = self.fec_ssrc_to_primary.get(&fec_ssrc)
             && let Some(stream) = self.inbound_rtp_streams.get_mut(primary_ssrc)
         {
@@ -437,14 +641,22 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates audio receiver stats for an inbound audio stream.
-    pub(crate) fn update_audio_receiver_stats(&mut self, ssrc: SSRC, stats: AudioReceiverStatsUpdate) {
+    pub(crate) fn update_audio_receiver_stats(
+        &mut self,
+        ssrc: SSRC,
+        stats: AudioReceiverStatsUpdate,
+    ) {
         if let Some(stream) = self.inbound_rtp_streams.get_mut(&ssrc) {
             stream.audio_receiver_stats = Some(stats);
         }
     }
 
     /// Updates audio source stats.
-    pub(crate) fn update_audio_source_stats(&mut self, track_id: &str, stats: AudioSourceStatsUpdate) {
+    pub(crate) fn update_audio_source_stats(
+        &mut self,
+        track_id: &str,
+        stats: AudioSourceStatsUpdate,
+    ) {
         if let Some(source) = self.media_sources.get_mut(track_id) {
             source.audio_level = Some(stats.audio_level);
             source.total_audio_energy = Some(stats.total_audio_energy);
@@ -455,7 +667,11 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates video source stats.
-    pub(crate) fn update_video_source_stats(&mut self, track_id: &str, stats: VideoSourceStatsUpdate) {
+    pub(crate) fn update_video_source_stats(
+        &mut self,
+        track_id: &str,
+        stats: VideoSourceStatsUpdate,
+    ) {
         if let Some(source) = self.media_sources.get_mut(track_id) {
             source.width = Some(stats.width);
             source.height = Some(stats.height);
@@ -465,7 +681,11 @@ impl RTCStatsAccumulator {
     }
 
     /// Updates audio playout stats.
-    pub(crate) fn update_audio_playout_stats(&mut self, playout_id: &str, stats: AudioPlayoutStatsUpdate) {
+    pub(crate) fn update_audio_playout_stats(
+        &mut self,
+        playout_id: &str,
+        stats: AudioPlayoutStatsUpdate,
+    ) {
         if let Some(playout) = self.audio_playouts.get_mut(playout_id) {
             playout.synthesized_samples_duration = stats.synthesized_samples_duration;
             playout.synthesized_samples_events = stats.synthesized_samples_events;

@@ -1,3 +1,4 @@
+use crate::rtp_transceiver::RTCRtpTransceiverId;
 use crate::rtp_transceiver::SSRC;
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::accumulator::{AudioReceiverStatsUpdate, DecoderStatsUpdate};
@@ -28,6 +29,8 @@ pub struct InboundRtpStreamAccumulator {
     pub track_identifier: String,
     /// The media stream identification tag from SDP.
     pub mid: String,
+    /// The transceiver ID that owns this stream (for filtering).
+    pub transceiver_id: RTCRtpTransceiverId,
 
     // Packet counters
     /// Total RTP packets received.

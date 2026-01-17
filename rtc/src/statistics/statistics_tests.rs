@@ -8,10 +8,12 @@ use crate::peer_connection::transport::{
     RTCDtlsRole, RTCDtlsTransportState, RTCIceRole, RTCIceTransportState,
 };
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
+use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpSenderId};
+use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::{
-    DataChannelStatsAccumulator, IceCandidatePairAccumulator, InboundRtpStreamAccumulator,
-    OutboundRtpStreamAccumulator, PeerConnectionStatsAccumulator, RTCStatsAccumulator,
-    TransportStatsAccumulator,
+    CodecStatsAccumulator, DataChannelStatsAccumulator, IceCandidatePairAccumulator,
+    InboundRtpStreamAccumulator, OutboundRtpStreamAccumulator, PeerConnectionStatsAccumulator,
+    RTCStatsAccumulator, TransportStatsAccumulator,
 };
 use crate::statistics::report::{RTCStatsReport, RTCStatsReportEntry};
 use crate::statistics::stats::RTCStatsType;
@@ -568,6 +570,7 @@ fn test_master_accumulator_snapshot() {
         "0",
         Some(12345679),
         None,
+        0, // transceiver_id
     );
     inbound.on_rtp_received(12, 1000, now);
     inbound.on_frame_received();
@@ -580,6 +583,7 @@ fn test_master_accumulator_snapshot() {
         "",
         0,
         Some(87654322),
+        0, // transceiver_id
     );
     outbound.on_rtp_sent(12, 1200, now);
     outbound.on_frame_sent(true);
@@ -634,6 +638,7 @@ fn test_rtx_fec_tracking() {
         "0",
         Some(rtx_ssrc),
         Some(fec_ssrc),
+        0, // transceiver_id
     );
 
     // Receive primary packets
@@ -722,4 +727,687 @@ fn test_transport_json_snapshot() {
     assert_eq!(normalized["dtlsState"], "connected");
     assert_eq!(normalized["tlsVersion"], "DTLS 1.2");
     assert_eq!(normalized["dtlsRole"], "server");
+}
+
+// ============================================================================
+// Unit Tests for StatsSelector
+// ============================================================================
+
+/// Test that StatsSelector::None returns all stats.
+#[test]
+fn test_stats_selector_none_returns_all() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+
+    // Set up transport
+    master.transport.transport_id = "RTCTransport_0".to_string();
+    master
+        .transport
+        .on_ice_state_changed(RTCIceTransportState::Connected);
+
+    // Create streams for different transceivers
+    master.get_or_create_inbound_rtp_streams(
+        11111111,
+        RtpCodecKind::Audio,
+        "audio-track",
+        "0",
+        None,
+        None,
+        0, // transceiver_id 0
+    );
+    master.get_or_create_inbound_rtp_streams(
+        22222222,
+        RtpCodecKind::Video,
+        "video-track",
+        "1",
+        None,
+        None,
+        1, // transceiver_id 1
+    );
+    master.get_or_create_outbound_rtp_streams(
+        33333333,
+        RtpCodecKind::Audio,
+        "0",
+        "",
+        0,
+        None,
+        0, // transceiver_id 0
+    );
+    master.get_or_create_outbound_rtp_streams(
+        44444444,
+        RtpCodecKind::Video,
+        "1",
+        "",
+        0,
+        None,
+        1, // transceiver_id 1
+    );
+
+    // Create data channel
+    master.get_or_create_data_channel(1, "test", "");
+
+    // Snapshot with None selector
+    let report = master.snapshot_with_selector(now, StatsSelector::None);
+
+    // Should have all stats
+    assert!(report.peer_connection().is_some());
+    assert!(report.transport().is_some());
+    assert_eq!(report.inbound_rtp_streams().count(), 2);
+    assert_eq!(report.outbound_rtp_streams().count(), 2);
+    assert_eq!(report.data_channels().count(), 1);
+}
+
+/// Test that StatsSelector::Sender filters to only sender's outbound streams.
+#[test]
+fn test_stats_selector_sender_filters_outbound() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+
+    // Set up transport
+    master.transport.transport_id = "RTCTransport_0".to_string();
+    master
+        .transport
+        .on_ice_state_changed(RTCIceTransportState::Connected);
+
+    // Create outbound streams for different senders (transceiver_ids 0 and 1)
+    let outbound0 = master.get_or_create_outbound_rtp_streams(
+        11111111,
+        RtpCodecKind::Audio,
+        "0",
+        "",
+        0,
+        None,
+        0, // transceiver_id 0
+    );
+    outbound0.on_rtp_sent(12, 160, now);
+
+    let outbound1 = master.get_or_create_outbound_rtp_streams(
+        22222222,
+        RtpCodecKind::Video,
+        "1",
+        "",
+        0,
+        None,
+        1, // transceiver_id 1
+    );
+    outbound1.on_rtp_sent(12, 1200, now);
+
+    // Also create inbound streams (should NOT be included for sender filter)
+    master.get_or_create_inbound_rtp_streams(
+        33333333,
+        RtpCodecKind::Audio,
+        "audio-in",
+        "0",
+        None,
+        None,
+        0,
+    );
+
+    // Create data channel (should NOT be included for sender filter)
+    master.get_or_create_data_channel(1, "test", "");
+
+    // Snapshot with Sender(0) selector
+    let sender_id = RTCRtpSenderId(0);
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(sender_id));
+
+    // Should only have sender 0's outbound stream
+    assert_eq!(report.outbound_rtp_streams().count(), 1);
+    let outbound = report.outbound_rtp_streams().next().unwrap();
+    assert_eq!(
+        outbound.sent_rtp_stream_stats.rtp_stream_stats.ssrc,
+        11111111
+    );
+
+    // Should have transport (referenced by stream)
+    assert!(report.transport().is_some());
+
+    // Should NOT have peer connection stats
+    assert!(report.peer_connection().is_none());
+
+    // Should NOT have inbound streams
+    assert_eq!(report.inbound_rtp_streams().count(), 0);
+
+    // Should NOT have data channels
+    assert_eq!(report.data_channels().count(), 0);
+}
+
+/// Test that StatsSelector::Receiver filters to only receiver's inbound streams.
+#[test]
+fn test_stats_selector_receiver_filters_inbound() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+
+    // Set up transport
+    master.transport.transport_id = "RTCTransport_0".to_string();
+    master
+        .transport
+        .on_ice_state_changed(RTCIceTransportState::Connected);
+
+    // Create inbound streams for different receivers (transceiver_ids 0 and 1)
+    let inbound0 = master.get_or_create_inbound_rtp_streams(
+        11111111,
+        RtpCodecKind::Audio,
+        "audio-track",
+        "0",
+        None,
+        None,
+        0, // transceiver_id 0
+    );
+    inbound0.on_rtp_received(12, 160, now);
+
+    let inbound1 = master.get_or_create_inbound_rtp_streams(
+        22222222,
+        RtpCodecKind::Video,
+        "video-track",
+        "1",
+        None,
+        None,
+        1, // transceiver_id 1
+    );
+    inbound1.on_rtp_received(12, 1200, now);
+
+    // Also create outbound streams (should NOT be included for receiver filter)
+    master.get_or_create_outbound_rtp_streams(33333333, RtpCodecKind::Audio, "0", "", 0, None, 0);
+
+    // Snapshot with Receiver(1) selector
+    let receiver_id = RTCRtpReceiverId(1);
+    let report = master.snapshot_with_selector(now, StatsSelector::Receiver(receiver_id));
+
+    // Should only have receiver 1's inbound stream
+    assert_eq!(report.inbound_rtp_streams().count(), 1);
+    let inbound = report.inbound_rtp_streams().next().unwrap();
+    assert_eq!(
+        inbound.received_rtp_stream_stats.rtp_stream_stats.ssrc,
+        22222222
+    );
+
+    // Should have transport (referenced by stream)
+    assert!(report.transport().is_some());
+
+    // Should NOT have peer connection stats
+    assert!(report.peer_connection().is_none());
+
+    // Should NOT have outbound streams
+    assert_eq!(report.outbound_rtp_streams().count(), 0);
+}
+
+/// Test that filtered stats include referenced codec stats.
+#[test]
+fn test_stats_selector_includes_referenced_codecs() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+
+    // Set up transport
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Add codecs directly to the HashMap
+    master.codecs.insert(
+        "RTCCodec_audio_111".to_string(),
+        CodecStatsAccumulator {
+            payload_type: 111,
+            mime_type: "audio/opus".to_string(),
+            clock_rate: 48000,
+            channels: 2,
+            ..Default::default()
+        },
+    );
+    master.codecs.insert(
+        "RTCCodec_video_96".to_string(),
+        CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            ..Default::default()
+        },
+    );
+
+    // Create outbound stream with codec reference
+    let outbound = master.get_or_create_outbound_rtp_streams(
+        11111111,
+        RtpCodecKind::Audio,
+        "0",
+        "",
+        0,
+        None,
+        0,
+    );
+    outbound.codec_id = "RTCCodec_audio_111".to_string();
+
+    // Snapshot with Sender(0) selector
+    let sender_id = RTCRtpSenderId(0);
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(sender_id));
+
+    // Should have the referenced codec - use iter to filter
+    let codecs: Vec<_> = report
+        .iter()
+        .filter_map(|e| match e {
+            RTCStatsReportEntry::Codec(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(codecs.len(), 1);
+    assert_eq!(codecs[0].payload_type, 111);
+    assert_eq!(codecs[0].mime_type, "audio/opus");
+}
+
+/// Test that sender filter includes remote inbound stats.
+#[test]
+fn test_stats_selector_sender_includes_remote_inbound() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Create outbound stream with RTCP RR data
+    let outbound = master.get_or_create_outbound_rtp_streams(
+        11111111,
+        RtpCodecKind::Video,
+        "0",
+        "",
+        0,
+        None,
+        0,
+    );
+    outbound.on_rtp_sent(12, 1200, now);
+    outbound.on_rtcp_rr_received(100, 5, 0.003, 0.05, 0.025);
+
+    // Snapshot with Sender selector
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(0)));
+
+    // Should have remote inbound stats derived from RTCP RR
+    let remote_inbound: Vec<_> = report
+        .iter()
+        .filter(|e| matches!(e, RTCStatsReportEntry::RemoteInboundRtp(_)))
+        .collect();
+    assert_eq!(remote_inbound.len(), 1);
+
+    if let RTCStatsReportEntry::RemoteInboundRtp(stats) = remote_inbound[0] {
+        assert_eq!(stats.received_rtp_stream_stats.packets_received, 100);
+        assert_eq!(stats.round_trip_time, 0.025);
+    } else {
+        panic!("Expected RemoteInboundRtp");
+    }
+}
+
+/// Test that receiver filter includes remote outbound stats.
+#[test]
+fn test_stats_selector_receiver_includes_remote_outbound() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Create inbound stream with RTCP SR data
+    let inbound = master.get_or_create_inbound_rtp_streams(
+        22222222,
+        RtpCodecKind::Video,
+        "video-track",
+        "0",
+        None,
+        None,
+        0,
+    );
+    inbound.on_rtp_received(12, 1200, now);
+    inbound.on_rtcp_sr_received(500, 600000, now);
+
+    // Snapshot with Receiver selector
+    let report = master.snapshot_with_selector(now, StatsSelector::Receiver(RTCRtpReceiverId(0)));
+
+    // Should have remote outbound stats derived from RTCP SR
+    let remote_outbound: Vec<_> = report
+        .iter()
+        .filter(|e| matches!(e, RTCStatsReportEntry::RemoteOutboundRtp(_)))
+        .collect();
+    assert_eq!(remote_outbound.len(), 1);
+
+    if let RTCStatsReportEntry::RemoteOutboundRtp(stats) = remote_outbound[0] {
+        assert_eq!(stats.sent_rtp_stream_stats.packets_sent, 500);
+        assert_eq!(stats.sent_rtp_stream_stats.bytes_sent, 600000);
+    } else {
+        panic!("Expected RemoteOutboundRtp");
+    }
+}
+
+/// Test empty report when selector matches no streams.
+#[test]
+fn test_stats_selector_no_matching_streams() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Create streams for transceiver 0
+    master.get_or_create_outbound_rtp_streams(11111111, RtpCodecKind::Audio, "0", "", 0, None, 0);
+
+    // Query for transceiver 5 which doesn't exist
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(5)));
+
+    // Should have no streams
+    assert_eq!(report.outbound_rtp_streams().count(), 0);
+    assert_eq!(report.inbound_rtp_streams().count(), 0);
+
+    // Should also have no transport (since no streams reference it)
+    assert!(report.transport().is_none());
+}
+
+/// Test that filtered stats include ICE candidates.
+#[test]
+fn test_stats_selector_includes_ice_candidates() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Add ICE candidate pair
+    master.ice_candidate_pairs.insert(
+        "candidate-pair-1".to_string(),
+        IceCandidatePairAccumulator {
+            transport_id: "RTCTransport_0".to_string(),
+            local_candidate_id: "local-1".to_string(),
+            remote_candidate_id: "remote-1".to_string(),
+            state: RTCStatsIceCandidatePairState::Succeeded,
+            ..Default::default()
+        },
+    );
+
+    // Create outbound stream
+    master.get_or_create_outbound_rtp_streams(11111111, RtpCodecKind::Video, "0", "", 0, None, 0);
+
+    // Snapshot with Sender selector
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(0)));
+
+    // Should have ICE candidate pair
+    let pairs: Vec<_> = report.candidate_pairs().collect();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].state, RTCStatsIceCandidatePairState::Succeeded);
+}
+
+// ============================================================================
+// Module Level Integration Tests for StatsSelector
+// ============================================================================
+
+/// Integration test: Simulate a bidirectional audio/video call with stats filtering.
+#[test]
+fn test_stats_selector_bidirectional_call() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+
+    // Set up transport
+    master.transport.transport_id = "RTCTransport_0".to_string();
+    master
+        .transport
+        .on_ice_state_changed(RTCIceTransportState::Connected);
+    master
+        .transport
+        .on_dtls_state_changed(RTCDtlsTransportState::Connected);
+
+    // Add codecs directly to the HashMap
+    master.codecs.insert(
+        "RTCCodec_audio_111".to_string(),
+        CodecStatsAccumulator {
+            payload_type: 111,
+            mime_type: "audio/opus".to_string(),
+            clock_rate: 48000,
+            channels: 2,
+            ..Default::default()
+        },
+    );
+    master.codecs.insert(
+        "RTCCodec_video_96".to_string(),
+        CodecStatsAccumulator {
+            payload_type: 96,
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            ..Default::default()
+        },
+    );
+
+    // Transceiver 0: Audio (send and receive)
+    let audio_out = master.get_or_create_outbound_rtp_streams(
+        100000001,
+        RtpCodecKind::Audio,
+        "audio",
+        "",
+        0,
+        None,
+        0,
+    );
+    audio_out.codec_id = "RTCCodec_audio_111".to_string();
+    audio_out.on_rtp_sent(12, 160, now);
+    audio_out.on_rtp_sent(12, 160, now);
+
+    let audio_in = master.get_or_create_inbound_rtp_streams(
+        200000001,
+        RtpCodecKind::Audio,
+        "remote-audio",
+        "audio",
+        None,
+        None,
+        0,
+    );
+    audio_in.codec_id = "RTCCodec_audio_111".to_string();
+    audio_in.on_rtp_received(12, 160, now);
+
+    // Transceiver 1: Video (send and receive)
+    let video_out = master.get_or_create_outbound_rtp_streams(
+        100000002,
+        RtpCodecKind::Video,
+        "video",
+        "",
+        0,
+        None,
+        1,
+    );
+    video_out.codec_id = "RTCCodec_video_96".to_string();
+    video_out.on_rtp_sent(12, 1200, now);
+    video_out.on_frame_sent(false);
+
+    let video_in = master.get_or_create_inbound_rtp_streams(
+        200000002,
+        RtpCodecKind::Video,
+        "remote-video",
+        "video",
+        None,
+        None,
+        1,
+    );
+    video_in.codec_id = "RTCCodec_video_96".to_string();
+    video_in.on_rtp_received(12, 1200, now);
+    video_in.on_frame_received();
+
+    // Test: Get all stats
+    let all_stats = master.snapshot_with_selector(now, StatsSelector::None);
+    assert_eq!(all_stats.outbound_rtp_streams().count(), 2);
+    assert_eq!(all_stats.inbound_rtp_streams().count(), 2);
+
+    // Count codecs using iter
+    let all_codecs: Vec<_> = all_stats
+        .iter()
+        .filter_map(|e| match e {
+            RTCStatsReportEntry::Codec(_) => Some(()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(all_codecs.len(), 2);
+    assert!(all_stats.peer_connection().is_some());
+
+    // Test: Get audio sender stats
+    let audio_sender_stats =
+        master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(0)));
+    assert_eq!(audio_sender_stats.outbound_rtp_streams().count(), 1);
+    let audio_out_stats = audio_sender_stats.outbound_rtp_streams().next().unwrap();
+    assert_eq!(audio_out_stats.sent_rtp_stream_stats.packets_sent, 2);
+    assert_eq!(
+        audio_out_stats.sent_rtp_stream_stats.rtp_stream_stats.kind,
+        RtpCodecKind::Audio
+    );
+    // Should have audio codec only
+    let codecs: Vec<_> = audio_sender_stats
+        .iter()
+        .filter_map(|e| match e {
+            RTCStatsReportEntry::Codec(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(codecs.len(), 1);
+    assert_eq!(codecs[0].mime_type, "audio/opus");
+
+    // Test: Get video receiver stats
+    let video_receiver_stats =
+        master.snapshot_with_selector(now, StatsSelector::Receiver(RTCRtpReceiverId(1)));
+    assert_eq!(video_receiver_stats.inbound_rtp_streams().count(), 1);
+    let video_in_stats = video_receiver_stats.inbound_rtp_streams().next().unwrap();
+    assert_eq!(video_in_stats.received_rtp_stream_stats.packets_received, 1);
+    assert_eq!(video_in_stats.frames_received, 1);
+    // Should have video codec only
+    let codecs: Vec<_> = video_receiver_stats
+        .iter()
+        .filter_map(|e| match e {
+            RTCStatsReportEntry::Codec(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(codecs.len(), 1);
+    assert_eq!(codecs[0].mime_type, "video/VP8");
+}
+
+/// Integration test: Simulcast scenario with multiple outbound streams per sender.
+#[test]
+fn test_stats_selector_simulcast_sender() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Transceiver 0: Simulcast video with 3 layers (same transceiver_id, different SSRCs)
+    let low = master.get_or_create_outbound_rtp_streams(
+        100000001,
+        RtpCodecKind::Video,
+        "video",
+        "l", // low quality
+        0,
+        None,
+        0,
+    );
+    low.on_rtp_sent(12, 400, now);
+
+    let mid = master.get_or_create_outbound_rtp_streams(
+        100000002,
+        RtpCodecKind::Video,
+        "video",
+        "m", // medium quality
+        1,
+        None,
+        0,
+    );
+    mid.on_rtp_sent(12, 800, now);
+
+    let high = master.get_or_create_outbound_rtp_streams(
+        100000003,
+        RtpCodecKind::Video,
+        "video",
+        "h", // high quality
+        2,
+        None,
+        0,
+    );
+    high.on_rtp_sent(12, 1200, now);
+
+    // Different transceiver for audio
+    master.get_or_create_outbound_rtp_streams(
+        200000001,
+        RtpCodecKind::Audio,
+        "audio",
+        "",
+        0,
+        None,
+        1,
+    );
+
+    // Get sender 0's stats (should include all 3 simulcast layers)
+    let report = master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(0)));
+
+    let outbound_streams: Vec<_> = report.outbound_rtp_streams().collect();
+    assert_eq!(outbound_streams.len(), 3);
+
+    // Verify all simulcast layers are present
+    let rids: Vec<_> = outbound_streams.iter().map(|s| s.rid.as_str()).collect();
+    assert!(rids.contains(&"l"));
+    assert!(rids.contains(&"m"));
+    assert!(rids.contains(&"h"));
+
+    // Verify audio transceiver is not included
+    for stream in &outbound_streams {
+        assert_eq!(
+            stream.sent_rtp_stream_stats.rtp_stream_stats.kind,
+            RtpCodecKind::Video
+        );
+    }
+}
+
+/// Integration test: Verify transceiver_id correctly links sender/receiver to streams.
+#[test]
+fn test_stats_selector_transceiver_isolation() {
+    let now = Instant::now();
+
+    let mut master = RTCStatsAccumulator::new();
+    master.transport.transport_id = "RTCTransport_0".to_string();
+
+    // Create many transceivers with streams
+    for i in 0..5 {
+        master.get_or_create_outbound_rtp_streams(
+            100000000 + i,
+            RtpCodecKind::Video,
+            &format!("mid-{}", i),
+            "",
+            0,
+            None,
+            i as usize,
+        );
+        master.get_or_create_inbound_rtp_streams(
+            200000000 + i,
+            RtpCodecKind::Video,
+            &format!("track-{}", i),
+            &format!("mid-{}", i),
+            None,
+            None,
+            i as usize,
+        );
+    }
+
+    // Query each transceiver individually
+    for i in 0..5 {
+        let sender_report =
+            master.snapshot_with_selector(now, StatsSelector::Sender(RTCRtpSenderId(i as usize)));
+        assert_eq!(
+            sender_report.outbound_rtp_streams().count(),
+            1,
+            "Sender {} should have exactly 1 outbound stream",
+            i
+        );
+        let outbound = sender_report.outbound_rtp_streams().next().unwrap();
+        assert_eq!(
+            outbound.sent_rtp_stream_stats.rtp_stream_stats.ssrc,
+            100000000 + i
+        );
+
+        let receiver_report = master
+            .snapshot_with_selector(now, StatsSelector::Receiver(RTCRtpReceiverId(i as usize)));
+        assert_eq!(
+            receiver_report.inbound_rtp_streams().count(),
+            1,
+            "Receiver {} should have exactly 1 inbound stream",
+            i
+        );
+        let inbound = receiver_report.inbound_rtp_streams().next().unwrap();
+        assert_eq!(
+            inbound.received_rtp_stream_stats.rtp_stream_stats.ssrc,
+            200000000 + i
+        );
+    }
 }
