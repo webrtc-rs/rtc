@@ -126,6 +126,11 @@ path = "examples/simulcast_bidirection/simulcast_bidirection.rs"
 bench = false
 
 [[example]]
+name = "stats"
+path = "examples/stats/stats.rs"
+bench = false
+
+[[example]]
 name = "mdns-query-and-gather"
 path = "examples/mdns-query-and-gather/mdns-query-and-gather.rs"
 bench = false
