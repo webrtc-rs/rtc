@@ -73,7 +73,7 @@ pub enum RTCIceServerTransportProtocol {
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcicecandidate-interface
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCIceCandidate {
-    pub stats_id: String,
+    pub id: String,
     pub foundation: String,
     pub priority: u32,
     pub address: String,
@@ -106,7 +106,7 @@ impl From<&Candidate> for RTCIceCandidate {
         };
 
         RTCIceCandidate {
-            stats_id: c.id(),
+            id: c.id().to_string(),
             foundation: c.foundation(),
             priority: c.priority(),
             address: c.address().to_string(),
@@ -125,7 +125,7 @@ impl From<&Candidate> for RTCIceCandidate {
 
 impl RTCIceCandidate {
     pub(crate) fn to_ice(&self) -> Result<Candidate> {
-        let candidate_id = self.stats_id.clone();
+        let candidate_id = self.id.clone();
         let base_config = CandidateConfig {
             candidate_id,
             network: self.protocol.to_string(),

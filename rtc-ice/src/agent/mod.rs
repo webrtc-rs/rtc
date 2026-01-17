@@ -587,20 +587,6 @@ impl Agent {
     }
 
     /// Returns the selected pair (local_candidate, remote_candidate) or none
-    pub fn get_selected_candidate_pair_id(&self) -> Option<String> {
-        if let Some(pair_index) = self.get_selected_pair() {
-            let candidate_pair = &self.candidate_pairs[pair_index];
-            Some(format!(
-                "RTCIceCandidatePair_{}_{}",
-                self.local_candidates[candidate_pair.local_index].id(),
-                self.remote_candidates[candidate_pair.remote_index].id()
-            ))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the selected pair (local_candidate, remote_candidate) or none
     pub fn get_selected_candidate_pair(&self) -> Option<(&Candidate, &Candidate)> {
         if let Some(pair_index) = self.get_selected_pair() {
             let candidate_pair = &self.candidate_pairs[pair_index];

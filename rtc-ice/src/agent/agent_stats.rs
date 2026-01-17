@@ -217,8 +217,8 @@ impl Agent {
         for cp in &self.candidate_pairs {
             let stat = CandidatePairStats {
                 timestamp: Instant::now(),
-                local_candidate_id: self.local_candidates[cp.local_index].id(),
-                remote_candidate_id: self.remote_candidates[cp.remote_index].id(),
+                local_candidate_id: self.local_candidates[cp.local_index].id().to_string(),
+                remote_candidate_id: self.remote_candidates[cp.remote_index].id().to_string(),
                 state: cp.state,
                 nominated: cp.nominated,
                 // STUN transaction stats
@@ -243,7 +243,7 @@ impl Agent {
         for c in &self.local_candidates {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
-                id: c.id(),
+                id: c.id().to_string(),
                 network_type: c.network_type(),
                 ip: c.address().to_owned(),
                 port: c.port(),
@@ -265,7 +265,7 @@ impl Agent {
         for c in &self.remote_candidates {
             let stat = CandidateStats {
                 timestamp: Instant::now(),
-                id: c.id(),
+                id: c.id().to_string(),
                 network_type: c.network_type(),
                 ip: c.address().to_owned(),
                 port: c.port(),

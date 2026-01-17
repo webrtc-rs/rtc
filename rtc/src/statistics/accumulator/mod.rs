@@ -161,7 +161,7 @@ impl RTCStatsAccumulator {
         // Data channel stats
         for (id, channel) in &self.data_channels {
             entries.push(RTCStatsReportEntry::DataChannel(
-                channel.snapshot(now, &format!("RTCDataChannel_{}", id)),
+                channel.snapshot(now, format!("RTCDataChannel_{}", id)),
             ));
         }
 
@@ -310,11 +310,17 @@ impl RTCStatsAccumulator {
     /// Gets or creates an ICE candidate pair accumulator.
     pub fn get_or_create_candidate_pair(
         &mut self,
-        pair_id: &str,
+        local_id: &str,
+        remote_id: &str,
     ) -> &mut IceCandidatePairAccumulator {
         self.ice_candidate_pairs
-            .entry(pair_id.to_string())
-            .or_default()
+            .entry(format!("RTCIceCandidatePair_{}_{}", local_id, remote_id))
+            .or_insert_with(|| IceCandidatePairAccumulator {
+                transport_id: self.transport.transport_id.clone(),
+                local_candidate_id: local_id.to_string(),
+                remote_candidate_id: remote_id.to_string(),
+                ..Default::default()
+            })
     }
 
     /// Registers a local ICE candidate.
@@ -468,8 +474,13 @@ impl RTCStatsAccumulator {
     ///
     /// * `pair_id` - The ID of the candidate pair to sync
     /// * `cp_stats.` - CandidatePairStats
-    pub fn update_ice_agent_stats(&mut self, pair_id: &str, cp_stats: &CandidatePairStats) {
-        let pair = self.get_or_create_candidate_pair(pair_id);
+    pub fn update_ice_agent_stats(
+        &mut self,
+        local_id: &str,
+        remote_id: &str,
+        cp_stats: &CandidatePairStats,
+    ) {
+        let pair = self.get_or_create_candidate_pair(local_id, remote_id);
         pair.requests_sent = cp_stats.requests_sent;
         pair.requests_received = cp_stats.requests_received;
         pair.responses_sent = cp_stats.responses_sent;

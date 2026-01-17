@@ -182,7 +182,7 @@
 //! * [RFC 8122 - WebRTC Security Architecture](https://tools.ietf.org/html/rfc8122)
 
 use std::ops::Add;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
 use rcgen::{CertificateParams, KeyPair};
@@ -307,13 +307,6 @@ pub struct RTCCertificate {
 
     /// Timestamp after which this certificate is no longer valid
     pub(crate) expires: SystemTime,
-
-    /// Unique identifier for this certificate used in statistics reporting
-    ///
-    /// Format: "certificate-{nanosecond_timestamp}"
-    ///
-    /// Example: "certificate-1667202302853538793"
-    pub(crate) stats_id: String,
 }
 
 impl PartialEq for RTCCertificate {
@@ -395,7 +388,6 @@ impl RTCCertificate {
                 private_key,
             },
             expires,
-            stats_id: gen_stats_id(),
         })
     }
 
@@ -556,8 +548,6 @@ impl RTCCertificate {
         Self {
             dtls_certificate,
             expires,
-            // TODO: figure out if it needs to be persisted
-            stats_id: gen_stats_id(),
         }
     }
 
@@ -676,31 +666,6 @@ impl RTCCertificate {
 
         fingerprints
     }
-
-    /*TODO:
-    pub(crate) async fn collect_stats(&self, collector: &mut StatsCollector) {
-        if let Some(fingerprint) = self.get_fingerprints().into_iter().next() {
-            let stats = CertificateStats::new(self, fingerprint);
-            collector.insert(
-                self.stats_id.clone(),
-                StatsReportType::CertificateStats(stats),
-            );
-        }
-    }*/
-}
-
-/// Generates a unique statistics identifier for a certificate.
-///
-/// Creates an ID in the format "certificate-{timestamp}" where timestamp
-/// is the current time in nanoseconds since Unix epoch.
-fn gen_stats_id() -> String {
-    format!(
-        "certificate-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
-    )
 }
 
 #[cfg(test)]
@@ -745,13 +710,12 @@ mod test {
     }
 
     #[test]
-    fn test_generate_certificate_expires_and_stats_id() -> Result<()> {
+    fn test_generate_certificate_expires() -> Result<()> {
         let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
         let cert = RTCCertificate::from_key_pair(kp)?;
 
         let now = SystemTime::now();
         assert!(cert.expires.duration_since(now).is_ok());
-        assert!(cert.stats_id.contains("certificate"));
 
         Ok(())
     }

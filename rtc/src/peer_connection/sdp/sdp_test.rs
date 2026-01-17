@@ -2,15 +2,15 @@ use rcgen::KeyPair;
 use sdp::description::common::Attribute;
 
 use super::*;
+use crate::api::APIBuilder;
 use crate::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8};
 use crate::api::setting_engine::SettingEngine;
-use crate::api::APIBuilder;
-use crate::dtls_transport::dtls_role::DEFAULT_DTLS_ROLE_OFFER;
 use crate::dtls_transport::RTCDtlsTransport;
+use crate::dtls_transport::dtls_role::DEFAULT_DTLS_ROLE_OFFER;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
-use crate::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use crate::track::track_local::TrackLocal;
+use crate::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 #[test]
 fn test_extract_fingerprint() -> Result<()> {
@@ -1325,7 +1325,6 @@ async fn test_populate_sdp_reject() -> Result<()> {
                 rtcp_feedback: vec![],
             },
             payload_type: 2,
-            stats_id: "id".to_owned(),
         },
         RTPCodecType::Video,
     )?;

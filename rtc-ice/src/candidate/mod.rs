@@ -221,8 +221,8 @@ impl Candidate {
     }
 
     /// Returns Candidate ID.
-    pub fn id(&self) -> String {
-        self.id.clone()
+    pub fn id(&self) -> &str {
+        self.id.as_str()
     }
 
     /// Returns candidate component.

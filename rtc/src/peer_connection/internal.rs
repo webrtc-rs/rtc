@@ -1018,7 +1018,7 @@ where
         // Register remote candidate with stats accumulator
         // Per W3C spec, URL must NOT be present for remote candidates
         let rtc_candidate: RTCIceCandidate = (&candidate).into();
-        let candidate_id = format!("RTCRemoteIceCandidate_{}", rtc_candidate.stats_id);
+        let candidate_id = format!("RTCRemoteIceCandidate_{}", rtc_candidate.id);
         let (ufrag, _) = self.ice_transport().get_remote_user_credentials();
         let accumulator = self.candidate_to_accumulator(&rtc_candidate, ufrag, None);
         self.stats_mut()
@@ -1037,7 +1037,7 @@ where
 
         // Register local candidate with stats accumulator
         let rtc_candidate: RTCIceCandidate = (&candidate).into();
-        let candidate_id = format!("RTCLocalIceCandidate_{}", rtc_candidate.stats_id);
+        let candidate_id = format!("RTCLocalIceCandidate_{}", rtc_candidate.id);
         let (ufrag, _) = self.ice_transport().get_local_user_credentials();
         let accumulator = self.candidate_to_accumulator(&rtc_candidate, ufrag, url);
         self.stats_mut()
@@ -1052,13 +1052,15 @@ where
     /// This is called automatically by `get_stats()` to ensure ICE candidate pair
     /// statistics (RTT, requests/responses sent/received) are up to date.
     pub(super) fn update_ice_agent_stats(&mut self) {
-        if let Some(pair_id) = self
+        if let Some((local, remote)) = self
             .pipeline_context
             .ice_handler_context
             .ice_transport
             .agent
-            .get_selected_candidate_pair_id()
+            .get_selected_candidate_pair()
         {
+            let pair_id = format!("RTCIceCandidatePair_{}_{}", local.id(), remote.id());
+
             // Get candidate pair stats from the ice agent
             for cp_stats in self
                 .pipeline_context
@@ -1073,9 +1075,11 @@ where
                 );
                 if ice_pair_id == pair_id {
                     // Sync STUN stats from ice agent to RTC accumulator
-                    self.pipeline_context
-                        .stats
-                        .update_ice_agent_stats(&pair_id, &cp_stats);
+                    self.pipeline_context.stats.update_ice_agent_stats(
+                        local.id(),
+                        remote.id(),
+                        &cp_stats,
+                    );
                     break;
                 }
             }

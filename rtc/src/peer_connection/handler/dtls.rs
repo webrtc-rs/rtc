@@ -93,13 +93,11 @@ impl<'a> DtlsHandler<'a> {
         if let Some(local_cert) = self.ctx.dtls_transport.certificates.first() {
             let fingerprints = local_cert.get_fingerprints();
             if let Some(fp) = fingerprints.first() {
-                let cert_id = local_cert.stats_id.clone();
-
                 // Register certificate in accumulator
                 // Use hex encoding for certificate (base64 would need additional dependency)
                 if let Some(der) = local_cert.dtls_certificate.certificate.first() {
                     self.stats.register_certificate(
-                        cert_id.clone(),
+                        fp.value.clone(),
                         CertificateStatsAccumulator {
                             fingerprint: fp.value.clone(),
                             fingerprint_algorithm: fp.algorithm.clone(),
@@ -110,7 +108,7 @@ impl<'a> DtlsHandler<'a> {
                 }
 
                 // Set local certificate ID in transport stats
-                self.stats.transport.local_certificate_id = cert_id;
+                self.stats.transport.local_certificate_id = fp.value.clone();
             }
         }
 

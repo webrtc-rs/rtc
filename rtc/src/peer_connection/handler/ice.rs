@@ -65,18 +65,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 transport: msg.transport,
                 message,
             })?;
-        } else if let Some(pair_id) = self
-            .ctx
-            .ice_transport
-            .agent
-            .get_selected_candidate_pair_id()
+        } else if let Some((local, remote)) =
+            self.ctx.ice_transport.agent.get_selected_candidate_pair()
         {
             // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
 
             // Track packets/bytes received on the selected candidate pair
             let bytes = msg.message.len();
-            let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
+            let pair = self
+                .stats
+                .get_or_create_candidate_pair(local.id(), remote.id());
             pair.on_packet_received(bytes, msg.now);
 
             // When ICE restarts and the selected candidate pair changes,
@@ -106,16 +105,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
 
             // Track packets/bytes sent on the selected candidate pair
-            if let Some(pair_id) = self
-                .ctx
-                .ice_transport
-                .agent
-                .get_selected_candidate_pair_id()
-            {
-                let bytes = msg.message.len();
-                let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
-                pair.on_packet_sent(bytes, msg.now);
-            }
+
+            let bytes = msg.message.len();
+            let pair = self
+                .stats
+                .get_or_create_candidate_pair(local.id(), remote.id());
+            pair.on_packet_sent(bytes, msg.now);
 
             self.ctx.write_outs.push_back(msg);
         } else {
@@ -171,23 +166,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         remote.addr()
                     );
 
-                    if let Some(pair_id) = self
-                        .ctx
-                        .ice_transport
-                        .agent
-                        .get_selected_candidate_pair_id()
-                    {
-                        // Create/update the candidate pair accumulator
-                        let pair = self.stats.get_or_create_candidate_pair(pair_id.as_str());
-                        pair.local_candidate_id = local.id();
-                        pair.remote_candidate_id = remote.id();
-                        pair.nominated = true;
-                        pair.state = RTCStatsIceCandidatePairState::Succeeded;
-                        // Update transport stats for selected candidate pair change
-                        self.stats
-                            .transport
-                            .on_selected_candidate_pair_changed(pair_id);
-                    }
+                    // Create/update the candidate pair accumulator
+                    let pair = self
+                        .stats
+                        .get_or_create_candidate_pair(local.id(), remote.id());
+                    pair.nominated = true;
+                    pair.state = RTCStatsIceCandidatePairState::Succeeded;
+                    // Update transport stats for selected candidate pair change
+                    self.stats
+                        .transport
+                        .on_selected_candidate_pair_changed(format!(
+                            "RTCIceCandidatePair_{}_{}",
+                            local.id(),
+                            remote.id()
+                        ));
 
                     self.ctx
                         .event_outs

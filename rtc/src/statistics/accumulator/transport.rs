@@ -153,7 +153,7 @@ impl TransportStatsAccumulator {
 impl Default for TransportStatsAccumulator {
     fn default() -> Self {
         Self {
-            transport_id: "RTCTransport_0".to_string(),
+            transport_id: "RTCTransport".to_string(),
             packets_sent: 0,
             packets_received: 0,
             bytes_sent: 0,

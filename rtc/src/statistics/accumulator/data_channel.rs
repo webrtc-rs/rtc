@@ -49,12 +49,12 @@ impl DataChannelStatsAccumulator {
     }
 
     /// Creates a snapshot of the accumulated stats at the given timestamp.
-    pub fn snapshot(&self, now: Instant, stats_id: &str) -> RTCDataChannelStats {
+    pub fn snapshot(&self, now: Instant, id: String) -> RTCDataChannelStats {
         RTCDataChannelStats {
             stats: RTCStats {
                 timestamp: now,
                 typ: RTCStatsType::DataChannel,
-                id: stats_id.to_string(),
+                id,
             },
             data_channel_identifier: self.data_channel_identifier,
             label: self.label.clone(),

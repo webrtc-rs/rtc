@@ -15,7 +15,4 @@ pub struct RTCRtpCodecParameters {
     pub rtp_codec: RTCRtpCodec,
     /// The negotiated RTP payload type
     pub payload_type: PayloadType,
-
-    /// Statistics identifier (reserved for future use)
-    pub stats_id: String, //TODO:
 }

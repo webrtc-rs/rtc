@@ -1335,7 +1335,6 @@ pub(crate) fn codecs_from_media_description(
                 rtcp_feedback: feedback,
             },
             payload_type,
-            stats_id: String::new(),
         })
     }
 

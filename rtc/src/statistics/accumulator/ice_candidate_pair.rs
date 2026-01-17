@@ -10,6 +10,9 @@ use std::time::Instant;
 /// for a candidate pair during ICE connectivity checks and media flow.
 #[derive(Debug, Default)]
 pub struct IceCandidatePairAccumulator {
+    /// The transport ID this candidate belongs to.
+    pub transport_id: String,
+
     /// Reference to the local candidate ID.
     pub local_candidate_id: String,
     /// Reference to the remote candidate ID.
@@ -128,7 +131,7 @@ impl IceCandidatePairAccumulator {
                 typ: RTCStatsType::CandidatePair,
                 id: id.to_string(),
             },
-            transport_id: "transport".to_string(),
+            transport_id: self.transport_id.clone(),
             local_candidate_id: self.local_candidate_id.clone(),
             remote_candidate_id: self.remote_candidate_id.clone(),
             state: self.state,

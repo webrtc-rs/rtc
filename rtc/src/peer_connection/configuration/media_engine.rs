@@ -99,7 +99,6 @@ use sdp::description::session::SessionDescription;
 use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::ops::Range;
-use std::time::{SystemTime, UNIX_EPOCH};
 use unicase::UniCase;
 
 /// H.264 video codec MIME type.
@@ -346,7 +345,6 @@ impl MediaEngine {
                     rtcp_feedback: vec![],
                 },
                 payload_type: 111,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -357,7 +355,6 @@ impl MediaEngine {
                     rtcp_feedback: vec![],
                 },
                 payload_type: 9,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -368,7 +365,6 @@ impl MediaEngine {
                     rtcp_feedback: vec![],
                 },
                 payload_type: 0,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -379,7 +375,6 @@ impl MediaEngine {
                     rtcp_feedback: vec![],
                 },
                 payload_type: 8,
-                ..Default::default()
             },
         ] {
             self.register_codec(codec, RtpCodecKind::Audio)?;
@@ -413,7 +408,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 96,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -424,7 +418,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 98,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -435,7 +428,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 100,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -448,7 +440,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 102,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -461,7 +452,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 127,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -474,7 +464,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 125,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -487,7 +476,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 108,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -500,7 +488,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 127,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -513,7 +500,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 123,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -524,7 +510,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback.clone(),
                 },
                 payload_type: 41,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -535,7 +520,6 @@ impl MediaEngine {
                     rtcp_feedback: video_rtcp_feedback,
                 },
                 payload_type: 126,
-                ..Default::default()
             },
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -546,7 +530,6 @@ impl MediaEngine {
                     rtcp_feedback: vec![],
                 },
                 payload_type: 116,
-                ..Default::default()
             },
         ] {
             self.register_codec(codec, RtpCodecKind::Video)?;
@@ -610,16 +593,9 @@ impl MediaEngine {
     /// ```
     pub fn register_codec(
         &mut self,
-        mut codec: RTCRtpCodecParameters,
+        codec: RTCRtpCodecParameters,
         typ: RtpCodecKind,
     ) -> Result<()> {
-        codec.stats_id = format!(
-            "RTPCodec-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
         match typ {
             RtpCodecKind::Audio => {
                 MediaEngine::add_codec(&mut self.audio_codecs, codec);
@@ -777,21 +753,6 @@ impl MediaEngine {
 
         Err(Error::ErrCodecNotFound)
     }
-
-    /*TODO:
-    pub(crate) fn collect_stats(&self, collector: &StatsCollector) {
-        let mut reports = HashMap::new();
-
-        for codec in &self.video_codecs {
-            reports.insert(codec.stats_id.clone(), Codec(CodecStats::from(codec)));
-        }
-
-        for codec in &self.audio_codecs {
-            reports.insert(codec.stats_id.clone(), Codec(CodecStats::from(codec)));
-        }
-
-        collector.merge(reports);
-    }*/
 
     /// Look up a codec and enable if it exists
     pub(crate) fn match_remote_codec(
