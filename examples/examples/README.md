@@ -74,11 +74,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
   while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
   media packets, but browser will recover them using the FEC packets and the delivered packets.
-- 🚧 [Data Channels WHIP WHEP](TODO): This example demonstrates a WHIP/WHEP-like implementation using WebRTC with
-  DataChannel support for real-time chat.
-- 🚧 [WHIP WHEP](TODO): The whip-whep demonstrates using WHIP and WHEP with webrtc-rs. Since WHIP+WHEP is standardized
-  signaling you can publish via tools like OBS and GStreamer. You can then watch it in sub-second time from your
-  browser, or pull the video back into OBS and GStreamer via WHEP.
 
 ### Not Applicable
 
@@ -87,3 +82,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   multiplexing is already the application's responsibility.
 - [x] [ICE Proxy](N/A) This example doesn't apply to sansio RTC too, since Sansio RTC is I/O-free - it never creates
   network connections. The application is responsible for all I/O.
+- [x] [Data Channels WHIP WHEP](N/A): This example doesn't apply to sansio RTC, since it demonstrates a WHIP/WHEP-like
+  implementation.
+- [x] [WHIP WHEP](N/A): This example doesn't apply to sansio RTC, since it demonstrates using WHIP and WHEP.
