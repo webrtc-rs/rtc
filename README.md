@@ -254,7 +254,7 @@ The repository includes comprehensive examples demonstrating various use cases:
 Run an example:
 
 ```bash
-cargo run --example data-channels-offer-answer --features examples
+cargo run --example data-channels-answer
 ```
 
 ## Architecture
@@ -401,7 +401,7 @@ cargo test
 cargo doc --open
 
 # Run examples
-cargo run --example data-channels-offer --features examples
+cargo run --example data-channels-answer
 ```
 
 ## Contributing
