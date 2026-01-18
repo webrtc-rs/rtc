@@ -15,13 +15,13 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = ["ifaces"] }
 sansio.workspace = true
 
-bytes = "1.5.0"
-log = "0.4.21"
+bytes.workspace = true
+log.workspace = true
 socket2 = { version = "0.5", features = ["all"] }
 
 [dev-dependencies]
 env_logger = "0.11.3"
-tokio = { version = "1", features = ["full"] }
+tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4.42"
 

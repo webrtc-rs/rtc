@@ -18,7 +18,7 @@ interceptor-derive.workspace = true
 
 rtp.workspace = true
 rtcp.workspace = true
-rand = "0.8"
-log = "0.4.29"
+rand.workspace = true
+log.workspace = true
 
 [dev-dependencies]

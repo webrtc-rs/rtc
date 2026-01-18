@@ -12,7 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-tokio = { version = "1.32.0", features = ["full"] }
+tokio.workspace = true
 anyhow = "1"
 base64 = "0.22.1"
 lazy_static = "1"

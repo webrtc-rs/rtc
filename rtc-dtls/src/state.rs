@@ -4,10 +4,9 @@ use super::curve::named_curve::*;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
 use super::prf::*;
-use shared::error::*;
-
-use serde::{Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize};
 use shared::crypto::KeyingMaterialExporter;
+use shared::error::*;
 use std::io::{BufWriter, Cursor};
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
@@ -43,7 +42,7 @@ pub struct State {
     //pub(crate) replay_detector: Vec<Box<dyn ReplayDetector>>,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Archive, Serialize, Deserialize, PartialEq, Debug)]
 struct SerializedState {
     local_epoch: u16,
     remote_epoch: u16,
@@ -206,7 +205,7 @@ impl State {
     pub fn marshal_binary(&self) -> Result<Vec<u8>> {
         let serialized = self.serialize()?;
 
-        match bincode::serialize(&serialized) {
+        match rkyv::to_bytes::<rkyv::rancor::Error>(&serialized).map(Vec::from) {
             Ok(enc) => Ok(enc),
             Err(err) => Err(Error::Other(err.to_string())),
         }
@@ -214,10 +213,13 @@ impl State {
 
     // unmarshal_binary is a binary.BinaryUnmarshaler.unmarshal_binary implementation
     pub fn unmarshal_binary(&mut self, data: &[u8]) -> Result<()> {
-        let serialized: SerializedState = match bincode::deserialize(data) {
-            Ok(dec) => dec,
-            Err(err) => return Err(Error::Other(err.to_string())),
-        };
+        let serialized: SerializedState =
+            match rkyv::access::<ArchivedSerializedState, rkyv::rancor::Error>(data)
+                .and_then(rkyv::deserialize)
+            {
+                Ok(dec) => dec,
+                Err(err) => return Err(Error::Other(err.to_string())),
+            };
         self.deserialize(&serialized)?;
         self.init_cipher_suite()?;
 

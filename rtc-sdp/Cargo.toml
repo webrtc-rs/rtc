@@ -15,7 +15,7 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 
 url = "2.5.0"
-rand = "0.8.5"
+rand.workspace = true
 
 [dev-dependencies]
 criterion = "0.5.1"

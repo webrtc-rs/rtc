@@ -40,11 +40,10 @@ impl Certificate {
     ///
     /// See [`rcgen::generate_simple_self_signed`].
     pub fn generate_self_signed(subject_alt_names: impl Into<Vec<String>>) -> Result<Self> {
-        let CertifiedKey { cert, key_pair } =
-            generate_simple_self_signed(subject_alt_names).unwrap();
+        let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)?;
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
-            private_key: CryptoPrivateKey::try_from(&key_pair)?,
+            private_key: CryptoPrivateKey::try_from(&signing_key)?,
         })
     }
 

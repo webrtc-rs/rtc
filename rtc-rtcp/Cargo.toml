@@ -14,4 +14,4 @@ categories.workspace = true
 [dependencies]
 shared = { workspace = true, default-features = false, features = ["marshal"] }
 
-bytes = "1.5.0"
+bytes.workspace = true

@@ -15,10 +15,10 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 rtp.workspace = true
 
-byteorder = "1"
-bytes = "1"
-thiserror = "1"
-rand = "0.9"
+byteorder.workspace = true
+bytes.workspace = true
+rand.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -15,8 +15,8 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 stun.workspace = true
 
-bytes = "1.5.0"
-log = "0.4.21"
+bytes.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 env_logger = "0.11.3"
