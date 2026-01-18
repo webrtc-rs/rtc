@@ -516,7 +516,7 @@ mod test {
 
     #[cfg(feature = "pem")]
     #[test]
-    fn test_certificate_serialize_pem_and_from_pem() -> crate::error::Result<()> {
+    fn test_certificate_serialize_pem_and_from_pem() -> Result<()> {
         let cert = Certificate::generate_self_signed(vec!["webrtc.rs".to_owned()])?;
 
         let pem = cert.serialize_pem();

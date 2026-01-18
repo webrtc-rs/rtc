@@ -6,6 +6,9 @@
  <a href="https://github.com/webrtc-rs/rtc/actions">
   <img src="https://github.com/webrtc-rs/rtc/workflows/cargo/badge.svg">
  </a>
+ <a href="https://codecov.io/gh/webrtc-rs/rtc">
+  <img src="https://codecov.io/gh/webrtc-rs/rtc/branch/master/graph/badge.svg">
+ </a>
  <a href="https://deps.rs/repo/github/webrtc-rs/rtc">
   <img src="https://deps.rs/repo/github/webrtc-rs/rtc/status.svg">
  </a>
@@ -20,6 +23,9 @@
  </a>
  <a href="https://discord.gg/4Ju8UHdXMs">
   <img src="https://img.shields.io/discord/800204819540869120?logo=discord" alt="Discord">
+ </a>
+ <a href="https://twitter.com/WebRTCrs">
+  <img src="https://img.shields.io/twitter/url/https/twitter.com/webrtcrs.svg?style=social&label=%40WebRTCrs" alt="Twitter">
  </a>
 </p>
 <p align="center">

@@ -1,15 +1,13 @@
-use bytes::{BufMut, Bytes};
+use super::{Cipher, CipherInner};
+use crate::cipher::Kdf;
+use crate::key_derivation::*;
+use crate::protection_profile::ProtectionProfile;
+use bytes::{BufMut, BytesMut};
 use openssl::cipher_ctx::CipherCtx;
 use rtcp::header::{HEADER_LENGTH, SSRC_LENGTH};
+use shared::error::{Error, Result};
+use shared::marshal::*;
 use subtle::ConstantTimeEq;
-use util::marshal::*;
-
-use super::{Cipher, CipherInner};
-use crate::protection_profile::ProtectionProfile;
-use crate::{
-    error::{Error, Result},
-    key_derivation::*,
-};
 
 pub(crate) struct CipherAesCmHmacSha1 {
     inner: CipherInner,
@@ -98,9 +96,14 @@ impl Cipher for CipherAesCmHmacSha1 {
         self.inner.get_rtcp_index(input)
     }
 
-    fn encrypt_rtp(&mut self, plaintext: &[u8], header: &rtp::Header, roc: u32) -> Result<Bytes> {
+    fn encrypt_rtp(
+        &mut self,
+        plaintext: &[u8],
+        header: &rtp::Header,
+        roc: u32,
+    ) -> Result<BytesMut> {
         let header_len = header.marshal_size();
-        let mut writer = Vec::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
+        let mut writer = BytesMut::with_capacity(plaintext.len() + self.rtp_auth_tag_len());
 
         // Copy the header unencrypted.
         writer.extend_from_slice(&plaintext[..header_len]);
@@ -126,17 +129,22 @@ impl Cipher for CipherAesCmHmacSha1 {
         let auth_tag = &self.inner.generate_srtp_auth_tag(&writer, roc)[..self.rtp_auth_tag_len()];
         writer.extend_from_slice(auth_tag);
 
-        Ok(Bytes::from(writer))
+        Ok(writer)
     }
 
-    fn decrypt_rtp(&mut self, encrypted: &[u8], header: &rtp::Header, roc: u32) -> Result<Bytes> {
+    fn decrypt_rtp(
+        &mut self,
+        encrypted: &[u8],
+        header: &rtp::Header,
+        roc: u32,
+    ) -> Result<BytesMut> {
         let encrypted_len = encrypted.len();
         if encrypted_len < self.rtp_auth_tag_len() {
             return Err(Error::SrtpTooSmall(encrypted_len, self.rtp_auth_tag_len()));
         }
         let header_len = header.marshal_size();
 
-        let mut writer = Vec::with_capacity(encrypted_len - self.rtp_auth_tag_len());
+        let mut writer = BytesMut::with_capacity(encrypted_len - self.rtp_auth_tag_len());
 
         // Split the auth tag and the cipher text into two parts.
         let actual_tag = &encrypted[encrypted_len - self.rtp_auth_tag_len()..];
@@ -173,14 +181,19 @@ impl Cipher for CipherAesCmHmacSha1 {
             .cipher_final(&mut writer[header_len + count..])
             .unwrap();
 
-        Ok(Bytes::from(writer))
+        Ok(writer)
     }
 
-    fn encrypt_rtcp(&mut self, decrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn encrypt_rtcp(
+        &mut self,
+        decrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         let decrypted_len = decrypted.len();
 
         let mut writer =
-            Vec::with_capacity(decrypted_len + SRTCP_INDEX_SIZE + self.rtcp_auth_tag_len());
+            BytesMut::with_capacity(decrypted_len + SRTCP_INDEX_SIZE + self.rtcp_auth_tag_len());
 
         // Write the decrypted to the destination buffer.
         writer.extend_from_slice(&decrypted[..HEADER_LENGTH + SSRC_LENGTH]);
@@ -215,10 +228,15 @@ impl Cipher for CipherAesCmHmacSha1 {
         let auth_tag = &self.inner.generate_srtcp_auth_tag(&writer)[..self.rtcp_auth_tag_len()];
         writer.extend(auth_tag);
 
-        Ok(Bytes::from(writer))
+        Ok(writer)
     }
 
-    fn decrypt_rtcp(&mut self, encrypted: &[u8], srtcp_index: usize, ssrc: u32) -> Result<Bytes> {
+    fn decrypt_rtcp(
+        &mut self,
+        encrypted: &[u8],
+        srtcp_index: usize,
+        ssrc: u32,
+    ) -> Result<BytesMut> {
         let encrypted_len = encrypted.len();
 
         if encrypted_len < self.rtcp_auth_tag_len() + SRTCP_INDEX_SIZE {
@@ -233,13 +251,13 @@ impl Cipher for CipherAesCmHmacSha1 {
             return Err(Error::ErrTooShortRtcp);
         }
 
-        let mut writer = Vec::with_capacity(tail_offset);
+        let mut writer = BytesMut::with_capacity(tail_offset);
 
         writer.extend_from_slice(&encrypted[..HEADER_LENGTH + SSRC_LENGTH]);
 
         let is_encrypted = encrypted[tail_offset] >> 7;
         if is_encrypted == 0 {
-            return Ok(Bytes::from(writer));
+            return Ok(writer);
         }
 
         // Split the auth tag and the cipher text into two parts.
@@ -285,6 +303,6 @@ impl Cipher for CipherAesCmHmacSha1 {
             .cipher_final(&mut writer[HEADER_LENGTH + SSRC_LENGTH + count..])
             .unwrap();
 
-        Ok(Bytes::from(writer))
+        Ok(writer)
     }
 }
