@@ -2,6 +2,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use log::trace;
 use rtc_turn::client::*;
+use sansio::Protocol;
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
 use std::io::{ErrorKind, Write};
@@ -116,7 +117,7 @@ fn main() -> Result<()> {
             }
         };
 
-        while let Some(transmit) = client.poll_transmit() {
+        while let Some(transmit) = client.poll_write() {
             socket.send_to(&transmit.message, transmit.transport.peer_addr)?;
             trace!(
                 "socket.sent {} to {}",
@@ -170,7 +171,7 @@ fn main() -> Result<()> {
         }
 
         let mut eto = Instant::now() + Duration::from_millis(100);
-        if let Some(to) = client.poll_timout() {
+        if let Some(to) = client.poll_timeout() {
             if to < eto {
                 eto = to;
             }
@@ -180,7 +181,7 @@ fn main() -> Result<()> {
             .checked_duration_since(Instant::now())
             .unwrap_or(Duration::from_secs(0));
         if delay_from_now.is_zero() {
-            client.handle_timeout(Instant::now());
+            client.handle_timeout(Instant::now())?;
             continue;
         }
 
@@ -194,16 +195,14 @@ fn main() -> Result<()> {
                 transmit.message.len(),
                 transmit.transport.peer_addr
             );
-            client.handle_transmit(transmit)?;
+            client.handle_read(transmit)?;
         }
 
         // Drive time forward in all clients.
-        client.handle_timeout(Instant::now());
+        client.handle_timeout(Instant::now())?;
     }
 
-    client.close();
-
-    Ok(())
+    client.close()
 }
 
 fn read_socket_input(socket: &UdpSocket, buf: &mut [u8]) -> Option<TransportMessage<BytesMut>> {

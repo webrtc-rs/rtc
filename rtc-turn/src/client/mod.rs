@@ -3,6 +3,7 @@ mod client_test;
 
 pub mod binding;
 pub mod permission;
+mod proto;
 pub mod relay;
 pub mod transaction;
 
@@ -151,63 +152,6 @@ impl Client {
             transmits: VecDeque::new(),
             events: VecDeque::new(),
         })
-    }
-
-    pub fn poll_timout(&mut self) -> Option<Instant> {
-        let mut eto = None;
-        if let Some(to) = self.tr_map.poll_timout()
-            && (eto.is_none() || to < *eto.as_ref().unwrap())
-        {
-            eto = Some(to);
-        }
-
-        #[allow(clippy::map_clone)]
-        let relayed_addrs: Vec<SocketAddr> = self.relays.keys().map(|key| *key).collect();
-        for relayed_addr in relayed_addrs {
-            let relay = Relay {
-                relayed_addr,
-                client: self,
-            };
-            if let Some(to) = relay.poll_timeout()
-                && (eto.is_none() || to < *eto.as_ref().unwrap())
-            {
-                eto = Some(to);
-            }
-        }
-
-        eto
-    }
-
-    pub fn handle_timeout(&mut self, now: Instant) {
-        self.tr_map.handle_timeout(now);
-
-        #[allow(clippy::map_clone)]
-        let relayed_addrs: Vec<SocketAddr> = self.relays.keys().map(|key| *key).collect();
-        for relayed_addr in relayed_addrs {
-            let mut relay = Relay {
-                relayed_addr,
-                client: self,
-            };
-            relay.handle_timeout(now);
-        }
-    }
-
-    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
-        while let Some(transmit) = self.tr_map.poll_transmit() {
-            self.transmits.push_back(transmit);
-        }
-        self.transmits.pop_front()
-    }
-
-    pub fn handle_transmit(&mut self, msg: TransportMessage<BytesMut>) -> Result<()> {
-        self.handle_inbound(&msg.message[..], msg.transport.peer_addr)
-    }
-
-    pub fn poll_event(&mut self) -> Option<Event> {
-        while let Some(event) = self.tr_map.poll_event() {
-            self.events.push_back(event);
-        }
-        self.events.pop_front()
     }
 
     // handle_inbound handles data received.
@@ -387,11 +331,6 @@ impl Client {
         ));
 
         Ok(())
-    }
-
-    /// Close closes this client
-    pub fn close(&mut self) {
-        self.tr_map.delete_all();
     }
 
     pub fn relay(&mut self, relayed_addr: SocketAddr) -> Result<Relay<'_>> {

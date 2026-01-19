@@ -1,4 +1,5 @@
 use super::*;
+use sansio::Protocol;
 use std::collections::HashSet;
 use std::net::UdpSocket;
 
@@ -47,13 +48,13 @@ fn test_client_with_stun_send_binding_request() -> Result<()> {
 
     let tid = client.send_binding_request()?;
 
-    while let Some(transmit) = client.poll_transmit() {
+    while let Some(transmit) = client.poll_write() {
         conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
     }
 
     let mut buffer = vec![0u8; 2048];
     let (n, peer_addr) = conn.recv_from(&mut buffer)?;
-    client.handle_transmit(TransportMessage {
+    client.handle_read(TransportMessage {
         now: Instant::now(),
         transport: TransportContext {
             local_addr,
@@ -78,9 +79,7 @@ fn test_client_with_stun_send_binding_request() -> Result<()> {
 
     assert_eq!(0, client.tr_map.size(), "should be no transaction left");
 
-    client.close();
-
-    Ok(())
+    client.close()
 }
 
 #[test]
@@ -94,14 +93,14 @@ fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
 
     let tid1 = client.send_binding_request_to(to)?;
     let tid2 = client.send_binding_request_to(to)?;
-    while let Some(transmit) = client.poll_transmit() {
+    while let Some(transmit) = client.poll_write() {
         conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
     }
 
     let mut buffer = vec![0u8; 2048];
     for _ in 0..2 {
         let (n, peer_addr) = conn.recv_from(&mut buffer)?;
-        client.handle_transmit(TransportMessage {
+        client.handle_read(TransportMessage {
             now: Instant::now(),
             transport: TransportContext {
                 local_addr,
@@ -128,9 +127,7 @@ fn test_client_with_stun_send_binding_request_to_parallel() -> Result<()> {
     assert!(tids.contains(&tid1));
     assert!(tids.contains(&tid2));
 
-    client.close();
-
-    Ok(())
+    client.close()
 }
 
 #[test]
@@ -142,12 +139,12 @@ fn test_client_with_stun_send_binding_request_to_timeout() -> Result<()> {
     let to = lookup_host(true, "127.0.0.1:9")?;
 
     let tid = client.send_binding_request_to(to)?;
-    while let Some(transmit) = client.poll_transmit() {
+    while let Some(transmit) = client.poll_write() {
         conn.send_to(&transmit.message, transmit.transport.peer_addr)?;
     }
 
-    while let Some(to) = client.poll_timout() {
-        client.handle_timeout(to);
+    while let Some(to) = client.poll_timeout() {
+        client.handle_timeout(to)?;
     }
 
     if let Some(event) = client.poll_event() {
@@ -161,7 +158,5 @@ fn test_client_with_stun_send_binding_request_to_timeout() -> Result<()> {
         assert!(false);
     }
 
-    client.close();
-
-    Ok(())
+    client.close()
 }

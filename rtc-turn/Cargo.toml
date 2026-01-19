@@ -14,6 +14,7 @@ categories.workspace = true
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 stun.workspace = true
+sansio.workspace = true
 
 bytes.workspace = true
 log.workspace = true
