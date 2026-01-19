@@ -1,15 +1,18 @@
 use rtc_stun::client::*;
 use rtc_stun::message::*;
 use rtc_stun::xoraddr::*;
+use sansio::Protocol;
 
+use bytes::BytesMut;
 use clap::Parser;
-use shared::TransportProtocol;
 use shared::error::Error;
+use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::net::UdpSocket;
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "STUN Client")]
-#[command(author = "Rusty Rain <y@ngr.tc>")]
+#[command(author = "Rusty Rain <yliu@webrtc.rs>")]
 #[command(version = "0.1.0")]
 #[command(about = "An example of STUN Client", long_about = None)]
 struct Cli {
@@ -37,13 +40,22 @@ fn main() -> Result<(), Error> {
     let mut msg = Message::new();
     msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
     client.handle_write(msg)?;
-    while let Some(transmit) = client.poll_transmit() {
+    while let Some(transmit) = client.poll_write() {
         conn.send(&transmit.message)?;
     }
 
     let mut buf = vec![0u8; 1500];
     let n = conn.recv(&mut buf)?;
-    client.handle_read(&buf[..n])?;
+    client.handle_read(TaggedBytesMut {
+        now: Instant::now(),
+        transport: TransportContext {
+            local_addr: conn.local_addr()?,
+            peer_addr: conn.peer_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            ecn: None,
+        },
+        message: BytesMut::from(&buf[..n]),
+    })?;
 
     if let Some(event) = client.poll_event() {
         let msg = event.result?;
@@ -52,7 +64,7 @@ fn main() -> Result<(), Error> {
         println!("Got response: {xor_addr}");
     }
 
-    client.handle_close()?;
+    client.close()?;
 
     Ok(())
 }

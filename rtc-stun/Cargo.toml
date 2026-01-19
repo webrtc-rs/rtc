@@ -17,6 +17,7 @@ bench = []
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
+sansio.workspace = true
 
 bytes.workspace = true
 lazy_static = "1.4.0"

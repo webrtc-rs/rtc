@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::agent::*;
 use crate::message::*;
-use shared::{TransportContext, TransportMessage, TransportProtocol};
+use shared::{TaggedBytesMut, TransportContext, TransportMessage, TransportProtocol};
 
 const DEFAULT_TIMEOUT_RATE: Duration = Duration::from_millis(5);
 const DEFAULT_RTO: Duration = Duration::from_millis(300);
@@ -134,6 +134,58 @@ impl Client {
             transmits: VecDeque::new(),
         }
     }
+}
+
+impl sansio::Protocol<TaggedBytesMut, Message, Event> for Client {
+    type Rout = ();
+    type Wout = TaggedBytesMut;
+    type Eout = Event;
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
+        let mut stun_msg = Message::new();
+        let mut reader = BufReader::new(&msg.message[..]);
+        stun_msg.read_from(&mut reader)?;
+        self.agent.handle_event(ClientAgent::Process(stun_msg))
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        None
+    }
+
+    fn handle_write(&mut self, m: Message) -> Result<()> {
+        if self.settings.closed {
+            return Err(Error::ErrClientClosed);
+        }
+
+        let payload = BytesMut::from(&m.raw[..]);
+
+        let ct = ClientTransaction {
+            id: m.transaction_id,
+            attempt: 0,
+            start: Instant::now(),
+            rto: self.settings.rto,
+            raw: m.raw,
+        };
+        let deadline = ct.next_timeout(ct.start);
+        self.transactions.entry(ct.id).or_insert(ct);
+        self.agent
+            .handle_event(ClientAgent::Start(m.transaction_id, deadline))?;
+
+        self.transmits.push_back(TransportMessage {
+            now: Instant::now(),
+            transport: TransportContext {
+                local_addr: self.local,
+                peer_addr: self.remote,
+                ecn: None,
+                transport_protocol: self.transport_protocol,
+            },
+            message: payload,
+        });
+
+        Ok(())
+    }
 
     /// Returns packets to transmit
     ///
@@ -142,12 +194,11 @@ impl Client {
     /// - a call was made to `handle_read`
     /// - a call was made to `handle_write`
     /// - a call was made to `handle_timeout`
-    #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<TransportMessage<BytesMut>> {
+    fn poll_write(&mut self) -> Option<Self::Wout> {
         self.transmits.pop_front()
     }
 
-    pub fn poll_event(&mut self) -> Option<Event> {
+    fn poll_event(&mut self) -> Option<Self::Eout> {
         while let Some(event) = self.agent.poll_event() {
             let mut ct = if self.transactions.contains_key(&event.id) {
                 self.transactions.remove(&event.id).unwrap()
@@ -195,55 +246,15 @@ impl Client {
         None
     }
 
-    pub fn handle_read(&mut self, buf: &[u8]) -> Result<()> {
-        let mut msg = Message::new();
-        let mut reader = BufReader::new(buf);
-        msg.read_from(&mut reader)?;
-        self.agent.handle_event(ClientAgent::Process(msg))
-    }
-
-    pub fn handle_write(&mut self, m: Message) -> Result<()> {
-        if self.settings.closed {
-            return Err(Error::ErrClientClosed);
-        }
-
-        let payload = BytesMut::from(&m.raw[..]);
-
-        let ct = ClientTransaction {
-            id: m.transaction_id,
-            attempt: 0,
-            start: Instant::now(),
-            rto: self.settings.rto,
-            raw: m.raw,
-        };
-        let deadline = ct.next_timeout(ct.start);
-        self.transactions.entry(ct.id).or_insert(ct);
-        self.agent
-            .handle_event(ClientAgent::Start(m.transaction_id, deadline))?;
-
-        self.transmits.push_back(TransportMessage {
-            now: Instant::now(),
-            transport: TransportContext {
-                local_addr: self.local,
-                peer_addr: self.remote,
-                ecn: None,
-                transport_protocol: self.transport_protocol,
-            },
-            message: payload,
-        });
-
-        Ok(())
-    }
-
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
         self.agent.poll_timeout()
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
         self.agent.handle_event(ClientAgent::Collect(now))
     }
 
-    pub fn handle_close(&mut self) -> Result<()> {
+    fn close(&mut self) -> Result<()> {
         if self.settings.closed {
             return Err(Error::ErrClientClosed);
         }
