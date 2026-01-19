@@ -51,16 +51,23 @@ Once the data channel is successfully opened, requester will start sending a ser
 Here's how to run the code:
 
 ```shell
-$ cargo run --release --example data-channels-flow-control
-    Finished release [optimized] target(s) in 0.36s
-     Running `target\release\examples\data-channels-flow-control.exe`
-
-Throughput is about 127.060 Mbps
-Throughput is about 122.091 Mbps
-Throughput is about 120.630 Mbps
-Throughput is about 120.105 Mbps
-Throughput is about 119.873 Mbps
-Throughput is about 118.890 Mbps
-Throughput is about 118.525 Mbps
-Throughput is about 118.614 Mbps
+/cargo run --release --example data-channels-flow-control
+    Finished `release` profile [optimized] target(s) in 0.11s
+     Running `target/release/examples/data-channels-flow-control`
+Press Ctrl-C to stop
+Responder listening on 127.0.0.1:64124
+Requester listening on 127.0.0.1:57338
+Responder: Data channel opened
+Requester: Data channel opened
+Throughput is about 116.599 Mbps
+Throughput is about 233.999 Mbps
+Throughput is about 232.550 Mbps
+Throughput is about 231.028 Mbps
+Throughput is about 229.491 Mbps
+Throughput is about 227.874 Mbps
+Throughput is about 226.476 Mbps
+Throughput is about 224.842 Mbps
+Throughput is about 223.859 Mbps
+Throughput is about 222.279 Mbps
+...
 ```
