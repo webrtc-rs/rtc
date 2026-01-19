@@ -151,6 +151,11 @@ path = "examples/trickle-ice/trickle-ice.rs"
 bench = false
 
 [[example]]
+name = "trickle-ice-srflx"
+path = "examples/trickle-ice-srflx/trickle-ice-srflx.rs"
+bench = false
+
+[[example]]
 name = "ice-tcp"
 path = "examples/ice-tcp/ice-tcp.rs"
 bench = false

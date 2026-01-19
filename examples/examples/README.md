@@ -63,6 +63,8 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - ✅ [Trickle ICE](trickle-ice) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to
   use since it allows ICE Gathering and Connecting to happen concurrently.
+- 🚧 [Trickle ICE ServerReflexive](trickle-ice-srflx): Example demonstrates how to add ServerReflexive (STUN)
+  type local candidate.
 - ✅ [ICE TCP](ice-tcp) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
 - ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
@@ -71,8 +73,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 
 ### TODO
 
-- 🚧 [ServerReflexive Local Candidate](TODO): Example demonstrates how to add ServerReflexive (STUN) type local
-  candidate.
 - 🚧 [Relay Local Candidate](TODO): Example demonstrates how to add Relay (TURN) type local candidate.
 - 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
   while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
