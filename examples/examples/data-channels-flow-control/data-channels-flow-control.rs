@@ -18,8 +18,10 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
+use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
 const BUFFERED_AMOUNT_LOW_THRESHOLD: u32 = 512 * 1024; // 512 KB
@@ -73,6 +75,8 @@ async fn main() -> Result<()> {
     }
 
     let (stop_tx, _stop_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let (offer_tx, offer_rx) = tokio::sync::mpsc::channel::<RTCSessionDescription>(8);
+    let (answer_tx, answer_rx) = tokio::sync::mpsc::channel::<RTCSessionDescription>(8);
 
     println!("Press Ctrl-C to stop");
     let stop_tx_clone = stop_tx.clone();
@@ -81,14 +85,51 @@ async fn main() -> Result<()> {
         let _ = stop_tx_clone.send(());
     });
 
-    if let Err(err) = run(stop_tx).await {
-        eprintln!("run got error: {}", err);
+    let stop_tx_clone = stop_tx.clone();
+    let requester_handle = std::thread::spawn(move || {
+        // Create a new tokio runtime for this thread
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async move {
+            if let Err(err) = run_requester(stop_tx_clone, offer_tx, answer_rx).await {
+                eprintln!("run got error: {}", err);
+            }
+        });
+    });
+
+    let stop_tx_clone = stop_tx.clone();
+    let responder_handle = std::thread::spawn(move || {
+        // Create a new tokio runtime for this thread
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async move {
+            if let Err(err) = run_responder(stop_tx_clone, offer_rx, answer_tx).await {
+                eprintln!("run got error: {}", err);
+            }
+        });
+    });
+
+    if let Err(err) = requester_handle.join() {
+        eprintln!("requester thread exited with error: {:?}", err);
+    }
+    if let Err(err) = responder_handle.join() {
+        eprintln!("responder thread exited with error: {:?}", err);
     }
 
     Ok(())
 }
 
-async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
+async fn run_requester(
+    stop_tx: tokio::sync::broadcast::Sender<()>,
+    offer_tx: tokio::sync::mpsc::Sender<RTCSessionDescription>,
+    mut answer_rx: tokio::sync::mpsc::Receiver<RTCSessionDescription>,
+) -> Result<()> {
     let requester_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
             ..Default::default()
@@ -106,27 +147,13 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     dc.set_buffered_amount_low_threshold(BUFFERED_AMOUNT_LOW_THRESHOLD);
     dc.set_buffered_amount_high_threshold(BUFFERED_AMOUNT_HIGH_THRESHOLD);
 
-    let responder_config = RTCConfigurationBuilder::new()
-        .with_ice_servers(vec![RTCIceServer {
-            ..Default::default()
-        }])
-        .build();
-
-    // Create responder (receiver) peer connection
-    let mut responder = RTCPeerConnection::new(responder_config)?;
-
     // Create sockets first
     let req_socket = UdpSocket::bind("127.0.0.1:0").await?;
     let req_local_addr = req_socket.local_addr()?;
-    let resp_socket = UdpSocket::bind("127.0.0.1:0").await?;
-    let resp_local_addr = resp_socket.local_addr()?;
 
     println!("Requester listening on {}", req_local_addr);
-    println!("Responder listening on {}", resp_local_addr);
 
     // Add ICE candidates
-    use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
-
     let req_candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
@@ -139,30 +166,16 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     }
     .new_candidate_host()?;
 
-    let resp_candidate = CandidateHostConfig {
-        base_config: CandidateConfig {
-            network: "udp".to_owned(),
-            address: resp_local_addr.ip().to_string(),
-            port: resp_local_addr.port(),
-            component: 1,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-    .new_candidate_host()?;
-
     // Add local candidates
     requester.add_local_candidate(RTCIceCandidate::from(&req_candidate).to_json()?)?;
-    responder.add_local_candidate(RTCIceCandidate::from(&resp_candidate).to_json()?)?;
 
     // Create offer
     let offer = requester.create_offer(None)?;
     requester.set_local_description(offer.clone())?;
-    responder.set_remote_description(offer)?;
+    offer_tx.send(offer).await?;
 
-    // Create answer
-    let answer = responder.create_answer(None)?;
-    responder.set_local_description(answer.clone())?;
+    let answer = answer_rx.recv().await.unwrap();
+    // set answer
     requester.set_remote_description(answer)?;
 
     // Track state for requester (sender)
@@ -170,29 +183,17 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
     let mut req_can_send_more = true;
     let send_buf = vec![0u8; 1024];
 
-    // Track state for responder (receiver)
-    let mut resp_data_channel_opened = false;
-    let total_bytes_received = Arc::new(AtomicUsize::new(0));
-    let mut last_total_bytes_received: usize = 0;
-    let mut throughput_start = SystemTime::now();
-    let mut throughput_timer = Instant::now();
-
     let mut req_buf = vec![0; 2000];
-    let mut resp_buf = vec![0; 2000];
     let mut stop_rx = stop_tx.subscribe();
 
     'EventLoop: loop {
         // Poll requester writes
         while let Some(msg) = requester.poll_write() {
-            if let Err(err) = req_socket.send_to(&msg.message, resp_local_addr).await {
+            if let Err(err) = req_socket
+                .send_to(&msg.message, msg.transport.peer_addr)
+                .await
+            {
                 error!("requester socket write error: {}", err);
-            }
-        }
-
-        // Poll responder writes
-        while let Some(msg) = responder.poll_write() {
-            if let Err(err) = resp_socket.send_to(&msg.message, req_local_addr).await {
-                error!("responder socket write error: {}", err);
             }
         }
 
@@ -223,6 +224,133 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Requester: send data when channel is open and can send
+        if req_data_channel_opened.is_some() && req_can_send_more {
+            let channel_id = req_data_channel_opened.unwrap();
+            if let Some(mut dc) = requester.data_channel(channel_id) {
+                let _ = dc.send(BytesMut::from(&send_buf[..]));
+            }
+        }
+
+        // Get next timeout
+        let req_timeout = requester
+            .poll_timeout()
+            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
+        let delay_from_now = req_timeout
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::from_secs(0));
+
+        if delay_from_now.is_zero() {
+            requester.handle_timeout(Instant::now())?;
+            continue;
+        }
+
+        let timer = tokio::time::sleep(delay_from_now);
+        tokio::pin!(timer);
+
+        tokio::select! {
+            biased;
+
+            _ = stop_rx.recv() => {
+                break 'EventLoop;
+            }
+            _ = timer.as_mut() => {
+                requester.handle_timeout(Instant::now())?;
+            }
+            res = req_socket.recv_from(&mut req_buf) => {
+                match res {
+                    Ok((n, peer_addr)) => {
+                        requester.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr: req_local_addr,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&req_buf[..n]),
+                        })?;
+                    }
+                    Err(err) => {
+                        eprintln!("requester socket read error: {}", err);
+                        break 'EventLoop;
+                    }
+                }
+            }
+        }
+    }
+
+    requester.close()?;
+
+    Ok(())
+}
+
+async fn run_responder(
+    stop_tx: tokio::sync::broadcast::Sender<()>,
+    mut offer_rx: tokio::sync::mpsc::Receiver<RTCSessionDescription>,
+    answer_tx: tokio::sync::mpsc::Sender<RTCSessionDescription>,
+) -> Result<()> {
+    let responder_config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![RTCIceServer {
+            ..Default::default()
+        }])
+        .build();
+
+    // Create responder (receiver) peer connection
+    let mut responder = RTCPeerConnection::new(responder_config)?;
+
+    // Create sockets first
+    let resp_socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let resp_local_addr = resp_socket.local_addr()?;
+
+    println!("Responder listening on {}", resp_local_addr);
+
+    // Add ICE candidates
+    let resp_candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: resp_local_addr.ip().to_string(),
+            port: resp_local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+
+    // Add local candidates
+    responder.add_local_candidate(RTCIceCandidate::from(&resp_candidate).to_json()?)?;
+
+    let offer = offer_rx.recv().await.unwrap();
+    // set offer
+    responder.set_remote_description(offer)?;
+
+    // Create answer
+    let answer = responder.create_answer(None)?;
+    responder.set_local_description(answer.clone())?;
+    answer_tx.send(answer).await?;
+
+    // Track state for responder (receiver)
+    let mut resp_data_channel_opened = false;
+    let total_bytes_received = Arc::new(AtomicUsize::new(0));
+    let mut last_total_bytes_received: usize = 0;
+    let mut throughput_start = SystemTime::now();
+    let mut throughput_timer = Instant::now();
+
+    let mut resp_buf = vec![0; 2000];
+    let mut stop_rx = stop_tx.subscribe();
+
+    'EventLoop: loop {
+        // Poll responder writes
+        while let Some(msg) = responder.poll_write() {
+            if let Err(err) = resp_socket
+                .send_to(&msg.message, msg.transport.peer_addr)
+                .await
+            {
+                error!("responder socket write error: {}", err);
             }
         }
 
@@ -261,14 +389,6 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
             }
         }
 
-        // Requester: send data when channel is open and can send
-        if req_data_channel_opened.is_some() && req_can_send_more {
-            let channel_id = req_data_channel_opened.unwrap();
-            if let Some(mut dc) = requester.data_channel(channel_id) {
-                let _ = dc.send(BytesMut::from(&send_buf[..]));
-            }
-        }
-
         // Responder: print throughput every second
         if resp_data_channel_opened {
             let now = Instant::now();
@@ -290,22 +410,15 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
         }
 
         // Get next timeout
-        let req_timeout = requester
-            .poll_timeout()
-            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
         let resp_timeout = responder
             .poll_timeout()
             .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
-        let next_timeout = req_timeout.min(resp_timeout);
-
-        let delay_from_now = next_timeout
+        let delay_from_now = resp_timeout
             .checked_duration_since(Instant::now())
             .unwrap_or(Duration::from_secs(0));
 
         if delay_from_now.is_zero() {
-            let now = Instant::now();
-            requester.handle_timeout(now)?;
-            responder.handle_timeout(now)?;
+            responder.handle_timeout(Instant::now())?;
             continue;
         }
 
@@ -319,29 +432,7 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
                 break 'EventLoop;
             }
             _ = timer.as_mut() => {
-                let now = Instant::now();
-                requester.handle_timeout(now)?;
-                responder.handle_timeout(now)?;
-            }
-            res = req_socket.recv_from(&mut req_buf) => {
-                match res {
-                    Ok((n, peer_addr)) => {
-                        requester.handle_read(TaggedBytesMut {
-                            now: Instant::now(),
-                            transport: TransportContext {
-                                local_addr: req_local_addr,
-                                peer_addr,
-                                ecn: None,
-                                transport_protocol: TransportProtocol::UDP,
-                            },
-                            message: BytesMut::from(&req_buf[..n]),
-                        })?;
-                    }
-                    Err(err) => {
-                        eprintln!("requester socket read error: {}", err);
-                        break 'EventLoop;
-                    }
-                }
+                responder.handle_timeout(Instant::now())?;
             }
             res = resp_socket.recv_from(&mut resp_buf) => {
                 match res {
@@ -366,7 +457,6 @@ async fn run(stop_tx: tokio::sync::broadcast::Sender<()>) -> Result<()> {
         }
     }
 
-    requester.close()?;
     responder.close()?;
 
     Ok(())
