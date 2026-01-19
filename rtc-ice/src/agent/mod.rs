@@ -942,6 +942,11 @@ impl Agent {
                 }
             } else if c.addr() == addr {
                 return Some(index);
+            } else if let Some(related_address) = c.related_address()
+                && related_address.address == addr.ip().to_string()
+                && related_address.port == addr.port()
+            {
+                return Some(index);
             }
         }
         None

@@ -33,6 +33,7 @@ use rtc::peer_connection::transport::{CandidateConfig, RTCIceCandidate};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc::stun::{client::*, message::*, xoraddr::*};
+use shared::error::Error;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use std::{fs::OpenOptions, io::Write, str::FromStr};
@@ -105,15 +106,8 @@ async fn main() -> Result<()> {
     println!("Open http://localhost:8080 to access this demo");
     println!("Press ctrl-c to stop");
 
-    let (srflx_tx, srflx_rx) = tokio::sync::mpsc::channel::<(XorMappedAddress, SocketAddr)>(8);
-
-    let stun_server = "stun.l.google.com:19302".to_owned();
-
-    // gather ServerReflexive candidate
-    tokio::spawn(run_srflx_gather(srflx_tx, stun_server.clone()));
-
     // Run the main event loop with WebSocket handling
-    run_main_loop(srflx_rx, stun_server).await
+    run_main_loop().await
 }
 
 async fn run_http_server() {
@@ -149,84 +143,52 @@ async fn run_http_server() {
     }
 }
 
-async fn run_srflx_gather(
-    srflx_tx: tokio::sync::mpsc::Sender<(XorMappedAddress, SocketAddr)>,
-    stun_server: String,
-) -> shared::error::Result<()> {
-    let conn = std::net::UdpSocket::bind("0:0")?;
-    println!("Local address: {}", conn.local_addr()?);
+async fn run_main_loop() -> Result<()> {
+    let stun_server = "stun.l.google.com:19302".to_owned();
 
-    println!("Connecting to: {stun_server}");
-    conn.connect(stun_server)?;
-
-    let mut client = ClientBuilder::new().build(
-        conn.local_addr()?,
-        conn.peer_addr()?,
-        TransportProtocol::UDP,
-    )?;
-
-    let mut msg = rtc::stun::message::Message::new();
-    msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
-    client.handle_write(msg)?;
-    while let Some(transmit) = client.poll_write() {
-        conn.send(&transmit.message)?;
-    }
-
-    let mut buf = vec![0u8; 1500];
-    let n = conn.recv(&mut buf)?;
-    client.handle_read(TaggedBytesMut {
-        now: Instant::now(),
-        transport: TransportContext {
-            local_addr: conn.local_addr()?,
-            peer_addr: conn.peer_addr()?,
-            transport_protocol: TransportProtocol::UDP,
-            ecn: None,
-        },
-        message: BytesMut::from(&buf[..n]),
-    })?;
-
-    if let Some(event) = client.poll_event() {
-        let msg = event.result?;
-        let mut xor_addr = XorMappedAddress::default();
-        xor_addr.get_from(&msg)?;
-        println!("Got response: {xor_addr}");
-
-        if let Err(err) = srflx_tx.send((xor_addr, conn.local_addr()?)).await {
-            eprintln!("Failed to send srflx message: {err}");
-        }
-    }
-
-    client.close()
-}
-
-async fn run_main_loop(
-    mut srflx_rx: tokio::sync::mpsc::Receiver<(XorMappedAddress, SocketAddr)>,
-    stun_server: String,
-) -> Result<()> {
     // WebSocket server listener (separate port for WebSocket)
     let ws_listener = TcpListener::bind("0.0.0.0:8081").await?;
     println!("WebSocket server listening on ws://localhost:8081");
+
+    let srflx_udp_socket = UdpSocket::bind("0:0").await?;
+    let srflx = gather_srflx_candidate(&srflx_udp_socket, stun_server.as_str()).await?;
+    let laddr = srflx_udp_socket.local_addr()?;
+    println!(
+        "Connecting to: {stun_server} with srflx_udp_socket local_addr: {laddr} and srflx_addr: {srflx}"
+    );
 
     // Note: The index.html needs to connect to port 8081 for WebSocket
     // Or we need to modify it. For now, let's update the HTML.
 
     // State for the main loop
     let mut peer_connection: Option<RTCPeerConnection> = None;
-    let mut udp_socket: Option<UdpSocket> = None;
-    let mut local_addr: Option<SocketAddr> = None;
+    let mut pc_udp_socket: Option<UdpSocket> = None;
+    let mut pc_local_addr: Option<SocketAddr> = None;
     let mut data_channel_id: Option<u16> = None;
     let mut last_send = Instant::now();
     let mut ws_stream: Option<WebSocketStream<TcpStream>> = None;
-    let mut buf = vec![0; 2000];
+    let mut pc_buf = vec![0; 2000];
+    let mut srflx_buf = vec![0; 2000];
 
     loop {
         // Process peer connection if it exists
         if let Some(pc) = peer_connection.as_mut() {
             // Poll writes
             while let Some(msg) = pc.poll_write() {
-                if let Some(sock) = udp_socket.as_ref() {
-                    if let Err(e) = sock.send_to(&msg.message, msg.transport.peer_addr).await {
-                        error!("Socket write error: {}", e);
+                if msg.transport.local_addr.ip() == srflx.ip
+                    && msg.transport.local_addr.port() == srflx.port
+                {
+                    if let Err(e) = srflx_udp_socket
+                        .send_to(&msg.message, msg.transport.peer_addr)
+                        .await
+                    {
+                        error!("srflx_udp_socket write error: {}", e);
+                    }
+                } else {
+                    if let Some(sock) = pc_udp_socket.as_ref() {
+                        if let Err(e) = sock.send_to(&msg.message, msg.transport.peer_addr).await {
+                            error!("pc_udp_socket write error: {}", e);
+                        }
                     }
                 }
             }
@@ -317,15 +279,30 @@ async fn run_main_loop(
                     pc.handle_timeout(Instant::now()).ok();
                 }
                 // Handle UDP data
+                res = srflx_udp_socket.recv_from(&mut srflx_buf) => {
+                    if let Ok((n, peer_addr)) = res {
+                        trace!("srflx_udp_socket read {} bytes from {} to {}", n, peer_addr, srflx_udp_socket.local_addr()?);
+                        pc.handle_read(TaggedBytesMut {
+                            now: Instant::now(),
+                            transport: TransportContext {
+                                local_addr: srflx_udp_socket.local_addr()?,
+                                peer_addr,
+                                ecn: None,
+                                transport_protocol: TransportProtocol::UDP,
+                            },
+                            message: BytesMut::from(&srflx_buf[..n]),
+                        })?;
+                    }
+                }
                 res = async {
-                    if let Some(sock) = udp_socket.as_ref() {
-                        sock.recv_from(&mut buf).await
+                    if let Some(sock) = pc_udp_socket.as_ref() {
+                        sock.recv_from(&mut pc_buf).await
                     } else {
                         std::future::pending().await
                     }
                 } => {
                     if let Ok((n, peer_addr)) = res {
-                        if let Some(local) = local_addr {
+                        if let Some(local) = pc_local_addr {
                             pc.handle_read(TaggedBytesMut {
                                 now: Instant::now(),
                                 transport: TransportContext {
@@ -334,40 +311,8 @@ async fn run_main_loop(
                                     ecn: None,
                                     transport_protocol: TransportProtocol::UDP,
                                 },
-                                message: BytesMut::from(&buf[..n]),
+                                message: BytesMut::from(&pc_buf[..n]),
                             }).ok();
-                        }
-                    }
-                }
-                srflx = srflx_rx.recv() => {
-                    if let Some((srflx, laddr)) = srflx {
-                        // Now that both local and remote descriptions are set,
-                        // gather and add local host candidate (simulates trickle ICE gathering)
-                        let candidate = CandidateServerReflexiveConfig{
-                            base_config: CandidateConfig {
-                                network: "udp".to_owned(),
-                                address: srflx.ip.to_string(),
-                                port: srflx.port,
-                                component: 1,
-                                ..Default::default()
-                            },
-                            rel_addr: laddr.ip().to_string(),
-                            rel_port: laddr.port(),
-                            ..Default::default()
-                        }
-                        .new_candidate_server_reflexive()?;
-                        let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
-
-                        // Add to peer connection after SDP exchange
-                        pc.add_local_candidate(local_candidate_init.clone())?;
-                        println!("Added local ServerReflexive ICE candidate: {}", local_candidate_init.candidate);
-
-                        // Send answer to browser
-                        if let Some(ref mut ws) = ws_stream {
-                            // Send our local ICE candidate to browser (trickle ICE)
-                            let json = serde_json::to_string(&local_candidate_init)?;
-                            info!("Sending local ICE candidate: {}", local_candidate_init.candidate);
-                            ws.send(Message::Text(json.into())).await?;
                         }
                     }
                 }
@@ -399,8 +344,8 @@ async fn run_main_loop(
                             info!("WebSocket closed, cleaning up");
                             ws_stream = None;
                             peer_connection = None;
-                            udp_socket = None;
-                            local_addr = None;
+                            pc_udp_socket = None;
+                            pc_local_addr = None;
                             data_channel_id = None;
                         }
                         Some(Err(e)) => {
@@ -452,11 +397,11 @@ async fn run_main_loop(
                                         // Create UDP socket
                                         let sock = UdpSocket::bind("127.0.0.1:0").await?;
                                         let local = sock.local_addr()?;
-                                        local_addr = Some(local);
+                                        pc_local_addr = Some(local);
                                         println!("Bound to {}", local);
 
                                         let mut setting_engine = SettingEngine::default();
-                                        setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+                                        setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
                                         let config = RTCConfigurationBuilder::new()
                                             .with_ice_servers(vec![RTCIceServer {
@@ -480,22 +425,24 @@ async fn run_main_loop(
 
                                         // Now that both local and remote descriptions are set,
                                         // gather and add local host candidate (simulates trickle ICE gathering)
-                                        /*let candidate = CandidateHostConfig {
+                                        let candidate = CandidateServerReflexiveConfig{
                                             base_config: CandidateConfig {
                                                 network: "udp".to_owned(),
-                                                address: local.ip().to_string(),
-                                                port: local.port(),
+                                                address: srflx.ip.to_string(),
+                                                port: srflx.port,
                                                 component: 1,
                                                 ..Default::default()
                                             },
+                                            rel_addr: laddr.ip().to_string(),
+                                            rel_port: laddr.port(),
                                             ..Default::default()
                                         }
-                                        .new_candidate_host()?;
+                                        .new_candidate_server_reflexive()?;
                                         let local_candidate_init = RTCIceCandidate::from(&candidate).to_json()?;
 
                                         // Add to peer connection after SDP exchange
                                         pc.add_local_candidate(local_candidate_init.clone())?;
-                                        println!("Added local ICE candidate: {}", local_candidate_init.candidate);*/
+                                        println!("Added local ServerReflexive ICE candidate: {}", local_candidate_init.candidate);
 
                                         // Send answer to browser
                                         if let Some(ref mut ws) = ws_stream {
@@ -504,13 +451,13 @@ async fn run_main_loop(
                                             ws.send(Message::Text(json.into())).await?;
 
                                             // Send our local ICE candidate to browser (trickle ICE)
-                                            /*let json = serde_json::to_string(&local_candidate_init)?;
+                                            let json = serde_json::to_string(&local_candidate_init)?;
                                             info!("Sending local ICE candidate: {}", local_candidate_init.candidate);
-                                            ws.send(Message::Text(json.into())).await?;*/
+                                            ws.send(Message::Text(json.into())).await?;
                                         }
 
                                         peer_connection = Some(pc);
-                                        udp_socket = Some(sock);
+                                        pc_udp_socket = Some(sock);
                                     }
                                     WsMessage::IceCandidate(candidate) => {
                                         info!("Received ICE candidate before offer, ignoring: {}", candidate.candidate);
@@ -555,6 +502,53 @@ async fn run_main_loop(
     }
 
     Ok(())
+}
+
+async fn gather_srflx_candidate(
+    stun_udp_socket: &UdpSocket,
+    stun_server: &str,
+) -> Result<XorMappedAddress, Error> {
+    let transport_context = TransportContext::default();
+    let local_addr = stun_udp_socket.local_addr()?;
+    let mut client = ClientBuilder::new().build(
+        local_addr,
+        transport_context.peer_addr,
+        TransportProtocol::UDP,
+    )?;
+    let mut msg = rtc::stun::message::Message::new();
+    msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
+    client.handle_write(msg)?;
+    while let Some(transmit) = client.poll_write() {
+        stun_udp_socket
+            .send_to(&transmit.message, stun_server)
+            .await?;
+    }
+
+    let mut buf = vec![0u8; 1500];
+    let (n, peer_addr) = stun_udp_socket.recv_from(&mut buf).await?;
+    client.handle_read(TaggedBytesMut {
+        now: Instant::now(),
+        transport: TransportContext {
+            local_addr,
+            peer_addr,
+            transport_protocol: TransportProtocol::UDP,
+            ecn: None,
+        },
+        message: BytesMut::from(&buf[..n]),
+    })?;
+
+    let xor_addr = if let Some(event) = client.poll_event() {
+        let msg = event.result?;
+        let mut xor_addr = XorMappedAddress::default();
+        xor_addr.get_from(&msg)?;
+        println!("Got response: {xor_addr}");
+        xor_addr
+    } else {
+        return Err(Error::ErrStunQuery);
+    };
+
+    client.close()?;
+    Ok(xor_addr)
 }
 
 fn parse_ws_message(text: &str) -> Option<WsMessage> {

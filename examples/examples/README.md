@@ -63,7 +63,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - ✅ [Trickle ICE](trickle-ice) Example trickle-ice example demonstrates WebRTC's Trickle ICE APIs. This is important to
   use since it allows ICE Gathering and Connecting to happen concurrently.
-- 🚧 [Trickle ICE ServerReflexive](trickle-ice-srflx): Example demonstrates how to add ServerReflexive (STUN)
+- ✅ [Trickle ICE ServerReflexive](trickle-ice-srflx): Example demonstrates how to add ServerReflexive (STUN)
   type local candidate.
 - ✅ [ICE TCP](ice-tcp) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
