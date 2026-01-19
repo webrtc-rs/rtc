@@ -71,6 +71,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 
 ### TODO
 
+- 🚧 [ServerReflexive Local Candidate](TODO): Example demonstrates how to add ServerReflexive (STUN) type local
+  candidate.
+- 🚧 [Relay Local Candidate](TODO): Example demonstrates how to add Relay (TURN) type local candidate.
 - 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
   while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
   media packets, but browser will recover them using the FEC packets and the delivered packets.
