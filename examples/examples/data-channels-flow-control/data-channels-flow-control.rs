@@ -6,9 +6,7 @@ use log::error;
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::fs::OpenOptions;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
@@ -335,10 +333,9 @@ async fn run_responder(
 
     // Track state for responder (receiver)
     let mut resp_data_channel_opened = false;
-    let total_bytes_received = Arc::new(AtomicUsize::new(0));
+    let mut total_bytes_received: usize = 0;
     let mut last_total_bytes_received: usize = 0;
-    let mut throughput_start = SystemTime::now();
-    let mut throughput_timer = Instant::now();
+    let mut throughput_start = Instant::now();
 
     let mut resp_buf = vec![0; 2000];
     let mut stop_rx = stop_tx.subscribe();
@@ -368,8 +365,7 @@ async fn run_responder(
                         RTCDataChannelEvent::OnOpen(_channel_id) => {
                             println!("Responder: Data channel opened");
                             resp_data_channel_opened = true;
-                            throughput_start = SystemTime::now();
-                            throughput_timer = Instant::now();
+                            throughput_start = Instant::now();
                         }
                         _ => {}
                     }
@@ -383,8 +379,7 @@ async fn run_responder(
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
                 RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
-                    total_bytes_received
-                        .fetch_add(data_channel_message.data.len(), Ordering::Relaxed);
+                    total_bytes_received += data_channel_message.data.len();
                 }
             }
         }
@@ -392,20 +387,19 @@ async fn run_responder(
         // Responder: print throughput every second
         if resp_data_channel_opened {
             let now = Instant::now();
-            if now.duration_since(throughput_timer) >= Duration::from_secs(1) {
-                let current_total = total_bytes_received.load(Ordering::Relaxed);
+            if now.duration_since(throughput_start) >= Duration::from_secs(1) {
+                let current_total = total_bytes_received;
                 let epoch_bytes_received = current_total - last_total_bytes_received;
                 last_total_bytes_received = current_total;
 
-                let elapsed = SystemTime::now().duration_since(throughput_start);
-                let bps = (epoch_bytes_received * 8) as f64 / elapsed.unwrap().as_secs_f64();
+                let elapsed = now.duration_since(throughput_start);
+                let bps = (epoch_bytes_received * 8) as f64 / elapsed.as_secs_f64();
 
                 println!(
                     "Throughput is about {:.03} Mbps",
                     bps / (1024 * 1024) as f64
                 );
-                throughput_start = SystemTime::now();
-                throughput_timer = now;
+                throughput_start = now;
             }
         }
 
