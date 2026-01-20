@@ -150,46 +150,31 @@ async fn run_main_loop() -> Result<()> {
     let ws_listener = TcpListener::bind("0.0.0.0:8081").await?;
     println!("WebSocket server listening on ws://localhost:8081");
 
-    let srflx_udp_socket = UdpSocket::bind("0:0").await?;
-    let srflx = gather_srflx_candidate(&srflx_udp_socket, stun_server.as_str()).await?;
-    let laddr = srflx_udp_socket.local_addr()?;
-    println!(
-        "Connecting to: {stun_server} with srflx_udp_socket local_addr: {laddr} and srflx_addr: {srflx}"
-    );
+    let udp_socket = UdpSocket::bind("0:0").await?;
+    let srflx = gather_srflx_candidate(&udp_socket, stun_server.as_str()).await?;
+    let local_addr = udp_socket.local_addr()?;
+    println!("Connecting to: {stun_server} with local_addr: {local_addr} and srflx_addr: {srflx}");
 
     // Note: The index.html needs to connect to port 8081 for WebSocket
     // Or we need to modify it. For now, let's update the HTML.
 
     // State for the main loop
     let mut peer_connection: Option<RTCPeerConnection> = None;
-    let mut pc_udp_socket: Option<UdpSocket> = None;
-    let mut pc_local_addr: Option<SocketAddr> = None;
     let mut data_channel_id: Option<u16> = None;
     let mut last_send = Instant::now();
     let mut ws_stream: Option<WebSocketStream<TcpStream>> = None;
-    let mut pc_buf = vec![0; 2000];
-    let mut srflx_buf = vec![0; 2000];
+    let mut buf = vec![0; 2000];
 
     loop {
         // Process peer connection if it exists
         if let Some(pc) = peer_connection.as_mut() {
             // Poll writes
             while let Some(msg) = pc.poll_write() {
-                if msg.transport.local_addr.ip() == srflx.ip
-                    && msg.transport.local_addr.port() == srflx.port
+                if let Err(err) = udp_socket
+                    .send_to(&msg.message, msg.transport.peer_addr)
+                    .await
                 {
-                    if let Err(e) = srflx_udp_socket
-                        .send_to(&msg.message, msg.transport.peer_addr)
-                        .await
-                    {
-                        error!("srflx_udp_socket write error: {}", e);
-                    }
-                } else {
-                    if let Some(sock) = pc_udp_socket.as_ref() {
-                        if let Err(e) = sock.send_to(&msg.message, msg.transport.peer_addr).await {
-                            error!("pc_udp_socket write error: {}", e);
-                        }
-                    }
+                    error!("udp_socket write error: {}", err);
                 }
             }
 
@@ -279,41 +264,19 @@ async fn run_main_loop() -> Result<()> {
                     pc.handle_timeout(Instant::now()).ok();
                 }
                 // Handle UDP data
-                res = srflx_udp_socket.recv_from(&mut srflx_buf) => {
+                res = udp_socket.recv_from(&mut buf) => {
                     if let Ok((n, peer_addr)) = res {
-                        trace!("srflx_udp_socket read {} bytes from {} to {}", n, peer_addr, srflx_udp_socket.local_addr()?);
+                        trace!("udp_socket read {} bytes from {} to {}", n, peer_addr, udp_socket.local_addr()?);
                         pc.handle_read(TaggedBytesMut {
                             now: Instant::now(),
                             transport: TransportContext {
-                                local_addr: srflx_udp_socket.local_addr()?,
+                                local_addr,
                                 peer_addr,
                                 ecn: None,
                                 transport_protocol: TransportProtocol::UDP,
                             },
-                            message: BytesMut::from(&srflx_buf[..n]),
+                            message: BytesMut::from(&buf[..n]),
                         })?;
-                    }
-                }
-                res = async {
-                    if let Some(sock) = pc_udp_socket.as_ref() {
-                        sock.recv_from(&mut pc_buf).await
-                    } else {
-                        std::future::pending().await
-                    }
-                } => {
-                    if let Ok((n, peer_addr)) = res {
-                        if let Some(local) = pc_local_addr {
-                            pc.handle_read(TaggedBytesMut {
-                                now: Instant::now(),
-                                transport: TransportContext {
-                                    local_addr: local,
-                                    peer_addr,
-                                    ecn: None,
-                                    transport_protocol: TransportProtocol::UDP,
-                                },
-                                message: BytesMut::from(&pc_buf[..n]),
-                            }).ok();
-                        }
                     }
                 }
                 // Handle WebSocket messages
@@ -344,8 +307,6 @@ async fn run_main_loop() -> Result<()> {
                             info!("WebSocket closed, cleaning up");
                             ws_stream = None;
                             peer_connection = None;
-                            pc_udp_socket = None;
-                            pc_local_addr = None;
                             data_channel_id = None;
                         }
                         Some(Err(e)) => {
@@ -394,12 +355,6 @@ async fn run_main_loop() -> Result<()> {
                                     WsMessage::Offer(offer) => {
                                         println!("Received offer, creating peer connection");
 
-                                        // Create UDP socket
-                                        let sock = UdpSocket::bind("127.0.0.1:0").await?;
-                                        let local = sock.local_addr()?;
-                                        pc_local_addr = Some(local);
-                                        println!("Bound to {}", local);
-
                                         let mut setting_engine = SettingEngine::default();
                                         setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
@@ -433,8 +388,8 @@ async fn run_main_loop() -> Result<()> {
                                                 component: 1,
                                                 ..Default::default()
                                             },
-                                            rel_addr: laddr.ip().to_string(),
-                                            rel_port: laddr.port(),
+                                            rel_addr: local_addr.ip().to_string(),
+                                            rel_port: local_addr.port(),
                                             ..Default::default()
                                         }
                                         .new_candidate_server_reflexive()?;
@@ -457,7 +412,6 @@ async fn run_main_loop() -> Result<()> {
                                         }
 
                                         peer_connection = Some(pc);
-                                        pc_udp_socket = Some(sock);
                                     }
                                     WsMessage::IceCandidate(candidate) => {
                                         info!("Received ICE candidate before offer, ignoring: {}", candidate.candidate);
