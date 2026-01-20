@@ -11,7 +11,16 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
-// RUST_LOG=trace cargo run --color=always --package rtc-turn --example turn_client_udp -- --host 127.0.0.1 --user user=pass --ping
+// First, start turn server:
+
+// Option 1: webrtc-rs/webrtc/turn/examples/turn_server_udp:
+//  RUST_LOG=trace cargo run --color=always --package turn --example turn_server_udp -- --public-ip 127.0.0.1 --users user=pass
+
+// Option 2: pion/turn/examples/turn-server/simple:
+//  ./simple -public-ip 127.0.0.1 -users user=pass
+
+// Then, start webrtc-rs/rtc/rtc-turn/examples/turn_client_udp:
+//   RUST_LOG=trace cargo run --color=always --package rtc-turn --example turn_client_udp -- --host 127.0.0.1 --user user=pass --ping
 
 #[derive(Parser)]
 #[command(name = "TURN Client UDP")]
