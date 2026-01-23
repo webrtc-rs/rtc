@@ -42,10 +42,10 @@ use tokio_tungstenite::tungstenite::Message;
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
 #[derive(Parser)]
-#[command(name = "trickle-ice")]
+#[command(name = "trickle-ice-host")]
 #[command(author = "Rain Liu <yliu@webrtc.rs>")]
 #[command(version = "0.1.0")]
-#[command(about = "An example of trickle-ice", long_about = None)]
+#[command(about = "An example of trickle-ice-host", long_about = None)]
 struct Cli {
     #[arg(short, long)]
     debug: bool,

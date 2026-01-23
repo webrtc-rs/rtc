@@ -146,13 +146,18 @@ path = "examples/ice-restart/ice-restart.rs"
 bench = false
 
 [[example]]
-name = "trickle-ice"
-path = "examples/trickle-ice/trickle-ice.rs"
+name = "trickle-ice-host"
+path = "examples/trickle-ice-host/trickle-ice-host.rs"
 bench = false
 
 [[example]]
 name = "trickle-ice-srflx"
 path = "examples/trickle-ice-srflx/trickle-ice-srflx.rs"
+bench = false
+
+[[example]]
+name = "trickle-ice-relay"
+path = "examples/trickle-ice-relay/trickle-ice-relay.rs"
 bench = false
 
 [[example]]

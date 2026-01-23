@@ -1,5 +1,5 @@
-# trickle-ice
-trickle-ice demonstrates the sansio RTC's Trickle ICE APIs. ICE is the subsystem WebRTC uses to establish connectivity.
+# trickle-ice-host
+trickle-ice-host demonstrates the sansio RTC's Trickle ICE APIs. ICE is the subsystem WebRTC uses to establish connectivity.
 
 Trickle ICE is the process of sharing addresses as soon as they are gathered. This parallelizes
 establishing a connection with a remote peer and starting sessions with TURN servers. Using Trickle ICE
@@ -9,17 +9,17 @@ Trickle ICE isn't mandatory to use, but highly recommended.
 
 ## Instructions
 
-### Run trickle-ice
+### Run trickle-ice-host
 From the `rtc` directory, execute:
 
 ```
-cargo run --example trickle-ice
+cargo run --example trickle-ice-host
 ```
 
 Or with debug logging:
 
 ```
-cargo run --example trickle-ice -- --debug
+cargo run --example trickle-ice-host -- --debug
 ```
 
 ### Open the Web UI
