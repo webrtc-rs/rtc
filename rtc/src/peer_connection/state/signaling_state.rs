@@ -350,11 +350,22 @@ pub(crate) fn check_next_signaling_state(
                     }
                     _ => {}
                 }
-            } else if op == StateChangeOp::SetLocal
-                && sdp_type == RTCSdpType::Offer
-                && next == RTCSignalingState::HaveLocalOffer
-            {
-                return Ok(next);
+            } else if op == StateChangeOp::SetLocal {
+                match sdp_type {
+                    // have-local-offer->SetLocal(offer)->have-local-offer (reoffer)
+                    RTCSdpType::Offer => {
+                        if next == RTCSignalingState::HaveLocalOffer {
+                            return Ok(next);
+                        }
+                    }
+                    // have-local-offer->SetLocal(rollback)->stable
+                    RTCSdpType::Rollback => {
+                        if next == RTCSignalingState::Stable {
+                            return Ok(next);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         RTCSignalingState::HaveRemotePranswer => {
@@ -382,6 +393,12 @@ pub(crate) fn check_next_signaling_state(
                     }
                     _ => {}
                 }
+            } else if op == StateChangeOp::SetRemote
+                && sdp_type == RTCSdpType::Rollback
+                && next == RTCSignalingState::Stable
+            {
+                // have-remote-offer->SetRemote(rollback)->stable
+                return Ok(next);
             }
         }
         RTCSignalingState::HaveLocalPranswer => {

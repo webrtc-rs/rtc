@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! rtcp-processing demonstrates the Public API for processing RTCP packets in sansio RTC.
 //!
 //! This example shows:

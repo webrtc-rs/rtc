@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perfect Negotiation Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .role-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .polite {
+            background: #10b981;
+            color: white;
+        }
+
+        .impolite {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #dc2626;
+        }
+
+        .status.connecting {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .status.connected {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 1;
+            min-width: 140px;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #2563eb;
+        }
+
+        .btn-secondary {
+            background: #8b5cf6;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #7c3aed;
+        }
+
+        .btn-send {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-send:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        .message-area {
+            margin-top: 20px;
+        }
+
+        .message-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        #messageInput:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .log {
+            background: #f9fafb;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .log-entry {
+            padding: 6px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: #6b7280;
+            margin-right: 8px;
+        }
+
+        .log-level {
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .log-level.info {
+            color: #3b82f6;
+        }
+
+        .log-level.success {
+            color: #10b981;
+        }
+
+        .log-level.warning {
+            color: #f59e0b;
+        }
+
+        .log-level.error {
+            color: #ef4444;
+        }
+
+        .info-box {
+            background: #eff6ff;
+            border: 2px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .info-box h3 {
+            margin: 0 0 10px 0;
+            color: #1e40af;
+            font-size: 16px;
+        }
+
+        .info-box ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #1e3a8a;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>
+        Perfect Negotiation Demo
+        <span class="role-badge" id="roleBadge"></span>
+    </h1>
+    <div class="subtitle">
+        Demonstrating the Perfect Negotiation pattern at application level using webrtc-rs/rtc sans-I/O API
+    </div>
+
+    <div class="info-box">
+        <h3>🎯 About Perfect Negotiation</h3>
+        <ul>
+            <li><strong>Both peers use identical code</strong> - no offerer/answerer asymmetry</li>
+            <li><strong>Automatic collision detection</strong> - handles simultaneous offers gracefully</li>
+            <li><strong>Polite/impolite roles</strong> - polite peer yields on collision</li>
+            <li><strong>Application-level pattern</strong> - implemented using spec-compliant RTC primitives</li>
+        </ul>
+    </div>
+
+    <div class="status disconnected" id="status">
+        Status: Disconnected
+    </div>
+
+    <div class="controls">
+        <button class="btn-primary" id="connectBtn" onclick="connect()">
+            Connect
+        </button>
+        <button class="btn-secondary" id="renegotiateBtn" onclick="renegotiate()" disabled>
+            Renegotiate
+        </button>
+    </div>
+
+    <div class="message-area">
+        <div class="message-input">
+            <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+            <button class="btn-send" id="sendBtn" onclick="sendMessage()" disabled>
+                Send
+            </button>
+        </div>
+
+        <div class="log" id="log">
+            <div class="log-entry">
+                <span class="log-time">[00:00:00]</span>
+                <span class="log-level info">[INFO]</span>
+                Ready to connect...
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Determine role from URL path
+    const isPolite = window.location.pathname === '/polite';
+    const role = isPolite ? 'POLITE' : 'IMPOLITE';
+
+    document.getElementById('roleBadge').className = `role-badge ${isPolite ? 'polite' : 'impolite'}`;
+    document.getElementById('roleBadge').textContent = role;
+
+    let ws = null;
+
+    // Connect to WebSocket server (Rust backend handles WebRTC)
+    function setupWebSocket() {
+        ws = new WebSocket('ws://localhost:8081');
+
+        ws.onopen = () => {
+            log('Connected to signaling server', 'success');
+        };
+
+        ws.onmessage = async (event) => {
+            const data = event.data;
+
+            // Handle status updates from Rust backend
+            try {
+                const message = JSON.parse(data);
+
+                if (message.type === 'status') {
+                    updateStatus(message.state);
+                    log(message.message, message.level || 'info');
+                } else if (message.type === 'data') {
+                    log(`Received: ${message.message}`, 'success');
+                } else if (message.type === 'log') {
+                    log(message.message, message.level || 'info');
+                }
+            } catch (e) {
+                // Plain text message
+                log(data, 'info');
+            }
+        };
+
+        ws.onerror = (error) => {
+            log('WebSocket error: ' + error, 'error');
+        };
+
+        ws.onclose = () => {
+            log('Disconnected from signaling server', 'warning');
+            updateStatus('disconnected');
+        };
+    }
+
+    // Connect button handler - send command to Rust backend
+    async function connect() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            setupWebSocket();
+            await new Promise(resolve => {
+                const checkInterval = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 100);
+            });
+        }
+
+        log('Sending connect command to Rust backend...', 'info');
+        document.getElementById('connectBtn').disabled = true;
+
+        // Send connect command to Rust
+        ws.send('connect');
+    }
+
+    // Renegotiate button handler
+    async function renegotiate() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            log('Sending renegotiate command...', 'info');
+            ws.send('renegotiate');
+        } else {
+            log('Not connected to server', 'error');
+        }
+    }
+
+    // Send message through Rust backend
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const message = input.value.trim();
+
+        if (message && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'message',
+                message: message
+            }));
+            log(`Sent: ${message}`, 'info');
+            input.value = '';
+        }
+    }
+
+    // Handle Enter key in message input
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+
+    // Update status display
+    function updateStatus(state) {
+        const statusDiv = document.getElementById('status');
+        statusDiv.className = 'status';
+
+        switch (state) {
+            case 'connected':
+                statusDiv.className += ' connected';
+                statusDiv.textContent = 'Status: Connected ✓';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('renegotiateBtn').disabled = false;
+                document.getElementById('messageInput').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                break;
+            case 'connecting':
+                statusDiv.className += ' connecting';
+                statusDiv.textContent = 'Status: Connecting...';
+                document.getElementById('connectBtn').disabled = true; // Also disable during connection
+                break;
+            default:
+                statusDiv.className += ' disconnected';
+                statusDiv.textContent = 'Status: Disconnected';
+                document.getElementById('connectBtn').disabled = false; // Re-enable on disconnect
+                document.getElementById('renegotiateBtn').disabled = true;
+                document.getElementById('messageInput').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+        }
+    }
+
+    // Log message to console
+    function log(message, level = 'info') {
+        const logDiv = document.getElementById('log');
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = `
+                <span class="log-time">[${time}]</span>
+                <span class="log-level ${level}">[${level.toUpperCase()}]</span>
+                ${message}
+            `;
+        logDiv.appendChild(entry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+
+        // Also log to browser console
+        console.log(`[${role}] ${message}`);
+    }
+
+    // Initialize - connect WebSocket immediately when page loads
+    log(`Starting as ${role} peer`, 'info');
+    log('Connecting to Rust backend...', 'info');
+    setupWebSocket();
+</script>
+</body>
+</html>

@@ -28,6 +28,7 @@ tokio-util = { version = "0.7.17", features = ["codec"] }
 anyhow = "1.0.100"
 chrono = "0.4.42"
 log.workspace = true
+serde.workspace = true
 serde_json = "1.0.145"
 bytes.workspace = true
 rand.workspace = true
@@ -198,4 +199,9 @@ bench = false
 [[example]]
 name = "play-from-disk-playlist-control"
 path = "examples/play-from-disk-playlist-control/play-from-disk-playlist-control.rs"
+bench = false
+
+[[example]]
+name = "perfect-negotiation"
+path = "examples/perfect-negotiation/perfect-negotiation.rs"
 bench = false

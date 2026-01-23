@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! save-to-disk-av1 is a simple application that shows how to save a video to disk using AV1.
 //!
 //! This example demonstrates:

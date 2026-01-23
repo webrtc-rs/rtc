@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! ice-tcp demonstrates sansio RTC's ICE TCP abilities.
 //!
 //! This example shows how to use ICE over TCP instead of UDP.

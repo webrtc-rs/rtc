@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! trickle-ice demonstrates the comprehensive Trickle ICE APIs.
 //!
 //! ICE is the subsystem WebRTC uses to establish connectivity.

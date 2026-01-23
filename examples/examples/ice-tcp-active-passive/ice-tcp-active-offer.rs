@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! ice-tcp-active-offer demonstrates the offering side with TCP active candidates.
 //!
 //! This example shows:

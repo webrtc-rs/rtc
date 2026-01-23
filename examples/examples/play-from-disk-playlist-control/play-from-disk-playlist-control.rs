@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! play-from-disk-playlist-control streams Opus pages from single or multi-track Ogg containers,
 //! exposes the playlist over a DataChannel, and lets the browser switch tracks.
 //!
@@ -62,7 +59,7 @@ use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::sync::oneshot;
 
 const LABEL_AUDIO: &str = "audio";
-const LABEL_TRACK: &str = "pion";
+const LABEL_TRACK: &str = "webrtc-rs";
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 const RTP_OUTBOUND_MTU: usize = 1200;
 

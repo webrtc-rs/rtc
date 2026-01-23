@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! data-channels-simple is a simple datachannel demo with HTTP signaling server.
 //!
 //! This example demonstrates:

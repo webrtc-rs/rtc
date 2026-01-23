@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! trickle-ice-relay demonstrates the Trickle ICE APIs with TURN relay candidates.
 //!
 //! ICE is the subsystem WebRTC uses to establish connectivity.

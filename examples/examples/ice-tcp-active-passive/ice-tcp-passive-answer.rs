@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
-// SPDX-License-Identifier: MIT
-
 //! ice-tcp-active-answer demonstrates the answering side with TCP passive candidates.
 //!
 //! This example shows:

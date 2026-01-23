@@ -981,11 +981,17 @@ where
                 RTCSdpType::Offer => {
                     local_description.sdp.clone_from(&self.last_offer);
                 }
+                RTCSdpType::Rollback => {
+                    // WebRTC spec: rollback SDP is ignored, empty is allowed
+                }
                 _ => return Err(Error::ErrPeerConnSDPTypeInvalidValueSetLocalDescription),
             }
         }
 
-        local_description.parsed = Some(local_description.unmarshal()?);
+        // Parse SDP (skip for rollback as content is ignored per spec)
+        if local_description.sdp_type != RTCSdpType::Rollback {
+            local_description.parsed = Some(local_description.unmarshal()?);
+        }
         self.set_description(&local_description, StateChangeOp::SetLocal)?;
 
         let we_answer = local_description.sdp_type == RTCSdpType::Answer;
@@ -1107,7 +1113,10 @@ where
 
         let is_renegotiation = self.current_remote_description.is_some();
 
-        remote_description.parsed = Some(remote_description.unmarshal()?);
+        // Parse SDP (skip for rollback as content is ignored per spec)
+        if remote_description.sdp_type != RTCSdpType::Rollback {
+            remote_description.parsed = Some(remote_description.unmarshal()?);
+        }
         self.set_description(&remote_description, StateChangeOp::SetRemote)?;
 
         if let Some(parsed_remote_description) = &remote_description.parsed {
