@@ -61,12 +61,14 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [mDNS Query and Gather](mdns-query-and-gather) Example mdns-query-and-gather demonstrates webrtc-rs hides local ip
   with mDNS.
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
-- ✅ [Trickle ICE Host](trickle-ice-host) Example demonstrates WebRTC's Trickle ICE APIs to add Host type local candidate. This is important to
-  use since it allows ICE Gathering and Connecting to happen concurrently.
+- ✅ [Trickle ICE Host](trickle-ice-host) Example demonstrates WebRTC's Trickle ICE APIs to add Host type local
+  candidate.
 - ✅ [Trickle ICE ServerReflexive](trickle-ice-srflx): Example demonstrates how to add ServerReflexive (STUN)
   type local candidate.
 - ✅ [Trickle ICE Realy](trickle-ice-relay): Example demonstrates how to add Relay (TURN)
   type local candidate.
+- ✅ [Trickle ICE](trickle-ice) Example trickle-ice demonstrates the comprehensive Trickle ICE APIs with all three types
+  of ICE candidates. This is important to use since it allows ICE Gathering and Connecting to happen concurrently.
 - ✅ [ICE TCP](ice-tcp) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
 - ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
