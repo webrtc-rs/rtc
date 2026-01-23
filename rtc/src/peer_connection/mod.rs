@@ -1084,6 +1084,36 @@ where
         }
     }
 
+    /// Returns the current local description as last successfully negotiated since
+    /// the last negotiation completed.
+    ///
+    /// This represents the local description from the last offer/answer exchange that was
+    /// successfully applied, not including any offers currently being negotiated.
+    ///
+    /// Returns `None` if there is no current local description (e.g., before initial negotiation).
+    ///
+    /// # Specification
+    ///
+    /// See [currentLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-currentlocaldescription)
+    pub fn current_local_description(&self) -> Option<&RTCSessionDescription> {
+        self.current_local_description.as_ref()
+    }
+
+    /// Returns the pending local description if it exists.
+    ///
+    /// This represents the local description from a call to `set_local_description()` whose
+    /// corresponding remote description has not yet been applied. This is `None` if negotiation
+    /// is not in progress or if a rollback has been performed.
+    ///
+    /// Returns `None` if there is no pending local description.
+    ///
+    /// # Specification
+    ///
+    /// See [pendingLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-pendinglocaldescription)
+    pub fn pending_local_description(&self) -> Option<&RTCSessionDescription> {
+        self.pending_local_description.as_ref()
+    }
+
     /// Sets the remote description as part of the offer/answer negotiation.
     ///
     /// This changes the remote description associated with the connection. This description
@@ -1410,6 +1440,36 @@ where
         } else {
             self.current_remote_description.as_ref()
         }
+    }
+
+    /// Returns the current remote description as last successfully negotiated since
+    /// the last negotiation completed.
+    ///
+    /// This represents the remote description from the last offer/answer exchange that was
+    /// successfully applied, not including any offers currently being negotiated.
+    ///
+    /// Returns `None` if there is no current remote description (e.g., before initial negotiation).
+    ///
+    /// # Specification
+    ///
+    /// See [currentRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-currentremotedescription)
+    pub fn current_remote_description(&self) -> Option<&RTCSessionDescription> {
+        self.current_remote_description.as_ref()
+    }
+
+    /// Returns the pending remote description if it exists.
+    ///
+    /// This represents the remote description from a call to `set_remote_description()` whose
+    /// corresponding local description has not yet been applied. This is `None` if negotiation
+    /// is not in progress or if a rollback has been performed.
+    ///
+    /// Returns `None` if there is no pending remote description.
+    ///
+    /// # Specification
+    ///
+    /// See [pendingRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-pendingremotedescription)
+    pub fn pending_remote_description(&self) -> Option<&RTCSessionDescription> {
+        self.pending_remote_description.as_ref()
     }
 
     /// Adds a remote ICE candidate to the peer connection.
