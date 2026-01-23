@@ -267,8 +267,8 @@ use crate::peer_connection::handler::sctp::SctpHandlerContext;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
-    get_application_media_section_sctp_port, get_mid_value, get_peer_direction, is_lite_set,
-    sdp_type::RTCSdpType, update_sdp_origin,
+    get_application_media_section_sctp_port, get_mid_value, get_peer_direction,
+    has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType, update_sdp_origin,
 };
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::peer_connection_state::{
@@ -347,7 +347,7 @@ where
 
     pub(crate) signaling_state: RTCSignalingState,
     pub(crate) peer_connection_state: RTCPeerConnectionState,
-    can_trickle_ice_candidates: bool,
+    can_trickle_ice_candidates: Option<bool>,
 
     //////////////////////////////////////////////////
     // PeerConnection Internal State Machine
@@ -551,7 +551,7 @@ where
             pending_remote_description: None,
             signaling_state: RTCSignalingState::Stable,
             peer_connection_state: RTCPeerConnectionState::New,
-            can_trickle_ice_candidates: false,
+            can_trickle_ice_candidates: None,
             pipeline_context,
             data_channels: HashMap::new(),
             rtp_transceivers: Vec::new(),
@@ -1114,6 +1114,24 @@ where
         self.pending_local_description.as_ref()
     }
 
+    /// Returns whether the remote peer supports trickle ICE.
+    ///
+    /// This value is determined from the remote SDP description after `set_remote_description()`
+    /// is called. It checks for "trickle" in the "ice-options" attribute per
+    /// RFC 8838 and RFC 9429 section 4.1.17.
+    ///
+    /// Returns:
+    /// - `None` if no remote description has been set yet (unknown)
+    /// - `Some(true)` if the remote peer indicated trickle ICE support
+    /// - `Some(false)` if the remote peer did not indicate support
+    ///
+    /// # Specification
+    ///
+    /// See [canTrickleIceCandidates](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-cantrickleicecandidates)
+    pub fn can_trickle_ice_candidates(&self) -> Option<bool> {
+        self.can_trickle_ice_candidates
+    }
+
     /// Sets the remote description as part of the offer/answer negotiation.
     ///
     /// This changes the remote description associated with the connection. This description
@@ -1153,6 +1171,20 @@ where
             self.configuration
                 .media_engine
                 .update_from_remote_description(parsed_remote_description)?;
+
+            // Detect trickle ICE support from remote SDP (RFC 8838/RFC 9429 section 4.1.17)
+            // Check for "trickle" in space-separated "ice-options" attribute values
+            let has_trickle_ice = has_ice_trickle_option(parsed_remote_description);
+
+            match remote_description.sdp_type {
+                RTCSdpType::Offer | RTCSdpType::Answer | RTCSdpType::Pranswer => {
+                    self.can_trickle_ice_candidates = Some(has_trickle_ice);
+                }
+                _ => {
+                    // Rollback or other types: reset to unknown
+                    self.can_trickle_ice_candidates = None;
+                }
+            }
 
             // Disable RTX/FEC on RTPSenders if the remote didn't support it
             for transceiver in &mut self.rtp_transceivers {

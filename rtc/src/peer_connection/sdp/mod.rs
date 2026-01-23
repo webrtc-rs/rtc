@@ -1396,3 +1396,36 @@ pub(crate) fn is_ext_map_allow_mixed_set(
             .is_some_and(|parsed| parsed.has_attribute(ATTR_KEY_EXTMAP_ALLOW_MIXED))
     })
 }
+
+/// Checks if the SDP indicates trickle ICE support.
+///
+/// Per RFC 8838 and RFC 9429 section 4.1.17, trickle ICE support is indicated by
+/// the presence of "trickle" in space-separated "ice-options" attribute values
+/// at either session level or media level.
+///
+/// # Arguments
+///
+/// * `desc` - The parsed SDP session description
+///
+/// # Returns
+///
+/// `true` if trickle ICE is supported, `false` otherwise
+pub(crate) fn has_ice_trickle_option(desc: &SessionDescription) -> bool {
+    // Check session-level ice-options attribute
+    if let Some(value) = desc.attribute("ice-options")
+        && value.split_whitespace().any(|opt| opt == "trickle")
+    {
+        return true;
+    }
+
+    // Check media-level ice-options attribute
+    for media in &desc.media_descriptions {
+        if let Some(Some(value)) = media.attribute("ice-options")
+            && value.split_whitespace().any(|opt| opt == "trickle")
+        {
+            return true;
+        }
+    }
+
+    false
+}
