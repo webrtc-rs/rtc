@@ -348,6 +348,87 @@ impl RTCSessionDescription {
         Ok(desc)
     }
 
+    /// Creates a rollback session description.
+    ///
+    /// This constructor creates an `RTCSessionDescription` with type
+    /// [`RTCSdpType::Rollback`]. Rollback is used to revert a pending
+    /// local or remote description and return the signaling state to Stable.
+    ///
+    /// Per WebRTC specification (RFC 8829 §5.7), rollback descriptions
+    /// typically have empty SDP content. This is used to abort an in-progress
+    /// negotiation, such as when implementing Perfect Negotiation collision
+    /// resolution.
+    ///
+    /// # Parameters
+    ///
+    /// - `sdp`: Optional SDP content. Per spec, this should typically be
+    ///   `None` or an empty string. If provided and non-empty, the SDP will
+    ///   be parsed and validated.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(RTCSessionDescription)` with type Rollback. If non-empty
+    /// SDP is provided and parsing fails, returns `Err`.
+    ///
+    /// # Use Cases
+    ///
+    /// - **Perfect Negotiation (Polite Peer)**: When a collision is detected,
+    ///   the polite peer calls `set_local_description(rollback)` to abort its
+    ///   pending offer before accepting the remote offer.
+    ///
+    /// - **Perfect Negotiation (Offer Rejection)**: When rejecting a remote
+    ///   offer, call `set_remote_description(rollback)` to return to Stable
+    ///   state without completing negotiation.
+    ///
+    /// - **Signaling State Transitions**: Enables these rollback transitions:
+    ///   - HaveLocalOffer → Stable (SetLocal with rollback)
+    ///   - HaveRemoteOffer → Stable (SetRemote with rollback)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rtc::peer_connection::sdp::{RTCSessionDescription, RTCSdpType};
+    /// use rtc::peer_connection::{RTCPeerConnection, configuration::RTCConfigurationBuilder};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// // Create a rollback description (typically with empty SDP)
+    /// let rollback = RTCSessionDescription::rollback(None)?;
+    /// assert_eq!(rollback.sdp_type, RTCSdpType::Rollback);
+    /// assert_eq!(rollback.sdp, "");
+    ///
+    /// // Use case: Polite peer rolling back local offer on collision
+    /// // (assumes peer is currently in HaveLocalOffer state)
+    /// pc.set_local_description(rollback)?;
+    /// // Now back in Stable state, ready to accept remote offer
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Specification
+    ///
+    /// Implements rollback as specified in:
+    /// - RFC 8829 (JSEP) §5.7: Rollback
+    /// - W3C WebRTC 1.0 §4.4.1.6: Set the RTCSessionDescription
+    pub fn rollback(sdp: Option<String>) -> Result<RTCSessionDescription> {
+        let mut desc = RTCSessionDescription {
+            sdp: if let Some(sdp) = sdp {
+                sdp
+            } else {
+                "".to_string()
+            },
+            sdp_type: RTCSdpType::Rollback,
+            parsed: None,
+        };
+
+        if !desc.sdp.is_empty() {
+            let parsed = desc.unmarshal()?;
+            desc.parsed = Some(parsed);
+        }
+
+        Ok(desc)
+    }
+
     /// Parses the SDP text into a structured format.
     ///
     /// This method deserializes the SDP string into a parsed
