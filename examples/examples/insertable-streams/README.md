@@ -15,12 +15,6 @@ E2E encryption, add metadata or insert a completely different video feed!
 ffmpeg -i $INPUT_FILE -g 30 output.ivf
 ```
 
-### Build insertable-streams
-
-```shell
-cargo build --example insertable-streams
-```
-
 ### Open insertable-streams example page
 
 [jsfiddle.net](https://jsfiddle.net/t5xoaryc/) you should see two text-areas and a 'Start Session' button. You will also have a 'Decrypt' checkbox.
@@ -32,12 +26,12 @@ The `output.ivf` you created should be in the same directory as `insertable-stre
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/insertable-streams`
+Run `echo $BROWSER_SDP | cargo run --example insertable-streams`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/insertable-streams < my_file`
+1. Run `cargo run --example insertable-streams < my_file`
 
 ### Input insertable-streams's SessionDescription into your browser
 

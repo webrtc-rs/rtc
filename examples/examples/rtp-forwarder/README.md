@@ -4,12 +4,6 @@ rtp-forwarder is a simple application that shows how to forward your webcam/micr
 
 ## Instructions
 
-### Build rtp-forwarder
-
-```shell
-cargo build --example rtp-forwarder
-```
-
 ### Open rtp-forwarder example page
 
 [jsfiddle.net](https://jsfiddle.net/fm7btvr3/) you should see your Webcam, two text-areas and a 'Start Session' button
@@ -20,12 +14,12 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/rtp-forwarder`
+Run `echo $BROWSER_SDP | cargo run --example rtp-forwarder`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/rtp-forwarder < my_file`
+1. Run `cargo run --example rtp-forwarder < my_file`
 
 ### Input rtp-forwarder's SessionDescription into your browser
 

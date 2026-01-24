@@ -4,12 +4,6 @@ data-channels is a WebRTC.rs application that shows how you can send/recv DataCh
 
 ## Instructions
 
-### Build data-channels
-
-```shell
-cargo build --example data-channels
-```
-
 ### Open data-channels example page
 
 [jsfiddle.net](https://jsfiddle.net/e41tgovp/)
@@ -20,12 +14,12 @@ In the jsfiddle the top textarea is your browser's session description, copy tha
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/data-channels`
+Run `echo $BROWSER_SDP | cargo run --example data-channels`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/data-channels < my_file`
+1. Run `cargo run --example data-channels < my_file`
 
 ### Input data-channels's SessionDescription into your browser
 
