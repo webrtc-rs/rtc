@@ -1223,8 +1223,43 @@ pub fn test_sample_builder() {
             }
         }
 
-        // Current problem: Sample does not implement Eq. Either implement myself or find another way of comparison. (Derive does not work)
-        assert_eq!(t.samples, samples, "{}", t.message);
+        // Compare samples field-by-field, ignoring timestamp (which varies with wall clock time)
+        assert_eq!(
+            t.samples.len(),
+            samples.len(),
+            "{}: Sample count mismatch",
+            t.message
+        );
+
+        for (i, (expected, actual)) in t.samples.iter().zip(samples.iter()).enumerate() {
+            assert_eq!(
+                expected.data, actual.data,
+                "{}: Sample {} data mismatch",
+                t.message, i
+            );
+            assert_eq!(
+                expected.duration, actual.duration,
+                "{}: Sample {} duration mismatch",
+                t.message, i
+            );
+            assert_eq!(
+                expected.packet_timestamp, actual.packet_timestamp,
+                "{}: Sample {} packet_timestamp mismatch",
+                t.message, i
+            );
+            assert_eq!(
+                expected.prev_dropped_packets, actual.prev_dropped_packets,
+                "{}: Sample {} prev_dropped_packets mismatch",
+                t.message, i
+            );
+            assert_eq!(
+                expected.prev_padding_packets, actual.prev_padding_packets,
+                "{}: Sample {} prev_padding_packets mismatch",
+                t.message, i
+            );
+            // Note: We skip comparing 'timestamp' field as it contains wall-clock time
+            // which varies between test runs, causing flakiness
+        }
     }
 }
 
