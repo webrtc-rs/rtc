@@ -21,7 +21,7 @@ memchr = "2.1.1"
 
 [dev-dependencies]
 chrono = "0.4.35"
-criterion = "0.5.1"
+criterion.workspace = true
 
 [[bench]]
 name = "packet_bench"

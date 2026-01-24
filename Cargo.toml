@@ -63,4 +63,5 @@ rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 
+criterion = "0.8.1"
 tokio = { version = "1.49.0", features = ["full"] }

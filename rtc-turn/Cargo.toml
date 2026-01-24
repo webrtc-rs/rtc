@@ -24,7 +24,7 @@ env_logger = "0.11.3"
 chrono = "0.4.35"
 hex = "0.4.3"
 clap = { version = "4.5.3", features = ["derive"] }
-criterion = "0.5.1"
+criterion.workspace = true
 crossbeam-channel = "0.5"
 ctrlc = "3.4"
 

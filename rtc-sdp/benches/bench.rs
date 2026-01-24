@@ -1,5 +1,5 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-use sdp::SessionDescription;
+use criterion::{criterion_group, criterion_main, Criterion};
+use rtc_sdp::SessionDescription;
 use std::io::Cursor;
 
 const CANONICAL_UNMARSHAL_SDP: &str = "v=0\r\n\
