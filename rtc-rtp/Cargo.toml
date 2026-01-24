@@ -20,7 +20,7 @@ serde.workspace = true
 memchr = "2.1.1"
 
 [dev-dependencies]
-chrono = "0.4.35"
+chrono.workspace = true
 criterion.workspace = true
 
 [[bench]]

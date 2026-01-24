@@ -44,11 +44,11 @@ chacha20poly1305 = "0.10.1"
 [dev-dependencies]
 local-sync = "0.1.1"
 core_affinity = "0.8.1"
-chrono = "0.4.35"
-env_logger = "0.11.3"
-clap = { version = "4.5.2", features = ["derive"] }
+chrono.workspace = true
+env_logger.workspace = true
+clap.workspace = true
 anyhow = "1.0.80"
-ctrlc = "3.4.4"
+ctrlc.workspace = true
 futures = "0.3.30"
 
 [features]

@@ -1,24 +1,26 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::io::Cursor;
-use std::net::Ipv4Addr;
-use stun::addr::{AlternateServer, MappedAddress};
-use stun::attributes::{
+use rtc_stun::addr::{AlternateServer, MappedAddress};
+use rtc_stun::attributes::{
     ATTR_CHANNEL_NUMBER, ATTR_DONT_FRAGMENT, ATTR_ERROR_CODE, ATTR_MESSAGE_INTEGRITY, ATTR_NONCE,
     ATTR_REALM, ATTR_SOFTWARE, ATTR_USERNAME, ATTR_XORMAPPED_ADDRESS,
 };
-use stun::error_code::{CODE_STALE_NONCE, ErrorCode, ErrorCodeAttribute};
-use stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
-use stun::integrity::MessageIntegrity;
-use stun::message::TransactionId;
-use stun::message::{
+use rtc_stun::error_code::{CODE_STALE_NONCE, ErrorCode, ErrorCodeAttribute};
+use rtc_stun::fingerprint::{FINGERPRINT, FINGERPRINT_SIZE};
+use rtc_stun::integrity::MessageIntegrity;
+use rtc_stun::message::TransactionId;
+use rtc_stun::message::{
     ATTRIBUTE_HEADER_SIZE, BINDING_REQUEST, CLASS_REQUEST, Getter, MESSAGE_HEADER_SIZE,
-    METHOD_BINDING, Message, MessageType, Setter, is_message,
+    METHOD_BINDING, Message, MessageType, Setter, is_stun_message,
 };
-use stun::textattrs::{Nonce, Realm, Software, Username};
-use stun::uattrs::UnknownAttributes;
-use stun::xoraddr::{XorMappedAddress, xor_bytes};
+use rtc_stun::textattrs::{Nonce, Realm, Software, Username};
+use rtc_stun::uattrs::UnknownAttributes;
+use rtc_stun::xoraddr::{XorMappedAddress, xor_bytes};
+use std::io::Cursor;
+use std::net::Ipv4Addr;
+
+use base64::prelude::*;
 
 // AGENT_COLLECT_CAP is initial capacity for Agent.Collect slices,
 // sufficient to make function zero-alloc in most cases.
@@ -371,7 +373,7 @@ fn benchmark_message(c: &mut Criterion) {
         m.write_header();
         c.bench_function("BenchmarkIsMessage", |b| {
             b.iter(|| {
-                assert!(is_message(&m.raw), "Should be message");
+                assert!(is_stun_message(&m.raw), "Should be message");
             })
         });
     }
@@ -622,7 +624,7 @@ fn benchmark_xoraddr(c: &mut Criterion) {
 
     {
         let mut m = Message::new();
-        let transaction_id = base64::decode("jxhBARZwX+rsC6er").unwrap();
+        let transaction_id = BASE64_STANDARD.decode("jxhBARZwX+rsC6er").unwrap();
 
         m.transaction_id.0.copy_from_slice(&transaction_id);
         let addr_value = [0, 1, 156, 213, 244, 159, 56, 174]; //hex.DecodeString("00019cd5f49f38ae")

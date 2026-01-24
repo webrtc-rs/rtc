@@ -63,5 +63,10 @@ rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 
+# dev dependencies
+env_logger = "0.11.8"
+chrono = "0.4.43"
+clap = { version = "4.5.54", features = ["derive"] }
+ctrlc = "3.5.1"
 criterion = "0.8.1"
 tokio = { version = "1.49.0", features = ["full"] }

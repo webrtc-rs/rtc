@@ -23,14 +23,14 @@ bytes.workspace = true
 lazy_static = "1.4.0"
 url = "2.5.0"
 rand.workspace = true
-base64 = "0.22.0"
+base64 = "0.22.1"
 subtle = "2.5.0"
 crc = "3.0.1"
 ring.workspace = true
 md-5 = "0.10"
 
 [dev-dependencies]
-clap = { version = "4.5.2", features = ["derive"] }
+clap.workspace = true
 criterion.workspace = true
 
 [[bench]]
