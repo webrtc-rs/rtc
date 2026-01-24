@@ -1,7 +1,8 @@
 use criterion::measurement::WallTime;
-use criterion::{BenchmarkGroup, Criterion, black_box, criterion_main};
+use criterion::{BenchmarkGroup, Criterion, criterion_main};
 use rtc_media::audio::buffer::Buffer;
 use rtc_media::audio::buffer::layout::{Deinterleaved, Interleaved};
+use std::hint::black_box;
 
 fn benchmark_from(g: &mut BenchmarkGroup<WallTime>) {
     type Sample = i32;

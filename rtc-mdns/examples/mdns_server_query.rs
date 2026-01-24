@@ -31,7 +31,7 @@ use tokio::net::UdpSocket;
 #[derive(Parser, Debug)]
 #[command(name = "mDNS Server + Query")]
 #[command(version = "0.1.0")]
-#[command(author = "Rain Liu <yuliu@webrtc.rs>")]
+#[command(author = "Rain Liu <yliu@webrtc.rs>")]
 #[command(about = "An example of mDNS Server + Query using sans-I/O rtc-mdns")]
 struct Cli {
     #[arg(short, long)]

@@ -32,4 +32,9 @@ aes-gcm = { version = "0.10.3", features = ["std"] }
 openssl = { version = "0.10.72", optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
 lazy_static = "1.4.0"
+
+[[bench]]
+name = "bench"
+harness = false

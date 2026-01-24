@@ -25,5 +25,5 @@ criterion.workspace = true
 nearly_eq = "0.2"
 
 [[bench]]
-name = "audio_buffer"
+name = "bench"
 harness = false

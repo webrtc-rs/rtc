@@ -4,9 +4,6 @@ MacBook Air M3 24 GB MacOS 26.2
 
 ```
 cargo bench --package rtc-rtp --bench bench
-   Compiling rtc-rtp v0.8.2 (/Users/yuliu/Projects/rtc/rtc-rtp)
-    Finished `bench` profile [optimized] target(s) in 1.18s
-     Running benches/bench.rs (target/release/deps/bench-b94f3d075c0f6e69)
 Gnuplot not found, using plotters backend
 Benchmark MarshalTo     time:   [17.738 ns 17.833 ns 17.933 ns]
 Found 4 outliers among 100 measurements (4.00%)

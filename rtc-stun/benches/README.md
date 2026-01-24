@@ -3,8 +3,6 @@
 MacBook Air M3 24 GB MacOS 26.2
 
 ```
-   Compiling rtc-stun v0.8.2 (/Users/yuliu/Projects/rtc/rtc-stun)
-    Finished `bench` profile [optimized] target(s) in 2.20s
      Running benches/bench.rs (target/release/deps/bench-6291adbc690698b7)
 Gnuplot not found, using plotters backend
 BenchmarkMappedAddress_AddTo
@@ -518,5 +516,272 @@ Found 13 outliers among 100 measurements (13.00%)
 ```
 
 ```
+    Finished `bench` profile [optimized] target(s) in 0.31s
+     Running benches/bench.rs (target/release/deps/bench-6291adbc690698b7)
+Gnuplot not found, using plotters backend
+BenchmarkMappedAddress_AddTo
+                        time:   [46.998 ns 47.059 ns 47.124 ns]
+                        change: [−1.9044% −1.3224% −0.8041%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 21 outliers among 100 measurements (21.00%)
+  6 (6.00%) low severe
+  3 (3.00%) low mild
+  2 (2.00%) high mild
+  10 (10.00%) high severe
 
+BenchmarkAlternateServer_AddTo
+                        time:   [46.708 ns 46.773 ns 46.846 ns]
+                        change: [−0.8782% −0.4604% −0.0650%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 18 outliers among 100 measurements (18.00%)
+  1 (1.00%) low severe
+  2 (2.00%) high mild
+  15 (15.00%) high severe
+
+BenchmarkMessage_GetNotFound
+                        time:   [2.1159 ns 2.1208 ns 2.1256 ns]
+                        change: [−0.5414% −0.2438% −0.0013%] (p = 0.07 > 0.05)
+                        No change in performance detected.
+Found 29 outliers among 100 measurements (29.00%)
+  11 (11.00%) low severe
+  3 (3.00%) low mild
+  3 (3.00%) high mild
+  12 (12.00%) high severe
+
+BenchmarkMessage_Get    time:   [17.190 ns 17.472 ns 17.802 ns]
+                        change: [+2.4942% +4.2385% +5.9860%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+
+BenchmarkErrorCode_AddTo
+                        time:   [78.872 ns 79.190 ns 79.593 ns]
+                        change: [−1.8466% −0.2350% +1.3776%] (p = 0.79 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+
+BenchmarkErrorCodeAttribute_AddTo
+                        time:   [58.710 ns 58.756 ns 58.804 ns]
+                        change: [−0.8258% −0.4140% −0.0368%] (p = 0.04 < 0.05)
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+
+BenchmarkErrorCodeAttribute_GetFrom
+                        time:   [29.451 ns 29.512 ns 29.586 ns]
+                        change: [−0.6752% −0.1796% +0.2852%] (p = 0.48 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+BenchmarkFingerprint_AddTo
+                        time:   [513.88 ns 514.87 ns 515.93 ns]
+                        change: [−5.4139% −5.1753% −4.9505%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 19 outliers among 100 measurements (19.00%)
+  8 (8.00%) low severe
+  5 (5.00%) low mild
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+
+BenchmarkFingerprint_Check
+                        time:   [502.44 ns 503.05 ns 503.80 ns]
+                        change: [−5.1709% −4.8672% −4.5165%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+
+BenchmarkBuildOverhead/Build
+                        time:   [746.49 ns 749.73 ns 753.09 ns]
+                        change: [−2.3690% −2.0377% −1.7356%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+BenchmarkBuildOverhead/Raw
+                        time:   [648.14 ns 649.96 ns 652.14 ns]
+                        change: [−2.5416% −2.1720% −1.7810%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+BenchmarkMessageIntegrity_AddTo
+                        time:   [445.14 ns 446.11 ns 447.29 ns]
+                        change: [−3.9957% −2.5682% −1.2658%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+BenchmarkMessageIntegrity_Check
+                        time:   [459.94 ns 469.21 ns 479.93 ns]
+                        change: [+1.4077% +2.8419% +4.7054%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 12 outliers among 100 measurements (12.00%)
+  12 (12.00%) high severe
+
+BenchmarkMessage_Write  time:   [43.082 ns 43.146 ns 43.223 ns]
+                        change: [−0.7260% −0.4653% −0.2072%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  10 (10.00%) high mild
+  3 (3.00%) high severe
+
+BenchmarkMessageType_Value
+                        time:   [250.36 ps 252.54 ps 254.98 ps]
+                        change: [+0.5670% +1.1837% +1.8349%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 11 outliers among 100 measurements (11.00%)
+  3 (3.00%) high mild
+  8 (8.00%) high severe
+
+BenchmarkMessage_WriteTo
+                        time:   [4.1175 ns 4.1645 ns 4.2344 ns]
+                        change: [−0.3156% +4.6032% +12.616%] (p = 0.15 > 0.05)
+                        No change in performance detected.
+Found 14 outliers among 100 measurements (14.00%)
+  7 (7.00%) low mild
+  7 (7.00%) high severe
+
+BenchmarkMessage_ReadFrom
+                        time:   [39.557 ns 39.637 ns 39.716 ns]
+                        change: [−0.2618% −0.0023% +0.2936%] (p = 0.98 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+
+BenchmarkMessage_ReadBytes
+                        time:   [13.597 ns 13.698 ns 13.793 ns]
+                        change: [−2.7223% −1.0024% +0.8414%] (p = 0.28 > 0.05)
+                        No change in performance detected.
+
+BenchmarkIsMessage      time:   [776.13 ps 781.49 ps 787.09 ps]
+                        change: [−2.5315% −1.9835% −1.3679%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+BenchmarkMessage_NewTransactionID
+                        time:   [16.349 ns 16.420 ns 16.531 ns]
+                        change: [−0.0070% +0.5828% +1.5644%] (p = 0.15 > 0.05)
+                        No change in performance detected.
+Found 18 outliers among 100 measurements (18.00%)
+  3 (3.00%) high mild
+  15 (15.00%) high severe
+
+BenchmarkMessageFull    time:   [754.93 ns 756.66 ns 758.34 ns]
+                        change: [+0.4383% +0.7760% +1.1530%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 14 outliers among 100 measurements (14.00%)
+  5 (5.00%) low mild
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+
+BenchmarkMessageFullHardcore
+                        time:   [70.015 ns 70.120 ns 70.252 ns]
+                        change: [−0.1057% +1.9606% +5.8718%] (p = 0.28 > 0.05)
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+
+BenchmarkMessage_WriteHeader
+                        time:   [1.5910 ns 1.5932 ns 1.5958 ns]
+                        change: [−0.0865% +0.0528% +0.1992%] (p = 0.48 > 0.05)
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  3 (3.00%) high mild
+  10 (10.00%) high severe
+
+BenchmarkMessage_CloneTo
+                        time:   [61.003 ns 61.256 ns 61.545 ns]
+                        change: [+2.7381% +3.3733% +4.0174%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+BenchmarkMessage_AddTo  time:   [1.0260 ns 1.0368 ns 1.0555 ns]
+                        change: [+3.1557% +4.0651% +5.1028%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 23 outliers among 100 measurements (23.00%)
+  12 (12.00%) low severe
+  3 (3.00%) low mild
+  1 (1.00%) high mild
+  7 (7.00%) high severe
+
+BenchmarkDecode         time:   [38.603 ns 38.813 ns 39.035 ns]
+                        change: [+1.9521% +2.4638% +3.1204%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+BenchmarkUsername_AddTo time:   [26.318 ns 26.395 ns 26.483 ns]
+                        change: [+0.0979% +0.4692% +0.8535%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+BenchmarkUsername_GetFrom
+                        time:   [20.447 ns 20.514 ns 20.600 ns]
+                        change: [−1.0209% −0.6409% −0.2294%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+BenchmarkNonce_AddTo    time:   [33.378 ns 33.779 ns 34.407 ns]
+                        change: [+0.7666% +1.4260% +2.2223%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+BenchmarkNonce_AddTo_BadLength
+                        time:   [2.9218 ns 2.9325 ns 2.9470 ns]
+                        change: [+0.2171% +0.5463% +0.9744%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 13 outliers among 100 measurements (13.00%)
+  4 (4.00%) high mild
+  9 (9.00%) high severe
+
+BenchmarkNonce_GetFrom  time:   [21.072 ns 21.168 ns 21.276 ns]
+                        change: [+0.4887% +1.0415% +1.6076%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+BenchmarkUnknownAttributes/AddTo
+                        time:   [39.653 ns 39.887 ns 40.133 ns]
+                        change: [−1.9345% −0.9103% +0.0712%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+BenchmarkUnknownAttributes/GetFrom
+                        time:   [19.367 ns 20.104 ns 20.996 ns]
+                        change: [+4.4597% +6.8253% +9.6554%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 13 outliers among 100 measurements (13.00%)
+  6 (6.00%) high mild
+  7 (7.00%) high severe
+
+BenchmarkXOR            time:   [13.123 ns 13.183 ns 13.247 ns]
+                        change: [+1.8270% +2.2101% +2.5690%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+
+BenchmarkXORMappedAddress_AddTo
+                        time:   [51.513 ns 54.605 ns 57.763 ns]
+                        change: [+7.8882% +11.509% +15.477%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 14 outliers among 100 measurements (14.00%)
+  5 (5.00%) high mild
+  9 (9.00%) high severe
+
+BenchmarkXORMappedAddress_GetFrom
+                        time:   [29.489 ns 30.000 ns 30.637 ns]
+                        change: [+6.7761% +10.404% +14.417%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 13 outliers among 100 measurements (13.00%)
+  2 (2.00%) high mild
+  11 (11.00%) high severe
 ```
