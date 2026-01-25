@@ -51,7 +51,7 @@ Once the data channel is successfully opened, requester will start sending a ser
 Here's how to run the code:
 
 ```shell
-/cargo run --release --example data-channels-flow-control
+$ cargo run --release --example data-channels-flow-control
     Finished `release` profile [optimized] target(s) in 0.11s
      Running `target/release/examples/data-channels-flow-control`
 Press Ctrl-C to stop
