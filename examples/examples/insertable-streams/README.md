@@ -9,7 +9,7 @@ E2E encryption, add metadata or insert a completely different video feed!
 
 ## Instructions
 
-### Create IVF named `output.ivf` that contains a VP8 track
+### Create IVF that contains a VP8 track
 
 ```shell
 ffmpeg -i $INPUT_FILE -g 30 output.ivf
@@ -22,16 +22,18 @@ When unchecked the browser will not decrypt the incoming video stream, so it wil
 
 ### Run insertable-streams with your browsers SessionDescription as stdin
 
-The `output.ivf` you created should be in the same directory as `insertable-streams`. In the jsfiddle the top textarea is your browser, copy that and:
+Copy the string in the first input labelled `Browser base64 Session Description`
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | cargo run --example insertable-streams`
+Run `echo $BROWSER_SDP | cargo run --example insertable-streams -- --video <path/to/ivf/file>`
+
+`$BROWSER_OFFER` is the value you copied in the last step.
 
 #### Windows
 
-1. Paste the SessionDescription into a file.
-1. Run `cargo run --example insertable-streams < my_file`
+1. Paste the copied string in the last step into a file.
+1. Run `cargo run --example insertable-streams < my_file -- --video <path/to/ivf/file>`
 
 ### Input insertable-streams's SessionDescription into your browser
 
