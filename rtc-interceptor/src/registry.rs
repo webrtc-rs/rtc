@@ -218,7 +218,7 @@ mod tests {
         let mut chain = registry.build();
         let pkt = dummy_rtp_packet();
         chain.handle_read(pkt).unwrap();
-        assert!(chain.poll_read().is_none());
+        assert!(chain.poll_read().is_some());
     }
 
     #[test]
@@ -228,7 +228,7 @@ mod tests {
 
         let pkt = dummy_rtp_packet();
         chain.handle_read(pkt).unwrap();
-        assert!(chain.poll_read().is_none());
+        assert!(chain.poll_read().is_some());
         assert_eq!(chain.name, "test");
     }
 
@@ -241,7 +241,7 @@ mod tests {
 
         let pkt = dummy_rtp_packet();
         chain.handle_read(pkt).unwrap();
-        assert!(chain.poll_read().is_none());
+        assert!(chain.poll_read().is_some());
         assert_eq!(chain.name, "outer");
         assert_eq!(chain.inner.name, "inner");
     }
@@ -275,7 +275,7 @@ mod tests {
 
         let pkt = dummy_rtp_packet();
         chain.handle_read(pkt).unwrap();
-        assert!(chain.poll_read().is_none());
+        assert!(chain.poll_read().is_some());
         assert_eq!(chain.name, "second");
         assert_eq!(chain.inner.name, "first");
     }

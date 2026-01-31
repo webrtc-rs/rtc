@@ -289,7 +289,7 @@ fn test_receiver_report_interceptor_generates_rr_on_timeout() {
             rtp_count += 1;
         }
     }
-    assert_eq!(rtp_count, 0, "None RTP packet should pass through");
+    assert_eq!(rtp_count, 10, "None RTP packet should pass through");
 
     // Trigger timeout to generate Receiver Report
     let trigger_time = base_time + Duration::from_millis(150);

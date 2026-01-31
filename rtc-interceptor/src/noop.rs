@@ -1,7 +1,7 @@
 //! NoOp Interceptor - A pass-through terminal for interceptor chains.
 
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, TaggedPacket};
+use crate::{Interceptor, Packet, TaggedPacket};
 use shared::error::Error;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -23,6 +23,7 @@ use std::time::Instant;
 /// assert!(noop.poll_read().is_some());
 /// ```
 pub struct NoopInterceptor {
+    read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
 }
 
@@ -30,6 +31,7 @@ impl NoopInterceptor {
     /// Create a new NoopInterceptor.
     pub fn new() -> Self {
         Self {
+            read_queue: VecDeque::new(),
             write_queue: VecDeque::new(),
         }
     }
@@ -48,12 +50,17 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, _msg: TaggedPacket) -> Result<(), Self::Error> {
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        if let Packet::Rtp(_) = &msg.message {
+            self.read_queue.push_back(msg);
+        }
+        // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
+        // just add a new interceptor to forward it by using self.interceptor.poll_read()
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        None
+        self.read_queue.pop_front()
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
@@ -82,6 +89,7 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     }
 
     fn close(&mut self) -> Result<(), Self::Error> {
+        self.read_queue.clear();
         self.write_queue.clear();
         Ok(())
     }
@@ -107,15 +115,25 @@ mod tests {
         }
     }
 
+    fn dummy_rtcp_packet() -> TaggedPacket {
+        TaggedPacket {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: crate::Packet::Rtcp(vec![Box::new(rtcp::raw_packet::RawPacket::default())]),
+        }
+    }
+
     #[test]
     fn test_noop_read_write() {
         let mut noop = NoopInterceptor::new();
 
         // Test read
         let pkt1 = dummy_rtp_packet();
-        let pkt2 = dummy_rtp_packet();
+        let pkt1_message = pkt1.message.clone();
+        let pkt2 = dummy_rtcp_packet();
         noop.handle_read(pkt1).unwrap();
         noop.handle_read(pkt2).unwrap();
+        assert_eq!(noop.poll_read().unwrap().message, pkt1_message);
         assert!(noop.poll_read().is_none());
 
         // Test write

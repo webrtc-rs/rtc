@@ -4,7 +4,7 @@ use crate::peer_connection::message::internal::{
 };
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet, TaggedPacket};
-use log::{debug, error, trace};
+use log::{debug, trace};
 use rtcp::header::{FORMAT_CCFB, PacketType};
 use rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
@@ -181,33 +181,9 @@ where
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
         if self.ctx.is_dtls_handshake_complete
-            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message
+            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = msg.message
         {
-            self.interceptor.handle_read(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: packet.clone(),
-                // RTP packet use Bytes which is zero-copy,
-                // RTCP packet may have clone overhead.
-                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
-            })?;
-
-            if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtcp(rtcp_packets))) =
-                &msg.message
-            {
-                // Process RTCP packets for stats (SR/RR parsing)
-                self.process_read_rtcp_for_stats(rtcp_packets, msg.now);
-
-                // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-                // just add a new interceptor to forward it by using self.interceptor.poll_read()
-                debug!("interceptor terminates Rtcp {:?}", msg.transport.peer_addr);
-                return Ok(());
-            } else if let RTCMessageInternal::Rtp(RTPMessage::Packet(Packet::Rtp(rtp_packet))) =
-                &msg.message
-            {
-                // For Packet::Rtp packet, self.interceptor.poll_read() must not have return it,
-                // since it has already been bypassed as below, otherwise, it will cause duplicated rtp packets in SRTP
-
+            if let Packet::Rtp(rtp_packet) = &packet {
                 let ssrc = rtp_packet.header.ssrc;
                 let payload_bytes = rtp_packet.payload.len();
                 self.stats
@@ -215,31 +191,31 @@ where
                 self.stats
                     .on_fec_packet_received_if_fec(ssrc, payload_bytes);
             }
-        }
 
-        debug!("interceptor read bypass {:?}", msg.transport.peer_addr);
-        self.ctx.read_outs.push_back(msg);
+            self.interceptor.handle_read(TaggedPacket {
+                now: msg.now,
+                transport: msg.transport,
+                message: packet,
+            })?;
+        } else {
+            debug!("interceptor read bypass {:?}", msg.transport.peer_addr);
+            self.ctx.read_outs.push_back(msg);
+        }
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_read() {
-                match &packet.message {
-                    Packet::Rtp(_) => {
-                        error!(
-                            "Interceptor should never forward RTP packet!!! Please double check your interceptor handle/poll_read implementation."
-                        );
-                    }
-                    Packet::Rtcp(rtcp_packet) => {
-                        trace!("Interceptor forward a RTCP packet {:?}", rtcp_packet);
-                        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                            now: packet.now,
-                            transport: packet.transport,
-                            message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
-                        });
-                    }
+                if let Packet::Rtcp(rtcp_packet) = &packet.message {
+                    trace!("Interceptor forwarded a RTCP packet {:?}", rtcp_packet);
                 }
+
+                self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                    now: packet.now,
+                    transport: packet.transport,
+                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                });
             }
         }
 
@@ -248,15 +224,12 @@ where
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
         if self.ctx.is_dtls_handshake_complete
-            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = &msg.message
+            && let RTCMessageInternal::Rtp(RTPMessage::Packet(packet)) = msg.message
         {
             self.interceptor.handle_write(TaggedPacket {
                 now: msg.now,
                 transport: msg.transport,
-                message: packet.clone(),
-                // RTP packet use Bytes which is zero-copy,
-                // RTCP packet may have clone overhead.
-                // TODO: Future optimization: If RTCP becomes a bottleneck, wrap it in Arc (minor change)
+                message: packet,
             })?;
         } else {
             debug!("interceptor bypass {:?}", msg.transport.peer_addr);

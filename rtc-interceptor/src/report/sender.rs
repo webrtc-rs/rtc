@@ -307,7 +307,7 @@ mod tests {
         // Test read path
         let pkt = dummy_rtp_packet();
         chain.handle_read(pkt).unwrap();
-        assert!(chain.poll_read().is_none());
+        assert!(chain.poll_read().is_some());
 
         // Test write path
         let pkt2 = dummy_rtp_packet();
