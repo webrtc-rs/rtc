@@ -38,16 +38,16 @@
 <p align="center">
 <strong>Gold Sponsors:</strong><br>
 <a href="https://www.recall.ai" target="_blank">
-<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/recall.svg"
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc-rs.github.io/master/res/recall_md.svg"
 alt="Recall.ai">
 </a><br>
 <p align="center">
 <strong>Silver Sponsors:</strong><br>
 <a href="https://getstream.io/video/voice-calling/?utm_source=https://github.com/webrtc-rs/webrtc&utm_medium=sponsorship&utm_content=&utm_campaign=webrtcRepo_July2023_video_klmh22" target="_blank">
-<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/stream-logo.png" height="50" alt="Stream Chat">
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc-rs.github.io/master/res/stream-logo.png" height="50" alt="Stream Chat">
 </a><br>
 <a href="https://channel.io/" target="_blank">
-<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc/master/doc/ChannelTalk_logo.png" alt="ChannelTalk">
+<img src="https://raw.githubusercontent.com/webrtc-rs/webrtc-rs.github.io/master/res/ChannelTalk_logo_md.png" alt="ChannelTalk">
 </a><br>
 <strong>Bronze Sponsors:</strong><br>
 <a href="https://github.com/AdrianEddy" target="_blank">AdrianEddy</a><br>
