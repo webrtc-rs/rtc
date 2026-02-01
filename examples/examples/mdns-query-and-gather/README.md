@@ -33,6 +33,4 @@ Under Start Session you should see 'Checking' as it starts connecting. If everyt
 Now you can put whatever you want in the `Message` textarea, and when you hit `Send Message` it should appear in your
 terminal!
 
-WebRTC.rs will send random messages every 5 seconds that will appear in your browser.
-
 Congrats, you have used WebRTC.rs!
