@@ -292,7 +292,59 @@ impl<I> RTCConfiguration<I>
 where
     I: Interceptor,
 {
-    /// get_iceservers side-steps the strict parsing mode of the ice package
+    /// Returns the ICE servers configured for this peer connection.
+    ///
+    /// This is useful for ICE candidate gathering implementations that need
+    /// to know which STUN/TURN servers to use.
+    pub fn ice_servers(&self) -> &[RTCIceServer] {
+        &self.ice_servers
+    }
+
+    /// Returns the ICE transport policy.
+    ///
+    /// This indicates which candidates the ICE agent is allowed to use.
+    pub fn ice_transport_policy(&self) -> RTCIceTransportPolicy {
+        self.ice_transport_policy
+    }
+
+    /// Returns the bundle policy.
+    ///
+    /// This indicates which media-bundling policy to use when gathering ICE candidates.
+    pub fn bundle_policy(&self) -> RTCBundlePolicy {
+        self.bundle_policy
+    }
+
+    /// Returns the RTCP mux policy.
+    ///
+    /// This indicates which RTCP-mux policy to use when gathering ICE candidates.
+    pub fn rtcp_mux_policy(&self) -> RTCRtcpMuxPolicy {
+        self.rtcp_mux_policy
+    }
+
+    /// Returns the peer identity.
+    ///
+    /// This is the target peer identity for the PeerConnection.
+    /// The PeerConnection will not establish a connection to a remote peer
+    /// unless it can be successfully authenticated with the provided name.
+    pub fn peer_identity(&self) -> &str {
+        &self.peer_identity
+    }
+
+    /// Returns the certificates configured for this peer connection.
+    ///
+    /// These certificates are used for DTLS authentication.
+    pub fn certificates(&self) -> &[RTCCertificate] {
+        &self.certificates
+    }
+
+    /// Returns the ICE candidate pool size.
+    ///
+    /// This describes the size of the prefetched ICE pool.
+    pub fn ice_candidate_pool_size(&self) -> u8 {
+        self.ice_candidate_pool_size
+    }
+
+    /// get_ice_servers side-steps the strict parsing mode of the ice package
     /// (as defined in https://tools.ietf.org/html/rfc7064) by copying and then
     /// stripping any erroneous queries from "stun(s):" URLs before parsing.
     #[allow(clippy::assigning_clones)]
