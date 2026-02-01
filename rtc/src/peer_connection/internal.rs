@@ -1,5 +1,5 @@
 use super::*;
-use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::{RTCPeerConnectionEvent, RTCPeerConnectionIceEvent};
 use crate::peer_connection::sdp::{
     MediaSection, PopulateSdpParams, get_by_mid, get_peer_direction, get_rids, have_data_channel,
     is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
@@ -1050,6 +1050,17 @@ where
             .register_local_candidate(candidate_id, accumulator);
 
         self.ice_transport_mut().add_local_candidate(candidate)?;
+
+        // Emit OnIceCandidateEvent
+        self.pipeline_context
+            .event_outs
+            .push_back(RTCPeerConnectionEvent::OnIceCandidateEvent(
+                RTCPeerConnectionIceEvent {
+                    candidate: rtc_candidate,
+                    url: url.unwrap_or_default().to_string(),
+                },
+            ));
+
         Ok(())
     }
 
