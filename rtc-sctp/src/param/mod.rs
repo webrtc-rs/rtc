@@ -30,7 +30,7 @@ use shared::error::{Error, Result};
 use bytes::{Buf, Bytes, BytesMut};
 use std::{any::Any, fmt};
 
-pub(crate) trait Param: fmt::Display + fmt::Debug {
+pub(crate) trait Param: fmt::Display + fmt::Debug + Send + Sync {
     fn header(&self) -> ParamHeader;
     fn unmarshal(raw: &Bytes) -> Result<Self>
     where

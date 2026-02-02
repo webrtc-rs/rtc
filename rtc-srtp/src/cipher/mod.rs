@@ -32,7 +32,7 @@ type Kdf = fn(u8, &[u8], &[u8], usize, usize) -> Result<Vec<u8>>;
 ///
 /// Cipher represents a implementation of one
 /// of the SRTP Specific ciphers.
-pub(crate) trait Cipher {
+pub(crate) trait Cipher: Send + Sync {
     /// Get RTP authenticated tag length.
     fn rtp_auth_tag_len(&self) -> usize;
 

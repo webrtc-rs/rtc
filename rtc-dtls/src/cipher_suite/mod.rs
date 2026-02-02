@@ -163,7 +163,7 @@ impl CipherSuiteHash {
     }
 }
 
-pub trait CipherSuite {
+pub trait CipherSuite: Send + Sync {
     fn to_string(&self) -> String;
     fn id(&self) -> CipherSuiteId;
     fn certificate_type(&self) -> ClientCertificateType;

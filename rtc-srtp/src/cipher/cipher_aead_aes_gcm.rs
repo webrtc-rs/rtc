@@ -35,8 +35,8 @@ where
 
 impl<AES, NS> Cipher for CipherAeadAesGcm<AES, NS>
 where
-    NS: Unsigned,
-    AES: BlockEncrypt + KeyInit + BlockSizeUser<BlockSize = U16> + 'static,
+    NS: Unsigned + Send + Sync,
+    AES: BlockEncrypt + KeyInit + BlockSizeUser<BlockSize = U16> + Send + Sync + 'static,
     AesGcm<AES, NS>: Aead,
 {
     fn rtp_auth_tag_len(&self) -> usize {

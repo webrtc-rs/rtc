@@ -5,7 +5,7 @@ mod replay_detector_test;
 use fixed_big_int::*;
 
 // ReplayDetector is the interface of sequence replay detector.
-pub trait ReplayDetector {
+pub trait ReplayDetector: Send + Sync {
     // Check returns true if given sequence number is not replayed.
     // Call accept() to mark the packet is received properly.
     fn check(&mut self, seq: u64) -> bool;
