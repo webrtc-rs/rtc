@@ -14,7 +14,6 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use ice::candidate::candidate_relay::CandidateRelayConfig;
 use log::{error, info, trace};
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -27,6 +26,7 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, RTCIceCandidate};
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc::stun::message::TransactionId;
@@ -585,10 +585,10 @@ async fn run_main_loop(
                                                 credential: cred[1].to_string(),
                                                 ..Default::default()
                                             }])
-                                            .with_setting_engine(setting_engine)
+
                                             .build();
 
-                                        let mut pc = RTCPeerConnection::new(config)?;
+                                        let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config) .with_setting_engine(setting_engine).build()?;
                                         println!("Created peer connection");
 
                                         // Set remote description

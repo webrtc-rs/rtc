@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -57,10 +57,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(offer_setting_engine)
         .build();
 
-    let mut offer_pc = RTCPeerConnection::new(offer_config)?;
+    let mut offer_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(offer_config)
+        .with_setting_engine(offer_setting_engine)
+        .build()?;
     log::info!("Created offer peer connection");
 
     // Create data channel on offer side
@@ -104,10 +106,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(answer_setting_engine)
         .build();
 
-    let mut answer_pc = RTCPeerConnection::new(answer_config)?;
+    let mut answer_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(answer_config)
+        .with_setting_engine(answer_setting_engine)
+        .build()?;
     log::info!("Created answer peer connection");
 
     // Set remote description on answer (the offer)

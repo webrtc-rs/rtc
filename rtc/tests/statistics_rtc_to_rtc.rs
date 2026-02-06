@@ -15,7 +15,6 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use rtc::data_channel::RTCDataChannelState;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
@@ -25,6 +24,7 @@ use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCDtlsTransportState, RTCIceCandidate,
     RTCIceServer, RTCIceTransportState,
 };
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc::statistics::StatsSelector;
@@ -59,10 +59,12 @@ impl PeerRunner {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
                 ..Default::default()
             }])
-            .with_setting_engine(offer_setting_engine)
             .build();
 
-        let mut offer_pc = RTCPeerConnection::new(offer_config)?;
+        let mut offer_pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(offer_config)
+            .with_setting_engine(offer_setting_engine)
+            .build()?;
 
         // Add local candidate for offer peer
         let offer_candidate = CandidateHostConfig {
@@ -90,10 +92,12 @@ impl PeerRunner {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
                 ..Default::default()
             }])
-            .with_setting_engine(answer_setting_engine)
             .build();
 
-        let mut answer_pc = RTCPeerConnection::new(answer_config)?;
+        let mut answer_pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(answer_config)
+            .with_setting_engine(answer_setting_engine)
+            .build()?;
 
         // Add local candidate for answer peer
         let answer_candidate = CandidateHostConfig {

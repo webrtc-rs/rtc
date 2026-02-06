@@ -14,7 +14,7 @@ use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
@@ -159,7 +159,9 @@ async fn main() -> Result<()> {
         .build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .build()?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;

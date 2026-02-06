@@ -20,7 +20,7 @@ use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -185,12 +185,13 @@ async fn main() -> Result<()> {
         ice::network_type::NetworkType::Tcp6,
     ]);
 
-    let config = RTCConfigurationBuilder::new()
-        .with_setting_engine(setting_engine)
-        .build();
+    let config = RTCConfigurationBuilder::new().build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .build()?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;

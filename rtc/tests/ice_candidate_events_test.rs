@@ -4,7 +4,7 @@
 //! via add_local_candidate(), the OnIceCandidateEvent is properly emitted
 //! and can be retrieved via poll_event().
 
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
@@ -14,7 +14,10 @@ use rtc::sansio::Protocol;
 fn test_host_candidate_event_emission() {
     // Create a basic RTCPeerConnection
     let config = RTCConfigurationBuilder::new().build();
-    let mut pc = RTCPeerConnection::new(config).expect("Failed to create peer connection");
+    let mut pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .build()
+        .expect("Failed to create peer connection");
 
     // Create a host candidate
     let host_candidate = RTCIceCandidateInit {
@@ -69,7 +72,10 @@ fn test_host_candidate_event_emission() {
 fn test_srflx_candidate_event_emission() {
     // Create a basic RTCPeerConnection
     let config = RTCConfigurationBuilder::new().build();
-    let mut pc = RTCPeerConnection::new(config).expect("Failed to create peer connection");
+    let mut pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .build()
+        .expect("Failed to create peer connection");
 
     // Create an srflx candidate (server reflexive)
     let srflx_candidate = RTCIceCandidateInit {
@@ -126,7 +132,10 @@ fn test_srflx_candidate_event_emission() {
 fn test_multiple_candidates_events() {
     // Create a basic RTCPeerConnection
     let config = RTCConfigurationBuilder::new().build();
-    let mut pc = RTCPeerConnection::new(config).expect("Failed to create peer connection");
+    let mut pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .build()
+        .expect("Failed to create peer connection");
 
     // Add multiple candidates
     let candidates = vec![

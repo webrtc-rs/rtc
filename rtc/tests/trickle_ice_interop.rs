@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -33,6 +33,7 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
+use interceptor::Interceptor;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -71,18 +72,20 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 /// Create sansio RTC peer configuration (no STUN - local only)
 fn create_rtc_peer_config(
     is_answerer: bool,
-) -> Result<rtc::peer_connection::configuration::RTCConfiguration> {
+) -> Result<rtc::peer_connection::RTCPeerConnection<impl Interceptor>> {
     let mut setting_engine = SettingEngine::default();
     if is_answerer {
         setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
     }
 
     // No ICE servers - local only
-    let config = RTCConfigurationBuilder::new()
+    let config = RTCConfigurationBuilder::new().build();
+    let pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build();
+        .build()?;
 
-    Ok(config)
+    Ok(pc)
 }
 
 // ============================================================================
@@ -160,8 +163,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let config = create_rtc_peer_config(true)?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config(true)?;
     log::info!("Created RTC peer connection");
 
     // Set remote description (offer) on RTC - no candidates in SDP yet (trickle ICE demo)
@@ -402,8 +404,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let config = create_rtc_peer_config(false)?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config(false)?;
     log::info!("Created RTC peer connection (offerer)");
 
     // Track received messages

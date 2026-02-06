@@ -17,7 +17,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -73,10 +73,12 @@ async fn test_data_channel_close_by_webrtc_interop() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
         .build();
 
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .build()?;
     log::info!("Created RTC peer connection");
 
     // Create a data channel from RTC side

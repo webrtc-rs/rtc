@@ -5,7 +5,7 @@ use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -188,12 +188,14 @@ async fn run_broadcaster(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
+        .build();
+
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+        .build()?;
 
     // Add transceiver to receive video
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
@@ -527,12 +529,14 @@ async fn run_viewer(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
+        .build();
+
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+        .build()?;
 
     // Wait for codec information from broadcaster
     println!(

@@ -11,7 +11,7 @@ use std::{io::Write, str::FromStr};
 use tokio::net::UdpSocket;
 
 use rtc::data_channel::RTCDataChannelInit;
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
@@ -135,7 +135,9 @@ async fn run_requester(
         .build();
 
     // Create requester (sender) peer connection
-    let mut requester = RTCPeerConnection::new(requester_config)?;
+    let mut requester = RTCPeerConnectionBuilder::new()
+        .with_configuration(requester_config)
+        .build()?;
     let options = Some(RTCDataChannelInit {
         ordered: false,
         max_retransmits: Some(0u16),
@@ -298,7 +300,9 @@ async fn run_responder(
         .build();
 
     // Create responder (receiver) peer connection
-    let mut responder = RTCPeerConnection::new(responder_config)?;
+    let mut responder = RTCPeerConnectionBuilder::new()
+        .with_configuration(responder_config)
+        .build()?;
 
     // Create sockets first
     let resp_socket = UdpSocket::bind("127.0.0.1:0").await?;

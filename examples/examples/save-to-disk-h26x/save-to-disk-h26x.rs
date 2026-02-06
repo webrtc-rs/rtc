@@ -11,7 +11,7 @@ use rtc::interceptor::Registry;
 use rtc::media::io::Writer;
 use rtc::media::io::h26x_writer::H26xWriter;
 use rtc::media::io::ogg_writer::OggWriter;
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{
@@ -215,13 +215,15 @@ async fn run(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .build()?;
 
     // Allow us to receive 1 audio track, and 1 video track
     if audio_file.is_some() {

@@ -28,7 +28,6 @@ use rtc::media::io::ogg_reader::{
     OggHeader, OggHeaderType, OggReader, OpusTags, parse_opus_head, parse_opus_tags,
 };
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_OPUS, MediaEngine};
@@ -41,6 +40,7 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp;
 use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
@@ -530,12 +530,14 @@ async fn handle_whep_connection(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
+        .build();
+
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+        .build()?;
 
     // Create audio track
     let ssrc: SSRC = rand::random();

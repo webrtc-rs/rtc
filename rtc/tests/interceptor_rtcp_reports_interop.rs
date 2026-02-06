@@ -20,7 +20,7 @@ use tokio::time::timeout;
 
 use rtc::interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder};
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
@@ -104,12 +104,14 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
     log::info!("Created RTC peer connection with custom interceptor registry");
 
     // Create output track
@@ -420,12 +422,14 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
 
     let output_track = MediaStreamTrack::new(
         "test-stream".to_string(),
@@ -689,12 +693,14 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
     log::info!("Created RTC peer connection with default interceptors");
 
     let output_track = MediaStreamTrack::new(

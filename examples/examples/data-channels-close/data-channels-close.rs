@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use std::{fs, io::Write, str::FromStr};
 use tokio::{net::UdpSocket, sync::broadcast};
 
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -147,11 +147,13 @@ async fn run(
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
         .build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .build()?;
 
     // Wait for the offer to be pasted
     let line = if input_sdp_file.is_empty() {

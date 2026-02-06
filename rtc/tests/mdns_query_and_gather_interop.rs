@@ -21,7 +21,6 @@ use tokio::time::timeout;
 
 use rtc::ice::mdns::MulticastDnsMode;
 use rtc::mdns::{MDNS_PORT, MulticastSocket};
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -32,6 +31,7 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
+use rtc::peer_connection::{RTCPeerConnection as RtcPeerConnection, RTCPeerConnectionBuilder};
 
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -110,10 +110,12 @@ fn create_rtc_peer_with_mdns(
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
         .build();
 
-    Ok(RtcPeerConnection::new(config)?)
+    Ok(RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .build()?)
 }
 
 /// Run the RTC event loop with mDNS support

@@ -5,7 +5,7 @@ use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
@@ -122,13 +122,15 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     // Create PeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .build()?;
 
     // Bind to local UDP socket
     let socket = UdpSocket::bind("0.0.0.0:0").await?;

@@ -19,7 +19,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
@@ -197,12 +197,14 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
     log::info!("Created RTC peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs

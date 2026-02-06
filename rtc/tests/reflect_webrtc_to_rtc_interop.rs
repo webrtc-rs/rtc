@@ -14,11 +14,13 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::event::RTCTrackEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -29,9 +31,6 @@ use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
 };
 use rtc::shared::error::Error;
-
-use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
@@ -177,12 +176,14 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
     log::info!("Created RTC peer connection");
 
     // Create output track for reflecting

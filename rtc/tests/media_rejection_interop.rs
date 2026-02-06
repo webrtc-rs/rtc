@@ -25,7 +25,6 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use rtc::interceptor::Registry;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
@@ -36,6 +35,7 @@ use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState}
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
 };
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
 
 use webrtc::api::APIBuilder;
@@ -82,8 +82,7 @@ async fn create_webrtc_peer_video_only() -> Result<Arc<WebrtcPeerConnection>> {
 /// Create sansio RTC peer configuration with video-only codec support
 /// Audio codecs are NOT registered, so audio tracks will be rejected
 fn create_rtc_peer_config_video_only()
--> Result<rtc::peer_connection::configuration::RTCConfiguration<impl rtc::interceptor::Interceptor>>
-{
+-> Result<RTCPeerConnection<impl rtc::interceptor::Interceptor>> {
     let mut setting_engine = SettingEngine::default();
     setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
@@ -105,13 +104,16 @@ fn create_rtc_peer_config_video_only()
     let registry = Registry::new();
     let registry = register_default_interceptors(registry, &mut media_engine)?;
 
-    let config = RTCConfigurationBuilder::new()
+    let config = RTCConfigurationBuilder::new().build();
+
+    let pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
+        .build()?;
 
-    Ok(config)
+    Ok(pc)
 }
 
 // ============================================================================
@@ -167,8 +169,7 @@ async fn test_video_only_webrtc_offerer_rtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let config = create_rtc_peer_config_video_only()?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config_video_only()?;
     log::info!("Created RTC peer with video-only codec support");
 
     // Set remote description (offer) on RTC - use offer without candidates (trickle ICE)
@@ -457,8 +458,7 @@ a=ssrc:22222 cname:test
 "#;
 
     // Create RTC peer with video-only support
-    let config = create_rtc_peer_config_video_only()?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config_video_only()?;
 
     // Set remote description (offer with video + audio)
     let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_sdp.to_string())?;

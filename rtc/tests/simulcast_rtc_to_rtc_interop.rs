@@ -13,7 +13,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
@@ -119,12 +119,14 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut answerer_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(answerer_config)
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut answerer_pc = RtcPeerConnection::new(answerer_config)?;
+        .build()?;
     log::info!("Created answerer peer connection");
 
     // Add local candidate for answerer
@@ -182,12 +184,14 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut offerer_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(offerer_config)
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut offerer_pc = RtcPeerConnection::new(offerer_config)?;
+        .build()?;
     log::info!("Created offerer peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs

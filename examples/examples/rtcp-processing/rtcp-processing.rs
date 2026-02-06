@@ -16,7 +16,7 @@ use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
 use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{
@@ -245,11 +245,13 @@ async fn run(input_sdp_file: String) -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .build()?;
 
     // Wait for the offer to be pasted
     println!("Paste your offer here:");

@@ -21,7 +21,6 @@ use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -32,6 +31,7 @@ use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use shared::tcp_framing::{TcpFrameDecoder, frame_packet};
@@ -392,10 +392,10 @@ async fn run_main_loop(
                             setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
 
                             let config = RTCConfigurationBuilder::new()
-                                .with_setting_engine(setting_engine)
+
                                 .build();
 
-                            let mut pc = RTCPeerConnection::new(config)?;
+                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)  .with_setting_engine(setting_engine).build()?;
                             println!("Created peer connection");
 
                             // Set remote description

@@ -18,7 +18,6 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
@@ -29,6 +28,7 @@ use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState}
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
 };
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp_transceiver::RTCRtpTransceiverInit;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
 use rtc::shared::error::Error;
@@ -156,7 +156,7 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 /// Create sansio RTC peer with RTCP forwarder interceptor
 fn create_rtc_peer_config_with_rtcp_forwarder(
     is_answerer: bool,
-) -> Result<rtc::peer_connection::configuration::RTCConfiguration<impl Interceptor>> {
+) -> Result<RTCPeerConnection<impl Interceptor>> {
     let mut setting_engine = SettingEngine::default();
     if is_answerer {
         setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
@@ -187,12 +187,14 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+    let pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    Ok(config)
+        .build()?;
+    Ok(pc)
 }
 
 // ============================================================================
@@ -253,8 +255,7 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let config = create_rtc_peer_config_with_rtcp_forwarder(true)?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(true)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -482,8 +483,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let config = create_rtc_peer_config_with_rtcp_forwarder(false)?;
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {

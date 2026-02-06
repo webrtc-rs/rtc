@@ -13,7 +13,6 @@
 
 use anyhow::Result;
 use bytes::BytesMut;
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
@@ -22,6 +21,7 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
 };
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use shared::tcp_framing::{TcpFrameDecoder, frame_packet};
@@ -57,11 +57,12 @@ impl TcpPeerRunner {
             ice::network_type::NetworkType::Tcp6,
         ]);
 
-        let offer_config = RTCConfigurationBuilder::new()
-            .with_setting_engine(offer_setting_engine)
-            .build();
+        let offer_config = RTCConfigurationBuilder::new().build();
 
-        let mut offer_pc = RTCPeerConnection::new(offer_config)?;
+        let mut offer_pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(offer_config)
+            .with_setting_engine(offer_setting_engine)
+            .build()?;
 
         // Create TCP active candidate for offer side
         // Port 9 (discard) is used as placeholder for active candidates
@@ -86,11 +87,12 @@ impl TcpPeerRunner {
             ice::network_type::NetworkType::Tcp6,
         ]);
 
-        let answer_config = RTCConfigurationBuilder::new()
-            .with_setting_engine(answer_setting_engine)
-            .build();
+        let answer_config = RTCConfigurationBuilder::new().build();
 
-        let mut answer_pc = RTCPeerConnection::new(answer_config)?;
+        let mut answer_pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(answer_config)
+            .with_setting_engine(answer_setting_engine)
+            .build()?;
 
         // Create TCP passive candidate for answer side
         let answer_candidate = CandidateHostConfig {

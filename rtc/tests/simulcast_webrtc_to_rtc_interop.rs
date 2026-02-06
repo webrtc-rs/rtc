@@ -25,7 +25,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, mpsc::channel};
 use tokio::time::timeout;
 
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
@@ -245,12 +245,14 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
+        .build();
+
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build();
-
-    let mut rtc_pc = RtcPeerConnection::new(config)?;
+        .build()?;
     log::info!("Created RTC peer connection");
 
     // Set the remote description (offer from webrtc)

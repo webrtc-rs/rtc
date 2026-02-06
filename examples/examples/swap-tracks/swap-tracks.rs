@@ -4,7 +4,7 @@ use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
@@ -159,13 +159,15 @@ async fn run(
             urls: vec!["stun:stun.l.google.com:19302".to_string()],
             ..Default::default()
         }])
-        .with_setting_engine(setting_engine)
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(registry)
         .build();
 
     // Create a new RTCPeerConnection
-    let mut peer_connection = RTCPeerConnection::new(config)?;
+    let mut peer_connection = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_setting_engine(setting_engine)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .build()?;
 
     // Create output track that we send video back to browser on
     let output_track = MediaStreamTrack::new(

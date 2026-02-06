@@ -15,7 +15,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use rtc::peer_connection::RTCPeerConnection;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -27,6 +26,7 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
+use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 
@@ -371,10 +371,11 @@ async fn main() -> Result<()> {
                                     urls: vec!["stun:stun.l.google.com:19302".to_owned()],
                                     ..Default::default()
                                 }])
-                                .with_setting_engine(setting_engine)
+
                                 .build();
 
-                            let mut pc = RTCPeerConnection::new(config)?;
+                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)
+                               .with_setting_engine(setting_engine).build()?;
                             println!("Created peer connection");
 
                             // Add local candidate

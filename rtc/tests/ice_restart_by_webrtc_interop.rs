@@ -12,18 +12,17 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
-
-use rtc::peer_connection::message::RTCMessage;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -155,10 +154,12 @@ async fn test_ice_restart_interop() -> Result<()> {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
         }])
-        .with_setting_engine(rtc_setting_engine)
         .build();
 
-    let mut rtc_pc = RtcPeerConnection::new(rtc_config)?;
+    let mut rtc_pc = RTCPeerConnectionBuilder::new()
+        .with_configuration(rtc_config)
+        .with_setting_engine(rtc_setting_engine)
+        .build()?;
     log::info!("Created rtc peer connection");
 
     // Add local candidate for rtc peer

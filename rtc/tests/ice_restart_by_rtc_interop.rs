@@ -14,7 +14,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
-use rtc::peer_connection::RTCPeerConnection as RtcPeerConnection;
+use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -150,13 +150,15 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
         setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
 
         let config = RTCConfigurationBuilder::default()
-            .with_setting_engine(setting_engine)
             .with_ice_servers(vec![RTCIceServer {
                 ..Default::default()
             }])
             .build();
 
-        let mut rtc_pc = RtcPeerConnection::new(config)?;
+        let mut rtc_pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(config)
+            .with_setting_engine(setting_engine)
+            .build()?;
 
         // Create data channel
         let _ = rtc_pc.create_data_channel("test", None)?;
