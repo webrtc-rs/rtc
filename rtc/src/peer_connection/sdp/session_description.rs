@@ -388,10 +388,10 @@ impl RTCSessionDescription {
     ///
     /// ```no_run
     /// use rtc::peer_connection::sdp::{RTCSessionDescription, RTCSdpType};
-    /// use rtc::peer_connection::{RTCPeerConnection, configuration::RTCConfigurationBuilder};
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// # let mut pc = RTCPeerConnectionBuilder::new().build()?;
     /// // Create a rollback description (typically with empty SDP)
     /// let rollback = RTCSessionDescription::rollback(None)?;
     /// assert_eq!(rollback.sdp_type, RTCSdpType::Rollback);

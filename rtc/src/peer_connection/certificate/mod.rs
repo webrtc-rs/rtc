@@ -28,7 +28,7 @@
 //! ## Quick Start - Generate and Use Certificate
 //!
 //! ```
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::certificate::RTCCertificate;
 //! use rcgen::KeyPair;
@@ -39,11 +39,13 @@
 //! let certificate = RTCCertificate::from_key_pair(key_pair)?;
 //!
 //! // Use in peer connection
-//! let config = RTCConfigurationBuilder::new()
-//!     .with_certificates(vec![certificate])
-//!     .build();
-//!
-//! let peer_connection = RTCPeerConnection::new(config)?;
+//! let peer_connection = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_certificates(vec![certificate])
+//!             .build()
+//!     )
+//!     .build()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -275,8 +277,8 @@ use shared::util::math_rand_alpha;
 /// ## Using with RTCConfiguration
 ///
 /// ```no_run
-/// # use rtc::peer_connection::RTCPeerConnection;
-/// # use rtc::peer_connection::configuration::{RTCConfiguration, RTCConfigurationBuilder};
+/// # use rtc::peer_connection::RTCPeerConnectionBuilder;
+/// # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 /// # use rtc::peer_connection::certificate::RTCCertificate;
 /// # use rcgen::KeyPair;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -285,11 +287,13 @@ use shared::util::math_rand_alpha;
 /// let certificate = RTCCertificate::from_key_pair(key_pair)?;
 ///
 /// // Configure peer connection with custom certificate
-/// let config = RTCConfigurationBuilder::new()
-///     .with_certificates(vec![certificate])
-///     .build();
-///
-/// let peer_connection = RTCPeerConnection::new(config)?;
+/// let peer_connection = RTCPeerConnectionBuilder::new()
+///     .with_configuration(
+///         RTCConfigurationBuilder::new()
+///             .with_certificates(vec![certificate])
+///             .build()
+///     )
+///     .build()?;
 /// # Ok(())
 /// # }
 /// ```

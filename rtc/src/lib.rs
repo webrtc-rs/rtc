@@ -18,7 +18,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
 //! use rtc::peer_connection::sdp::RTCSessionDescription;
@@ -26,14 +26,16 @@
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // 1. Create a peer connection with ICE servers
-//! let config = RTCConfigurationBuilder::new()
-//!     .with_ice_servers(vec![RTCIceServer {
-//!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
-//!         ..Default::default()
-//!     }])
-//!     .build();
-//!
-//! let mut pc = RTCPeerConnection::new(config)?;
+//! let mut pc = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_ice_servers(vec![RTCIceServer {
+//!                 urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!                 ..Default::default()
+//!             }])
+//!             .build()
+//!     )
+//!     .build()?;
 //!
 //! // 2. Create an offer
 //! let offer = pc.create_offer(None)?;
@@ -74,7 +76,7 @@
 //! This example demonstrates the full sans-I/O event loop pattern with all key API methods:
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, media_engine::MediaEngine};
 //! use rtc::peer_connection::transport::RTCIceServer;
 //! use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -91,16 +93,18 @@
 //! // Configure media codecs
 //! let media_engine = MediaEngine::default();
 //!
-//! // Create peer connection configuration
-//! let config = RTCConfigurationBuilder::new()
-//!     .with_ice_servers(vec![RTCIceServer {
-//!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
-//!         ..Default::default()
-//!     }])
+//! // Create peer connection
+//! let mut pc = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_ice_servers(vec![RTCIceServer {
+//!                 urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!                 ..Default::default()
+//!             }])
+//!             .build()
+//!     )
 //!     .with_media_engine(media_engine)
-//!     .build();
-//!
-//! let mut pc = RTCPeerConnection::new(config)?;
+//!     .build()?;
 //!
 //! // Bind UDP socket for network I/O
 //! let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -241,7 +245,7 @@
 //! candidates. This example shows the complete offer/answer flow:
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
 //! use rtc::peer_connection::sdp::RTCSessionDescription;
@@ -251,14 +255,16 @@
 //! # fn receive_from_remote_peer() -> String { String::new() }
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Offerer side - creates the offer
-//! let offerer_config = RTCConfigurationBuilder::new()
-//!     .with_ice_servers(vec![RTCIceServer {
-//!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
-//!         ..Default::default()
-//!     }])
-//!     .build();
-//!
-//! let mut offerer = RTCPeerConnection::new(offerer_config)?;
+//! let mut offerer = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_ice_servers(vec![RTCIceServer {
+//!                 urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!                 ..Default::default()
+//!             }])
+//!             .build()
+//!     )
+//!     .build()?;
 //!
 //! // 1. Create offer
 //! let offer = offerer.create_offer(None)?;
@@ -284,14 +290,16 @@
 //! send_to_remote_peer(&serde_json::to_string(&offer)?);
 //!
 //! // --- On answerer side ---
-//! let answerer_config = RTCConfigurationBuilder::new()
-//!     .with_ice_servers(vec![RTCIceServer {
-//!         urls: vec!["stun:stun.l.google.com:19302".to_string()],
-//!         ..Default::default()
-//!     }])
-//!     .build();
-//!
-//! let mut answerer = RTCPeerConnection::new(answerer_config)?;
+//! let mut answerer = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_ice_servers(vec![RTCIceServer {
+//!                 urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!                 ..Default::default()
+//!             }])
+//!             .build()
+//!     )
+//!     .build()?;
 //!
 //! // 5. Receive and set remote description
 //! let offer_json = receive_from_remote_peer();
@@ -392,7 +400,7 @@
 //! to configure packet loss recovery, congestion control, and quality monitoring:
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -409,13 +417,11 @@
 //! let registry = Registry::new();
 //! let registry = register_default_interceptors(registry, &mut media_engine)?;
 //!
-//! // Build configuration with interceptors
-//! let config = RTCConfigurationBuilder::new()
+//! // Build peer connection with interceptors
+//! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build();
-//!
-//! let mut pc = RTCPeerConnection::new(config)?;
+//!     .build()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -423,7 +429,7 @@
 //! For custom interceptor configuration:
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::configuration::interceptor_registry::{
@@ -442,12 +448,10 @@
 //! let registry = configure_rtcp_reports(registry);                   // SR/RR statistics
 //! let registry = configure_twcc(registry, &mut media_engine)?;       // Full TWCC (sender + receiver)
 //!
-//! let config = RTCConfigurationBuilder::new()
+//! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build();
-//!
-//! let mut pc = RTCPeerConnection::new(config)?;
+//!     .build()?;
 //! # Ok(())
 //! # }
 //! ```

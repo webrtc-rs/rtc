@@ -23,6 +23,113 @@ impl<I> RTCPeerConnection<I>
 where
     I: Interceptor,
 {
+    pub(super) fn new(
+        mut configuration: RTCConfiguration,
+        media_engine: MediaEngine,
+        setting_engine: SettingEngine,
+        interceptor: I,
+    ) -> Result<Self> {
+        configuration.validate()?;
+
+        let mut candidate_types = vec![];
+        if setting_engine.candidates.ice_lite {
+            candidate_types.push(ice::candidate::CandidateType::Host);
+        } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
+            candidate_types.push(ice::candidate::CandidateType::Relay);
+        }
+
+        let mut validated_servers = vec![];
+        if !configuration.ice_servers.is_empty() {
+            for server in &configuration.ice_servers {
+                let url = server.urls()?;
+                validated_servers.extend(url);
+            }
+        }
+
+        let network_types = if setting_engine.candidates.ice_network_types.is_empty() {
+            ice::network_type::supported_network_types()
+        } else {
+            setting_engine.candidates.ice_network_types.clone()
+        };
+
+        let agent_config = AgentConfig {
+            lite: setting_engine.candidates.ice_lite,
+            urls: validated_servers,
+            disconnected_timeout: setting_engine.timeout.ice_disconnected_timeout,
+            failed_timeout: setting_engine.timeout.ice_failed_timeout,
+            keepalive_interval: setting_engine.timeout.ice_keepalive_interval,
+            candidate_types,
+            network_types,
+            host_acceptance_min_wait: setting_engine.timeout.ice_host_acceptance_min_wait,
+            srflx_acceptance_min_wait: setting_engine.timeout.ice_srflx_acceptance_min_wait,
+            prflx_acceptance_min_wait: setting_engine.timeout.ice_prflx_acceptance_min_wait,
+            relay_acceptance_min_wait: setting_engine.timeout.ice_relay_acceptance_min_wait,
+            multicast_dns_mode: setting_engine.multicast_dns.mode,
+            multicast_dns_local_name: setting_engine.multicast_dns.local_name.clone(),
+            multicast_dns_local_ip: setting_engine.multicast_dns.local_ip,
+            multicast_dns_query_timeout: setting_engine.multicast_dns.timeout,
+            local_ufrag: setting_engine.candidates.username_fragment.clone(),
+            local_pwd: setting_engine.candidates.password.clone(),
+
+            ..Default::default()
+        };
+
+        // Create the ICE transport
+        let ice_transport = RTCIceTransport::new(agent_config)?;
+
+        // Create the DTLS transport
+        let certificates = configuration.certificates.drain(..).collect();
+        let dtls_transport = RTCDtlsTransport::new(
+            certificates,
+            setting_engine.answering_dtls_role,
+            setting_engine.srtp_protection_profiles.clone(),
+            setting_engine.allow_insecure_verification_algorithm,
+            setting_engine.replay_protection,
+        )?;
+
+        // Create the SCTP transport
+        let sctp_transport = RTCSctpTransport::new(setting_engine.sctp_max_message_size);
+
+        // Create Pipeline Context
+        let ice_handler_context = IceHandlerContext::new(ice_transport);
+        let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
+        let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
+
+        let pipeline_context = PipelineContext {
+            ice_handler_context,
+            dtls_handler_context,
+            sctp_handler_context,
+
+            ..Default::default()
+        };
+
+        Ok(Self {
+            configuration,
+            media_engine,
+            setting_engine,
+            interceptor,
+            local_description: None,
+            current_local_description: None,
+            pending_local_description: None,
+            remote_description: None,
+            current_remote_description: None,
+            pending_remote_description: None,
+            signaling_state: RTCSignalingState::Stable,
+            peer_connection_state: RTCPeerConnectionState::New,
+            can_trickle_ice_candidates: None,
+            pipeline_context,
+            data_channels: HashMap::new(),
+            rtp_transceivers: Vec::new(),
+            greater_mid: -1,
+            sdp_origin: Origin::default(),
+            last_offer: String::new(),
+            last_answer: String::new(),
+            ice_restart_requested: None,
+            negotiation_needed_state: NegotiationNeededState::Empty,
+            is_negotiation_ongoing: false,
+        })
+    }
+
     /// generate_unmatched_sdp generates an SDP that doesn't take remote state into account
     /// This is used for the initial call for CreateOffer
     pub(super) fn generate_unmatched_sdp(&mut self) -> Result<SessionDescription> {

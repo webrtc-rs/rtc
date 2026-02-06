@@ -10,12 +10,11 @@
 //! # Examples
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! let init = RTCDataChannelInit {
 //!     ordered: true,

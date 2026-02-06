@@ -16,11 +16,10 @@
 //! ## Getting the sender's track
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(sender_id: RTCRtpSenderId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Get sender and access its track
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
@@ -35,11 +34,10 @@
 //! ## Getting and modifying send parameters
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(sender_id: RTCRtpSenderId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Get current parameters
@@ -61,15 +59,14 @@
 //! ## Replacing a track
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # fn example(
 //! #     sender_id: RTCRtpSenderId,
 //! #     new_track: MediaStreamTrack
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Replace with new track (same kind required)
@@ -82,8 +79,7 @@
 //! ## Writing raw RTP packets
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpSenderId;
 //! # use rtp::packet::Packet;
 //! # use shared::error::Error;
@@ -91,7 +87,7 @@
 //! #     sender_id: RTCRtpSenderId,
 //! #     mut rtp_packet: Packet
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
 //!     // Write RTP packet directly
@@ -110,15 +106,14 @@
 //! ## Configuring simulcast with transceiver init
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # use rtc::rtp_transceiver::rtp_sender::{
 //! #     RTCRtpEncodingParameters, RTCRtpCodingParameters
 //! # };
 //! # fn example(video_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Configure simulcast with three layers
 //! let mut init = RTCRtpTransceiverInit {

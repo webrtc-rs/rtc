@@ -17,12 +17,11 @@
 //! ## Adding a transceiver from a track
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Add a transceiver for sending audio
 //! let init = RTCRtpTransceiverInit {
@@ -41,12 +40,11 @@
 //! ## Adding a transceiver by media kind
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Add a video transceiver for receiving only
 //! let init = RTCRtpTransceiverInit {
@@ -65,11 +63,10 @@
 //! ## Controlling transceiver direction
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Iterate through transceivers and change direction
 //! for transceiver_id in peer_connection.get_transceivers() {
@@ -84,11 +81,10 @@
 //! ## Setting codec preferences
 //!
 //! ```no_run
-//! # use rtc::peer_connection::RTCPeerConnection;
-//! # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 //! # fn example(preferred_codecs: Vec<RTCRtpCodecParameters>) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Codec preferences would be set through peer connection methods
 //! // The exact API depends on your implementation

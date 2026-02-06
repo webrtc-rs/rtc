@@ -86,12 +86,11 @@
 //! ## Creating a Peer Connection
 //!
 //! ```
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create with default configuration
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -99,11 +98,10 @@
 //! ## Creating an Offer (Initiating Peer)
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Add media track or data channel first
 //! // pc.add_track(audio_track)?;
@@ -123,12 +121,11 @@
 //! ## Answering an Offer (Responding Peer)
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::sdp::RTCSessionDescription;
 //!
 //! # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Receive offer from remote peer
 //! let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -151,13 +148,12 @@
 //! ## Adding Media Tracks
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //!
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Add an audio track
 //! let sender_id = pc.add_track(audio_track)?;
@@ -171,12 +167,11 @@
 //! ## Creating Data Channels
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
 //!
 //! // Create a reliable, ordered data channel
 //! let init = RTCDataChannelInit {
@@ -193,7 +188,7 @@
 //! ## ICE Candidate Exchange
 //!
 //! ```no_run
-//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 //! use rtc::peer_connection::transport::RTCIceCandidateInit;
 //!
 //! # fn example(mut pc: RTCPeerConnection) -> Result<(), Box<dyn std::error::Error>> {
@@ -316,19 +311,93 @@ use shared::util::math_rand_alpha;
 use std::collections::HashMap;
 use std::time::Instant;
 
+/// Builder for creating RTCPeerConnection instances.
+///
+/// This builder provides a fluent API for configuring peer connections with:
+/// - ICE servers (STUN/TURN) via [`RTCConfiguration`](configuration::RTCConfiguration)
+/// - Media codecs and RTP extensions via [`MediaEngine`](configuration::media_engine::MediaEngine)
+/// - Low-level transport settings via [`SettingEngine`](configuration::setting_engine::SettingEngine)
+/// - RTP/RTCP interceptors for NACK, TWCC, and RTCP reports
+///
+/// # Examples
+///
+/// ## Basic peer connection
+///
+/// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let pc = RTCPeerConnectionBuilder::new().build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## With ICE servers
+///
+/// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let pc = RTCPeerConnectionBuilder::new()
+///     .with_configuration(
+///         RTCConfigurationBuilder::new()
+///             .with_ice_servers(vec![RTCIceServer {
+///                 urls: vec!["stun:stun.l.google.com:19302".to_string()],
+///                 ..Default::default()
+///             }])
+///             .build()
+///     )
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## With custom media engine
+///
+/// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+/// media_engine.register_default_codecs()?;
+///
+/// let pc = RTCPeerConnectionBuilder::new()
+///     .with_media_engine(media_engine)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## With interceptors
+///
+/// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+/// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+/// use rtc::interceptor::Registry;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+/// let registry = Registry::new();
+/// let registry = register_default_interceptors(registry, &mut media_engine)?;
+///
+/// let pc = RTCPeerConnectionBuilder::new()
+///     .with_media_engine(media_engine)
+///     .with_interceptor_registry(registry)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct RTCPeerConnectionBuilder<I = NoopInterceptor>
 where
     I: Interceptor,
 {
-    /// ice_servers defines a slice describing servers available to be used by
-    /// ICE, such as STUN and TURN servers.
-    pub(crate) configuration: RTCConfiguration,
-
-    pub(crate) media_engine: MediaEngine,
-
-    pub(crate) setting_engine: SettingEngine,
-
-    pub(crate) interceptor: I,
+    configuration: RTCConfiguration,
+    media_engine: MediaEngine,
+    setting_engine: SettingEngine,
+    interceptor: I,
 }
 
 impl Default for RTCPeerConnectionBuilder<NoopInterceptor> {
@@ -344,8 +413,26 @@ impl Default for RTCPeerConnectionBuilder<NoopInterceptor> {
 
 // Non-generic impl block for associated functions that don't depend on I
 impl RTCPeerConnectionBuilder<NoopInterceptor> {
-    /// Creates a new RTCConfigurationBuilder with default NoopInterceptor.
-    /// Use with_interceptor_registry() to change the interceptor type.
+    /// Creates a new RTCPeerConnectionBuilder with default configuration.
+    ///
+    /// The default builder includes:
+    /// - Empty ICE server list
+    /// - Default MediaEngine (no codecs registered)
+    /// - Default SettingEngine (standard timeouts and limits)
+    /// - NoopInterceptor (no RTP/RTCP processing)
+    ///
+    /// Use `with_*` methods to customize configuration before calling `build()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let pc = RTCPeerConnectionBuilder::new().build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
@@ -355,23 +442,128 @@ impl<I> RTCPeerConnectionBuilder<I>
 where
     I: Interceptor,
 {
+    /// Sets the RTCConfiguration for the peer connection.
+    ///
+    /// The configuration includes ICE servers, transport policies, bundle policies,
+    /// RTCP mux policies, and certificates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_ice_servers(vec![RTCIceServer {
+    ///         urls: vec!["stun:stun.l.google.com:19302".to_string()],
+    ///         ..Default::default()
+    ///     }])
+    ///     .build();
+    ///
+    /// let pc = RTCPeerConnectionBuilder::new()
+    ///     .with_configuration(config)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_configuration(mut self, configuration: RTCConfiguration) -> Self {
         self.configuration = configuration;
         self
     }
 
+    /// Sets the MediaEngine for the peer connection.
+    ///
+    /// The media engine configures codecs and RTP header extensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut media_engine = MediaEngine::default();
+    /// media_engine.register_default_codecs()?;
+    ///
+    /// let pc = RTCPeerConnectionBuilder::new()
+    ///     .with_media_engine(media_engine)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_media_engine(mut self, media_engine: MediaEngine) -> Self {
         self.media_engine = media_engine;
         self
     }
 
+    /// Sets the SettingEngine for the peer connection.
+    ///
+    /// The setting engine configures low-level transport parameters including
+    /// timeouts, buffer sizes, ICE settings, and SCTP parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use std::time::Duration;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut setting_engine = SettingEngine::default();
+    /// setting_engine.set_ice_timeouts(
+    ///     Some(Duration::from_secs(30)),
+    ///     Some(Duration::from_secs(60)),
+    ///     Some(Duration::from_millis(100)),
+    /// );
+    ///
+    /// let pc = RTCPeerConnectionBuilder::new()
+    ///     .with_setting_engine(setting_engine)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
         self.setting_engine = setting_engine;
         self
     }
 
-    /// with_interceptor_registry allows providing Interceptors to the API.
-    /// Settings should not be changed after passing the registry to an API.
+    /// Configures the peer connection with an interceptor registry.
+    ///
+    /// Interceptors process RTP/RTCP packets as they flow through the pipeline,
+    /// enabling features like:
+    /// - NACK (Negative Acknowledgment) for packet loss recovery
+    /// - TWCC (Transport-Wide Congestion Control) for bandwidth estimation
+    /// - RTCP Reports for quality statistics
+    ///
+    /// This method changes the interceptor type from `NoopInterceptor` to the
+    /// registry's interceptor type. It must be the last builder method called
+    /// before `build()` when used.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `P` - The interceptor type produced by the registry
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+    /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+    /// use rtc::interceptor::Registry;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut media_engine = MediaEngine::default();
+    /// let registry = Registry::new();
+    /// let registry = register_default_interceptors(registry, &mut media_engine)?;
+    ///
+    /// let pc = RTCPeerConnectionBuilder::new()
+    ///     .with_media_engine(media_engine)
+    ///     .with_interceptor_registry(registry)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_interceptor_registry<P>(
         self,
         interceptor_registry: Registry<P>,
@@ -387,6 +579,29 @@ where
         }
     }
 
+    /// Builds the RTCPeerConnection with the configured settings.
+    ///
+    /// This method validates the configuration and creates a new peer connection.
+    /// If validation fails (e.g., expired certificates, invalid ICE servers),
+    /// an error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Certificates have expired
+    /// - ICE server URLs are invalid
+    /// - Other validation checks fail
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let pc = RTCPeerConnectionBuilder::new().build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(self) -> Result<RTCPeerConnection<I>> {
         RTCPeerConnection::new(
             self.configuration,
@@ -405,13 +620,13 @@ where
 ///
 /// # Examples
 ///
-/// ```no_run
-/// use rtc::peer_connection::RTCPeerConnection;
-/// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+/// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
 ///
-/// let config = RTCConfigurationBuilder::new().build();
-/// let mut pc = RTCPeerConnection::new(config)?;
-/// # Ok::<(), rtc::shared::error::Error>(())
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct RTCPeerConnection<I = NoopInterceptor>
 where
@@ -457,171 +672,6 @@ impl<I> RTCPeerConnection<I>
 where
     I: Interceptor,
 {
-    /// Creates a new `RTCPeerConnection` with the specified configuration.
-    ///
-    /// This constructor creates the necessary transport layers (ICE, DTLS, SCTP) and
-    /// initializes the peer connection state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `configuration` - The configuration for the peer connection, including ICE servers,
-    ///   certificates, and various settings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configuration is invalid or if transport initialization fails.
-    ///
-    /// # Specification
-    ///
-    /// See [RTCPeerConnection constructor](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-constructor)
-    /// Creates a new `RTCPeerConnection` with the specified configuration.
-    ///
-    /// This initializes all the necessary transport layers (ICE, DTLS, SCTP) and
-    /// prepares the peer connection for media and data channel creation.
-    ///
-    /// # Parameters
-    ///
-    /// - `configuration`: Configuration including ICE servers, certificates, and
-    ///   engine settings. See [`RTCConfiguration`] for details.
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `RTCPeerConnection` ready for establishing a connection.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Configuration validation fails
-    /// - Certificate initialization fails
-    /// - Transport layer creation fails
-    ///
-    /// # Examples
-    ///
-    /// ## Basic Usage
-    ///
-    /// ```
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-    ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = RTCConfigurationBuilder::new().build();
-    /// let pc = RTCPeerConnection::new(config)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Specifications
-    ///
-    /// - [W3C RTCPeerConnection constructor]
-    ///
-    /// [W3C RTCPeerConnection constructor]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-constructor
-    pub(crate) fn new(
-        mut configuration: RTCConfiguration,
-        media_engine: MediaEngine,
-        setting_engine: SettingEngine,
-        interceptor: I,
-    ) -> Result<Self> {
-        configuration.validate()?;
-
-        let mut candidate_types = vec![];
-        if setting_engine.candidates.ice_lite {
-            candidate_types.push(ice::candidate::CandidateType::Host);
-        } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
-            candidate_types.push(ice::candidate::CandidateType::Relay);
-        }
-
-        let mut validated_servers = vec![];
-        if !configuration.ice_servers.is_empty() {
-            for server in &configuration.ice_servers {
-                let url = server.urls()?;
-                validated_servers.extend(url);
-            }
-        }
-
-        let network_types = if setting_engine.candidates.ice_network_types.is_empty() {
-            ice::network_type::supported_network_types()
-        } else {
-            setting_engine.candidates.ice_network_types.clone()
-        };
-
-        let agent_config = AgentConfig {
-            lite: setting_engine.candidates.ice_lite,
-            urls: validated_servers,
-            disconnected_timeout: setting_engine.timeout.ice_disconnected_timeout,
-            failed_timeout: setting_engine.timeout.ice_failed_timeout,
-            keepalive_interval: setting_engine.timeout.ice_keepalive_interval,
-            candidate_types,
-            network_types,
-            host_acceptance_min_wait: setting_engine.timeout.ice_host_acceptance_min_wait,
-            srflx_acceptance_min_wait: setting_engine.timeout.ice_srflx_acceptance_min_wait,
-            prflx_acceptance_min_wait: setting_engine.timeout.ice_prflx_acceptance_min_wait,
-            relay_acceptance_min_wait: setting_engine.timeout.ice_relay_acceptance_min_wait,
-            multicast_dns_mode: setting_engine.multicast_dns.mode,
-            multicast_dns_local_name: setting_engine.multicast_dns.local_name.clone(),
-            multicast_dns_local_ip: setting_engine.multicast_dns.local_ip,
-            multicast_dns_query_timeout: setting_engine.multicast_dns.timeout,
-            local_ufrag: setting_engine.candidates.username_fragment.clone(),
-            local_pwd: setting_engine.candidates.password.clone(),
-
-            ..Default::default()
-        };
-
-        // Create the ICE transport
-        let ice_transport = RTCIceTransport::new(agent_config)?;
-
-        // Create the DTLS transport
-        let certificates = configuration.certificates.drain(..).collect();
-        let dtls_transport = RTCDtlsTransport::new(
-            certificates,
-            setting_engine.answering_dtls_role,
-            setting_engine.srtp_protection_profiles.clone(),
-            setting_engine.allow_insecure_verification_algorithm,
-            setting_engine.replay_protection,
-        )?;
-
-        // Create the SCTP transport
-        let sctp_transport = RTCSctpTransport::new(setting_engine.sctp_max_message_size);
-
-        // Create Pipeline Context
-        let ice_handler_context = IceHandlerContext::new(ice_transport);
-        let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
-        let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
-
-        let pipeline_context = PipelineContext {
-            ice_handler_context,
-            dtls_handler_context,
-            sctp_handler_context,
-
-            ..Default::default()
-        };
-
-        Ok(Self {
-            configuration,
-            media_engine,
-            setting_engine,
-            interceptor,
-            local_description: None,
-            current_local_description: None,
-            pending_local_description: None,
-            remote_description: None,
-            current_remote_description: None,
-            pending_remote_description: None,
-            signaling_state: RTCSignalingState::Stable,
-            peer_connection_state: RTCPeerConnectionState::New,
-            can_trickle_ice_candidates: None,
-            pipeline_context,
-            data_channels: HashMap::new(),
-            rtp_transceivers: Vec::new(),
-            greater_mid: -1,
-            sdp_origin: Origin::default(),
-            last_offer: String::new(),
-            last_answer: String::new(),
-            ice_restart_requested: None,
-            negotiation_needed_state: NegotiationNeededState::Empty,
-            is_negotiation_ongoing: false,
-        })
-    }
-
     /// Creates an SDP offer to start a new WebRTC connection to a remote peer.
     ///
     /// The offer includes information about the attached media tracks, codecs and options supported
@@ -781,12 +831,11 @@ where
     /// ## Basic Answer Flow
     ///
     /// ```no_run
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
     ///
     /// // 1. Receive and set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -807,8 +856,7 @@ where
     /// ## With Media Tracks
     ///
     /// ```no_run
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     /// use rtc::media_stream::MediaStreamTrack;
     ///
@@ -816,7 +864,7 @@ where
     /// #     remote_offer_sdp: String,
     /// #     audio_track: MediaStreamTrack,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
     ///
     /// // Set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -953,11 +1001,10 @@ where
     /// ## Setting Local Offer
     ///
     /// ```no_run
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
     ///
     /// // Create offer
     /// let offer = pc.create_offer(None)?;
@@ -974,12 +1021,11 @@ where
     /// ## Setting Local Answer
     ///
     /// ```no_run
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
     ///
     /// // Set remote offer first
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
@@ -2142,12 +2188,11 @@ where
     ///
     /// ```no_run
     /// use std::time::Instant;
-    /// use rtc::peer_connection::RTCPeerConnection;
-    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::statistics::StatsSelector;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnection::new(RTCConfigurationBuilder::new().build())?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
     ///
     /// // Get all stats
     /// let report = pc.get_stats(Instant::now(), StatsSelector::None);

@@ -19,22 +19,23 @@
 //! # Quick Start
 //!
 //! ```
-//! use rtc::peer_connection::RTCPeerConnection;
-//! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-//! use rtc::peer_connection::configuration::RTCIceServer;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
+//! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Simple configuration with STUN server
-//! let config = RTCConfigurationBuilder::new()
-//!     .with_ice_servers(vec![
-//!         RTCIceServer {
-//!             urls: vec!["stun:stun.l.google.com:19302".to_string()],
-//!             ..Default::default()
-//!         }
-//!     ])
-//!     .build();
-//!
-//! let peer_connection = RTCPeerConnection::new(config)?;
+//! let peer_connection = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(
+//!         RTCConfigurationBuilder::new()
+//!             .with_ice_servers(vec![
+//!                 RTCIceServer {
+//!                     urls: vec!["stun:stun.l.google.com:19302".to_string()],
+//!                     ..Default::default()
+//!                 }
+//!             ])
+//!             .build()
+//!     )
+//!     .build()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -375,6 +376,97 @@ impl RTCConfiguration {
     }
 }
 
+/// Builder for creating RTCConfiguration instances.
+///
+/// This builder provides a fluent API for configuring WebRTC peer connection settings:
+/// - ICE servers (STUN/TURN) for NAT traversal
+/// - Transport policies (which ICE candidates to use)
+/// - Bundle and RTCP mux policies
+/// - Custom DTLS certificates
+/// - ICE candidate pool size
+///
+/// # Examples
+///
+/// ## Basic configuration with STUN
+///
+/// ```
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = RTCConfigurationBuilder::new()
+///     .with_ice_servers(vec![
+///         RTCIceServer {
+///             urls: vec!["stun:stun.l.google.com:19302".to_string()],
+///             ..Default::default()
+///         }
+///     ])
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## TURN server with credentials
+///
+/// ```
+/// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = RTCConfigurationBuilder::new()
+///     .with_ice_servers(vec![
+///         RTCIceServer {
+///             urls: vec!["turn:turn.example.com:3478".to_string()],
+///             username: "user".to_string(),
+///             credential: "password".to_string(),
+///             ..Default::default()
+///         }
+///     ])
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Relay-only (privacy mode)
+///
+/// ```
+/// use rtc::peer_connection::configuration::{
+///     RTCConfigurationBuilder,
+///     RTCIceServer,
+///     RTCIceTransportPolicy
+/// };
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = RTCConfigurationBuilder::new()
+///     .with_ice_servers(vec![
+///         RTCIceServer {
+///             urls: vec!["turn:turn.example.com:3478".to_string()],
+///             username: "user".to_string(),
+///             credential: "password".to_string(),
+///             ..Default::default()
+///         }
+///     ])
+///     .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Custom certificate
+///
+/// ```
+/// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+/// use rtc::peer_connection::certificate::RTCCertificate;
+/// use rcgen::KeyPair;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+/// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+///
+/// let config = RTCConfigurationBuilder::new()
+///     .with_certificates(vec![certificate])
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Default, Debug)]
 pub struct RTCConfigurationBuilder {
     /// ice_servers defines a slice describing servers available to be used by
@@ -416,17 +508,74 @@ pub struct RTCConfigurationBuilder {
 }
 
 impl RTCConfigurationBuilder {
-    /// Creates a new RTCConfigurationBuilder with default NoopInterceptor.
-    /// Use with_interceptor_registry() to change the interceptor type.
+    /// Creates a new RTCConfigurationBuilder with default settings.
+    ///
+    /// Default values:
+    /// - No ICE servers (local candidates only)
+    /// - All ICE candidate types allowed
+    /// - Balanced bundle policy
+    /// - Required RTCP mux policy
+    /// - No peer identity
+    /// - Auto-generated certificates
+    /// - ICE candidate pool size of 0
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    ///
+    /// let config = RTCConfigurationBuilder::new().build();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the ICE servers for STUN and TURN.
+    ///
+    /// ICE servers are used for NAT traversal to establish peer-to-peer connectivity.
+    /// Multiple servers can be provided for redundancy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_ice_servers(vec![
+    ///         RTCIceServer {
+    ///             urls: vec!["stun:stun.l.google.com:19302".to_string()],
+    ///             ..Default::default()
+    ///         },
+    ///         RTCIceServer {
+    ///             urls: vec!["turn:turn.example.com:3478".to_string()],
+    ///             username: "user".to_string(),
+    ///             credential: "pass".to_string(),
+    ///             ..Default::default()
+    ///         }
+    ///     ])
+    ///     .build();
+    /// ```
     pub fn with_ice_servers(mut self, ice_servers: Vec<RTCIceServer>) -> Self {
         self.ice_servers = ice_servers;
         self
     }
 
+    /// Sets the ICE transport policy.
+    ///
+    /// Controls which types of ICE candidates are allowed:
+    /// - `All` (default): Use all candidate types (host, srflx, relay)
+    /// - `Relay`: Only use TURN relay candidates (hides IP addresses)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceTransportPolicy};
+    ///
+    /// // Privacy mode - only use TURN relays
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+    ///     .build();
+    /// ```
     pub fn with_ice_transport_policy(
         mut self,
         ice_transport_policy: RTCIceTransportPolicy,
@@ -435,31 +584,123 @@ impl RTCConfigurationBuilder {
         self
     }
 
+    /// Sets the bundle policy.
+    ///
+    /// Controls how media tracks are bundled onto transports:
+    /// - `Balanced` (default): Bundle audio/video separately if peer doesn't support bundling
+    /// - `MaxCompat`: Separate transports for each track (maximum compatibility)
+    /// - `MaxBundle`: Single transport for all media (best performance)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCBundlePolicy};
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+    ///     .build();
+    /// ```
     pub fn with_bundle_policy(mut self, bundle_policy: RTCBundlePolicy) -> Self {
         self.bundle_policy = bundle_policy;
         self
     }
 
+    /// Sets the RTCP multiplexing policy.
+    ///
+    /// Controls whether RTCP is multiplexed with RTP:
+    /// - `Negotiate`: Try to multiplex, fall back to separate ports
+    /// - `Require` (default): Require multiplexing (standard for WebRTC)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCRtcpMuxPolicy};
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+    ///     .build();
+    /// ```
     pub fn with_rtcp_mux_policy(mut self, rtcp_mux_policy: RTCRtcpMuxPolicy) -> Self {
         self.rtcp_mux_policy = rtcp_mux_policy;
         self
     }
 
+    /// Sets the target peer identity.
+    ///
+    /// If set, the peer connection will only connect to a remote peer that can be
+    /// successfully authenticated with this identity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_peer_identitys("peer@example.com".to_string())
+    ///     .build();
+    /// ```
     pub fn with_peer_identitys(mut self, peer_identity: String) -> Self {
         self.peer_identity = peer_identity;
         self
     }
 
+    /// Sets custom DTLS certificates.
+    ///
+    /// If not provided, certificates are auto-generated. Providing certificates allows
+    /// for consistent peer identity across connections.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    /// use rtc::peer_connection::certificate::RTCCertificate;
+    /// use rcgen::KeyPair;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+    /// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_certificates(vec![certificate])
+    ///     .build();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_certificates(mut self, certificates: Vec<RTCCertificate>) -> Self {
         self.certificates = certificates;
         self
     }
 
+    /// Sets the ICE candidate pool size.
+    ///
+    /// Specifies the number of ICE candidates to gather before needed.
+    /// Pre-gathering candidates can reduce connection establishment time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    ///
+    /// let config = RTCConfigurationBuilder::new()
+    ///     .with_ice_candidate_pool_size(5)
+    ///     .build();
+    /// ```
     pub fn with_ice_candidate_pool_size(mut self, ice_candidate_pool_size: u8) -> Self {
         self.ice_candidate_pool_size = ice_candidate_pool_size;
         self
     }
 
+    /// Builds the RTCConfiguration.
+    ///
+    /// Creates an immutable configuration that can be used to create a peer connection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+    ///
+    /// let config = RTCConfigurationBuilder::new().build();
+    /// ```
     pub fn build(self) -> RTCConfiguration {
         RTCConfiguration {
             ice_servers: self.ice_servers,

@@ -226,16 +226,16 @@ impl MediaEngineHeaderExtension {
 /// ## Default Configuration
 ///
 /// ```
+/// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// media_engine.register_default_codecs()?;
 ///
-/// let config = RTCConfigurationBuilder::new()
+/// let pc = RTCPeerConnectionBuilder::new()
 ///     .with_media_engine(media_engine)
-///     .build();
+///     .build()?;
 /// # Ok(())
 /// # }
 /// ```
