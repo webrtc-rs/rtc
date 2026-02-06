@@ -232,7 +232,7 @@ where
             .receiver
             .as_ref()
             .unwrap()
-            .get_capabilities(kind, &self.peer_connection.configuration.media_engine)
+            .get_capabilities(kind, &self.peer_connection.media_engine)
     }
 
     /// Returns the RTP receive parameters for this receiver.
@@ -251,7 +251,7 @@ where
             .receiver
             .as_mut()
             .unwrap()
-            .get_parameters(&self.peer_connection.configuration.media_engine)
+            .get_parameters(&self.peer_connection.media_engine)
     }
 
     /// Returns an iterator over the contributing sources for this receiver.

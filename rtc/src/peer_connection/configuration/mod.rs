@@ -204,7 +204,6 @@
 
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
-use interceptor::{Interceptor, NoopInterceptor, Registry};
 use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use std::time::SystemTime;
@@ -224,9 +223,6 @@ pub use offer_answer_options::{RTCAnswerOptions, RTCOfferOptions};
 pub use rtcp_mux_policy::RTCRtcpMuxPolicy;
 pub use sdp_semantics::RTCSdpSemantics;
 
-use media_engine::MediaEngine;
-use setting_engine::SettingEngine;
-
 pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 
 /// A Configuration defines how peer-to-peer communication via PeerConnection
@@ -240,10 +236,8 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 /// * [W3C]
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary
-pub struct RTCConfiguration<I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+#[derive(Default, Clone, Debug)]
+pub struct RTCConfiguration {
     /// ice_servers defines a slice describing servers available to be used by
     /// ICE, such as STUN and TURN servers.
     pub(crate) ice_servers: Vec<RTCIceServer>,
@@ -280,18 +274,9 @@ where
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub(crate) ice_candidate_pool_size: u8,
-
-    pub(crate) media_engine: MediaEngine,
-
-    pub(crate) setting_engine: SettingEngine,
-
-    pub(crate) interceptor: I,
 }
 
-impl<I> RTCConfiguration<I>
-where
-    I: Interceptor,
-{
+impl RTCConfiguration {
     /// Returns the ICE servers configured for this peer connection.
     ///
     /// This is useful for ICE candidate gathering implementations that need
@@ -390,10 +375,8 @@ where
     }
 }
 
-pub struct RTCConfigurationBuilder<I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+#[derive(Default, Debug)]
+pub struct RTCConfigurationBuilder {
     /// ice_servers defines a slice describing servers available to be used by
     /// ICE, such as STUN and TURN servers.
     pub(crate) ice_servers: Vec<RTCIceServer>,
@@ -430,44 +413,15 @@ where
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
     pub(crate) ice_candidate_pool_size: u8,
-
-    pub(crate) media_engine: MediaEngine,
-
-    pub(crate) setting_engine: SettingEngine,
-
-    pub(crate) interceptor: I,
 }
 
-impl Default for RTCConfigurationBuilder<NoopInterceptor> {
-    fn default() -> Self {
-        Self {
-            ice_servers: Vec::new(),
-            ice_transport_policy: RTCIceTransportPolicy::default(),
-            bundle_policy: RTCBundlePolicy::default(),
-            rtcp_mux_policy: RTCRtcpMuxPolicy::default(),
-            peer_identity: String::new(),
-            certificates: Vec::new(),
-            ice_candidate_pool_size: 0,
-            media_engine: MediaEngine::default(),
-            setting_engine: SettingEngine::default(),
-            interceptor: NoopInterceptor::new(),
-        }
-    }
-}
-
-// Non-generic impl block for associated functions that don't depend on I
-impl RTCConfigurationBuilder<NoopInterceptor> {
+impl RTCConfigurationBuilder {
     /// Creates a new RTCConfigurationBuilder with default NoopInterceptor.
     /// Use with_interceptor_registry() to change the interceptor type.
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-impl<I> RTCConfigurationBuilder<I>
-where
-    I: Interceptor,
-{
     pub fn with_ice_servers(mut self, ice_servers: Vec<RTCIceServer>) -> Self {
         self.ice_servers = ice_servers;
         self
@@ -506,40 +460,7 @@ where
         self
     }
 
-    pub fn with_media_engine(mut self, media_engine: MediaEngine) -> Self {
-        self.media_engine = media_engine;
-        self
-    }
-
-    pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
-        self.setting_engine = setting_engine;
-        self
-    }
-
-    /// with_interceptor_registry allows providing Interceptors to the API.
-    /// Settings should not be changed after passing the registry to an API.
-    pub fn with_interceptor_registry<P>(
-        self,
-        interceptor_registry: Registry<P>,
-    ) -> RTCConfigurationBuilder<P>
-    where
-        P: Interceptor,
-    {
-        RTCConfigurationBuilder {
-            ice_servers: self.ice_servers,
-            ice_transport_policy: self.ice_transport_policy,
-            bundle_policy: self.bundle_policy,
-            rtcp_mux_policy: self.rtcp_mux_policy,
-            peer_identity: self.peer_identity,
-            certificates: self.certificates,
-            ice_candidate_pool_size: self.ice_candidate_pool_size,
-            media_engine: self.media_engine,
-            setting_engine: self.setting_engine,
-            interceptor: interceptor_registry.build(),
-        }
-    }
-
-    pub fn build(self) -> RTCConfiguration<I> {
+    pub fn build(self) -> RTCConfiguration {
         RTCConfiguration {
             ice_servers: self.ice_servers,
             ice_transport_policy: self.ice_transport_policy,
@@ -548,9 +469,6 @@ where
             peer_identity: self.peer_identity,
             certificates: self.certificates,
             ice_candidate_pool_size: self.ice_candidate_pool_size,
-            media_engine: self.media_engine,
-            setting_engine: self.setting_engine,
-            interceptor: self.interceptor,
         }
     }
 }

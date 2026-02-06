@@ -255,7 +255,8 @@ use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataChannelInternal};
 use crate::media_stream::track::MediaStreamTrack;
-use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::setting_engine::{SctpMaxMessageSize, SettingEngine};
 use crate::peer_connection::configuration::{
     RTCConfiguration, RTCIceTransportPolicy,
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
@@ -308,12 +309,93 @@ use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::AgentConfig;
 use ice::candidate::{Candidate, unmarshal_candidate};
-use interceptor::{Interceptor, NoopInterceptor};
+use interceptor::{Interceptor, NoopInterceptor, Registry};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 use std::collections::HashMap;
 use std::time::Instant;
+
+pub struct RTCPeerConnectionBuilder<I = NoopInterceptor>
+where
+    I: Interceptor,
+{
+    /// ice_servers defines a slice describing servers available to be used by
+    /// ICE, such as STUN and TURN servers.
+    pub(crate) configuration: RTCConfiguration,
+
+    pub(crate) media_engine: MediaEngine,
+
+    pub(crate) setting_engine: SettingEngine,
+
+    pub(crate) interceptor: I,
+}
+
+impl Default for RTCPeerConnectionBuilder<NoopInterceptor> {
+    fn default() -> Self {
+        Self {
+            configuration: RTCConfiguration::default(),
+            media_engine: MediaEngine::default(),
+            setting_engine: SettingEngine::default(),
+            interceptor: NoopInterceptor::new(),
+        }
+    }
+}
+
+// Non-generic impl block for associated functions that don't depend on I
+impl RTCPeerConnectionBuilder<NoopInterceptor> {
+    /// Creates a new RTCConfigurationBuilder with default NoopInterceptor.
+    /// Use with_interceptor_registry() to change the interceptor type.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<I> RTCPeerConnectionBuilder<I>
+where
+    I: Interceptor,
+{
+    pub fn with_configuration(mut self, configuration: RTCConfiguration) -> Self {
+        self.configuration = configuration;
+        self
+    }
+
+    pub fn with_media_engine(mut self, media_engine: MediaEngine) -> Self {
+        self.media_engine = media_engine;
+        self
+    }
+
+    pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
+        self.setting_engine = setting_engine;
+        self
+    }
+
+    /// with_interceptor_registry allows providing Interceptors to the API.
+    /// Settings should not be changed after passing the registry to an API.
+    pub fn with_interceptor_registry<P>(
+        self,
+        interceptor_registry: Registry<P>,
+    ) -> RTCPeerConnectionBuilder<P>
+    where
+        P: Interceptor,
+    {
+        RTCPeerConnectionBuilder {
+            configuration: self.configuration,
+            media_engine: self.media_engine,
+            setting_engine: self.setting_engine,
+            interceptor: interceptor_registry.build(),
+        }
+    }
+
+    pub fn build(self) -> Result<RTCPeerConnection<I>> {
+        RTCPeerConnection::new(
+            self.configuration,
+            self.media_engine,
+            self.setting_engine,
+            self.interceptor,
+        )
+    }
+}
 
 /// The `RTCPeerConnection` interface represents a WebRTC connection between the local computer
 /// and a remote peer. It provides methods to connect to a remote peer, maintain and monitor
@@ -338,7 +420,10 @@ where
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
     //////////////////////////////////////////////////
-    pub(crate) configuration: RTCConfiguration<I>,
+    pub(crate) configuration: RTCConfiguration,
+    pub(crate) media_engine: MediaEngine,
+    pub(crate) setting_engine: SettingEngine,
+    pub(crate) interceptor: I,
 
     local_description: Option<RTCSessionDescription>,
     current_local_description: Option<RTCSessionDescription>,
@@ -430,11 +515,16 @@ where
     /// - [W3C RTCPeerConnection constructor]
     ///
     /// [W3C RTCPeerConnection constructor]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-constructor
-    pub fn new(mut configuration: RTCConfiguration<I>) -> Result<Self> {
+    pub(crate) fn new(
+        mut configuration: RTCConfiguration,
+        media_engine: MediaEngine,
+        setting_engine: SettingEngine,
+        interceptor: I,
+    ) -> Result<Self> {
         configuration.validate()?;
 
         let mut candidate_types = vec![];
-        if configuration.setting_engine.candidates.ice_lite {
+        if setting_engine.candidates.ice_lite {
             candidate_types.push(ice::candidate::CandidateType::Host);
         } else if configuration.ice_transport_policy == RTCIceTransportPolicy::Relay {
             candidate_types.push(ice::candidate::CandidateType::Relay);
@@ -448,62 +538,30 @@ where
             }
         }
 
-        let network_types = if configuration
-            .setting_engine
-            .candidates
-            .ice_network_types
-            .is_empty()
-        {
+        let network_types = if setting_engine.candidates.ice_network_types.is_empty() {
             ice::network_type::supported_network_types()
         } else {
-            configuration
-                .setting_engine
-                .candidates
-                .ice_network_types
-                .clone()
+            setting_engine.candidates.ice_network_types.clone()
         };
 
         let agent_config = AgentConfig {
-            lite: configuration.setting_engine.candidates.ice_lite,
+            lite: setting_engine.candidates.ice_lite,
             urls: validated_servers,
-            disconnected_timeout: configuration
-                .setting_engine
-                .timeout
-                .ice_disconnected_timeout,
-            failed_timeout: configuration.setting_engine.timeout.ice_failed_timeout,
-            keepalive_interval: configuration.setting_engine.timeout.ice_keepalive_interval,
+            disconnected_timeout: setting_engine.timeout.ice_disconnected_timeout,
+            failed_timeout: setting_engine.timeout.ice_failed_timeout,
+            keepalive_interval: setting_engine.timeout.ice_keepalive_interval,
             candidate_types,
             network_types,
-            host_acceptance_min_wait: configuration
-                .setting_engine
-                .timeout
-                .ice_host_acceptance_min_wait,
-            srflx_acceptance_min_wait: configuration
-                .setting_engine
-                .timeout
-                .ice_srflx_acceptance_min_wait,
-            prflx_acceptance_min_wait: configuration
-                .setting_engine
-                .timeout
-                .ice_prflx_acceptance_min_wait,
-            relay_acceptance_min_wait: configuration
-                .setting_engine
-                .timeout
-                .ice_relay_acceptance_min_wait,
-            multicast_dns_mode: configuration.setting_engine.multicast_dns.mode,
-            multicast_dns_local_name: configuration
-                .setting_engine
-                .multicast_dns
-                .local_name
-                .clone(),
-            multicast_dns_local_ip: configuration.setting_engine.multicast_dns.local_ip,
-            multicast_dns_query_timeout: configuration.setting_engine.multicast_dns.timeout,
-            local_ufrag: configuration
-                .setting_engine
-                .candidates
-                .username_fragment
-                .clone(),
-            local_pwd: configuration.setting_engine.candidates.password.clone(),
+            host_acceptance_min_wait: setting_engine.timeout.ice_host_acceptance_min_wait,
+            srflx_acceptance_min_wait: setting_engine.timeout.ice_srflx_acceptance_min_wait,
+            prflx_acceptance_min_wait: setting_engine.timeout.ice_prflx_acceptance_min_wait,
+            relay_acceptance_min_wait: setting_engine.timeout.ice_relay_acceptance_min_wait,
+            multicast_dns_mode: setting_engine.multicast_dns.mode,
+            multicast_dns_local_name: setting_engine.multicast_dns.local_name.clone(),
+            multicast_dns_local_ip: setting_engine.multicast_dns.local_ip,
+            multicast_dns_query_timeout: setting_engine.multicast_dns.timeout,
+            local_ufrag: setting_engine.candidates.username_fragment.clone(),
+            local_pwd: setting_engine.candidates.password.clone(),
 
             ..Default::default()
         };
@@ -515,20 +573,14 @@ where
         let certificates = configuration.certificates.drain(..).collect();
         let dtls_transport = RTCDtlsTransport::new(
             certificates,
-            configuration.setting_engine.answering_dtls_role,
-            configuration
-                .setting_engine
-                .srtp_protection_profiles
-                .clone(),
-            configuration
-                .setting_engine
-                .allow_insecure_verification_algorithm,
-            configuration.setting_engine.replay_protection,
+            setting_engine.answering_dtls_role,
+            setting_engine.srtp_protection_profiles.clone(),
+            setting_engine.allow_insecure_verification_algorithm,
+            setting_engine.replay_protection,
         )?;
 
         // Create the SCTP transport
-        let sctp_transport =
-            RTCSctpTransport::new(configuration.setting_engine.sctp_max_message_size);
+        let sctp_transport = RTCSctpTransport::new(setting_engine.sctp_max_message_size);
 
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);
@@ -545,6 +597,9 @@ where
 
         Ok(Self {
             configuration,
+            media_engine,
+            setting_engine,
+            interceptor,
             local_description: None,
             current_local_description: None,
             pending_local_description: None,
@@ -809,18 +864,14 @@ where
             return Err(Error::ErrIncorrectSignalingState);
         }
 
-        let mut connection_role = self
-            .configuration
-            .setting_engine
-            .answering_dtls_role
-            .to_connection_role();
+        let mut connection_role = self.setting_engine.answering_dtls_role.to_connection_role();
         if connection_role == ConnectionRole::Unspecified {
             connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
 
             if let Some(remote_description) = self.remote_description()
                 && let Some(parsed) = remote_description.parsed.as_ref()
                 && is_lite_set(parsed)
-                && !self.configuration.setting_engine.candidates.ice_lite
+                && !self.setting_engine.candidates.ice_lite
             {
                 connection_role = RTCDtlsRole::Server.to_connection_role();
             }
@@ -829,7 +880,7 @@ where
         let mut d = self.generate_matched_sdp(
             false, /*includeUnmatched */
             connection_role,
-            self.configuration.setting_engine.ignore_rid_pause_for_recv,
+            self.setting_engine.ignore_rid_pause_for_recv,
         )?;
 
         update_sdp_origin(&mut self.sdp_origin, &mut d);
@@ -1170,8 +1221,7 @@ where
         self.set_description(&remote_description, StateChangeOp::SetRemote)?;
 
         if let Some(parsed_remote_description) = &remote_description.parsed {
-            self.configuration
-                .media_engine
+            self.media_engine
                 .update_from_remote_description(parsed_remote_description)?;
 
             // Detect trickle ICE support from remote SDP (RFC 8838/RFC 9429 section 4.1.17)
@@ -1192,11 +1242,9 @@ where
             for transceiver in &mut self.rtp_transceivers {
                 if let Some(sender) = transceiver.sender_mut() {
                     let (is_rtx_enabled, is_fec_enabled) = (
-                        self.configuration
-                            .media_engine
+                        self.media_engine
                             .is_rtx_enabled(sender.kind(), RTCRtpTransceiverDirection::Sendonly),
-                        self.configuration
-                            .media_engine
+                        self.media_engine
                             .is_fec_enabled(sender.kind(), RTCRtpTransceiverDirection::Sendonly),
                     );
                     sender.configure_rtx_and_fec(is_rtx_enabled, is_fec_enabled);
@@ -1236,10 +1284,8 @@ where
                             RTCPeerConnection::find_by_mid(mid_value, &self.rtp_transceivers)
                         {
                             if direction == RTCRtpTransceiverDirection::Inactive {
-                                self.rtp_transceivers[i].stop(
-                                    &self.configuration.media_engine,
-                                    &mut self.configuration.interceptor,
-                                )?;
+                                self.rtp_transceivers[i]
+                                    .stop(&self.media_engine, &mut self.interceptor)?;
                             }
                             Some(&mut self.rtp_transceivers[i])
                         } else {
@@ -1275,7 +1321,7 @@ where
 
                             transceiver.set_codec_preferences_from_remote_description(
                                 media,
-                                &self.configuration.media_engine,
+                                &self.media_engine,
                             )?;
 
                             if transceiver.mid().is_none() {
@@ -1301,7 +1347,7 @@ where
 
                             transceiver.set_codec_preferences_from_remote_description(
                                 media,
-                                &self.configuration.media_engine,
+                                &self.media_engine,
                             )?;
 
                             if transceiver.mid().is_none() {
@@ -1353,7 +1399,7 @@ where
 
                         transceiver.set_codec_preferences_from_remote_description(
                             media,
-                            &self.configuration.media_engine,
+                            &self.media_engine,
                         )?;
                     }
                 }
@@ -1392,8 +1438,8 @@ where
                 // If both or neither agents are lite the offering agent is controlling.
                 // RFC 8445 S6.1.1
                 let local_ice_role = if (we_offer
-                    && remote_is_lite == self.configuration.setting_engine.candidates.ice_lite)
-                    || (remote_is_lite && !self.configuration.setting_engine.candidates.ice_lite)
+                    && remote_is_lite == self.setting_engine.candidates.ice_lite)
+                    || (remote_is_lite && !self.setting_engine.candidates.ice_lite)
                 {
                     RTCIceRole::Controlling
                 } else {
@@ -1597,12 +1643,12 @@ where
     /// # Specification
     ///
     /// See [getConfiguration](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getconfiguration)
-    pub fn get_configuration(&self) -> &RTCConfiguration<I> {
+    pub fn get_configuration(&self) -> &RTCConfiguration {
         &self.configuration
     }
 
     /// set_configuration updates the configuration of this PeerConnection object.
-    pub fn set_configuration(&mut self, configuration: RTCConfiguration<I>) -> Result<()> {
+    pub fn set_configuration(&mut self, configuration: RTCConfiguration) -> Result<()> {
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
@@ -1873,10 +1919,7 @@ where
 
         if let Some(sender) = self.rtp_transceivers[sender_id.0].sender_mut()
             && sender
-                .stop(
-                    &self.configuration.media_engine,
-                    &mut self.configuration.interceptor,
-                )
+                .stop(&self.media_engine, &mut self.interceptor)
                 .is_ok()
         {
             self.trigger_negotiation_needed();
@@ -1961,7 +2004,7 @@ where
 
         let transceiver = match direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
-                let codecs = self.configuration.media_engine.get_codecs_by_kind(kind);
+                let codecs = self.media_engine.get_codecs_by_kind(kind);
                 let (encoding, code_match_result) =
                     encoding_parameters_fuzzy_search(&send_encodings, &codecs);
                 if code_match_result != CodecMatch::None {

@@ -63,30 +63,22 @@ where
         };
 
         let params = PopulateSdpParams {
-            media_description_fingerprint: self
-                .configuration
-                .setting_engine
-                .sdp_media_level_fingerprints,
-            is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
+            media_description_fingerprint: self.setting_engine.sdp_media_level_fingerprints,
+            is_ice_lite: self.setting_engine.candidates.ice_lite,
             is_extmap_allow_mixed: true,
             connection_role: DEFAULT_DTLS_ROLE_OFFER.to_connection_role(),
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group: None,
-            sctp_max_message_size: self
-                .configuration
-                .setting_engine
-                .sctp_max_message_size
-                .as_usize(),
+            sctp_max_message_size: self.setting_engine.sctp_max_message_size.as_usize(),
             ignore_rid_pause_for_recv: false,
             write_ssrc_attributes_for_simulcast: self
-                .configuration
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
         };
         RTCPeerConnection::populate_sdp(
             d,
             &dtls_fingerprints,
-            &self.configuration.media_engine,
+            &self.media_engine,
             &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
@@ -209,30 +201,22 @@ where
         };
 
         let params = PopulateSdpParams {
-            media_description_fingerprint: self
-                .configuration
-                .setting_engine
-                .sdp_media_level_fingerprints,
-            is_ice_lite: self.configuration.setting_engine.candidates.ice_lite,
+            media_description_fingerprint: self.setting_engine.sdp_media_level_fingerprints,
+            is_ice_lite: self.setting_engine.candidates.ice_lite,
             is_extmap_allow_mixed,
             connection_role,
             ice_gathering_state: self.ice_transport().ice_gathering_state,
             match_bundle_group,
-            sctp_max_message_size: self
-                .configuration
-                .setting_engine
-                .sctp_max_message_size
-                .as_usize(),
+            sctp_max_message_size: self.setting_engine.sctp_max_message_size.as_usize(),
             ignore_rid_pause_for_recv,
             write_ssrc_attributes_for_simulcast: self
-                .configuration
                 .setting_engine
                 .write_ssrc_attributes_for_simulcast,
         };
         RTCPeerConnection::populate_sdp(
             d,
             &dtls_fingerprints,
-            &self.configuration.media_engine,
+            &self.media_engine,
             &mut self.rtp_transceivers,
             &candidates,
             &ice_params,
@@ -499,8 +483,8 @@ where
                 }
 
                 sender.interceptor_local_streams_op(
-                    &self.configuration.media_engine,
-                    &mut self.configuration.interceptor,
+                    &self.media_engine,
+                    &mut self.interceptor,
                     true,
                 );
 
@@ -604,8 +588,8 @@ where
                     ));
 
                     receiver.interceptor_remote_streams_op(
-                        &self.configuration.media_engine,
-                        &mut self.configuration.interceptor,
+                        &self.media_engine,
+                        &mut self.interceptor,
                         true,
                     );
                 } else if only_one_rtp_transceiver {
@@ -876,11 +860,9 @@ where
         track: &MediaStreamTrack,
     ) -> Vec<RTCRtpEncodingParameters> {
         let (is_rtx_enabled, is_fec_enabled) = (
-            self.configuration
-                .media_engine
+            self.media_engine
                 .is_rtx_enabled(track.kind(), RTCRtpTransceiverDirection::Sendonly),
-            self.configuration
-                .media_engine
+            self.media_engine
                 .is_fec_enabled(track.kind(), RTCRtpTransceiverDirection::Sendonly),
         );
 
@@ -923,18 +905,9 @@ where
     /// Updates stats after ICE restart with the new credentials from the agent.
     pub(super) fn ice_restart(&mut self) -> Result<()> {
         let (local_ufrag, local_pwd, keep_local_candidates) = (
-            self.configuration
-                .setting_engine
-                .candidates
-                .username_fragment
-                .clone(),
-            self.configuration
-                .setting_engine
-                .candidates
-                .password
-                .clone(),
+            self.setting_engine.candidates.username_fragment.clone(),
+            self.setting_engine.candidates.password.clone(),
             !self
-                .configuration
                 .setting_engine
                 .candidates
                 .discard_local_candidates_during_ice_restart,

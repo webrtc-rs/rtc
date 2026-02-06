@@ -174,7 +174,7 @@ where
     pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_, I> {
         InterceptorHandler::new(
             &mut self.pipeline_context.interceptor_handler_context,
-            &mut self.configuration.interceptor,
+            &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
     }
@@ -183,8 +183,8 @@ where
         EndpointHandler::new(
             &mut self.pipeline_context.endpoint_handler_context,
             &mut self.rtp_transceivers,
-            &self.configuration.media_engine,
-            &mut self.configuration.interceptor,
+            &self.media_engine,
+            &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
     }

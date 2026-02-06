@@ -260,7 +260,7 @@ where
             .sender
             .as_ref()
             .unwrap()
-            .get_capabilities(kind, &self.peer_connection.configuration.media_engine)
+            .get_capabilities(kind, &self.peer_connection.media_engine)
     }
     /// Updates the RTP send parameters for this sender.
     ///
@@ -300,7 +300,7 @@ where
             .sender
             .as_mut()
             .unwrap()
-            .get_parameters(&self.peer_connection.configuration.media_engine)
+            .get_parameters(&self.peer_connection.media_engine)
     }
 
     /// Replaces the currently sent track with a new media track.
@@ -367,7 +367,7 @@ where
                 .sender
                 .as_mut()
                 .unwrap(),
-            &mut self.peer_connection.configuration.media_engine,
+            &mut self.peer_connection.media_engine,
         );
 
         if !sender
