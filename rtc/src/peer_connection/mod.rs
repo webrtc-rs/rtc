@@ -260,6 +260,7 @@ use crate::peer_connection::configuration::{
     RTCConfiguration, RTCIceTransportPolicy,
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
 };
+use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::handler::dtls::DtlsHandlerContext;
 use crate::peer_connection::handler::ice::IceHandlerContext;
@@ -270,6 +271,7 @@ use crate::peer_connection::sdp::{
     get_application_media_section_sctp_port, get_mid_value, get_peer_direction,
     has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType, update_sdp_origin,
 };
+use crate::peer_connection::state::RTCIceGatheringState;
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
@@ -1562,6 +1564,13 @@ where
 
         if !candidate_value.is_empty() {
             self.add_ice_local_candidate(candidate_value, local_candidate.url.as_deref())?;
+        } else {
+            // Emit OnIceGatheringStateChangeEvent
+            self.pipeline_context.event_outs.push_back(
+                RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent(
+                    RTCIceGatheringState::Complete,
+                ),
+            );
         }
 
         Ok(())
