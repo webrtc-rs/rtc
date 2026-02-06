@@ -314,6 +314,8 @@ pub trait Interceptor:
         Time = Instant,
         Error = shared::error::Error,
     > + Sized
+    + Send
+    + Sync
 {
     /// Wrap this interceptor with another layer.
     ///
