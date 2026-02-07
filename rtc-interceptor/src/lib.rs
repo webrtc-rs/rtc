@@ -316,6 +316,7 @@ pub trait Interceptor:
     > + Sized
     + Send
     + Sync
+    + 'static
 {
     /// Wrap this interceptor with another layer.
     ///
