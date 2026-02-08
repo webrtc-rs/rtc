@@ -25,7 +25,7 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | cargo run --example simulcast`
+Run `echo $BROWSER_SDP | cargo run --example simulcast_bidirection`
 
 #### Windows
 
