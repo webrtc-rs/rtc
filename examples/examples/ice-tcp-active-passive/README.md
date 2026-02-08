@@ -120,21 +120,21 @@ This will:
 Add `--debug` flag for detailed logging:
 
 ```bash
-cargo run --example ice-tcp-active-passive-answer -- --debug
-cargo run --example ice-tcp-active-passive-offer -- --debug
+cargo run --example ice-tcp-passive-answer -- --debug
+cargo run --example ice-tcp-active-offer -- --debug
 ```
 
 ### Custom Addresses
 
 ```bash
 # Answer side
-cargo run --example ice-tcp-active-passive-answer -- \
+cargo run --example ice-tcp-passive-answer -- \
   --tcp-address 0.0.0.0:9443 \
   --http-address 0.0.0.0:60001 \
   --offer-address localhost:50001
 
 # Offer side
-cargo run --example ice-tcp-active-passive-offer -- \
+cargo run --example ice-tcp-active-offer -- \
   --http-address 0.0.0.0:50001 \
   --answer-address localhost:60001
 ```

@@ -6,12 +6,6 @@ With this example we have pre-made GStreamer and ffmpeg pipelines, but you can u
 
 ## Instructions
 
-### Build rtp-to-webrtc
-
-```shell
-cargo build --example rtp-to-webrtc
-```
-
 ### Open jsfiddle example page
 
 [jsfiddle.net](https://jsfiddle.net/z7ms3u5r/) you should see two text-areas and a 'Start Session' button
@@ -22,12 +16,12 @@ In the jsfiddle the top textarea is your browser's SessionDescription, copy that
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/rtp-to-webrtc`
+Run `echo $BROWSER_SDP | cargo run --example rtp-to-webrtc`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/rtp-to-webrtc < my_file`
+1. Run `cargo run --example rtp-to-webrtc < my_file`
 
 ### Send RTP to listening socket
 

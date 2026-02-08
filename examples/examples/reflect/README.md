@@ -4,12 +4,6 @@ reflect demonstrates how with one PeerConnection you can send video to webrtc-rs
 
 ## Instructions
 
-### Build reflect
-
-```shell
-cargo build --example reflect
-```
-
 ### Open reflect example page
 
 [jsfiddle.net](https://jsfiddle.net/g643ft1k/) you should see two text-areas and a 'Start Session' button.
@@ -20,12 +14,12 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/reflect -a -v`
+Run `echo $BROWSER_SDP | cargo run --example reflect -- -a -v`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/reflect -a -v < my_file`
+1. Run `cargo run --example reflect -- -a -v < my_file`
 
 ### Input reflect's SessionDescription into your browser
 

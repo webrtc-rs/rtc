@@ -5,12 +5,6 @@ H264/H265 and Opus to disk.
 
 ## Instructions
 
-### Build save-to-disk-h26x
-
-```shell
-cargo build --example save-to-disk-h26x
-```
-
 ### Open save-to-disk example page
 
 [jsfiddle.net](https://jsfiddle.net/vfmcg8rk/1/) you should see your Webcam, two text-areas and a 'Start Session' button
@@ -21,17 +15,17 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-1. Run `echo $BROWSER_SDP | ./target/debug/examples/save-to-disk-h26x`
+1. Run `echo $BROWSER_SDP | cargo run --example save-to-disk-h26x`
 
-2. Run `echo $BROWSER_SDP | ./target/debug/examples/save-to-disk-h26x --hevc`
+2. Run `echo $BROWSER_SDP | cargo run --example save-to-disk-h26x --hevc`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
 
-2. Run `./target/debug/examples/save-to-disk-h26x < my_file`
+2. Run `cargo run --example save-to-disk-h26x < my_file`
 
-3. Run `./target/debug/examples/save-to-disk-h26x --hevc < my_file`
+3. Run `cargo run --example save-to-disk-h26x --hevc < my_file`
 
 ### Input save-to-disk-h26x's SessionDescription into your browser
 

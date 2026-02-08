@@ -17,12 +17,12 @@ We will use this value in the next step.
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | save-to-disk-av1`
+Run `echo $BROWSER_SDP | cargo run --example save-to-disk-av1`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `save-to-disk-av1 < my_file`
+1. Run `cargo run --example save-to-disk-av1 < my_file`
 
 ### Input save-to-disk-av1's SessionDescription into your browser
 
@@ -31,5 +31,5 @@ Copy the text that `save-to-disk-av1` just emitted and copy into second text are
 ### Hit 'Start Session' in jsfiddle, wait, close jsfiddle, enjoy your video!
 
 In the folder you ran `save-to-disk-av1` you should now have a file `output.ivf` play with your video player of choice!
-> Note: In order to correctly create the files, the remote client (JSFiddle) should be closed. The Go example will
-> automatically close itself.
+
+Congrats, you have used WebRTC.rs!

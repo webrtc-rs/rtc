@@ -4,19 +4,15 @@ data-channels-create is a WebRTC.rs application that shows how you can send/recv
 
 ## Instructions
 
-### Build data-channels-create
-
-```shell
-cargo build --example data-channels-create
-```
-
 ### Open data-channels-create example page
 
 [jsfiddle.net](https://jsfiddle.net/swgxrp94/20/)
 
 ### Run data-channels-create
 
-Just run `data-channels-create`.
+```shell
+cargo run --example data-channels-create
+```
 
 ### Input data-channels-create's SessionDescription into your browser
 

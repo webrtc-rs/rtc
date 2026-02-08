@@ -59,7 +59,7 @@ struct Cli {
     host: String,
     #[arg(long, default_value_t = 0)]
     port: u16,
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "output.h264")]
     video: Option<String>,
     #[arg(short, long)]
     audio: Option<String>,

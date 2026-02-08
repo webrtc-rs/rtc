@@ -105,12 +105,6 @@ let config = RTCConfigurationBuilder::new()
 [jsfiddle.net](https://jsfiddle.net/zurq6j7x/) you should see two text-areas, 'Start Session' button and 'Copy browser
 SessionDescription to clipboard'
 
-### Build
-
-```bash
-cargo build --example rtcp-processing
-```
-
 ### Run
 
 ```bash
