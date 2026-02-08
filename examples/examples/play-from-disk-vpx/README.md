@@ -12,12 +12,6 @@ ffmpeg -i $INPUT_FILE -g 30 -c libvpx-vp9 output_vp9.ivf
 ffmpeg -i $INPUT_FILE -map 0:a -c:a dca -ac 2 -c:a libopus -page_duration 20000 -vn output.ogg
 ```
 
-### Build play-from-disk-vpx
-
-```shell
-cargo build --example play-from-disk-vpx
-```
-
 ### Open play-from-disk-vpx example page
 
 [jsfiddle.net](https://jsfiddle.net/8kup9mvn/) you should see two text-areas and a 'Start Session' button
@@ -28,14 +22,14 @@ The `output_vp8.ivf`/`output_vp9.ivf` you created should be in the same director
 
 #### Linux/macOS
 
-1. Run `echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-vpx -v examples/test-data/output_vp8.ivf -a examples/test-data/output.ogg`
-2. Run `echo $BROWSER_SDP | ./target/debug/examples/play-from-disk-vpx -v examples/test-data/output_vp9.ivf -a examples/test-data/output.ogg --vp9`
+1. Run `echo $BROWSER_SDP | cargo run --example play-from-disk-vpx -- -v examples/test-data/output_vp8.ivf -a examples/test-data/output.ogg`
+2. Run `echo $BROWSER_SDP | cargo run --example play-from-disk-vpx -- -v examples/test-data/output_vp9.ivf -a examples/test-data/output.ogg --vp9`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-2. Run `./target/debug/examples/play-from-disk-vpx -v examples/test-data/output_vp8.ivf -a examples/test-data/output.ogg < my_file`
-3. Run `./target/debug/examples/play-from-disk-vpx -v examples/test-data/output_vp9.ivf -a examples/test-data/output.ogg --vp9 < my_file`
+2. Run `cargo run --example play-from-disk-vpx -- -v examples/test-data/output_vp8.ivf -a examples/test-data/output.ogg < my_file`
+3. Run `cargo run --example play-from-disk-vpx -- -v examples/test-data/output_vp9.ivf -a examples/test-data/output.ogg --vp9 < my_file`
 
 ### Input play-from-disk-vpx's SessionDescription into your browser
 

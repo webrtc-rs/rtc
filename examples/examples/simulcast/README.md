@@ -8,12 +8,6 @@ is selected.
 
 ## Instructions
 
-### Build simulcast
-
-```shell
-cargo build --example simulcast
-```
-
 ### Open simulcast example page
 
 [jsfiddle.net](https://jsfiddle.net/tz4d5bhj) you should see two text-areas and a 'Start Session' button.
@@ -24,12 +18,12 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/simulcast`
+Run `echo $BROWSER_SDP | cargo run --example simulcast`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/simulcast < my_file`
+1. Run `cargo run --example simulcast < my_file`
 
 ### Input simulcast's SessionDescription into your browser
 

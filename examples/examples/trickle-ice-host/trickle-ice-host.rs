@@ -5,6 +5,7 @@
 //! This parallelizes establishing a connection with a remote peer and starting
 //! sessions with TURN servers.
 
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
+use env_logger::Target;
 use futures_util::{SinkExt, StreamExt};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
@@ -46,6 +48,10 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400);
 struct Cli {
     #[arg(short, long)]
     debug: bool,
+    #[arg(short, long, default_value_t = format!("INFO"))]
+    log_level: String,
+    #[arg(short, long, default_value_t = format!(""))]
+    output_log_file: String,
 }
 
 static INDEX: &str = "examples/examples/trickle-ice/index.html";
@@ -60,9 +66,22 @@ enum WsMessage {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let output_log_file = cli.output_log_file;
+    let log_level = log::LevelFilter::from_str(&cli.log_level)?;
 
     if cli.debug {
         env_logger::Builder::new()
+            .target(if !output_log_file.is_empty() {
+                Target::Pipe(Box::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(output_log_file)?,
+                ))
+            } else {
+                Target::Stdout
+            })
             .format(|buf, record| {
                 writeln!(
                     buf,
@@ -74,7 +93,7 @@ async fn main() -> Result<()> {
                     record.args()
                 )
             })
-            .filter(None, log::LevelFilter::Trace)
+            .filter(None, log_level)
             .init();
     }
 

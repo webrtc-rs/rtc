@@ -43,15 +43,14 @@ ffmpeg -f lavfi -t 10 -i "sine=frequency=480" \
 
 2. Run the example from the examples directory:
    ```sh
-   cd rtc/examples
    cargo run --example play-from-disk-playlist-control
    # or with custom address and playlist file
-   cargo run --example play-from-disk-playlist-control -- --addr localhost:8080 --playlist-file my_music.ogg
+   cargo run --example play-from-disk-playlist-control -- --addr 127.0.0.1:8080 --playlist-file my_music.ogg
    ```
 
 3. Open the hosted UI in your browser and press **Start Session**:
    ```
-   http://localhost:8080
+   http://127.0.0.1:8080
    ```
 
    Signaling is WHEP-style: the browser POSTs plain SDP to `/whep` and the server responds with the answer SDP. Use the

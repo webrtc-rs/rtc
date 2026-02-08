@@ -22,12 +22,12 @@ We will use this value in the next step.
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/stats`
+Run `echo $BROWSER_SDP | cargo run --example stats`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/stats < my_file`
+1. Run `cargo run --example stats < my_file`
 
 ### Input stats' SessionDescription into your browser
 

@@ -40,12 +40,11 @@ From the pion/turn repository:
 
 ## Instructions
 
-### Run with default settings (Host + ServerReflexive + Relay)
+### Run with default settings (Host)
 
 From the `rtc` directory, execute:
 
 ```bash
-# Requires a TURN server running at 127.0.0.1:3478 with credentials user=pass
 cargo run --example trickle-ice
 ```
 
@@ -67,6 +66,7 @@ cargo run --example trickle-ice -- --enable-host
 cargo run --example trickle-ice -- --enable-srflx
 
 # Only TURN relay candidates
+# Requires a TURN server running at 127.0.0.1:3478 with credentials user=pass
 cargo run --example trickle-ice -- --enable-relay
 
 # Host + Relay (no STUN)

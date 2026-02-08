@@ -4,12 +4,6 @@ swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoi
 
 ## Instructions
 
-### Build swap-tracks
-
-```shell
-cargo build --example swap-tracks
-```
-
 ### Open swap-tracks example page
 
 [jsfiddle.net](https://jsfiddle.net/1rx5on86/) you should see two text-areas and a 'Start Session' button.
@@ -20,12 +14,12 @@ In the jsfiddle the top textarea is your browser, copy that and:
 
 #### Linux/macOS
 
-Run `echo $BROWSER_SDP | ./target/debug/examples/swap-tracks`
+Run `echo $BROWSER_SDP | cargo run --example swap-tracks`
 
 #### Windows
 
 1. Paste the SessionDescription into a file.
-1. Run `./target/debug/examples/swap-tracks < my_file`
+1. Run `cargo run --example swap-tracks < my_file`
 
 ### Input swap-tracks's SessionDescription into your browser
 

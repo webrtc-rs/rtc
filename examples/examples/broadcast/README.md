@@ -25,12 +25,6 @@ bandwidth constrained.
 
 ## Instructions
 
-### Build broadcast
-
-```shell
-cargo build --example broadcast
-```
-
 ### Open broadcast example page
 
 [jsfiddle.net](https://jsfiddle.net/us4h58jx/) You should see two buttons 'Publish a Broadcast' and 'Join a Broadcast'
@@ -39,7 +33,9 @@ cargo build --example broadcast
 
 #### Linux/macOS
 
-Run `broadcast`
+```shell
+cargo run --example broadcast
+```
 
 ### Start a publisher
 
