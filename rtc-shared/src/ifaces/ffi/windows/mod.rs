@@ -1,6 +1,6 @@
 #![allow(unused, non_upper_case_globals)]
 
-use winapi::shared::basetsd::{UINT32, UINT8, ULONG64};
+use winapi::shared::basetsd::{UINT8, UINT32, ULONG64};
 use winapi::shared::guiddef::GUID;
 use winapi::shared::minwindef::{BYTE, DWORD, PULONG, ULONG};
 use winapi::shared::ws2def::SOCKET_ADDRESS;
@@ -18,8 +18,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{io, mem, ptr};
 
 use winapi::shared::winerror::{
-    ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER,
-    ERROR_NOT_ENOUGH_MEMORY, ERROR_NO_DATA, ERROR_SUCCESS,
+    ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER, ERROR_NO_DATA,
+    ERROR_NOT_ENOUGH_MEMORY, ERROR_SUCCESS,
 };
 use winapi::shared::ws2def::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN};
 use winapi::shared::ws2ipdef::SOCKADDR_IN6;
@@ -242,119 +242,125 @@ pub enum TunnelType {
     IpHttps = 15,
 }
 
-unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV4 { unsafe {
-    let socket_addr = &unicast_addr.address;
+unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV4 {
+    unsafe {
+        let socket_addr = &unicast_addr.address;
 
-    let in_addr: SOCKADDR_IN = mem::transmute(*socket_addr.lpSockaddr);
-    let sin_addr = in_addr.sin_addr.S_un;
+        let in_addr: SOCKADDR_IN = mem::transmute(*socket_addr.lpSockaddr);
+        let sin_addr = in_addr.sin_addr.S_un;
 
-    let v4_addr = Ipv4Addr::new(
-        *sin_addr.S_addr() as u8,
-        (*sin_addr.S_addr() >> 8) as u8,
-        (*sin_addr.S_addr() >> 16) as u8,
-        (*sin_addr.S_addr() >> 24) as u8,
-    );
+        let v4_addr = Ipv4Addr::new(
+            *sin_addr.S_addr() as u8,
+            (*sin_addr.S_addr() >> 8) as u8,
+            (*sin_addr.S_addr() >> 16) as u8,
+            (*sin_addr.S_addr() >> 24) as u8,
+        );
 
-    SocketAddrV4::new(v4_addr, 0)
-}}
-
-unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV6 { unsafe {
-    let socket_addr = &unicast_addr.address;
-
-    let sock_addr6: *const SOCKADDR_IN6 = socket_addr.lpSockaddr as *const SOCKADDR_IN6;
-    let in6_addr: SOCKADDR_IN6 = *sock_addr6;
-
-    let v6_addr = (*in6_addr.sin6_addr.u.Word()).into();
-
-    SocketAddrV6::new(
-        v6_addr,
-        0,
-        in6_addr.sin6_flowinfo,
-        *in6_addr.u.sin6_scope_id(),
-    )
-}}
-
-unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> { unsafe {
-    let mut length = buffer.capacity() as u32;
-
-    let ret_code = GetAdaptersAddresses(
-        AF_UNSPEC as u32,
-        0,
-        ptr::null_mut(),
-        buffer.as_mut_ptr(),
-        &mut length,
-    );
-    match ret_code {
-        ERROR_SUCCESS => Ok(()),
-        ERROR_ADDRESS_NOT_ASSOCIATED => Err(io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
-            "An address has not yet been associated with the network endpoint.",
-        )),
-        ERROR_BUFFER_OVERFLOW => {
-            buffer.reserve_exact(length as usize);
-
-            local_ifaces_with_buffer(buffer)
-        }
-        ERROR_INVALID_PARAMETER => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "One of the parameters is invalid.",
-        )),
-        ERROR_NOT_ENOUGH_MEMORY => Err(io::Error::other(
-            "Insufficient memory resources are available to complete the operation.",
-        )),
-        ERROR_NO_DATA => Err(io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
-            "No addresses were found for the requested parameters.",
-        )),
-        _ => Err(io::Error::other(
-            "Some Other Error Occurred.",
-        )),
+        SocketAddrV4::new(v4_addr, 0)
     }
-}}
+}
 
-unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> Vec<Interface> { unsafe {
-    let mut adapter_addresses = Vec::new();
+unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV6 {
+    unsafe {
+        let socket_addr = &unicast_addr.address;
 
-    while !adapter_addr.is_null() {
-        let curr_adapter_addr = &*adapter_addr;
+        let sock_addr6: *const SOCKADDR_IN6 = socket_addr.lpSockaddr as *const SOCKADDR_IN6;
+        let in6_addr: SOCKADDR_IN6 = *sock_addr6;
 
-        let mut unicast_addr = curr_adapter_addr.all.first_unicast_address;
-        while !unicast_addr.is_null() {
-            let curr_unicast_addr = &*unicast_addr;
+        let v6_addr = (*in6_addr.sin6_addr.u.Word()).into();
 
-            // For some reason, some IpDadState::IpDadStateDeprecated addresses are return
-            // These contain BOGUS interface indices and will cause problesm if used
-            if curr_unicast_addr.dad_state != IpDadState::Deprecated {
-                if is_ipv4_enabled(curr_unicast_addr) {
-                    adapter_addresses.push(Interface {
-                        name: "".to_string(),
-                        kind: Kind::Ipv4,
-                        addr: Some(SocketAddr::V4(v4_socket_from_adapter(curr_unicast_addr))),
-                        mask: None,
-                        hop: None,
-                    });
-                } else if is_ipv6_enabled(curr_unicast_addr) {
-                    let mut v6_sock = v6_socket_from_adapter(curr_unicast_addr);
-                    // Make sure the scope id is set for ALL interfaces, not just link-local
-                    v6_sock.set_scope_id(curr_adapter_addr.xp.ipv6_if_index);
-                    adapter_addresses.push(Interface {
-                        name: "".to_string(),
-                        kind: Kind::Ipv6,
-                        addr: Some(SocketAddr::V6(v6_sock)),
-                        mask: None,
-                        hop: None,
-                    });
+        SocketAddrV6::new(
+            v6_addr,
+            0,
+            in6_addr.sin6_flowinfo,
+            *in6_addr.u.sin6_scope_id(),
+        )
+    }
+}
+
+unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> {
+    unsafe {
+        let mut length = buffer.capacity() as u32;
+
+        let ret_code = GetAdaptersAddresses(
+            AF_UNSPEC as u32,
+            0,
+            ptr::null_mut(),
+            buffer.as_mut_ptr(),
+            &mut length,
+        );
+        match ret_code {
+            ERROR_SUCCESS => Ok(()),
+            ERROR_ADDRESS_NOT_ASSOCIATED => Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "An address has not yet been associated with the network endpoint.",
+            )),
+            ERROR_BUFFER_OVERFLOW => {
+                buffer.reserve_exact(length as usize);
+
+                local_ifaces_with_buffer(buffer)
+            }
+            ERROR_INVALID_PARAMETER => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "One of the parameters is invalid.",
+            )),
+            ERROR_NOT_ENOUGH_MEMORY => Err(io::Error::other(
+                "Insufficient memory resources are available to complete the operation.",
+            )),
+            ERROR_NO_DATA => Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "No addresses were found for the requested parameters.",
+            )),
+            _ => Err(io::Error::other("Some Other Error Occurred.")),
+        }
+    }
+}
+
+unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> Vec<Interface> {
+    unsafe {
+        let mut adapter_addresses = Vec::new();
+
+        while !adapter_addr.is_null() {
+            let curr_adapter_addr = &*adapter_addr;
+
+            let mut unicast_addr = curr_adapter_addr.all.first_unicast_address;
+            while !unicast_addr.is_null() {
+                let curr_unicast_addr = &*unicast_addr;
+
+                // For some reason, some IpDadState::IpDadStateDeprecated addresses are return
+                // These contain BOGUS interface indices and will cause problesm if used
+                if curr_unicast_addr.dad_state != IpDadState::Deprecated {
+                    if is_ipv4_enabled(curr_unicast_addr) {
+                        adapter_addresses.push(Interface {
+                            name: "".to_string(),
+                            kind: Kind::Ipv4,
+                            addr: Some(SocketAddr::V4(v4_socket_from_adapter(curr_unicast_addr))),
+                            mask: None,
+                            hop: None,
+                        });
+                    } else if is_ipv6_enabled(curr_unicast_addr) {
+                        let mut v6_sock = v6_socket_from_adapter(curr_unicast_addr);
+                        // Make sure the scope id is set for ALL interfaces, not just link-local
+                        v6_sock.set_scope_id(curr_adapter_addr.xp.ipv6_if_index);
+                        adapter_addresses.push(Interface {
+                            name: "".to_string(),
+                            kind: Kind::Ipv6,
+                            addr: Some(SocketAddr::V6(v6_sock)),
+                            mask: None,
+                            hop: None,
+                        });
+                    }
                 }
+
+                unicast_addr = curr_unicast_addr.next;
             }
 
-            unicast_addr = curr_unicast_addr.next;
+            adapter_addr = curr_adapter_addr.all.next;
         }
 
-        adapter_addr = curr_adapter_addr.all.next;
+        adapter_addresses
     }
-
-    adapter_addresses
-}}
+}
 
 /// Query the local system for all interface addresses.
 pub fn ifaces() -> Result<Vec<Interface>, ::std::io::Error> {
@@ -368,24 +374,28 @@ pub fn ifaces() -> Result<Vec<Interface>, ::std::io::Error> {
     }
 }
 
-unsafe fn is_ipv4_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool { unsafe {
-    if unicast_addr.length != 0 {
-        let socket_addr = &unicast_addr.address;
-        let sa_family = (*socket_addr.lpSockaddr).sa_family;
+unsafe fn is_ipv4_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
+    unsafe {
+        if unicast_addr.length != 0 {
+            let socket_addr = &unicast_addr.address;
+            let sa_family = (*socket_addr.lpSockaddr).sa_family;
 
-        sa_family == AF_INET as u16
-    } else {
-        false
+            sa_family == AF_INET as u16
+        } else {
+            false
+        }
     }
-}}
+}
 
-unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool { unsafe {
-    if unicast_addr.length != 0 {
-        let socket_addr = &unicast_addr.address;
-        let sa_family = (*socket_addr.lpSockaddr).sa_family;
+unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
+    unsafe {
+        if unicast_addr.length != 0 {
+            let socket_addr = &unicast_addr.address;
+            let sa_family = (*socket_addr.lpSockaddr).sa_family;
 
-        sa_family == AF_INET6 as u16
-    } else {
-        false
+            sa_family == AF_INET6 as u16
+        } else {
+            false
+        }
     }
-}}
+}
