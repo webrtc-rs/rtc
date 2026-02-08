@@ -1,6 +1,10 @@
 #![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 
+#[cfg(target_family = "windows")]
+#[macro_use]
+extern crate bitflags;
+
 #[cfg(feature = "crypto")]
 pub mod crypto;
 

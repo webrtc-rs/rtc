@@ -1,6 +1,6 @@
 #![allow(unused, non_upper_case_globals)]
 
-use winapi::shared::basetsd::{UINT8, UINT32, ULONG64};
+use winapi::shared::basetsd::{UINT32, UINT8, ULONG64};
 use winapi::shared::guiddef::GUID;
 use winapi::shared::minwindef::{BYTE, DWORD, PULONG, ULONG};
 use winapi::shared::ws2def::SOCKET_ADDRESS;
@@ -18,8 +18,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{io, mem, ptr};
 
 use winapi::shared::winerror::{
-    ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER, ERROR_NO_DATA,
-    ERROR_NOT_ENOUGH_MEMORY, ERROR_SUCCESS,
+    ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER,
+    ERROR_NOT_ENOUGH_MEMORY, ERROR_NO_DATA, ERROR_SUCCESS,
 };
 use winapi::shared::ws2def::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN};
 use winapi::shared::ws2ipdef::SOCKADDR_IN6;
@@ -29,7 +29,7 @@ const PREALLOC_ADAPTERS_LEN: usize = 15 * 1024;
 use crate::ifaces::{Interface, Kind, NextHop};
 
 #[link(name = "iphlpapi")]
-extern "system" {
+unsafe extern "system" {
     pub fn GetAdaptersAddresses(
         family: ULONG,
         flags: ULONG,
@@ -183,69 +183,69 @@ bitflags! {
 
 #[repr(C)]
 pub enum IpPrefixOrigin {
-    IpPrefixOriginOther = 0,
-    IpPrefixOriginManual,
-    IpPrefixOriginWellKnown,
-    IpPrefixOriginDhcp,
-    IpPrefixOriginRouterAdvertisement,
-    IpPrefixOriginUnchanged = 16,
+    Other = 0,
+    Manual,
+    WellKnown,
+    Dhcp,
+    RouterAdvertisement,
+    Unchanged = 16,
 }
 
 #[repr(C)]
 pub enum IpSuffixOrigin {
-    IpSuffixOriginOther = 0,
-    IpSuffixOriginManual,
-    IpSuffixOriginWellKnown,
-    IpSuffixOriginDhcp,
-    IpSuffixOriginLinkLayerAddress,
-    IpSuffixOriginRandom,
-    IpSuffixOriginUnchanged = 16,
+    Other = 0,
+    Manual,
+    WellKnown,
+    Dhcp,
+    LinkLayerAddress,
+    Random,
+    Unchanged = 16,
 }
 
 #[derive(PartialEq, Eq)]
 #[repr(C)]
 pub enum IpDadState {
-    IpDadStateInvalid = 0,
-    IpDadStateTentative,
-    IpDadStateDuplicate,
-    IpDadStateDeprecated,
-    IpDadStatePreferred,
+    Invalid = 0,
+    Tentative,
+    Duplicate,
+    Deprecated,
+    Preferred,
 }
 
 #[repr(C)]
 pub enum IfOperStatus {
-    IfOperStatusUp = 1,
-    IfOperStatusDown = 2,
-    IfOperStatusTesting = 3,
-    IfOperStatusUnknown = 4,
-    IfOperStatusDormant = 5,
-    IfOperStatusNotPresent = 6,
-    IfOperStatusLowerLayerDown = 7,
+    Up = 1,
+    Down = 2,
+    Testing = 3,
+    Unknown = 4,
+    Dormant = 5,
+    NotPresent = 6,
+    LowerLayerDown = 7,
 }
 
 #[repr(C)]
 pub enum NetIfConnectionType {
-    NetIfConnectionDedicated = 1,
-    NetIfConnectionPassive = 2,
-    NetIfConnectionDemand = 3,
-    NetIfConnectionMaximum = 4,
+    Dedicated = 1,
+    Passive = 2,
+    Demand = 3,
+    Maximum = 4,
 }
 
 #[repr(C)]
 pub enum TunnelType {
-    TunnelTypeNone = 0,
-    TunnelTypeOther = 1,
-    TunnelTypeDirect = 2,
-    TunnelType6To4 = 11,
-    TunnelTypeIsatap = 13,
-    TunnelTypeTeredo = 14,
-    TunnelTypeIpHttps = 15,
+    None = 0,
+    Other = 1,
+    Direct = 2,
+    V6ToV4 = 11,
+    Isatap = 13,
+    Teredo = 14,
+    IpHttps = 15,
 }
 
 unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV4 {
     let socket_addr = &unicast_addr.address;
 
-    let in_addr: SOCKADDR_IN = mem::transmute(*socket_addr.lpSockaddr);
+    let in_addr: SOCKADDR_IN = unsafe { mem::transmute(*socket_addr.lpSockaddr) };
     let sin_addr = in_addr.sin_addr.S_un;
 
     let v4_addr = Ipv4Addr::new(
@@ -299,16 +299,14 @@ unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> {
             io::ErrorKind::InvalidInput,
             "One of the parameters is invalid.",
         )),
-        ERROR_NOT_ENOUGH_MEMORY => Err(io::Error::new(
-            io::ErrorKind::Other,
+        ERROR_NOT_ENOUGH_MEMORY => Err(io::Error::other(
             "Insufficient memory resources are available to complete the operation.",
         )),
         ERROR_NO_DATA => Err(io::Error::new(
             io::ErrorKind::AddrNotAvailable,
             "No addresses were found for the requested parameters.",
         )),
-        _ => Err(io::Error::new(
-            io::ErrorKind::Other,
+        _ => Err(io::Error::other(
             "Some Other Error Occurred.",
         )),
     }
@@ -326,7 +324,7 @@ unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> 
 
             // For some reason, some IpDadState::IpDadStateDeprecated addresses are return
             // These contain BOGUS interface indices and will cause problesm if used
-            if curr_unicast_addr.dad_state != IpDadState::IpDadStateDeprecated {
+            if curr_unicast_addr.dad_state != IpDadState::Deprecated {
                 if is_ipv4_enabled(curr_unicast_addr) {
                     adapter_addresses.push(Interface {
                         name: "".to_string(),
