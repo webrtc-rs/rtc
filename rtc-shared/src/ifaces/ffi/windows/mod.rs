@@ -242,10 +242,10 @@ pub enum TunnelType {
     IpHttps = 15,
 }
 
-unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV4 {
+unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV4 { unsafe {
     let socket_addr = &unicast_addr.address;
 
-    let in_addr: SOCKADDR_IN = unsafe { mem::transmute(*socket_addr.lpSockaddr) };
+    let in_addr: SOCKADDR_IN = mem::transmute(*socket_addr.lpSockaddr);
     let sin_addr = in_addr.sin_addr.S_un;
 
     let v4_addr = Ipv4Addr::new(
@@ -256,9 +256,9 @@ unsafe fn v4_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> Sock
     );
 
     SocketAddrV4::new(v4_addr, 0)
-}
+}}
 
-unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV6 {
+unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> SocketAddrV6 { unsafe {
     let socket_addr = &unicast_addr.address;
 
     let sock_addr6: *const SOCKADDR_IN6 = socket_addr.lpSockaddr as *const SOCKADDR_IN6;
@@ -272,9 +272,9 @@ unsafe fn v6_socket_from_adapter(unicast_addr: &IpAdapterUnicastAddress) -> Sock
         in6_addr.sin6_flowinfo,
         *in6_addr.u.sin6_scope_id(),
     )
-}
+}}
 
-unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> {
+unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> { unsafe {
     let mut length = buffer.capacity() as u32;
 
     let ret_code = GetAdaptersAddresses(
@@ -310,9 +310,9 @@ unsafe fn local_ifaces_with_buffer(buffer: &mut Vec<u8>) -> io::Result<()> {
             "Some Other Error Occurred.",
         )),
     }
-}
+}}
 
-unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> Vec<Interface> {
+unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> Vec<Interface> { unsafe {
     let mut adapter_addresses = Vec::new();
 
     while !adapter_addr.is_null() {
@@ -354,7 +354,7 @@ unsafe fn map_adapter_addresses(mut adapter_addr: *const IpAdapterAddresses) -> 
     }
 
     adapter_addresses
-}
+}}
 
 /// Query the local system for all interface addresses.
 pub fn ifaces() -> Result<Vec<Interface>, ::std::io::Error> {
@@ -368,7 +368,7 @@ pub fn ifaces() -> Result<Vec<Interface>, ::std::io::Error> {
     }
 }
 
-unsafe fn is_ipv4_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
+unsafe fn is_ipv4_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool { unsafe {
     if unicast_addr.length != 0 {
         let socket_addr = &unicast_addr.address;
         let sa_family = (*socket_addr.lpSockaddr).sa_family;
@@ -377,9 +377,9 @@ unsafe fn is_ipv4_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
     } else {
         false
     }
-}
+}}
 
-unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
+unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool { unsafe {
     if unicast_addr.length != 0 {
         let socket_addr = &unicast_addr.address;
         let sa_family = (*socket_addr.lpSockaddr).sa_family;
@@ -388,4 +388,4 @@ unsafe fn is_ipv6_enabled(unicast_addr: &IpAdapterUnicastAddress) -> bool {
     } else {
         false
     }
-}
+}}
