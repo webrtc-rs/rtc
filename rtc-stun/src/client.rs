@@ -134,6 +134,14 @@ impl Client {
             transmits: VecDeque::new(),
         }
     }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local
+    }
+
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.remote
+    }
 }
 
 impl sansio::Protocol<TaggedBytesMut, Message, Event> for Client {
