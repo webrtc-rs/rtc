@@ -36,6 +36,7 @@ use rtc::peer_connection::transport::{CandidateConfig, RTCIceCandidate};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use rtc::stun::agent::StunEvent;
 use rtc::stun::{client::*, message::*, xoraddr::*};
 use rtc::turn::client::{
     Client as TurnClient, ClientConfig as TurnClientConfig, Event as TurnEvent,
@@ -318,8 +319,8 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
 
             let mut close_stun = false;
             while let Some(event) = client.poll_event() {
-                match event.result {
-                    Ok(msg) => {
+                match event {
+                    StunEvent::Message(msg) => {
                         if stun_xor_addr.is_none() {
                             let mut xor_addr = XorMappedAddress::default();
                             if xor_addr.get_from(&msg).is_ok() {
@@ -353,8 +354,8 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("STUN error: {}", e);
+                    _ => {
+                        error!("STUN error: {:?}", event);
                         close_stun = true;
                     }
                 }

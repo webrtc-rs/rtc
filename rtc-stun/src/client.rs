@@ -144,10 +144,10 @@ impl Client {
     }
 }
 
-impl sansio::Protocol<TaggedBytesMut, Message, Event> for Client {
+impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
     type Rout = ();
     type Wout = TaggedBytesMut;
-    type Eout = Event;
+    type Eout = StunEvent;
     type Error = Error;
     type Time = Instant;
 
@@ -214,8 +214,11 @@ impl sansio::Protocol<TaggedBytesMut, Message, Event> for Client {
                 continue;
             };
 
-            if ct.attempt >= self.settings.max_attempts || event.result.is_ok() {
-                return Some(event);
+            if let StunEvent::Message(_) = &event.evt {
+                return Some(event.evt);
+            }
+            if ct.attempt >= self.settings.max_attempts {
+                return Some(event.evt);
             }
 
             // Doing re-transmission.
@@ -235,7 +238,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, Event> for Client {
                 .is_err()
             {
                 self.transactions.remove(&id);
-                return Some(event);
+                return Some(event.evt);
             }
 
             // Writing message to connection again.

@@ -5,6 +5,7 @@ use sansio::Protocol;
 
 use bytes::BytesMut;
 use clap::Parser;
+use rtc_stun::agent::StunEvent;
 use shared::error::Error;
 use shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use std::net::UdpSocket;
@@ -58,10 +59,11 @@ fn main() -> Result<(), Error> {
     })?;
 
     if let Some(event) = client.poll_event() {
-        let msg = event.result?;
-        let mut xor_addr = XorMappedAddress::default();
-        xor_addr.get_from(&msg)?;
-        println!("Got response: {xor_addr}");
+        if let StunEvent::Message(msg) = event {
+            let mut xor_addr = XorMappedAddress::default();
+            xor_addr.get_from(&msg)?;
+            println!("Got response: {xor_addr}");
+        }
     }
 
     client.close()?;

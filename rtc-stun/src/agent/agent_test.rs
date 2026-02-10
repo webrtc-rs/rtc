@@ -14,16 +14,16 @@ fn test_agent_process_in_transaction() -> Result<()> {
     a.close()?;
 
     while let Some(e) = a.poll_event() {
-        assert!(e.result.is_ok(), "got error: {:?}", e.result);
-
-        let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(
-            e.result.as_ref().unwrap().transaction_id,
-            tid,
-            "{:?} (got) != {:?} (expected)",
-            e.result.as_ref().unwrap().transaction_id,
-            tid
-        );
+        if let StunEvent::Message(msg) = &e.evt {
+            let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+            assert_eq!(
+                msg.transaction_id, tid,
+                "{:?} (got) != {:?} (expected)",
+                msg.transaction_id, tid
+            );
+        } else {
+            assert!(false, "got error: {:?}", e.evt);
+        }
     }
 
     Ok(())
@@ -38,16 +38,16 @@ fn test_agent_process() -> Result<()> {
     a.close()?;
 
     while let Some(e) = a.poll_event() {
-        assert!(e.result.is_ok(), "got error: {:?}", e.result);
-
-        let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(
-            e.result.as_ref().unwrap().transaction_id,
-            tid,
-            "{:?} (got) != {:?} (expected)",
-            e.result.as_ref().unwrap().transaction_id,
-            tid
-        );
+        if let StunEvent::Message(msg) = &e.evt {
+            let tid = TransactionId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+            assert_eq!(
+                msg.transaction_id, tid,
+                "{:?} (got) != {:?} (expected)",
+                msg.transaction_id, tid
+            );
+        } else {
+            assert!(false, "got error: {:?}", e.evt);
+        }
     }
 
     let result = a.process(m);
@@ -126,14 +126,7 @@ fn test_agent_stop() -> Result<()> {
     a.start(id, deadline)?;
     a.stop(id)?;
 
-    if let Err(err) = a.poll_event().unwrap().result {
-        assert_eq!(
-            err,
-            Error::ErrTransactionStopped,
-            "unexpected error: {}, should be {}",
-            err,
-            Error::ErrTransactionStopped
-        );
+    if let StunEvent::TransactionStopped = a.poll_event().unwrap().evt {
     } else {
         panic!("expected error, got ok");
     }

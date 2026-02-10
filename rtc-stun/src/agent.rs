@@ -28,16 +28,15 @@ pub struct Agent {
 #[derive(Debug)] //Clone
 pub struct Event {
     pub id: TransactionId,
-    pub result: Result<Message>,
+    pub evt: StunEvent,
 }
 
-impl Default for Event {
-    fn default() -> Self {
-        Event {
-            id: TransactionId::default(),
-            result: Ok(Message::default()),
-        }
-    }
+#[derive(Debug)] //Clone
+pub enum StunEvent {
+    AgentClosed,
+    TransactionStopped,
+    TransactionTimeOut,
+    Message(Message),
 }
 
 /// AgentTransaction represents transaction in progress.
@@ -106,7 +105,7 @@ impl Agent {
 
         self.events_queue.push_back(Event {
             id: message.transaction_id,
-            result: Ok(message),
+            evt: StunEvent::Message(message),
         });
 
         Ok(())
@@ -122,7 +121,7 @@ impl Agent {
         for id in self.transactions.keys() {
             self.events_queue.push_back(Event {
                 id: *id,
-                result: Err(Error::ErrAgentClosed),
+                evt: StunEvent::AgentClosed,
             });
         }
         self.transactions.clear();
@@ -160,7 +159,7 @@ impl Agent {
         if let Some(t) = v {
             self.events_queue.push_back(Event {
                 id: t.id,
-                result: Err(Error::ErrTransactionStopped),
+                evt: StunEvent::TransactionStopped,
             });
             Ok(())
         } else {
@@ -200,7 +199,7 @@ impl Agent {
         for id in to_remove {
             self.events_queue.push_back(Event {
                 id,
-                result: Err(Error::ErrTransactionTimeOut),
+                evt: StunEvent::TransactionTimeOut,
             });
         }
 

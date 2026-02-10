@@ -29,6 +29,7 @@ use rtc::peer_connection::transport::{CandidateConfig, RTCIceCandidate};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use rtc::stun::agent::StunEvent;
 use rtc::stun::{client::*, message::*, xoraddr::*};
 use shared::error::Error;
 use std::net::SocketAddr;
@@ -490,11 +491,14 @@ async fn gather_srflx_candidate(
     })?;
 
     let xor_addr = if let Some(event) = client.poll_event() {
-        let msg = event.result?;
-        let mut xor_addr = XorMappedAddress::default();
-        xor_addr.get_from(&msg)?;
-        println!("Got response: {xor_addr}");
-        xor_addr
+        if let StunEvent::Message(msg) = event {
+            let mut xor_addr = XorMappedAddress::default();
+            xor_addr.get_from(&msg)?;
+            println!("Got response: {xor_addr}");
+            xor_addr
+        } else {
+            return Err(Error::ErrStunQuery);
+        }
     } else {
         return Err(Error::ErrStunQuery);
     };
