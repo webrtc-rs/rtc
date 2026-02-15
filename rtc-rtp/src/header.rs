@@ -138,6 +138,10 @@ impl Unmarshal for Header {
                             break;
                         }
 
+                        if len > raw_packet.remaining() {
+                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+                        }
+
                         extensions.push(Extension {
                             id: extid,
                             payload: raw_packet.copy_to_bytes(len),
@@ -160,8 +164,16 @@ impl Unmarshal for Header {
                         let extid = b;
                         curr_offset += 1;
 
+                        if curr_offset >= end {
+                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+                        }
+
                         let len = raw_packet.get_u8() as usize;
                         curr_offset += 1;
+
+                        if len > raw_packet.remaining() {
+                            return Err(Error::ErrHeaderSizeInsufficientForExtension);
+                        }
 
                         extensions.push(Extension {
                             id: extid,
