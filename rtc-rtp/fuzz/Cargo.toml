@@ -1,0 +1,28 @@
+[package]
+name = "rtc-rtp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rtc-rtp]
+path = ".."
+
+[dependencies.rtc-shared]
+path = "../../rtc-shared"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "parse_packet"
+path = "fuzz_targets/parse_packet.rs"
+test = false
+doc = false
+bench = false
