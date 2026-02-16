@@ -1,0 +1,189 @@
+[package]
+name = "rtc-rtcp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rtc-rtcp]
+path = ".."
+
+[dependencies.rtc-shared]
+path = "../../rtc-shared"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "compound_packet_mod_unmarshal"
+path = "fuzz_targets/compound_packet_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_dlrr_unmarshal"
+path = "fuzz_targets/extended_report_dlrr_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_mod_unmarshal"
+path = "fuzz_targets/extended_report_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_prt_unmarshal"
+path = "fuzz_targets/extended_report_prt_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_rle_unmarshal"
+path = "fuzz_targets/extended_report_rle_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_rrt_unmarshal"
+path = "fuzz_targets/extended_report_rrt_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_ssr_unmarshal"
+path = "fuzz_targets/extended_report_ssr_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_unknown_unmarshal"
+path = "fuzz_targets/extended_report_unknown_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extended_report_vm_unmarshal"
+path = "fuzz_targets/extended_report_vm_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "goodbye_mod_unmarshal"
+path = "fuzz_targets/goodbye_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "header_unmarshal"
+path = "fuzz_targets/header_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet_unmarshal"
+path = "fuzz_targets/packet_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload_feedbacks_full_intra_request_mod_unmarshal"
+path = "fuzz_targets/payload_feedbacks_full_intra_request_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload_feedbacks_picture_loss_indication_mod_unmarshal"
+path = "fuzz_targets/payload_feedbacks_picture_loss_indication_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload_feedbacks_receiver_estimated_maximum_bitrate_mod_unmarshal"
+path = "fuzz_targets/payload_feedbacks_receiver_estimated_maximum_bitrate_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "payload_feedbacks_slice_loss_indication_mod_unmarshal"
+path = "fuzz_targets/payload_feedbacks_slice_loss_indication_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "raw_packet_unmarshal"
+path = "fuzz_targets/raw_packet_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receiver_report_mod_unmarshal"
+path = "fuzz_targets/receiver_report_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reception_report_unmarshal"
+path = "fuzz_targets/reception_report_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sender_report_mod_unmarshal"
+path = "fuzz_targets/sender_report_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "source_description_mod_unmarshal"
+path = "fuzz_targets/source_description_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_feedbacks_rapid_resynchronization_request_mod_unmarshal"
+path = "fuzz_targets/transport_feedbacks_rapid_resynchronization_request_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_feedbacks_transport_layer_cc_mod_unmarshal"
+path = "fuzz_targets/transport_feedbacks_transport_layer_cc_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_feedbacks_transport_layer_nack_mod_unmarshal"
+path = "fuzz_targets/transport_feedbacks_transport_layer_nack_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
