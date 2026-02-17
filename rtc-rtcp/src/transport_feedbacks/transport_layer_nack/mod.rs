@@ -219,7 +219,7 @@ impl Unmarshal for TransportLayerNack {
 
         let h = Header::unmarshal(raw_packet)?;
 
-        if raw_packet_len < (HEADER_LENGTH + (4 * h.length) as usize) {
+        if raw_packet_len < (HEADER_LENGTH + 4 * (h.length as usize)) {
             return Err(Error::PacketTooShort);
         }
 
