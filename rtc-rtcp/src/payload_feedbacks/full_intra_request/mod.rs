@@ -121,13 +121,16 @@ impl Unmarshal for FullIntraRequest {
         B: Buf,
     {
         let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < (HEADER_LENGTH + SSRC_LENGTH) {
+        if raw_packet_len < FIR_MIN_OCTET_COUNT {
             return Err(Error::PacketTooShort);
         }
 
         let h = Header::unmarshal(raw_packet)?;
+        if (HEADER_LENGTH + 4 * (h.length as usize)) < FIR_MIN_OCTET_COUNT {
+            return Err(Error::InvalidHeader);
+        }
 
-        if raw_packet_len < (HEADER_LENGTH + (4 * h.length) as usize) {
+        if raw_packet_len < (HEADER_LENGTH + 4 * (h.length as usize)) {
             return Err(Error::PacketTooShort);
         }
 
@@ -141,6 +144,11 @@ impl Unmarshal for FullIntraRequest {
         let mut i = HEADER_LENGTH + FIR_OFFSET;
         let mut fir = vec![];
         while i < HEADER_LENGTH + (h.length * 4) as usize {
+            // An FIR entry is 8 bytes
+            if raw_packet.remaining() < 8 {
+                return Err(Error::PacketTooShort);
+            }
+
             fir.push(FirEntry {
                 ssrc: raw_packet.get_u32(),
                 sequence_number: raw_packet.get_u8(),

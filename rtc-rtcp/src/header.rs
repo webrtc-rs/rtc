@@ -86,6 +86,16 @@ pub const COUNT_MAX: usize = (1 << 5) - 1;
 pub const SSRC_LENGTH: usize = 4;
 pub const SDES_MAX_OCTET_COUNT: usize = (1 << 8) - 1;
 
+// https://datatracker.ietf.org/doc/html/rfc5104#section-4.3.1
+//
+// The FCI field MUST contain one or more FIR entries.
+//
+// https://datatracker.ietf.org/doc/html/rfc5104#section-4.3.1.1
+//
+// The length of the FIR feedback message MUST be set to
+//    2+2*N, where N is the number of FCI entries.
+pub const FIR_MIN_OCTET_COUNT: usize = 20;
+
 /// A Header is the common header shared by all RTCP packets
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct Header {
