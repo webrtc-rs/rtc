@@ -619,7 +619,6 @@ impl Unmarshal for TransportLayerCc {
             match typ.into() {
                 StatusChunkTypeTcc::RunLengthChunk => {
                     let packet_status = RunLengthChunk::unmarshal(&mut chunk_reader)?;
-
                     let packet_number_to_process =
                         (packet_status_count - processed_packet_num).min(packet_status.run_length);
 
@@ -640,7 +639,9 @@ impl Unmarshal for TransportLayerCc {
                     }
 
                     initial_packet_status = PacketStatusChunk::RunLengthChunk(packet_status);
-                    processed_packet_num += packet_number_to_process;
+
+                    processed_packet_num =
+                        processed_packet_num.saturating_add(packet_number_to_process);
                 }
 
                 StatusChunkTypeTcc::StatusVectorChunk => {
@@ -672,7 +673,8 @@ impl Unmarshal for TransportLayerCc {
                         }
                     }
 
-                    processed_packet_num += packet_status.symbol_list.len() as u16;
+                    processed_packet_num =
+                        processed_packet_num.saturating_add(packet_status.symbol_list.len() as u16);
                     initial_packet_status = PacketStatusChunk::StatusVectorChunk(packet_status);
                 }
             }
