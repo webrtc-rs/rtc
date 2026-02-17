@@ -129,7 +129,7 @@ impl Unmarshal for SliceLossIndication {
         B: Buf,
     {
         let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < (HEADER_LENGTH + SSRC_LENGTH) {
+        if raw_packet_len < (HEADER_LENGTH + SLI_OFFSET) {
             return Err(Error::PacketTooShort);
         }
 
