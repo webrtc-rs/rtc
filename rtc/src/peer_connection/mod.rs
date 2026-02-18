@@ -1163,6 +1163,8 @@ where
             }
         }
 
+        self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Gathering;
+
         Ok(())
     }
 
@@ -1175,12 +1177,11 @@ where
     /// # Specification
     ///
     /// See [localDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-localdescription)
-    pub fn local_description(&self) -> Option<&RTCSessionDescription> {
-        if self.pending_local_description.is_some() {
-            self.pending_local_description.as_ref()
-        } else {
-            self.current_local_description.as_ref()
+    pub fn local_description(&self) -> Option<RTCSessionDescription> {
+        if let Some(pending_local_description) = self.pending_local_description() {
+            return Some(pending_local_description);
         }
+        self.current_local_description()
     }
 
     /// Returns the current local description as last successfully negotiated since
@@ -1194,8 +1195,8 @@ where
     /// # Specification
     ///
     /// See [currentLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-currentlocaldescription)
-    pub fn current_local_description(&self) -> Option<&RTCSessionDescription> {
-        self.current_local_description.as_ref()
+    pub fn current_local_description(&self) -> Option<RTCSessionDescription> {
+        self.populate_local_candidates(self.current_local_description.as_ref())
     }
 
     /// Returns the pending local description if it exists.
@@ -1209,8 +1210,8 @@ where
     /// # Specification
     ///
     /// See [pendingLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-pendinglocaldescription)
-    pub fn pending_local_description(&self) -> Option<&RTCSessionDescription> {
-        self.pending_local_description.as_ref()
+    pub fn pending_local_description(&self) -> Option<RTCSessionDescription> {
+        self.populate_local_candidates(self.pending_local_description.as_ref())
     }
 
     /// Returns whether the remote peer supports trickle ICE.
@@ -1657,6 +1658,7 @@ where
         if !candidate_value.is_empty() {
             self.add_ice_local_candidate(candidate_value, local_candidate.url.as_deref())?;
         } else {
+            self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Complete;
             // Emit OnIceGatheringStateChangeEvent
             self.pipeline_context.event_outs.push_back(
                 RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent(

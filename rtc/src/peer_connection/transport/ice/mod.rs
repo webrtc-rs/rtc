@@ -36,6 +36,7 @@ impl RTCIceTransport {
 
         Ok(RTCIceTransport {
             agent,
+            ice_gathering_state: RTCIceGatheringState::New,
             ..Default::default()
         })
     }

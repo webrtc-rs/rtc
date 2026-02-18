@@ -1,12 +1,15 @@
 use super::*;
 use crate::peer_connection::event::{RTCPeerConnectionEvent, RTCPeerConnectionIceEvent};
 use crate::peer_connection::sdp::{
-    MediaSection, PopulateSdpParams, get_by_mid, get_peer_direction, get_rids, have_data_channel,
-    is_ext_map_allow_mixed_set, rtp_extensions_from_media_description, track_details_from_sdp,
+    MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
+    get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
+    rtp_extensions_from_media_description, track_details_from_sdp,
 };
 use crate::peer_connection::state::signaling_state::check_next_signaling_state;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
-use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
+use crate::peer_connection::transport::ice::candidate::{
+    RTCIceCandidate, rtc_ice_candidates_from_ice_candidates,
+};
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
@@ -330,6 +333,47 @@ where
             &media_sections,
             params,
         )
+    }
+
+    pub(super) fn populate_local_candidates(
+        &self,
+        session_description: Option<&RTCSessionDescription>,
+    ) -> Option<RTCSessionDescription> {
+        if session_description.is_none() {
+            return session_description.cloned();
+        }
+
+        if let Some(sd) = session_description {
+            let candidates = rtc_ice_candidates_from_ice_candidates(
+                self.ice_transport().agent.get_local_candidates(),
+            );
+
+            let mut parsed = match sd.unmarshal() {
+                Ok(parsed) => parsed,
+                Err(_) => return Some(sd.clone()),
+            };
+
+            if !parsed.media_descriptions.is_empty() {
+                let mut m = parsed.media_descriptions.remove(0);
+                m = match add_candidates_to_media_descriptions(
+                    &candidates,
+                    m,
+                    self.ice_transport().ice_gathering_state,
+                ) {
+                    Ok(m) => m,
+                    Err(_) => return Some(sd.clone()),
+                };
+                parsed.media_descriptions.insert(0, m);
+            }
+
+            Some(RTCSessionDescription {
+                sdp_type: sd.sdp_type,
+                sdp: parsed.marshal(),
+                parsed: Some(parsed),
+            })
+        } else {
+            None
+        }
     }
 
     // 4.4.1.6 Set the SessionDescription
@@ -1021,6 +1065,7 @@ where
         );
         self.ice_transport_mut()
             .restart(local_ufrag, local_pwd, keep_local_candidates)?;
+        self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Gathering;
 
         // Update stats with new ICE credentials after restart
         if let Ok(params) = self.ice_transport().get_local_parameters() {

@@ -226,7 +226,7 @@ async fn run(
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
         println!("answer created: {}", local_desc);
-        let json_str = serde_json::to_string(local_desc)?;
+        let json_str = serde_json::to_string(&local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("{b64}");
     } else {

@@ -220,7 +220,7 @@ async fn run_broadcaster(
     peer_connection.set_local_description(answer)?;
 
     if let Some(local_desc) = peer_connection.local_description() {
-        let json_str = serde_json::to_string(local_desc)?;
+        let json_str = serde_json::to_string(&local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("Broadcast receiver answer:\n{}", b64);
     }
@@ -608,7 +608,7 @@ async fn run_viewer(
     peer_connection.set_local_description(answer)?;
 
     if let Some(local_desc) = peer_connection.local_description() {
-        let json_str = serde_json::to_string(local_desc)?;
+        let json_str = serde_json::to_string(&local_desc)?;
         let b64 = signal::encode(&json_str);
         println!("[Viewer {}] Answer:\n{}", viewer_id, b64);
     }
