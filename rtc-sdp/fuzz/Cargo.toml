@@ -24,3 +24,10 @@ path = "fuzz_targets/description_session_unmarshal.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "extmap_mod_unmarshal"
+path = "fuzz_targets/extmap_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
