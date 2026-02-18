@@ -1021,6 +1021,70 @@ impl Agent {
         }
     }
 
+    /// Sends a 487 (Role Conflict) error response.
+    /// RFC 8445 Section 7.3.1.1
+    pub(crate) fn send_role_conflict_error(
+        &mut self,
+        m: &Message,
+        local_index: usize,
+        remote_index: usize,
+    ) {
+        use stun::error_code::*;
+
+        let local_pwd = self.ufrag_pwd.local_credentials.pwd.clone();
+
+        let (out, result) = {
+            let mut out = Message::new();
+            let result = out.build(&[
+                Box::new(m.clone()),
+                Box::new(stun::message::BINDING_ERROR),
+                Box::new(CODE_ROLE_CONFLICT),
+                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(FINGERPRINT),
+            ]);
+            (out, result)
+        };
+
+        if let Err(err) = result {
+            warn!(
+                "[{}]: Failed to send role conflict error from: {} to: {} error: {}",
+                self.get_name(),
+                self.local_candidates[local_index],
+                self.remote_candidates[remote_index],
+                err
+            );
+        } else {
+            debug!(
+                "[{}]: Sent 487 Role Conflict error from {} to {}",
+                self.get_name(),
+                self.local_candidates[local_index],
+                self.remote_candidates[remote_index]
+            );
+            self.send_stun(&out, local_index, remote_index);
+        }
+    }
+
+    /// Switches the ICE agent role and recomputes all candidate pair priorities.
+    /// RFC 8445 Section 7.3.1.1
+    pub(crate) fn switch_role(&mut self) {
+        self.is_controlling = !self.is_controlling;
+
+        // Recompute priorities for all candidate pairs
+        // The priority calculation depends on ice_role_controlling
+        for pair in &mut self.candidate_pairs {
+            pair.ice_role_controlling = self.is_controlling;
+        }
+
+        // Clear nominated pair when switching roles
+        self.nominated_pair = None;
+
+        info!(
+            "[{}]: Role switched, recomputed {} candidate pair priorities",
+            self.get_name(),
+            self.candidate_pairs.len()
+        );
+    }
+
     /// Removes pending binding requests that are over `maxBindingRequestTimeout` old Let HTO be the
     /// transaction timeout, which SHOULD be 2*RTT if RTT is known or 500 ms otherwise.
     ///
@@ -1095,13 +1159,44 @@ impl Agent {
             return Err(Error::ErrUnhandledStunpacket);
         }
 
+        // RFC 8445 Section 7.3.1.1 - Detecting and Repairing Role Conflicts
         if self.is_controlling {
             if m.contains(ATTR_ICE_CONTROLLING) {
+                // Both agents are controlling - role conflict detected
+                let mut remote_controlling = crate::attributes::control::AttrControlling::default();
+                if let Err(err) = remote_controlling.get_from(m) {
+                    warn!(
+                        "[{}]: Failed to get remote ICE-CONTROLLING attribute: {}",
+                        self.get_name(),
+                        err
+                    );
+                    return Err(err);
+                }
+
                 debug!(
-                    "[{}]: inbound isControlling && a.isControlling == true",
+                    "[{}]: Role conflict detected (both controlling), local tiebreaker: {}, remote tiebreaker: {}",
                     self.get_name(),
+                    self.tie_breaker,
+                    remote_controlling.0
                 );
-                return Err(Error::ErrUnexpectedStunrequestMessage);
+
+                // Only process if this is a request (not a response)
+                if m.typ.class == CLASS_REQUEST {
+                    // Send 487 Role Conflict error
+                    if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
+                        self.send_role_conflict_error(m, local_index, remote_index);
+                    }
+
+                    // Compare tiebreakers - if ours is smaller, we switch to controlled
+                    if self.tie_breaker < remote_controlling.0 {
+                        info!(
+                            "[{}]: Switching from controlling to controlled due to role conflict (smaller tiebreaker)",
+                            self.get_name()
+                        );
+                        self.switch_role();
+                    }
+                }
+                // Continue processing the message after handling role conflict
             } else if m.contains(ATTR_USE_CANDIDATE) {
                 debug!(
                     "[{}]: useCandidate && a.isControlling == true",
@@ -1110,11 +1205,41 @@ impl Agent {
                 return Err(Error::ErrUnexpectedStunrequestMessage);
             }
         } else if m.contains(ATTR_ICE_CONTROLLED) {
+            // Both agents are controlled - role conflict detected
+            let mut remote_controlled = crate::attributes::control::AttrControlled::default();
+            if let Err(err) = remote_controlled.get_from(m) {
+                warn!(
+                    "[{}]: Failed to get remote ICE-CONTROLLED attribute: {}",
+                    self.get_name(),
+                    err
+                );
+                return Err(err);
+            }
+
             debug!(
-                "[{}]: inbound isControlled && a.isControlling == false",
+                "[{}]: Role conflict detected (both controlled), local tiebreaker: {}, remote tiebreaker: {}",
                 self.get_name(),
+                self.tie_breaker,
+                remote_controlled.0
             );
-            return Err(Error::ErrUnexpectedStunrequestMessage);
+
+            // Only process if this is a request (not a response)
+            if m.typ.class == CLASS_REQUEST {
+                // Send 487 Role Conflict error
+                if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
+                    self.send_role_conflict_error(m, local_index, remote_index);
+                }
+
+                // Compare tiebreakers - if ours is larger, we switch to controlling
+                if self.tie_breaker > remote_controlled.0 {
+                    info!(
+                        "[{}]: Switching from controlled to controlling due to role conflict (larger tiebreaker)",
+                        self.get_name()
+                    );
+                    self.switch_role();
+                }
+            }
+            // Continue processing the message after handling role conflict
         }
 
         let Some(remote_credentials) = &self.ufrag_pwd.remote_credentials else {

@@ -2008,3 +2008,404 @@ fn test_lite_lifecycle() -> Result<()> {
     Ok(())
 }
 */
+
+/// Test role conflict when both agents are controlling
+/// RFC 8445 Section 7.3.1.1 - Agent with smaller tiebreaker should switch to controlled
+#[test]
+fn test_role_conflict_both_controlling_smaller_tiebreaker_switches() -> Result<()> {
+    // Create agent with controlling role
+    let mut config = AgentConfig::default();
+    config.is_controlling = true;
+    let mut agent = Agent::new(Arc::new(config))?;
+
+    // Set a specific tiebreaker value
+    agent.tie_breaker = 100;
+
+    // Add local candidate
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let local_candidate = host_config.new_candidate_host()?;
+    let local_index = 0;
+    agent.add_local_candidate(local_candidate)?;
+
+    // Add remote candidate
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let remote_candidate = remote_host_config.new_candidate_host()?;
+    agent.add_remote_candidate(remote_candidate)?;
+
+    // Set remote credentials
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // Create STUN binding request from remote agent (also controlling, with larger tiebreaker)
+    let remote_tiebreaker = 200; // Larger than ours (100)
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(AttrControlling(remote_tiebreaker)), // Remote is also controlling
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    // Agent should be controlling before handling the message
+    assert!(
+        agent.is_controlling,
+        "Agent should be controlling before role conflict"
+    );
+
+    // Store initial pair count and priorities
+    let initial_pair_count = agent.candidate_pairs.len();
+    let initial_priorities: Vec<u64> = agent.candidate_pairs.iter().map(|p| p.priority()).collect();
+
+    // Handle the inbound message - should detect role conflict
+    let result = agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr);
+
+    // The message should be processed (role conflict handling doesn't stop processing)
+    // It may return an error for other reasons, but not for role conflict itself
+    let _ = result; // We don't care about the exact error, just that role switching happened
+
+    // Agent should have switched to controlled (because our tiebreaker 100 < 200)
+    assert!(
+        !agent.is_controlling,
+        "Agent should have switched to controlled role (smaller tiebreaker)"
+    );
+
+    // Verify that candidate pair priorities were recomputed
+    if !agent.candidate_pairs.is_empty() {
+        // Check that ice_role_controlling was updated in pairs
+        for pair in &agent.candidate_pairs {
+            assert!(
+                !pair.ice_role_controlling,
+                "Candidate pair should have controlling role set to false"
+            );
+        }
+
+        // Priorities should change when role changes (unless there were no pairs initially)
+        if initial_pair_count > 0 && initial_priorities.len() > 0 {
+            // At least verify the role was updated in pairs
+            assert_eq!(
+                agent.candidate_pairs.len(),
+                initial_pair_count,
+                "Number of pairs should remain the same"
+            );
+        }
+    }
+
+    // Verify nominated pair was cleared
+    assert!(
+        agent.nominated_pair.is_none(),
+        "Nominated pair should be cleared after role switch"
+    );
+
+    agent.close()?;
+    Ok(())
+}
+
+/// Test role conflict when both agents are controlling
+/// RFC 8445 Section 7.3.1.1 - Agent with larger tiebreaker should keep controlling role
+#[test]
+fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
+    // Create agent with controlling role
+    let mut config = AgentConfig::default();
+    config.is_controlling = true;
+    let mut agent = Agent::new(Arc::new(config))?;
+
+    // Set a larger tiebreaker value
+    agent.tie_breaker = 500;
+
+    // Add local candidate
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let local_candidate = host_config.new_candidate_host()?;
+    let local_index = 0;
+    agent.add_local_candidate(local_candidate)?;
+
+    // Add remote candidate
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let remote_candidate = remote_host_config.new_candidate_host()?;
+    agent.add_remote_candidate(remote_candidate)?;
+
+    // Set remote credentials
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // Create STUN binding request from remote agent (also controlling, with smaller tiebreaker)
+    let remote_tiebreaker = 100; // Smaller than ours (500)
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(AttrControlling(remote_tiebreaker)), // Remote is also controlling
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    // Agent should be controlling before handling the message
+    assert!(
+        agent.is_controlling,
+        "Agent should be controlling before role conflict"
+    );
+
+    // Handle the inbound message - should detect role conflict but NOT switch
+    let _ = agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr);
+
+    // Agent should remain controlling (because our tiebreaker 500 > 100)
+    assert!(
+        agent.is_controlling,
+        "Agent should remain controlling (larger tiebreaker)"
+    );
+
+    // Verify candidate pairs still have controlling role
+    for pair in &agent.candidate_pairs {
+        assert!(
+            pair.ice_role_controlling,
+            "Candidate pair should still have controlling role set to true"
+        );
+    }
+
+    agent.close()?;
+    Ok(())
+}
+
+/// Test role conflict when both agents are controlled
+/// RFC 8445 Section 7.3.1.1 - Agent with larger tiebreaker should switch to controlling
+#[test]
+fn test_role_conflict_both_controlled_larger_tiebreaker_switches() -> Result<()> {
+    use crate::attributes::control::AttrControlled;
+
+    // Create agent with controlled role
+    let mut config = AgentConfig::default();
+    config.is_controlling = false; // Controlled
+    let mut agent = Agent::new(Arc::new(config))?;
+
+    // Set a larger tiebreaker value
+    agent.tie_breaker = 500;
+
+    // Add local candidate
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let local_candidate = host_config.new_candidate_host()?;
+    let local_index = 0;
+    agent.add_local_candidate(local_candidate)?;
+
+    // Add remote candidate
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let remote_candidate = remote_host_config.new_candidate_host()?;
+    agent.add_remote_candidate(remote_candidate)?;
+
+    // Set remote credentials
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // Create STUN binding request from remote agent (also controlled, with smaller tiebreaker)
+    let remote_tiebreaker = 100; // Smaller than ours (500)
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(AttrControlled(remote_tiebreaker)), // Remote is also controlled
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    // Agent should be controlled before handling the message
+    assert!(
+        !agent.is_controlling,
+        "Agent should be controlled before role conflict"
+    );
+
+    // Handle the inbound message - should detect role conflict
+    let _ = agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr);
+
+    // Agent should have switched to controlling (because our tiebreaker 500 > 100)
+    assert!(
+        agent.is_controlling,
+        "Agent should have switched to controlling role (larger tiebreaker)"
+    );
+
+    // Verify that candidate pair priorities were recomputed
+    for pair in &agent.candidate_pairs {
+        assert!(
+            pair.ice_role_controlling,
+            "Candidate pair should have controlling role set to true"
+        );
+    }
+
+    // Verify nominated pair was cleared
+    assert!(
+        agent.nominated_pair.is_none(),
+        "Nominated pair should be cleared after role switch"
+    );
+
+    agent.close()?;
+    Ok(())
+}
+
+/// Test role conflict when both agents are controlled
+/// RFC 8445 Section 7.3.1.1 - Agent with smaller tiebreaker should stay controlled
+#[test]
+fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
+    use crate::attributes::control::AttrControlled;
+
+    // Create agent with controlled role
+    let mut config = AgentConfig::default();
+    config.is_controlling = false; // Controlled
+    let mut agent = Agent::new(Arc::new(config))?;
+
+    // Set a smaller tiebreaker value
+    agent.tie_breaker = 100;
+
+    // Add local candidate
+    let host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let local_candidate = host_config.new_candidate_host()?;
+    let local_index = 0;
+    agent.add_local_candidate(local_candidate)?;
+
+    // Add remote candidate
+    let remote_addr = SocketAddr::from_str("172.17.0.3:9999")?;
+    let remote_host_config = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 9999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let remote_candidate = remote_host_config.new_candidate_host()?;
+    agent.add_remote_candidate(remote_candidate)?;
+
+    // Set remote credentials
+    agent.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remote_ufrag".to_string(),
+        pwd: "remote_pwd".to_string(),
+    });
+
+    let username = agent.ufrag_pwd.local_credentials.ufrag.clone() + ":remote_ufrag";
+    let local_pwd = agent.ufrag_pwd.local_credentials.pwd.clone();
+
+    // Create STUN binding request from remote agent (also controlled, with larger tiebreaker)
+    let remote_tiebreaker = 500; // Larger than ours (100)
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(AttrControlled(remote_tiebreaker)), // Remote is also controlled
+        Box::new(PriorityAttr(1000)),
+        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    // Agent should be controlled before handling the message
+    assert!(
+        !agent.is_controlling,
+        "Agent should be controlled before role conflict"
+    );
+
+    // Handle the inbound message - should detect role conflict but NOT switch
+    let _ = agent.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr);
+
+    // Agent should remain controlled (because our tiebreaker 100 < 500)
+    assert!(
+        !agent.is_controlling,
+        "Agent should remain controlled (smaller tiebreaker)"
+    );
+
+    // Verify candidate pairs still have controlled role
+    for pair in &agent.candidate_pairs {
+        assert!(
+            !pair.ice_role_controlling,
+            "Candidate pair should still have controlling role set to false"
+        );
+    }
+
+    agent.close()?;
+    Ok(())
+}
