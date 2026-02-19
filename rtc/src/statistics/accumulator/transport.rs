@@ -91,6 +91,15 @@ impl TransportStatsAccumulator {
         self.ice_state = state;
     }
 
+    /// Called when the ICE role switches due to a role conflict.
+    pub fn on_ice_role_changed(&mut self, is_controlling: bool) {
+        self.ice_role = if is_controlling {
+            RTCIceRole::Controlling
+        } else {
+            RTCIceRole::Controlled
+        };
+    }
+
     /// Called when DTLS state changes.
     pub fn on_dtls_state_changed(&mut self, state: RTCDtlsTransportState) {
         self.dtls_state = state;
@@ -255,6 +264,17 @@ mod tests {
 
         acc.on_dtls_state_changed(RTCDtlsTransportState::Connected);
         assert_eq!(acc.dtls_state, RTCDtlsTransportState::Connected);
+    }
+
+    #[test]
+    fn test_on_ice_role_changed() {
+        let mut acc = TransportStatsAccumulator::default();
+
+        acc.on_ice_role_changed(true);
+        assert_eq!(acc.ice_role, RTCIceRole::Controlling);
+
+        acc.on_ice_role_changed(false);
+        assert_eq!(acc.ice_role, RTCIceRole::Controlled);
     }
 
     #[test]

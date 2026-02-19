@@ -90,6 +90,9 @@ fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
 pub enum Event {
     ConnectionStateChange(ConnectionState),
     SelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
+    /// Emitted when the ICE role switches due to a role conflict (RFC 8445 §7.3.1.1).
+    /// The bool is `true` if the agent is now controlling, `false` if now controlled.
+    RoleChange(bool),
 }
 
 /// Represents the ICE agent.
@@ -1083,6 +1086,9 @@ impl Agent {
             self.get_name(),
             self.candidate_pairs.len()
         );
+
+        self.event_outs
+            .push_back(Event::RoleChange(self.is_controlling));
     }
 
     /// Removes pending binding requests that are over `maxBindingRequestTimeout` old Let HTO be the

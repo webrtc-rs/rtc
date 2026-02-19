@@ -185,6 +185,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         .event_outs
                         .push_back(RTCEventInternal::ICESelectedCandidatePairChange);
                 }
+                ::ice::Event::RoleChange(is_controlling) => {
+                    self.stats.transport.on_ice_role_changed(is_controlling);
+                }
             }
         }
 
