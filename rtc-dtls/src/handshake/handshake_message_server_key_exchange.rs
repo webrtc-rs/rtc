@@ -60,6 +60,10 @@ impl HandshakeMessageServerKeyExchange {
         let mut data = vec![];
         reader.read_to_end(&mut data)?;
 
+        if data.len() < 2 {
+            return Err(Error::ErrBufferTooSmall);
+        }
+
         // If parsed as PSK return early and only populate PSK Identity Hint
         let psk_length = ((data[0] as u16) << 8) | data[1] as u16;
         if data.len() == psk_length as usize + 2 {
