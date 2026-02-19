@@ -89,6 +89,18 @@ fn test_full_intra_request_unmarshal() {
             FullIntraRequest::default(),
             Some(Error::WrongType),
         ),
+        (
+            "wrong length",
+            Bytes::from_static(&[
+                0x84, 0xce, 0x00, 0x03, // v=2, p=0, FMT=4, PSFB, len=3
+                0x00, 0x00, 0x00, 0x00, // ssrc=0x0
+                0x4b, 0xc4, 0xfc, 0xb4, // ssrc=0x4bc4fcb4
+                0x12, 0x34, 0x56, 0x78, // ssrc=0x12345678
+                0x42, 0x00, 0x00, 0x00, // Seqno=0x42
+            ]),
+            FullIntraRequest::default(),
+            Some(Error::InvalidHeader),
+        ),
     ];
 
     for (name, mut data, want, want_error) in tests {
