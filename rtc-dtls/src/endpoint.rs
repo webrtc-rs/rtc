@@ -177,8 +177,8 @@ impl Endpoint {
                 // Drain any queued future-epoch packets (e.g. Finished that arrived
                 // before ChangeCipherSpec bumped remote_epoch). If draining sets
                 // handshake_rx, run handshake() again so the FSM can advance.
-                conn.handle_incoming_queued_packets()?;
-                if !conn.is_handshake_completed() {
+                let is_handshake = conn.handle_incoming_queued_packets()?;
+                if is_handshake && !conn.is_handshake_completed() {
                     conn.handshake()?;
                 }
             }

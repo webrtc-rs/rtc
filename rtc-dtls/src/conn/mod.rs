@@ -477,7 +477,7 @@ impl DTLSConn {
         Ok(())
     }
 
-    pub(crate) fn handle_incoming_queued_packets(&mut self) -> Result<()> {
+    pub(crate) fn handle_incoming_queued_packets(&mut self) -> Result<bool> {
         // Drain queued future-epoch packets once the cipher suite is initialized,
         // which may happen before handshake_completed (e.g. Finished arrived before
         // ChangeCipherSpec bumped remote_epoch, so Finished was queued).
@@ -486,10 +486,12 @@ impl DTLSConn {
             .cipher_suite
             .as_ref()
             .is_some_and(|cs| cs.is_initialized());
+        let mut is_handshake = false;
         if cipher_ready {
             while let Some(p) = self.incoming_encrypted_packets.pop_front() {
                 let (hs, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
                 if hs {
+                    is_handshake = true;
                     self.handshake_rx = Some(());
                 }
                 if let Some(alert) = alert {
@@ -519,7 +521,7 @@ impl DTLSConn {
             }
         }
 
-        Ok(())
+        Ok(is_handshake)
     }
 
     fn handle_incoming_packet(
