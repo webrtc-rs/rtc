@@ -31,6 +31,7 @@ pub struct ReceiverEstimatedMaximumBitrate {
 }
 
 const REMB_OFFSET: usize = 16;
+const SSRC_ENTRY_OFFSET: usize = 20;
 
 /// Keep a table of powers to units for fast conversion.
 const BIT_UNITS: [&str; 7] = ["b", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb"];
@@ -192,8 +193,7 @@ impl Unmarshal for ReceiverEstimatedMaximumBitrate {
         B: Buf,
     {
         let raw_packet_len = raw_packet.remaining();
-        // 20 bytes is the size of the packet with no SSRCs
-        if raw_packet_len < 20 {
+        if raw_packet_len < SSRC_ENTRY_OFFSET {
             return Err(Error::PacketTooShort);
         }
 
@@ -245,6 +245,9 @@ impl Unmarshal for ReceiverEstimatedMaximumBitrate {
 
         // The next byte is the number of SSRC entries at the end.
         let ssrcs_len = raw_packet.get_u8() as usize;
+        if raw_packet_len < SSRC_ENTRY_OFFSET + ssrcs_len * 4 {
+            return Err(Error::PacketTooShort);
+        }
 
         // Get the 6-bit exponent value.
         let b17 = raw_packet.get_u8();

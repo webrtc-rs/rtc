@@ -100,6 +100,12 @@ impl IntoIterator for NackPair {
 const TLN_LENGTH: usize = 2;
 const NACK_OFFSET: usize = 8;
 
+// https://datatracker.ietf.org/doc/html/rfc4585#section-6.2.1
+//
+// The FCI field MUST contain at least one and MAY contain more than one
+// Generic NACK.
+const NACK_MIN_OCTET_COUNT: usize = 12;
+
 // The TransportLayerNack packet informs the encoder about the loss of a transport packet
 /// ## Specifications
 ///
@@ -207,13 +213,13 @@ impl Unmarshal for TransportLayerNack {
         B: Buf,
     {
         let raw_packet_len = raw_packet.remaining();
-        if raw_packet_len < (HEADER_LENGTH + SSRC_LENGTH) {
+        if raw_packet_len < (HEADER_LENGTH + NACK_MIN_OCTET_COUNT) {
             return Err(Error::PacketTooShort);
         }
 
         let h = Header::unmarshal(raw_packet)?;
 
-        if raw_packet_len < (HEADER_LENGTH + (4 * h.length) as usize) {
+        if raw_packet_len < (HEADER_LENGTH + 4 * (h.length as usize)) {
             return Err(Error::PacketTooShort);
         }
 
