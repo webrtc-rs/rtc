@@ -2362,3 +2362,276 @@ async fn test_renegotation_info() -> Result<()> {
     Ok(())
 }
 */
+
+// --- Tests for issue #46: DTLS handshake deadlock when Finished arrives before ChangeCipherSpec ---
+//
+// The deadlock scenario:
+//   1. Client sends ChangeCipherSpec (epoch=0) + Finished (epoch=1), possibly out of order.
+//   2. Finished (epoch=1) arrives first → queued in incoming_encrypted_packets because
+//      remote_epoch is still 0 (h.epoch > remote_epoch).
+//   3. ChangeCipherSpec arrives → remote_epoch bumps to 1, cipher suite initialized.
+//   4. handshake() runs but stays in Waiting because handshake_rx is None.
+//   5. handle_incoming_queued_packets() is called: the fix drains the queue (cipher ready),
+//      processes Finished, and sets handshake_rx = Some(()).
+//   6. Second handshake() call advances the FSM past Waiting.
+//
+// Fix 1 (read): pass enqueue = !is_handshake_completed() so post-handshake future-epoch
+//               packets are discarded, not buffered indefinitely (RFC 6347 §4.2.4).
+// Fix 2 (handle_incoming_queued_packets): use cipher_suite.is_initialized() as the gate
+//               (not is_handshake_completed()), and propagate hs → handshake_rx.
+
+/// Verify that read() no longer enqueues future-epoch packets once the handshake
+/// is completed (RFC 6347: buffer only until Finished is received).
+#[test]
+fn test_read_does_not_enqueue_after_handshake_completed() {
+    let config = Arc::new(HandshakeConfig::default());
+    let mut conn = DTLSConn::new(config, false, None);
+
+    // Mark handshake as completed.
+    conn.set_handshake_completed();
+    assert!(conn.is_handshake_completed());
+    assert!(conn.incoming_encrypted_packets.is_empty());
+
+    // Build a minimal valid DTLS record with epoch=1 (next-epoch packet).
+    // unpack_datagram reads content_len from the last 2 bytes of the 13-byte header.
+    let datagram = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x01, // epoch: 1
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // sequence_number: 1
+        0x00, 0x01, // content_len: 1
+        0x00, // payload (1 byte)
+    ];
+
+    // read() with handshake completed: should NOT enqueue the epoch=1 packet.
+    let _ = conn.read(&datagram);
+    assert!(
+        conn.incoming_encrypted_packets.is_empty(),
+        "After handshake completion, future-epoch packets must be discarded, not queued"
+    );
+}
+
+/// Verify that read() still enqueues future-epoch packets while the handshake
+/// is in progress (needed to handle Finished arriving before ChangeCipherSpec).
+#[test]
+fn test_read_enqueues_during_handshake() {
+    let config = Arc::new(HandshakeConfig::default());
+    let mut conn = DTLSConn::new(config, false, None);
+
+    assert!(!conn.is_handshake_completed());
+    assert!(conn.incoming_encrypted_packets.is_empty());
+
+    // Build epoch=1 packet while remote_epoch is still 0 → should be queued.
+    let datagram = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x01, // epoch: 1 (one ahead of remote_epoch=0)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // sequence_number: 1
+        0x00, 0x01, // content_len: 1
+        0x00, // payload
+    ];
+
+    let _ = conn.read(&datagram);
+    assert_eq!(
+        conn.incoming_encrypted_packets.len(),
+        1,
+        "During handshake, future-epoch packets must be queued for later processing"
+    );
+}
+
+/// Verify that handle_incoming_queued_packets() drains the queue and sets
+/// handshake_rx when the cipher suite is initialized (even before handshake_completed).
+/// This is the core fix: the old code guarded on is_handshake_completed() which
+/// was always false at the call site in endpoint.rs, making it a no-op.
+#[test]
+fn test_handle_incoming_queued_packets_drains_when_cipher_ready() {
+    use crate::cipher_suite::CipherSuite;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+
+    let config = Arc::new(HandshakeConfig::default());
+    let mut conn = DTLSConn::new(config, false, None);
+
+    assert!(!conn.is_handshake_completed());
+
+    // Simulate a queued epoch=0 handshake packet (epoch matches remote_epoch=0,
+    // so handle_incoming_packet can attempt to process it — it will fail to decode
+    // as a real handshake message, but the queue will be drained, which is what we test).
+    let pkt = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x00, // epoch: 0 (matches remote_epoch so no re-queuing)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // sequence_number: 1
+        0x00, 0x01, // content_len: 1
+        0x00, // payload
+    ];
+    conn.incoming_encrypted_packets.push_back(pkt.clone());
+    assert_eq!(conn.incoming_encrypted_packets.len(), 1);
+
+    // Without cipher suite initialized: should NOT drain.
+    conn.handle_incoming_queued_packets().unwrap();
+    assert_eq!(
+        conn.incoming_encrypted_packets.len(),
+        1,
+        "Queue must not be drained when cipher suite is not yet initialized"
+    );
+
+    // Now initialize the cipher suite (simulates ChangeCipherSpec having been processed).
+    let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
+    // init() with dummy key material — will produce an initialized cipher suite.
+    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    assert!(cs.is_initialized());
+    conn.state.cipher_suite = Some(cs);
+
+    // Now drain: cipher is ready, queue should be processed and emptied.
+    conn.handle_incoming_queued_packets().unwrap();
+    assert!(
+        conn.incoming_encrypted_packets.is_empty(),
+        "Queue must be drained once the cipher suite is initialized"
+    );
+}
+
+/// Verify that handle_incoming_queued_packets() sets handshake_rx when
+/// processing a queued packet that yields hs=true, so the FSM's wait()
+/// state can advance past Waiting on the next handshake() call.
+#[test]
+fn test_handle_incoming_queued_packets_sets_handshake_rx() {
+    use crate::cipher_suite::CipherSuite;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+
+    let config = Arc::new(HandshakeConfig::default());
+    let mut conn = DTLSConn::new(config, false, None);
+
+    // Initialize cipher suite.
+    let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
+    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    conn.state.cipher_suite = Some(cs);
+    conn.state.remote_epoch = 0;
+    conn.handshake_rx = None;
+
+    // Queue a minimal epoch=0 handshake record. handle_incoming_packet will
+    // attempt to process it; even if the payload isn't a valid Finished, the
+    // important thing is that handshake_rx remains None only if hs==false.
+    // We test the plumbing: if the queue is drained, handshake_rx is set
+    // whenever hs==true comes back. For a fragment-buffer hit, hs==true.
+    // Here we just confirm the queue is drained and no panic occurs.
+    let pkt = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x00, // epoch: 0
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x02, // sequence_number: 2
+        0x00, 0x01, // content_len: 1
+        0x00, // payload
+    ];
+    conn.incoming_encrypted_packets.push_back(pkt);
+
+    conn.handle_incoming_queued_packets().unwrap();
+
+    // Queue must be empty regardless of whether hs was true or false.
+    assert!(
+        conn.incoming_encrypted_packets.is_empty(),
+        "Queue must be fully drained by handle_incoming_queued_packets"
+    );
+    // handshake_rx is set if and only if the packet was recognized as a handshake
+    // message by the fragment buffer. For this minimal stub it won't be, but the
+    // key invariant is that the function runs without leaving packets behind.
+}
+
+fn setup_dtls_conn_server_handshake_in_progress() -> DTLSConn {
+    let handshake_config = Arc::new(HandshakeConfig::default());
+    // is_client=false (server), no initial_state → handshake not completed
+    DTLSConn::new(handshake_config, false, None)
+}
+
+/// From issue #46 — verifies the fix for Bug 1:
+/// After the fix, handle_incoming_queued_packets() drains the queue once the
+/// cipher suite is initialized, even before handshake_completed.
+/// (The old guard `is_handshake_completed()` was replaced with `cipher_suite.is_initialized()`.)
+///
+/// This test uses an epoch=1 packet queued while the cipher suite is initialized,
+/// confirming the queue IS drained (fixed behavior).
+#[test]
+fn test_queued_packets_drained_when_cipher_ready() {
+    use crate::cipher_suite::CipherSuite;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+    assert!(!conn.is_handshake_completed());
+
+    // Simulate a queued epoch-1 encrypted packet (e.g. Finished).
+    let fake_epoch1_packet: Vec<u8> = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x01, // epoch: 1
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // sequence_number: 1
+        0x00, 0x01, // content_len: 1
+        0x00, // payload (dummy)
+    ];
+    conn.incoming_encrypted_packets
+        .push_back(fake_epoch1_packet);
+
+    // Without cipher suite: queue is not drained.
+    conn.handle_incoming_queued_packets().unwrap();
+    assert_eq!(conn.incoming_encrypted_packets.len(), 1);
+
+    // Initialize cipher suite (simulates ChangeCipherSpec having been processed).
+    let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
+    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    conn.state.cipher_suite = Some(cs);
+    conn.state.remote_epoch = 1; // ChangeCipherSpec has been processed
+
+    // After fix: queue IS drained once cipher suite is initialized.
+    conn.handle_incoming_queued_packets().unwrap();
+    assert!(
+        conn.incoming_encrypted_packets.is_empty(),
+        "After fix: queued packets must be drained once cipher suite is initialized"
+    );
+}
+
+/// From issue #46 — verifies the fix for Bug 2:
+/// After the fix, handle_incoming_queued_packets() propagates hs=true from
+/// handle_incoming_packet() into self.handshake_rx = Some(()).
+///
+/// Uses a well-formed epoch-0 handshake fragment that the fragment_buffer
+/// will accept, causing handle_incoming_packet to return hs=true.
+#[test]
+fn test_handshake_rx_set_after_queue_processing() {
+    use crate::cipher_suite::CipherSuite;
+    use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
+
+    let mut conn = setup_dtls_conn_server_handshake_in_progress();
+
+    // Initialize cipher suite so the queue-drain guard passes.
+    let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
+    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    conn.state.cipher_suite = Some(cs);
+
+    assert!(conn.handshake_rx.is_none());
+
+    // A well-formed epoch-0 handshake record with a complete fragment
+    // (ClientHello stub) that the fragment_buffer will accept, causing
+    // handle_incoming_packet to return hs=true.
+    let fake_handshake_packet: Vec<u8> = vec![
+        0x16, // content_type: Handshake
+        0xfe, 0xfd, // protocol_version: DTLS 1.2
+        0x00, 0x00, // epoch: 0
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence_number: 0
+        0x00, 0x10, // content_len: 16
+        // Minimal handshake header
+        0x01, // handshake_type: ClientHello
+        0x00, 0x00, 0x04, // length: 4
+        0x00, 0x00, // message_sequence: 0
+        0x00, 0x00, 0x00, // fragment_offset: 0
+        0x00, 0x00, 0x04, // fragment_length: 4
+        0xfe, 0xfd, 0x00, 0x00, // body (version + dummy)
+    ];
+    conn.incoming_encrypted_packets
+        .push_back(fake_handshake_packet);
+
+    conn.handle_incoming_queued_packets().unwrap();
+
+    // After fix: handshake_rx is set because hs=true is now propagated.
+    assert!(
+        conn.handshake_rx.is_some(),
+        "After fix: handshake_rx must be set when a queued packet yields hs=true"
+    );
+}

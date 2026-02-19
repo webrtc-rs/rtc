@@ -174,7 +174,13 @@ impl Endpoint {
             conn.read(&data)?;
             if !conn.is_handshake_completed() {
                 conn.handshake()?;
+                // Drain any queued future-epoch packets (e.g. Finished that arrived
+                // before ChangeCipherSpec bumped remote_epoch). If draining sets
+                // handshake_rx, run handshake() again so the FSM can advance.
                 conn.handle_incoming_queued_packets()?;
+                if !conn.is_handshake_completed() {
+                    conn.handshake()?;
+                }
             }
             if !is_handshake_completed_before && conn.is_handshake_completed() {
                 messages.push(EndpointEvent::HandshakeComplete)

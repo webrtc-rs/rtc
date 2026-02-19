@@ -439,8 +439,11 @@ impl DTLSConn {
     }
 
     pub fn read(&mut self, buf: &[u8]) -> Result<()> {
+        // Per RFC 6347: buffer future-epoch packets only until Finished is received
+        // (i.e. until handshake completes). After that, discard them.
+        let enqueue = !self.is_handshake_completed();
         for pkt in unpack_datagram(buf)? {
-            let (hs, alert, err) = self.handle_incoming_packet(pkt, true);
+            let (hs, alert, err) = self.handle_incoming_packet(pkt, enqueue);
             if let Some(alert) = alert {
                 self.outgoing_packets.push_back(Packet {
                     record: RecordLayer::new(
@@ -475,9 +478,20 @@ impl DTLSConn {
     }
 
     pub(crate) fn handle_incoming_queued_packets(&mut self) -> Result<()> {
-        if self.is_handshake_completed() {
+        // Drain queued future-epoch packets once the cipher suite is initialized,
+        // which may happen before handshake_completed (e.g. Finished arrived before
+        // ChangeCipherSpec bumped remote_epoch, so Finished was queued).
+        let cipher_ready = self
+            .state
+            .cipher_suite
+            .as_ref()
+            .is_some_and(|cs| cs.is_initialized());
+        if cipher_ready {
             while let Some(p) = self.incoming_encrypted_packets.pop_front() {
-                let (_, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
+                let (hs, alert, err) = self.handle_incoming_packet(p, false); // don't re-enqueue
+                if hs {
+                    self.handshake_rx = Some(());
+                }
                 if let Some(alert) = alert {
                     self.outgoing_packets.push_back(Packet {
                         record: RecordLayer::new(
