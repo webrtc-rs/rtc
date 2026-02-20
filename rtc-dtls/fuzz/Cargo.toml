@@ -1,0 +1,222 @@
+[package]
+name = "rtc-dtls-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rand = "0.10.0"
+
+[dependencies.rtc-dtls]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "alert_mod_unmarshal"
+path = "fuzz_targets/alert_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "application_data_unmarshal"
+path = "fuzz_targets/application_data_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "change_cipher_spec_mod_unmarshal"
+path = "fuzz_targets/change_cipher_spec_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compression_methods_unmarshal"
+path = "fuzz_targets/compression_methods_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "content_unmarshal"
+path = "fuzz_targets/content_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_server_name_unmarshal"
+path = "fuzz_targets/extension_extension_server_name_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_supported_elliptic_curves_unmarshal"
+path = "fuzz_targets/extension_extension_supported_elliptic_curves_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_supported_point_formats_unmarshal"
+path = "fuzz_targets/extension_extension_supported_point_formats_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_supported_signature_algorithms_unmarshal"
+path = "fuzz_targets/extension_extension_supported_signature_algorithms_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_use_extended_master_secret_unmarshal"
+path = "fuzz_targets/extension_extension_use_extended_master_secret_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_extension_use_srtp_unmarshal"
+path = "fuzz_targets/extension_extension_use_srtp_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_mod_unmarshal"
+path = "fuzz_targets/extension_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extension_renegotiation_info_unmarshal"
+path = "fuzz_targets/extension_renegotiation_info_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_header_unmarshal"
+path = "fuzz_targets/handshake_handshake_header_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_certificate_request_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_certificate_request_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_certificate_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_certificate_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_certificate_verify_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_certificate_verify_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_client_hello_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_client_hello_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_client_key_exchange_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_client_key_exchange_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_finished_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_finished_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_hello_verify_request_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_hello_verify_request_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_server_hello_done_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_server_hello_done_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_server_hello_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_server_hello_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_message_server_key_exchange_unmarshal"
+path = "fuzz_targets/handshake_handshake_message_server_key_exchange_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_handshake_random_unmarshal"
+path = "fuzz_targets/handshake_handshake_random_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_mod_unmarshal"
+path = "fuzz_targets/handshake_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_layer_mod_unmarshal"
+path = "fuzz_targets/record_layer_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_layer_record_layer_header_unmarshal"
+path = "fuzz_targets/record_layer_record_layer_header_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_unmarshal_binary"
+path = "fuzz_targets/state_unmarshal_binary.rs"
+test = false
+doc = false
+bench = false

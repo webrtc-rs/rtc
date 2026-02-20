@@ -165,6 +165,10 @@ impl HandshakeMessageClientHello {
 
         let mut offset = 0;
         while offset < extension_buffer_len {
+            if offset + 4 > extension_buffer_len {
+                return Err(Error::ErrBufferTooSmall);
+            }
+
             let mut extension_reader = BufReader::new(&extension_buffer[offset..]);
             if let Ok(extension) = Extension::unmarshal(&mut extension_reader) {
                 extensions.push(extension);
