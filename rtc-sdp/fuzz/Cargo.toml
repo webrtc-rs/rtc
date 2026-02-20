@@ -19,7 +19,15 @@ path = ".."
 members = ["."]
 
 [[bin]]
-name = "parse_session"
-path = "fuzz_targets/parse_session.rs"
+name = "description_session_unmarshal"
+path = "fuzz_targets/description_session_unmarshal.rs"
 test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "extmap_mod_unmarshal"
+path = "fuzz_targets/extmap_mod_unmarshal.rs"
+test = false
+doc = false
+bench = false

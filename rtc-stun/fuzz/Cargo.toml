@@ -1,0 +1,25 @@
+[package]
+name = "rtc-stun-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rtc-stun]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "message_unmarshal_binary"
+path = "fuzz_targets/message_unmarshal_binary.rs"
+test = false
+doc = false
+bench = false
