@@ -963,8 +963,12 @@ pub enum Error {
     ErrParamPacketTooShort,
     #[error("outgoing SSN reset request parameter too short")]
     ErrSsnResetRequestParamTooShort,
+    #[error("failed unmarshalling SSN reset request parameter in RE-CONFIG chunk")]
+    ErrUnmarshalSsnResetRequestParam,
     #[error("reconfig response parameter too short")]
     ErrReconfigRespParamTooShort,
+    #[error("failed unmarshalling re-configuration response parameter in RE-CONFIG chunk")]
+    ErrUnmarshalReconfigRespParam,
     #[error("invalid algorithm type")]
     ErrInvalidAlgorithmType,
 
@@ -998,6 +1002,8 @@ pub enum Error {
     ErrChunkPayloadSmall,
     #[error("ChunkType is not of type PayloadData")]
     ErrChunkTypeNotPayloadData,
+    #[error("failed unmarshalling payload data chunk")]
+    ErrChunkUnmarshalPayloadData,
     #[error("ChunkType is not of type Reconfig")]
     ErrChunkTypeNotReconfig,
     #[error("ChunkReconfig has invalid ParamA")]
@@ -1014,11 +1020,15 @@ pub enum Error {
     ErrChunkTypeNotSack,
     #[error("SACK Chunk size is not large enough to contain header")]
     ErrSackSizeNotLargeEnoughInfo,
+    #[error("failed unmarshalling SACK chunk")]
+    ErrChunkUnmarshalSack,
 
     #[error("invalid chunk size")]
     ErrInvalidChunkSize,
     #[error("ChunkType is not of type SHUTDOWN")]
     ErrChunkTypeNotShutdown,
+    #[error("failed unmarshalling shutdown chunk")]
+    ErrChunkUnmarshalShutdown,
 
     #[error("ChunkType is not of type SHUTDOWN-ACK")]
     ErrChunkTypeNotShutdownAck,

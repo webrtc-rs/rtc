@@ -42,6 +42,15 @@ impl Chunk for ChunkShutdown {
             return Err(Error::ErrChunkTypeNotShutdown);
         }
 
+        // https://datatracker.ietf.org/doc/html/rfc4960#section-3.3.8
+        //
+        // Length: 16 bits (unsigned integer)
+        //
+        //    Indicates the length of the parameter.  Set to 8.
+        if header.value_length() + CHUNK_HEADER_SIZE != 8 {
+            return Err(Error::ErrChunkUnmarshalShutdown);
+        }
+
         if raw.len() != CHUNK_HEADER_SIZE + CUMULATIVE_TSN_ACK_LENGTH {
             return Err(Error::ErrInvalidChunkSize);
         }

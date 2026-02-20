@@ -90,6 +90,10 @@ impl Chunk for ChunkSelectiveAck {
             return Err(Error::ErrChunkTypeNotSack);
         }
 
+        if header.value_length() < SELECTIVE_ACK_HEADER_SIZE {
+            return Err(Error::ErrChunkUnmarshalSack);
+        }
+
         if raw.len() < CHUNK_HEADER_SIZE + SELECTIVE_ACK_HEADER_SIZE {
             return Err(Error::ErrSackSizeNotLargeEnoughInfo);
         }
@@ -100,6 +104,12 @@ impl Chunk for ChunkSelectiveAck {
         let advertised_receiver_window_credit = reader.get_u32();
         let gap_ack_blocks_len = reader.get_u16() as usize;
         let duplicate_tsn_len = reader.get_u16() as usize;
+
+        if header.value_length()
+            < SELECTIVE_ACK_HEADER_SIZE + 4 * gap_ack_blocks_len + 4 * duplicate_tsn_len
+        {
+            return Err(Error::ErrChunkUnmarshalSack);
+        }
 
         // Here we must account for case where the buffer contains another chunk
         // right after this one. Testing for equality would incorrectly fail the

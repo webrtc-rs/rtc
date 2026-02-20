@@ -98,7 +98,20 @@ impl Param for ParamReconfigResponse {
 
     fn unmarshal(raw: &Bytes) -> Result<Self> {
         let header = ParamHeader::unmarshal(raw)?;
-        if raw.len() < 8 + PARAM_HEADER_LENGTH {
+
+        // https://datatracker.ietf.org/doc/html/rfc6525#section-4.4
+        //
+        // Parameter Type Length: 2 bytes (unsigned integer)
+        // This field holds the length in bytes of the parameter; the value
+        // MUST be 12 if the optional fields are not present and 20
+        // otherwise.
+        if header.value_length() + PARAM_HEADER_LENGTH != 12
+            && header.value_length() + PARAM_HEADER_LENGTH != 20
+        {
+            return Err(Error::ErrUnmarshalReconfigRespParam);
+        }
+
+        if raw.len() < header.value_length() + PARAM_HEADER_LENGTH {
             return Err(Error::ErrReconfigRespParamTooShort);
         }
 

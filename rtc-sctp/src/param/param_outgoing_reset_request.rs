@@ -70,8 +70,20 @@ impl Param for ParamOutgoingResetRequest {
 
     fn unmarshal(raw: &Bytes) -> Result<Self> {
         let header = ParamHeader::unmarshal(raw)?;
-        if raw.len() < PARAM_HEADER_LENGTH + PARAM_OUTGOING_RESET_REQUEST_STREAM_IDENTIFIERS_OFFSET
+
+        // https://datatracker.ietf.org/doc/html/rfc6525#section-4.1
+        //
+        // Parameter Length: 2 bytes (unsigned integer)
+        //    This field holds the length in bytes of the parameter; the value
+        //    MUST be 16 + 2 * N, where N is the number of stream numbers
+        //    listed.
+        if header.value_length() + PARAM_HEADER_LENGTH < 16
+            || (header.value_length() + PARAM_HEADER_LENGTH - 16) % 2 != 0
         {
+            return Err(Error::ErrUnmarshalReconfigRespParam);
+        }
+
+        if raw.len() < PARAM_HEADER_LENGTH + header.value_length() {
             return Err(Error::ErrSsnResetRequestParamTooShort);
         }
 
