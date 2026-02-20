@@ -1,0 +1,234 @@
+[package]
+name = "rtc-sctp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.11.0"
+
+[dependencies.rtc-sctp]
+path = ".."
+
+[dependencies.shared]
+path = "../../rtc-shared"
+package = "rtc-shared"
+default-features = false
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "packet_unmarshal"
+path = "fuzz_targets/packet_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet_partial_decode_unmarshal"
+path = "fuzz_targets/packet_partial_decode_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_header_unmarshal"
+path = "fuzz_targets/chunk_chunk_header_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_abort_unmarshal"
+path = "fuzz_targets/chunk_chunk_abort_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_cookie_ack_unmarshal"
+path = "fuzz_targets/chunk_chunk_cookie_ack_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_cookie_echo_unmarshal"
+path = "fuzz_targets/chunk_chunk_cookie_echo_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_error_unmarshal"
+path = "fuzz_targets/chunk_chunk_error_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_forward_tsn_unmarshal"
+path = "fuzz_targets/chunk_chunk_forward_tsn_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_forward_tsn_stream_unmarshal"
+path = "fuzz_targets/chunk_chunk_forward_tsn_stream_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_heartbeat_unmarshal"
+path = "fuzz_targets/chunk_chunk_heartbeat_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_heartbeat_ack_unmarshal"
+path = "fuzz_targets/chunk_chunk_heartbeat_ack_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_init_unmarshal"
+path = "fuzz_targets/chunk_chunk_init_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_payload_data_unmarshal"
+path = "fuzz_targets/chunk_chunk_payload_data_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_reconfig_unmarshal"
+path = "fuzz_targets/chunk_chunk_reconfig_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_selective_ack_unmarshal"
+path = "fuzz_targets/chunk_chunk_selective_ack_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_shutdown_unmarshal"
+path = "fuzz_targets/chunk_chunk_shutdown_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_shutdown_ack_unmarshal"
+path = "fuzz_targets/chunk_chunk_shutdown_ack_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_chunk_shutdown_complete_unmarshal"
+path = "fuzz_targets/chunk_chunk_shutdown_complete_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunk_error_cause_unmarshal"
+path = "fuzz_targets/chunk_error_cause_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_header_unmarshal"
+path = "fuzz_targets/param_param_header_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_forward_tsn_supported_unmarshal"
+path = "fuzz_targets/param_param_forward_tsn_supported_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_supported_extensions_unmarshal"
+path = "fuzz_targets/param_param_supported_extensions_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_random_unmarshal"
+path = "fuzz_targets/param_param_random_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_requested_hmac_algorithm_unmarshal"
+path = "fuzz_targets/param_param_requested_hmac_algorithm_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_chunk_list_unmarshal"
+path = "fuzz_targets/param_param_chunk_list_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_state_cookie_unmarshal"
+path = "fuzz_targets/param_param_state_cookie_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_heartbeat_info_unmarshal"
+path = "fuzz_targets/param_param_heartbeat_info_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_outgoing_reset_request_unmarshal"
+path = "fuzz_targets/param_param_outgoing_reset_request_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_reconfig_response_unmarshal"
+path = "fuzz_targets/param_param_reconfig_response_unmarshal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_param_unknown_unmarshal"
+path = "fuzz_targets/param_param_unknown_unmarshal.rs"
+test = false
+doc = false
+bench = false
