@@ -768,6 +768,12 @@ where
     /// Update the PeerConnectionState given the state of relevant transports
     /// <https://www.w3.org/TR/webrtc/#rtcpeerconnectionstate-enum>
     pub(crate) fn update_connection_state(&mut self, is_closed: bool) {
+        // Once closed, the state is terminal — ignore any subsequent transport
+        // state changes that would otherwise re-evaluate to e.g. `New`.
+        if self.peer_connection_state == RTCPeerConnectionState::Closed && !is_closed {
+            return;
+        }
+
         let connection_state =
             // The RTCPeerConnection object's [[IsClosed]] slot is true.
             if is_closed {
