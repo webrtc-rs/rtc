@@ -13,7 +13,6 @@
 //! - **DTLS Security**: Control certificate verification and DTLS role behavior
 //! - **Replay Protection**: Configure anti-replay windows for DTLS, SRTP, and SRTCP
 //! - **Network Types**: Restrict candidate gathering to specific network types
-//! - **Data Channels**: Enable detached mode for custom transport handling
 //!
 //! # Examples
 //!
