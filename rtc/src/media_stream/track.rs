@@ -566,6 +566,11 @@ impl MediaStreamTrack {
         self.muted
     }
 
+    /// Returns MediaStreamTrackState
+    pub fn ready_state(&self) -> MediaStreamTrackState {
+        self.ready_state
+    }
+
     /// Permanently stops this track.
     ///
     /// Stopping a track ends its media source and transitions the track to the "ended" state.
