@@ -9,8 +9,18 @@ use std::time::SystemTimeError;
 use substring::Substring;
 use thiserror::Error;
 
+/// A type alias for `std::result::Result` with this crate's [`enum@Error`] type.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Unified error type for all WebRTC sub-protocols.
+///
+/// Aggregates errors from every layer of the WebRTC stack — buffers, RTP/RTCP,
+/// SRTP, STUN, TURN, ICE, DTLS, SCTP, data channels, SDP, mDNS, and the
+/// top-level peer connection — into a single enum so callers only need to
+/// handle one error type.
+///
+/// The enum is `#[non_exhaustive]`: new variants may be added in future
+/// releases without a semver-breaking change.
 #[derive(Error, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
@@ -1708,6 +1718,8 @@ pub enum Error {
 }
 
 impl Error {
+    /// Wraps any `std::error::Error` implementation as [`Error::Std`],
+    /// preserving the original error and its stack trace.
     pub fn from_std<T>(error: T) -> Self
     where
         T: std::error::Error + Send + Sync + 'static,
@@ -1715,6 +1727,10 @@ impl Error {
         Error::Std(StdError(Box::new(error)))
     }
 
+    /// Attempts to downcast an [`Error::Std`] variant to a concrete error type.
+    ///
+    /// Returns `None` if this error is not `Error::Std` or if the inner error
+    /// is not of type `T`.
     pub fn downcast_ref<T: std::error::Error + 'static>(&self) -> Option<&T> {
         if let Error::Std(s) = self {
             return s.0.downcast_ref();
@@ -1724,6 +1740,11 @@ impl Error {
     }
 }
 
+/// Wrapper around [`std::io::Error`] that implements [`PartialEq`].
+///
+/// `io::Error` does not implement `PartialEq`, which is required by the
+/// top-level [`enum@Error`] enum. This newtype delegates equality to
+/// [`io::ErrorKind`], so two `IoError` values are equal when their kinds match.
 #[derive(Debug, Error)]
 #[error("io error: {0}")]
 pub struct IoError(#[from] pub io::Error);
@@ -1741,14 +1762,15 @@ impl From<io::Error> for Error {
     }
 }
 
-/// An escape hatch to preserve stack traces when we don't know the error.
+/// An escape hatch to preserve stack traces for errors whose concrete type is unknown.
 ///
-/// This crate exports some traits such as `Conn` and `Listener`. The trait functions
-/// produce the local error `util::Error`. However when used in crates higher up the stack,
-/// we are forced to handle errors that are local to that crate. For example we use
-/// `Listener` the `dtls` crate and it needs to handle `dtls::Error`.
+/// Some traits exported by this crate (e.g. `Conn`, `Listener`) return `Error`.
+/// When those traits are used in higher-level crates that have their own error
+/// types, callers are forced to handle foreign errors. `StdError` boxes any
+/// `std::error::Error` implementation and wraps it in `Error::Std`, preserving
+/// the original error's message and — where supported — its stack trace.
 ///
-/// By using `util::Error::from_std` we can preserve the underlying error (and stack trace!).
+/// Use [`Error::from_std`] to construct this variant.
 #[derive(Debug, Error)]
 #[error("{0}")]
 pub struct StdError(pub Box<dyn std::error::Error + Send + Sync>);
@@ -1771,6 +1793,12 @@ impl From<sec1::Error> for Error {
     }
 }
 
+/// Wrapper around [`p256::elliptic_curve::Error`] that implements [`PartialEq`].
+///
+/// `p256::elliptic_curve::Error` does not implement `PartialEq`, which is
+/// required by the top-level [`enum@Error`] enum. This newtype always returns
+/// `false` for equality comparisons, which is the safe conservative choice
+/// for opaque cryptographic errors.
 #[derive(Debug, Error)]
 #[error("{0}")]
 pub struct P256Error(#[source] p256::elliptic_curve::Error);
@@ -1793,7 +1821,9 @@ impl From<SystemTimeError> for Error {
     }
 }
 
-/// flatten_errs flattens multiple errors into one
+/// Flattens a list of errors into a single [`enum@Error`], joining their messages with newlines.
+///
+/// Returns `Ok(())` if `errs` is empty.
 pub fn flatten_errs(errs: Vec<impl Into<Error>>) -> Result<()> {
     if errs.is_empty() {
         Ok(())
