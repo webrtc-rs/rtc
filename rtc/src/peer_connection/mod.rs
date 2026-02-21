@@ -314,9 +314,9 @@ use std::time::Instant;
 /// Builder for creating RTCPeerConnection instances.
 ///
 /// This builder provides a fluent API for configuring peer connections with:
-/// - ICE servers (STUN/TURN) via [`RTCConfiguration`](configuration::RTCConfiguration)
-/// - Media codecs and RTP extensions via [`MediaEngine`](configuration::media_engine::MediaEngine)
-/// - Low-level transport settings via [`SettingEngine`](configuration::setting_engine::SettingEngine)
+/// - ICE servers (STUN/TURN) via [`RTCConfiguration`]
+/// - Media codecs and RTP extensions via [`MediaEngine`]
+/// - Low-level transport settings via [`SettingEngine`]
 /// - RTP/RTCP interceptors for NACK, TWCC, and RTCP reports
 ///
 /// # Examples
