@@ -275,7 +275,7 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
-    pub(crate) fn mid(&self) -> &Option<String> {
+    pub fn mid(&self) -> &Option<String> {
         &self.mid
     }
 
@@ -289,7 +289,7 @@ where
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal<I>> {
+    pub fn sender(&self) -> &Option<RTCRtpSenderInternal<I>> {
         &self.sender
     }
     /// sender returns the RTPTransceiver's RTPSender if it has one
@@ -298,7 +298,7 @@ where
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal<I>> {
+    pub fn receiver(&self) -> &Option<RTCRtpReceiverInternal<I>> {
         &self.receiver
     }
 
@@ -346,7 +346,7 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
-    pub(crate) fn current_direction(&self) -> RTCRtpTransceiverDirection {
+    pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
         self.current_direction
     }
 
@@ -358,7 +358,7 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
-    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
+    pub fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -389,7 +389,7 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.setCodecPreferences()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-setcodecpreferences).
-    pub(crate) fn set_codec_preferences(
+    pub fn set_codec_preferences(
         &mut self,
         codecs: Vec<RTCRtpCodecParameters>,
         media_engine: &MediaEngine,

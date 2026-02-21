@@ -78,7 +78,7 @@ impl Param for ParamOutgoingResetRequest {
         //    MUST be 16 + 2 * N, where N is the number of stream numbers
         //    listed.
         if header.value_length() + PARAM_HEADER_LENGTH < 16
-            || (header.value_length() + PARAM_HEADER_LENGTH - 16) % 2 != 0
+            || !(header.value_length() + PARAM_HEADER_LENGTH - 16).is_multiple_of(2)
         {
             return Err(Error::ErrUnmarshalReconfigRespParam);
         }
