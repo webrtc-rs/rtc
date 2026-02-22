@@ -1591,6 +1591,8 @@ pub enum Error {
     ErrRTPSenderDTLSTransportNil,
     #[error("Send has already been called")]
     ErrRTPSenderSendAlreadyCalled,
+    #[error("TPTransceiver not existed")]
+    ErrTPTransceiverNotExisted,
     #[error("errRTPSenderTrackNil")]
     ErrRTPTransceiverCannotChangeMid,
     #[error("invalid state change in RTPTransceiver.setSending")]
