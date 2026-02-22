@@ -100,8 +100,12 @@
 //mod rtp_transceiver_test;
 
 use crate::media_stream::MediaStreamId;
+use crate::peer_connection::RTCPeerConnection;
+use crate::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
+use interceptor::{Interceptor, NoopInterceptor};
+use shared::error::Result;
 
 pub(crate) mod direction;
 pub(crate) mod fmtp;
@@ -188,4 +192,142 @@ pub struct RTCRtpTransceiverInit {
     pub direction: RTCRtpTransceiverDirection,
     pub streams: Vec<MediaStreamId>,
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
+}
+
+/// RTCRtpTransceiver represents a permanent pairing of an RTP sender and RTP receiver that share a common mid.
+/// The transceiver manages the direction of media flow and codec preferences.
+///
+/// # Specification
+///
+/// See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
+pub struct RTCRtpTransceiver<'a, I = NoopInterceptor>
+where
+    I: Interceptor,
+{
+    pub(crate) id: RTCRtpTransceiverId,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
+}
+
+impl<I> RTCRtpTransceiver<'_, I>
+where
+    I: Interceptor,
+{
+    /// Returns the media stream identification tag (mid) for this transceiver.
+    ///
+    /// The mid uniquely identifies the media description in the SDP. When not already set,
+    /// this value will be assigned during `create_offer` or `create_answer`.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
+    pub fn mid(&self) -> &Option<String> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id].mid()
+    }
+
+    /// sender returns the RTPTransceiver's RTPSender if it has one
+    pub fn sender(&self) -> Option<RTCRtpSenderId> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        if self.peer_connection.rtp_transceivers[self.id]
+            .sender()
+            .is_some()
+        {
+            Some(RTCRtpSenderId::from(self.id))
+        } else {
+            None
+        }
+    }
+
+    /// receiver returns the RTPTransceiver's RTPReceiver if it has one
+    pub fn receiver(&self) -> Option<RTCRtpReceiverId> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        if self.peer_connection.rtp_transceivers[self.id]
+            .receiver()
+            .is_some()
+        {
+            Some(RTCRtpReceiverId::from(self.id))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the preferred direction of the transceiver.
+    ///
+    /// This indicates the direction that the application prefers for media flow.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
+    pub fn direction(&self) -> RTCRtpTransceiverDirection {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id].direction()
+    }
+
+    /// Sets the preferred direction of this transceiver.
+    ///
+    /// Changing the direction may trigger renegotiation to update the session description.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
+    pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
+    }
+
+    /// Returns the negotiated direction of the transceiver.
+    ///
+    /// This indicates the current direction as established by the most recent session description
+    /// exchange. If this transceiver has never been negotiated or if it's stopped, this returns
+    /// [`RTCRtpTransceiverDirection::Unspecified`].
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.currentDirection](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-currentdirection).
+    pub fn current_direction(&self) -> RTCRtpTransceiverDirection {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id].current_direction()
+    }
+
+    /// Irreversibly stops the transceiver.
+    ///
+    /// After calling this method, the transceiver will no longer send or receive media.
+    /// This operation cannot be undone.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
+    pub fn stop(&mut self) -> Result<()> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id].stop(
+            &self.peer_connection.media_engine,
+            &mut self.peer_connection.interceptor,
+        )
+    }
+
+    /// Sets the preferred codec list for this transceiver.
+    ///
+    /// This overrides the default codec preferences from the media engine. If an empty list is
+    /// provided, the transceiver resets to use the default codecs from the media engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any codec in the list is not supported by the media engine.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCRtpTransceiver.setCodecPreferences()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-setcodecpreferences).
+    pub fn set_codec_preferences(&mut self, codecs: Vec<RTCRtpCodecParameters>) -> Result<()> {
+        // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
+        // so, [self.id] here is safe.
+        self.peer_connection.rtp_transceivers[self.id]
+            .set_codec_preferences(codecs, &self.peer_connection.media_engine)
+    }
 }

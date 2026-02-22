@@ -11,7 +11,7 @@ use crate::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit, 
 use interceptor::Interceptor;
 use log::trace;
 use sdp::MediaDescription;
-use shared::error::Error;
+use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::fmt;
 use unicase::UniCase;
@@ -182,11 +182,7 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
-    pub(crate) fn stop(
-        &mut self,
-        media_engine: &MediaEngine,
-        interceptor: &mut I,
-    ) -> shared::error::Result<()> {
+    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -221,7 +217,7 @@ where
         &mut self,
         codecs: Vec<RTCRtpCodecParameters>,
         media_engine: &MediaEngine,
-    ) -> shared::error::Result<()> {
+    ) -> Result<()> {
         for codec in &codecs {
             let media_engine_codecs = media_engine.get_codecs_by_kind(self.kind());
             let (_, match_type) =
@@ -254,7 +250,7 @@ where
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.
-    pub(crate) fn set_mid(&mut self, mid: String) -> shared::error::Result<()> {
+    pub(crate) fn set_mid(&mut self, mid: String) -> Result<()> {
         if self.mid.is_some() {
             return Err(Error::ErrRTPTransceiverCannotChangeMid);
         }
@@ -282,7 +278,7 @@ where
         &mut self,
         media: &MediaDescription,
         media_engine: &MediaEngine,
-    ) -> shared::error::Result<()> {
+    ) -> Result<()> {
         let mut remote_codecs = codecs_from_media_description(media)?;
 
         // make a copy as this slice is modified

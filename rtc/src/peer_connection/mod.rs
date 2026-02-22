@@ -295,8 +295,8 @@ use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpSender,
 };
 use crate::rtp_transceiver::{
-    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiverId, RTCRtpTransceiverInit,
-    internal::RTCRtpTransceiverInternal,
+    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
+    RTCRtpTransceiverInit, internal::RTCRtpTransceiverInternal,
 };
 use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::RTCStatsAccumulator;
@@ -2153,6 +2153,21 @@ where
             && self.rtp_transceivers[id.0].receiver().is_some()
         {
             Some(RTCRtpReceiver {
+                id,
+                peer_connection: self,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// rtp_transceiver provides the access to RTCRtpTransceiver object with the given id
+    pub fn rtp_transceiver(&mut self, id: RTCRtpTransceiverId) -> Option<RTCRtpTransceiver<'_, I>>
+    where
+        I: Interceptor,
+    {
+        if id < self.rtp_transceivers.len() {
+            Some(RTCRtpTransceiver {
                 id,
                 peer_connection: self,
             })
