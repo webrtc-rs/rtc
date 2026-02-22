@@ -171,11 +171,23 @@ pub type RTCRtpTransceiverId = usize;
 #[derive(Default, Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct RTCRtpSenderId(pub(crate) RTCRtpTransceiverId);
 
+impl From<RTCRtpTransceiverId> for RTCRtpSenderId {
+    fn from(id: RTCRtpTransceiverId) -> Self {
+        Self(id)
+    }
+}
+
 /// Identifier for an `RTCRtpReceiver` within a peer connection.
 ///
 /// Used to reference a specific RTP receiver when handling incoming media.
 #[derive(Default, Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct RTCRtpReceiverId(pub(crate) RTCRtpTransceiverId);
+
+impl From<RTCRtpTransceiverId> for RTCRtpReceiverId {
+    fn from(id: RTCRtpTransceiverId) -> Self {
+        Self(id)
+    }
+}
 
 /// Initialization parameters for creating an `RTCRtpTransceiver`.
 ///
