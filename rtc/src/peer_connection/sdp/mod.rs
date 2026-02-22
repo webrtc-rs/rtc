@@ -165,7 +165,8 @@ use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{RTCRtpCodec, RtpCodecKind};
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::{
-    PayloadType, RTCRtpTransceiver, RtpStreamId, SSRC, rtp_sender::rtcp_parameters::RTCPFeedback,
+    PayloadType, RtpStreamId, SSRC, internal::RTCRtpTransceiverInternal,
+    rtp_sender::rtcp_parameters::RTCPFeedback,
 };
 use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::Interceptor;
@@ -616,7 +617,7 @@ where
         mut d: SessionDescription,
         dtls_fingerprints: &[RTCDtlsFingerprint],
         media_engine: &MediaEngine,
-        transceivers: &mut [RTCRtpTransceiver<I>],
+        transceivers: &mut [RTCRtpTransceiverInternal<I>],
         ice_params: &RTCIceParameters,
         candidates: &[RTCIceCandidate],
         media_section: &MediaSection,
@@ -820,7 +821,7 @@ where
     fn add_sender_sdp(
         mut media: MediaDescription,
         media_engine: &MediaEngine,
-        transceiver: &mut RTCRtpTransceiver<I>,
+        transceiver: &mut RTCRtpTransceiverInternal<I>,
         write_ssrc_attributes_for_simulcast: bool,
     ) -> (MediaDescription, Vec<RtpStreamId>) {
         let mut send_rids = vec![];
@@ -986,13 +987,59 @@ impl<I> RTCPeerConnection<I>
 where
     I: Interceptor,
 {
+    pub(crate) fn find_by_mid(
+        mid: &String,
+        local_transceivers: &[RTCRtpTransceiverInternal<I>],
+    ) -> Option<usize> {
+        local_transceivers
+            .iter()
+            .enumerate()
+            .find(|(_i, t)| t.mid().as_ref() == Some(mid))
+            .map(|(i, _v)| i)
+    }
+
+    /// Given a direction+type pluck a transceiver from the passed list
+    /// if no entry satisfies the requested type+direction return a inactive Transceiver
+    pub(crate) fn satisfy_type_and_direction(
+        remote_kind: RtpCodecKind,
+        remote_direction: RTCRtpTransceiverDirection,
+        local_transceivers: &mut [RTCRtpTransceiverInternal<I>],
+    ) -> Option<&mut RTCRtpTransceiverInternal<I>> {
+        // Get direction order from most preferred to least
+        let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
+            match remote_direction {
+                RTCRtpTransceiverDirection::Sendrecv => vec![
+                    RTCRtpTransceiverDirection::Recvonly,
+                    RTCRtpTransceiverDirection::Sendrecv,
+                ],
+                RTCRtpTransceiverDirection::Sendonly => vec![RTCRtpTransceiverDirection::Recvonly],
+                RTCRtpTransceiverDirection::Recvonly => vec![
+                    RTCRtpTransceiverDirection::Sendonly,
+                    RTCRtpTransceiverDirection::Sendrecv,
+                ],
+                _ => vec![],
+            }
+        };
+
+        for possible_direction in get_preferred_directions() {
+            // Find the index first to avoid multiple mutable borrows
+            if let Some(index) = local_transceivers.iter().position(|t| {
+                t.mid().is_none() && t.kind() == remote_kind && possible_direction == t.direction()
+            }) {
+                return Some(&mut local_transceivers[index]);
+            }
+        }
+
+        None
+    }
+
     /// populate_sdp serializes a PeerConnections state into an SDP
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn populate_sdp(
         mut d: SessionDescription,
         dtls_fingerprints: &[RTCDtlsFingerprint],
         media_engine: &MediaEngine,
-        transceivers: &mut [RTCRtpTransceiver<I>],
+        transceivers: &mut [RTCRtpTransceiverInternal<I>],
         candidates: &[RTCIceCandidate],
         ice_params: &RTCIceParameters,
         media_sections: &[MediaSection],

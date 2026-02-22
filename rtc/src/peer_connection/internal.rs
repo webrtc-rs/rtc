@@ -582,7 +582,10 @@ where
     /// add_rtp_transceiver appends t into rtp_transceivers
     /// and fires onNegotiationNeeded;
     /// caller of this method should hold `self.mu` lock
-    pub(super) fn add_rtp_transceiver(&mut self, t: RTCRtpTransceiver<I>) -> RTCRtpTransceiverId {
+    pub(super) fn add_rtp_transceiver(
+        &mut self,
+        t: RTCRtpTransceiverInternal<I>,
+    ) -> RTCRtpTransceiverId {
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
         self.rtp_transceivers.len() - 1
@@ -1001,14 +1004,18 @@ where
         &self,
         track: MediaStreamTrack,
         mut init: RTCRtpTransceiverInit,
-    ) -> Result<RTCRtpTransceiver<I>> {
+    ) -> Result<RTCRtpTransceiverInternal<I>> {
         if init.direction == RTCRtpTransceiverDirection::Unspecified {
             Err(Error::ErrPeerConnAddTransceiverFromTrackSupport)
         } else {
             if init.send_encodings.is_empty() {
                 init.send_encodings = self.send_encodings_from_track(&track);
             }
-            Ok(RTCRtpTransceiver::new(track.kind(), Some(track), init))
+            Ok(RTCRtpTransceiverInternal::new(
+                track.kind(),
+                Some(track),
+                init,
+            ))
         }
     }
 

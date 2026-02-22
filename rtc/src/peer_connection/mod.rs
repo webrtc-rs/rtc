@@ -295,7 +295,8 @@ use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpSender,
 };
 use crate::rtp_transceiver::{
-    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId, RTCRtpTransceiverInit,
+    RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiverId, RTCRtpTransceiverInit,
+    internal::RTCRtpTransceiverInternal,
 };
 use crate::statistics::StatsSelector;
 use crate::statistics::accumulator::RTCStatsAccumulator;
@@ -656,7 +657,7 @@ where
     //////////////////////////////////////////////////
     pub(crate) pipeline_context: PipelineContext,
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
-    pub(super) rtp_transceivers: Vec<RTCRtpTransceiver<I>>,
+    pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal<I>>,
 
     greater_mid: isize,
     sdp_origin: Origin,
@@ -1382,7 +1383,7 @@ where
                                     RTCRtpTransceiverDirection::Recvonly
                                 };
 
-                            let mut transceiver = RTCRtpTransceiver::new(
+                            let mut transceiver = RTCRtpTransceiverInternal::new(
                                 kind,
                                 None,
                                 RTCRtpTransceiverInit {
@@ -2094,7 +2095,7 @@ where
                     return Err(Error::ErrRTPSenderNoBaseEncoding);
                 }
             }
-            RTCRtpTransceiverDirection::Recvonly => RTCRtpTransceiver::new(
+            RTCRtpTransceiverDirection::Recvonly => RTCRtpTransceiverInternal::new(
                 kind,
                 None,
                 RTCRtpTransceiverInit {

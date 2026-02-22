@@ -237,7 +237,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender()
             .as_ref()
             .unwrap()
             .track()
@@ -252,7 +252,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender()
             .as_ref()
             .unwrap()
             .get_capabilities(kind, &self.peer_connection.media_engine)
@@ -278,7 +278,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender_mut()
             .as_mut()
             .unwrap()
             .set_parameters(parameters, set_parameter_options)
@@ -292,7 +292,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender_mut()
             .as_mut()
             .unwrap()
             .get_parameters(&self.peer_connection.media_engine)
@@ -318,7 +318,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender_mut()
             .as_mut()
             .unwrap()
             .replace_track(track)
@@ -333,7 +333,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender_mut()
             .as_mut()
             .unwrap()
             .set_streams(streams);
@@ -359,7 +359,7 @@ where
         //TODO: handle rtp header extension, etc.
         let (sender, media_engine) = (
             self.peer_connection.rtp_transceivers[self.id.0]
-                .sender
+                .sender_mut()
                 .as_mut()
                 .unwrap(),
             &mut self.peer_connection.media_engine,
@@ -416,7 +416,7 @@ where
 
         //TODO: handle rtcp sender ssrc, header extension, etc.
         let sender = self.peer_connection.rtp_transceivers[self.id.0]
-            .sender
+            .sender_mut()
             .as_mut()
             .unwrap();
 

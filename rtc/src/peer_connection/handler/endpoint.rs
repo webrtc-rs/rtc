@@ -12,7 +12,7 @@ use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
-use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpTransceiver, SSRC};
+use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet};
 use log::{debug, trace, warn};
@@ -36,7 +36,7 @@ where
     I: Interceptor,
 {
     ctx: &'a mut EndpointHandlerContext,
-    rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
+    rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal<I>>,
     media_engine: &'a MediaEngine,
     interceptor: &'a mut I,
     stats: &'a mut RTCStatsAccumulator,
@@ -48,7 +48,7 @@ where
 {
     pub(crate) fn new(
         ctx: &'a mut EndpointHandlerContext,
-        rtp_transceivers: &'a mut Vec<RTCRtpTransceiver<I>>,
+        rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal<I>>,
         media_engine: &'a MediaEngine,
         interceptor: &'a mut I,
         stats: &'a mut RTCStatsAccumulator,

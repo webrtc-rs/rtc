@@ -200,7 +200,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver()
             .as_ref()
             .unwrap()
             .track()
@@ -223,7 +223,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver()
             .as_ref()
             .unwrap()
             .get_capabilities(kind, &self.peer_connection.media_engine)
@@ -242,7 +242,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver_mut()
             .as_mut()
             .unwrap()
             .get_parameters(&self.peer_connection.media_engine)
@@ -265,7 +265,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver()
             .as_ref()
             .unwrap()
             .get_contributing_sources()
@@ -289,7 +289,7 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
         self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver()
             .as_ref()
             .unwrap()
             .get_synchronization_sources()
@@ -333,7 +333,7 @@ where
 
         //TODO: handle rtcp media ssrc, header extension, etc.
         let receiver = self.peer_connection.rtp_transceivers[self.id.0]
-            .receiver
+            .receiver_mut()
             .as_mut()
             .unwrap();
 
