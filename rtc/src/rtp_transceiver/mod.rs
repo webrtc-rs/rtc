@@ -155,6 +155,18 @@ pub type RepairedStreamId = String;
 /// Internal identifier for an RTP transceiver.
 pub type RTCRtpTransceiverId = usize;
 
+impl From<RTCRtpSenderId> for RTCRtpTransceiverId {
+    fn from(id: RTCRtpSenderId) -> Self {
+        id.0
+    }
+}
+
+impl From<RTCRtpReceiverId> for RTCRtpTransceiverId {
+    fn from(id: RTCRtpReceiverId) -> Self {
+        id.0
+    }
+}
+
 /// Identifier for an `RTCRtpSender` within a peer connection.
 ///
 /// Used to reference a specific RTP sender when calling methods like `remove_track`.
