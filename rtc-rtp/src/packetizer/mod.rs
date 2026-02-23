@@ -26,7 +26,7 @@ impl Clone for Box<dyn Payloader> {
 }
 
 /// Packetizer packetizes a payload
-pub trait Packetizer: fmt::Debug {
+pub trait Packetizer: Send + Sync + fmt::Debug {
     fn enable_abs_send_time(&mut self, value: u8);
     fn packetize(&mut self, payload: &Bytes, samples: u32) -> Result<Vec<Packet>>;
     fn skip_samples(&mut self, skipped_samples: u32);
