@@ -2,7 +2,7 @@ use bytes::{Buf, BytesMut};
 
 use crate::error::{Error, Result};
 
-pub trait MarshalSize {
+pub trait MarshalSize: Send + Sync {
     fn marshal_size(&self) -> usize;
 }
 
