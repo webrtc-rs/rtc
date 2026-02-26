@@ -166,14 +166,14 @@ impl MediaDescription {
         self,
         ssrc: u32,
         cname: String,
-        stream_label: String,
-        label: String,
+        stream_id: String,
+        track_id: String,
     ) -> Self {
         self.
             with_value_attribute("ssrc".to_string(), format!("{ssrc} cname:{cname}")). // Deprecated but not phased out?
-            with_value_attribute("ssrc".to_string(), format!("{ssrc} msid:{stream_label} {label}")).
-            with_value_attribute("ssrc".to_string(), format!("{ssrc} mslabel:{stream_label}")). // Deprecated but not phased out?
-            with_value_attribute("ssrc".to_string(), format!("{ssrc} label:{label}"))
+            with_value_attribute("ssrc".to_string(), format!("{ssrc} msid:{stream_id} {track_id}")).
+            with_value_attribute("ssrc".to_string(), format!("{ssrc} mslabel:{stream_id}")). // Deprecated but not phased out?
+            with_value_attribute("ssrc".to_string(), format!("{ssrc} label:{track_id}"))
         // Deprecated but not phased out?
     }
 

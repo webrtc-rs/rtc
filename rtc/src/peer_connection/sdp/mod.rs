@@ -866,7 +866,7 @@ where
                         media = media.with_media_source(
                             ssrc,
                             track.stream_id().clone(), /* cname */
-                            track.label().to_owned(),  /* streamLabel */
+                            track.stream_id().to_owned(),  /* stream_id */
                             track.track_id().to_owned(),
                         );
 
@@ -874,7 +874,7 @@ where
                             media = media.with_media_source(
                                 rtx.ssrc,
                                 track.stream_id().clone(), /* cname */
-                                track.label().to_owned(),  /* streamLabel */
+                                track.stream_id().to_owned(),  /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }
@@ -883,7 +883,7 @@ where
                             media = media.with_media_source(
                                 fec.ssrc,
                                 track.stream_id().clone(), /* cname */
-                                track.label().to_owned(),  /* streamLabel */
+                                track.stream_id().to_owned(),  /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }
