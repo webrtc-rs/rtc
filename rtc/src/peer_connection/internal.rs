@@ -272,7 +272,16 @@ where
 
         // If we are offering also include unmatched local transceivers
         let match_bundle_group = if include_unmatched {
+            let already_matched: HashSet<usize> = media_sections
+                .iter()
+                .map(|s| s.transceiver_index)
+                .collect();
+
             for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
+                if already_matched.contains(&i) {
+                    continue;
+                }
+
                 if let Some(sender) = t.sender_mut() {
                     sender.set_negotiated();
                 }
