@@ -68,6 +68,13 @@ pub struct RTCTrackEventInit {
     /// These correspond to the msid attribute in the SDP.
     pub stream_ids: Vec<MediaStreamId>,
 
+    /// SSRC of the first RTP packet that triggered this OnOpen event.
+    ///
+    /// This is always populated when `OnOpen` fires (since it fires on receipt of the
+    /// first RTP packet for this stream). Use this value when sending RTCP feedback
+    /// such as PLI or NACK targeted at this specific stream.
+    pub ssrc: u32,
+
     /// RTP Stream ID (RID) for simulcast/SVC streams.
     ///
     /// In simulcast scenarios, this identifies which spatial/temporal layer this stream represents.
@@ -76,9 +83,6 @@ pub struct RTCTrackEventInit {
     ///
     /// - `None` - Non-simulcast track, or simulcast track before first RTP packet received
     /// - `Some(rid)` - Simulcast stream identifier (e.g., "q", "h", "f" for quality levels)
-    ///
-    /// For tracks that support simulcast, use `MediaStreamTrack::rid(ssrc)` to query the RID
-    /// for a specific SSRC after the track is established.
     pub rid: Option<RtpStreamId>,
 }
 

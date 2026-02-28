@@ -380,6 +380,7 @@ where
                                     receiver_id: RTCRtpReceiverId(id),
                                     track_id: receiver.track().track_id().to_owned(),
                                     stream_ids: vec![receiver.track().stream_id().to_owned()],
+                                    ssrc,
                                     rid: None,
                                 },
                             )),
@@ -498,6 +499,7 @@ where
                                     receiver_id: RTCRtpReceiverId(id),
                                     track_id: track_id.clone(),
                                     stream_ids: vec![receiver.track().stream_id().to_owned()],
+                                    ssrc,
                                     rid: Some(rid),
                                 },
                             )),
@@ -581,6 +583,7 @@ where
                             receiver_id: RTCRtpReceiverId(0),
                             track_id: track_id.clone(),
                             stream_ids: vec![receiver.track().stream_id().to_owned()],
+                            ssrc: rtp_header.ssrc,
                             rid: None,
                         })),
                     ));
