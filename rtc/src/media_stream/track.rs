@@ -789,7 +789,11 @@ impl MediaStreamTrack {
             .map(|coding| &coding.codec)
     }
 
-    pub(crate) fn codings(&self) -> &[RTCRtpEncodingParameters] {
+    pub fn codings(&self) -> &[RTCRtpEncodingParameters] {
         &self.codings
+    }
+
+    pub fn add_coding(&mut self, coding: RTCRtpEncodingParameters) {
+        self.codings.push(coding);
     }
 }
