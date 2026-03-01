@@ -566,6 +566,10 @@ impl MediaStreamTrack {
         self.muted
     }
 
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+    }
+
     /// Returns MediaStreamTrackState
     pub fn ready_state(&self) -> MediaStreamTrackState {
         self.ready_state
