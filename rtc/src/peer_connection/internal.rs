@@ -951,9 +951,7 @@ where
                             };
 
                             let track = sender.track();
-                            if dmsid.split_whitespace().next()
-                                != Some(track.stream_id())
-                            {
+                            if dmsid.split_whitespace().next() != Some(track.stream_id()) {
                                 return true;
                             }
                         } else {

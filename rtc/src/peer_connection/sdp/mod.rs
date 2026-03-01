@@ -865,16 +865,16 @@ where
 
                         media = media.with_media_source(
                             ssrc,
-                            track.stream_id().clone(), /* cname */
-                            track.stream_id().to_owned(),  /* stream_id */
+                            track.stream_id().clone(),    /* cname */
+                            track.stream_id().to_owned(), /* stream_id */
                             track.track_id().to_owned(),
                         );
 
                         if let Some(rtx) = encoding.rtp_coding_parameters.rtx.as_ref() {
                             media = media.with_media_source(
                                 rtx.ssrc,
-                                track.stream_id().clone(), /* cname */
-                                track.stream_id().to_owned(),  /* stream_id */
+                                track.stream_id().clone(),    /* cname */
+                                track.stream_id().to_owned(), /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }
@@ -882,8 +882,8 @@ where
                         if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
                             media = media.with_media_source(
                                 fec.ssrc,
-                                track.stream_id().clone(), /* cname */
-                                track.stream_id().to_owned(),  /* stream_id */
+                                track.stream_id().clone(),    /* cname */
+                                track.stream_id().to_owned(), /* stream_id */
                                 track.track_id().to_owned(),
                             );
                         }
