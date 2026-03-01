@@ -404,6 +404,24 @@ cargo doc --open
 cargo run --example data-channels-answer
 ```
 
+## Semantic Versioning
+
+This project follows [Semantic Versioning](https://semver.org/):
+
+- **Patch** (`0.x.Y`): Bug fixes and internal improvements with no public API changes.
+- **Minor** (`0.X.0`): Backwards-compatible additions or deprecations to the public API.
+- **Major** (`X.0.0`): Breaking changes to the public API.
+
+While the version is `0.x`, the minor version acts as the major — i.e., a minor bump may include breaking changes. Once `1.0.0` is released, full semver stability guarantees apply.
+
+Pre-release versions are published with the following suffixes, in order of increasing stability:
+
+- **`-alpha.N`**: Early preview. API is unstable and may change significantly.
+- **`-beta.N`**: Feature-complete for the release. API may still have minor changes.
+- **`-rc.N`**: Release candidate. No further API changes are expected unless critical issues are found.
+
+For example: `1.0.0-alpha.1` → `1.0.0-beta.1` → `1.0.0-rc.1` → `1.0.0`.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
