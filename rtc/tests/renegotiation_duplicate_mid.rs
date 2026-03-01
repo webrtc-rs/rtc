@@ -8,9 +8,9 @@
 use std::collections::HashSet;
 
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_VP8};
-use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
@@ -45,10 +45,7 @@ fn collect_mids(sdp: &RTCSessionDescription) -> Vec<String> {
     parsed
         .media_descriptions
         .iter()
-        .filter_map(|m| {
-            m.attribute("mid")
-                .and_then(|v| v.map(|s| s.to_owned()))
-        })
+        .filter_map(|m| m.attribute("mid").and_then(|v| v.map(|s| s.to_owned())))
         .collect()
 }
 

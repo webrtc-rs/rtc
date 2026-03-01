@@ -272,10 +272,8 @@ where
 
         // If we are offering also include unmatched local transceivers
         let match_bundle_group = if include_unmatched {
-            let already_matched: HashSet<String> = media_sections
-                .iter()
-                .map(|s| s.mid.clone())
-                .collect();
+            let already_matched: HashSet<String> =
+                media_sections.iter().map(|s| s.mid.clone()).collect();
 
             for (i, t) in self.rtp_transceivers.iter_mut().enumerate() {
                 if let Some(mid) = t.mid().clone() {
