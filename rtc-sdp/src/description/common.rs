@@ -1,5 +1,7 @@
 use std::fmt;
 
+use super::session::ATTR_KEY_CANDIDATE;
+
 /// Information describes the "i=" field which provides textual information
 /// about the session.
 pub type Information = String;
@@ -89,6 +91,6 @@ impl Attribute {
 
     /// is_ice_candidate returns true if the attribute key equals "candidate".
     pub fn is_ice_candidate(&self) -> bool {
-        self.key.as_str() == "candidate"
+        self.key.as_str() == ATTR_KEY_CANDIDATE
     }
 }
