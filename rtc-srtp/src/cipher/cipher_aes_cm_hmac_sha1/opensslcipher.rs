@@ -226,7 +226,7 @@ impl Cipher for CipherAesCmHmacSha1 {
 
         // Generate the auth tag.
         let auth_tag = &self.inner.generate_srtcp_auth_tag(&writer)[..self.rtcp_auth_tag_len()];
-        writer.extend(auth_tag);
+        writer.extend_from_slice(auth_tag);
 
         Ok(writer)
     }

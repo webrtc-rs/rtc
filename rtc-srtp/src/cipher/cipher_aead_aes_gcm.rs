@@ -71,7 +71,7 @@ where
             },
         )?;
 
-        writer.extend(encrypted);
+        writer.extend_from_slice(&encrypted);
         Ok(writer)
     }
 
@@ -97,7 +97,7 @@ where
 
         let mut writer = BytesMut::with_capacity(payload_offset + decrypted_msg.len());
         writer.extend_from_slice(&ciphertext[..payload_offset]);
-        writer.extend(decrypted_msg);
+        writer.extend_from_slice(&decrypted_msg);
 
         Ok(writer)
     }
@@ -121,7 +121,7 @@ where
 
         let mut writer = BytesMut::with_capacity(encrypted_data.len() + aad.len());
         writer.extend_from_slice(&decrypted[..8]);
-        writer.extend(encrypted_data);
+        writer.extend_from_slice(&encrypted_data);
         writer.extend_from_slice(&aad[8..]);
 
         Ok(writer)
@@ -150,7 +150,7 @@ where
 
         let mut writer = BytesMut::with_capacity(8 + decrypted_data.len());
         writer.extend_from_slice(&encrypted[..8]);
-        writer.extend(decrypted_data);
+        writer.extend_from_slice(&decrypted_data);
 
         Ok(writer)
     }
