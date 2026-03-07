@@ -33,7 +33,7 @@ Copy the text that `save-to-disk-h26x` just emitted and copy into second text ar
 
 ### Hit 'Start Session' in jsfiddle, wait, close jsfiddle, enjoy your video!
 
-In the folder you ran `save-to-disk-h26x` you should now have a file `output.h264` or `output.h265` play with your video
+In the folder you ran `save-to-disk-h26x` you should now have a file `output.264` or `output.265` play with your video
 player of choice!
 
 Congrats, you have used WebRTC.rs!
