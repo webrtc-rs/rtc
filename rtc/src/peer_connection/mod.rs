@@ -287,13 +287,9 @@ use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{
-    CodecMatch, RtpCodecKind, encoding_parameters_fuzzy_search,
-};
-use crate::rtp_transceiver::rtp_sender::{
-    RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpSender,
-};
+use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::{
     RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
     RTCRtpTransceiverInit, internal::RTCRtpTransceiverInternal,
@@ -2041,69 +2037,48 @@ where
             return Err(Error::ErrConnectionClosed);
         }
 
-        let (direction, streams, send_encodings) = if let Some(init) = init {
+        let init = if let Some(init) = init {
             if init.direction.has_send() && init.send_encodings.is_empty() {
                 return Err(Error::ErrInvalidDirection);
             }
 
-            (init.direction, init.streams, init.send_encodings)
+            init
         } else {
-            (RTCRtpTransceiverDirection::Recvonly, vec![], vec![])
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            }
         };
 
-        let transceiver = match direction {
+        let transceiver = match init.direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
-                let codecs = self.media_engine.get_codecs_by_kind(kind);
-                let (encoding, code_match_result) =
-                    encoding_parameters_fuzzy_search(&send_encodings, &codecs);
-                if code_match_result != CodecMatch::None {
-                    if encoding.rtp_coding_parameters.rid.is_empty()
+                let mut init = init;
+                if init.send_encodings.first().is_none_or(|encoding| {
+                    encoding.rtp_coding_parameters.rid.is_empty()
                         && encoding.rtp_coding_parameters.ssrc.is_none()
-                    {
-                        return Err(Error::ErrRTPSenderNoBaseEncoding);
-                    }
-
-                    let track = MediaStreamTrack::new(
-                        math_rand_alpha(16), // MediaStreamId
-                        math_rand_alpha(16), // MediaStreamTrackId
-                        math_rand_alpha(16), // Label
-                        kind,
-                        vec![RTCRtpEncodingParameters {
-                            rtp_coding_parameters: RTCRtpCodingParameters {
-                                rid: encoding.rtp_coding_parameters.rid,
-                                ssrc: if let Some(ssrc) = encoding.rtp_coding_parameters.ssrc {
-                                    Some(ssrc)
-                                } else {
-                                    Some(rand::random::<u32>())
-                                },
-                                rtx: None,
-                                fec: None,
-                            },
-                            codec: encoding.codec,
-                            ..Default::default()
-                        }],
-                    );
-                    self.new_transceiver_from_track(
-                        track,
-                        RTCRtpTransceiverInit {
-                            direction,
-                            streams,
-                            send_encodings,
-                        },
-                    )?
-                } else {
+                }) {
                     return Err(Error::ErrRTPSenderNoBaseEncoding);
                 }
+
+                for encoding in &mut init.send_encodings {
+                    if encoding.rtp_coding_parameters.ssrc.is_none() {
+                        encoding.rtp_coding_parameters.ssrc = Some(rand::random::<u32>());
+                    }
+                }
+
+                let track = MediaStreamTrack::new(
+                    math_rand_alpha(16), // MediaStreamId
+                    math_rand_alpha(16), // MediaStreamTrackId
+                    math_rand_alpha(16), // Label
+                    kind,
+                    init.send_encodings.clone(),
+                );
+                self.new_transceiver_from_track(track, init)?
             }
-            RTCRtpTransceiverDirection::Recvonly => RTCRtpTransceiverInternal::new(
-                kind,
-                None,
-                RTCRtpTransceiverInit {
-                    direction,
-                    streams: vec![],
-                    send_encodings: vec![],
-                },
-            ),
+            RTCRtpTransceiverDirection::Recvonly => {
+                RTCRtpTransceiverInternal::new(kind, None, init)
+            }
             _ => return Err(Error::ErrPeerConnAddTransceiverFromKindSupport),
         };
 
