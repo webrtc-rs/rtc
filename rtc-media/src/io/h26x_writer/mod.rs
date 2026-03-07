@@ -16,6 +16,19 @@ const NALU_TTYPE_SPS: u32 = 7;
 const NALU_TYPE_BITMASK: u32 = 0x1F;
 const ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
+fn rebuild_h265_nalu_header(
+    payload_header: rtp::codec::h265::H265NALUHeader,
+    fu_type: u8,
+) -> [u8; 2] {
+    let mut raw = (fu_type as u16) << 9;
+    raw |= (payload_header.layer_id() as u16) << 3;
+    raw |= payload_header.tid() as u16;
+    if payload_header.f() {
+        raw |= 1 << 15;
+    }
+    raw.to_be_bytes()
+}
+
 fn is_key_frame(data: &[u8]) -> bool {
     if data.len() < 4 {
         false
@@ -130,6 +143,7 @@ impl<W: Write> H26xWriter<W> {
                 H265Payload::H265SingleNALUnitPacket(p) => {
                     // Write start code + NAL unit
                     self.writer.write_all(ANNEXB_NALUSTART_CODE)?;
+                    self.writer.write_all(&p.payload_header().0.to_be_bytes())?;
                     self.writer.write_all(&p.payload())?;
                 }
                 H265Payload::H265AggregationPacket(p) => {
@@ -147,17 +161,15 @@ impl<W: Write> H26xWriter<W> {
                 H265Payload::H265FragmentationUnitPacket(p) => {
                     // Handle fragmentation units
                     if p.fu_header().s() {
-                        // Start of fragmented NAL unit
-                        // Reconstruct NAL unit header from FU header
-                        let nal_type = (p.fu_header().fu_type() << 1) & 0b0111_1110;
-
                         // Clear buffer for new NAL unit
                         self.buffer.clear();
 
                         // Write start code
                         self.buffer.extend_from_slice(ANNEXB_NALUSTART_CODE);
-                        // Write reconstructed NAL unit header (2 bytes for H265)
-                        self.buffer.extend_from_slice(&[nal_type, 0x01]);
+                        self.buffer.extend_from_slice(&rebuild_h265_nalu_header(
+                            p.payload_header(),
+                            p.fu_header().fu_type(),
+                        ));
                     }
 
                     // Accumulate payload

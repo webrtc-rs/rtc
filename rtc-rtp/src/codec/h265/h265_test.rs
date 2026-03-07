@@ -1,6 +1,101 @@
 use super::*;
 
 #[test]
+fn test_h265_payload_packetizes_raw_single_nalu_without_annexb_prefix() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+    let payload = Bytes::from_static(&[0x02, 0x01, 0xaa, 0xbb, 0xcc]);
+
+    assert_eq!(pck.payload(1500, &payload)?, vec![payload]);
+
+    Ok(())
+}
+
+#[test]
+fn test_h265_payload_fragmentation_sets_end_bit_on_last_fragment() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+
+    let exact_mtu_payload = Bytes::from_static(&[0x00, 0x00, 0x01, 0x02, 0x01, 1, 2, 3, 4, 5, 6]);
+    let exact_mtu_expected = vec![
+        Bytes::from_static(&[0x62, 0x01, 0x81, 1, 2, 3]),
+        Bytes::from_static(&[0x62, 0x01, 0x41, 4, 5, 6]),
+    ];
+    assert_eq!(pck.payload(6, &exact_mtu_payload)?, exact_mtu_expected);
+
+    let short_tail_payload =
+        Bytes::from_static(&[0x00, 0x00, 0x01, 0x02, 0x01, 11, 12, 13, 14, 15]);
+    let short_tail_expected = vec![
+        Bytes::from_static(&[0x62, 0x01, 0x81, 11, 12, 13]),
+        Bytes::from_static(&[0x62, 0x01, 0x41, 14, 15]),
+    ];
+    assert_eq!(pck.payload(6, &short_tail_payload)?, short_tail_expected);
+
+    Ok(())
+}
+
+#[test]
+fn test_h265_payload_packetizes_idr_n_lp_instead_of_dropping_it() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+    let idr_n_lp_payload = Bytes::from_static(&[
+        0x00, 0x00, 0x01, 0x28, 0x01, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ]);
+
+    let packets = pck.payload(6, &idr_n_lp_payload)?;
+    assert_eq!(
+        packets,
+        vec![
+            Bytes::from_static(&[0x62, 0x01, 0x94, 0xaa, 0xbb, 0xcc]),
+            Bytes::from_static(&[0x62, 0x01, 0x54, 0xdd, 0xee, 0xff]),
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_h265_payload_keeps_single_nalus_when_called_separately() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+
+    assert_eq!(
+        pck.payload(
+            1500,
+            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x40, 0x01, 0x01])
+        )?,
+        vec![Bytes::from_static(&[0x40, 0x01, 0x01])]
+    );
+    assert_eq!(
+        pck.payload(
+            1500,
+            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x42, 0x01, 0x02])
+        )?,
+        vec![Bytes::from_static(&[0x42, 0x01, 0x02])]
+    );
+    assert_eq!(
+        pck.payload(
+            1500,
+            &Bytes::from_static(&[0x00, 0x00, 0x01, 0x44, 0x01, 0x03])
+        )?,
+        vec![Bytes::from_static(&[0x44, 0x01, 0x03])]
+    );
+
+    let payloads = pck.payload(
+        1500,
+        &Bytes::from_static(&[
+            0x00, 0x00, 0x01, 0x40, 0x01, 0x01, 0x00, 0x00, 0x01, 0x42, 0x01, 0x02,
+        ]),
+    )?;
+
+    assert_eq!(payloads.len(), 1, "expected aggregated payload");
+    assert_eq!(
+        payloads[0],
+        Bytes::from_static(&[
+            0x60, 0x01, 0x00, 0x03, 0x40, 0x01, 0x01, 0x00, 0x03, 0x42, 0x01, 0x02,
+        ])
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_h265_nalu_header() -> Result<()> {
     #[derive(Default)]
     struct TestType {

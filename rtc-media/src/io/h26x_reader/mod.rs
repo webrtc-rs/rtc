@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod h26x_reader_test;
+pub mod sample_reader;
+
+pub use sample_reader::{H26xSample, H26xSampleReader};
 
 use bytes::{BufMut, BytesMut};
 use shared::error::{Error, Result};

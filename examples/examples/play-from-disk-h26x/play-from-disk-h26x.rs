@@ -4,7 +4,7 @@ use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
 use rtc::interceptor::Registry;
-use rtc::media::io::h26x_reader::{H26xNAL, H26xReader, H264NalUnitType, H265NalUnitType};
+use rtc::media::io::h26x_reader::H26xSampleReader;
 use rtc::media::io::ogg_reader::OggReader;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
@@ -521,31 +521,6 @@ async fn run(
     Ok(())
 }
 
-fn should_skip_timing(nal: &H26xNAL) -> bool {
-    match nal {
-        H26xNAL::H264(nal) => {
-            matches!(
-                nal.unit_type,
-                H264NalUnitType::SPS
-                    | H264NalUnitType::PPS
-                    | H264NalUnitType::SEI
-                    | H264NalUnitType::AUD
-            )
-        }
-        H26xNAL::H265(nal) => {
-            matches!(
-                nal.unit_type,
-                H265NalUnitType::VPS
-                    | H265NalUnitType::SPS
-                    | H265NalUnitType::PPS
-                    | H265NalUnitType::PrefixSEI
-                    | H265NalUnitType::SuffixSEI
-                    | H265NalUnitType::AUD
-            )
-        }
-    }
-}
-
 async fn stream_video(
     (ssrc, codec): (SSRC, RTCRtpCodecParameters),
     video_file_name: String,
@@ -574,7 +549,7 @@ async fn stream_video(
     // Open video file
     let file = File::open(&video_file_name)?;
     let reader = BufReader::new(file);
-    let mut video_reader = H26xReader::new(reader, 1_048_576, is_hevc);
+    let mut video_reader = H26xSampleReader::new(reader, 1_048_576, is_hevc);
 
     // It is important to use a time.Ticker instead of time.Sleep because
     // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
@@ -582,8 +557,8 @@ async fn stream_video(
     let mut ticker = tokio::time::interval(H26X_FRAME_DURATION);
 
     loop {
-        let nal = match video_reader.next_nal() {
-            Ok(nal) => nal,
+        let sample = match video_reader.next_sample() {
+            Ok(sample) => sample,
             Err(err) => {
                 println!("All video frames parsed and sent: {err}");
                 break;
@@ -592,12 +567,13 @@ async fn stream_video(
 
         let sample_duration = H26X_FRAME_DURATION;
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&nal.data().clone().freeze(), samples)?;
+        let packet_samples = if sample.timed { samples } else { 0 };
+        let packets = packetizer.packetize(&sample.data, packet_samples)?;
         for packet in packets {
             video_message_tx.send((video_sender_id, packet)).await?;
         }
 
-        if !should_skip_timing(&nal) {
+        if sample.timed {
             let _ = ticker.tick().await;
         }
     }
