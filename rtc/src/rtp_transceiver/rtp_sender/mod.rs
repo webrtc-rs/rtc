@@ -373,27 +373,40 @@ where
             return Err(Error::ErrSenderWithNoSSRCs);
         }
 
-        let parameters = sender.get_parameters(media_engine);
-        let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
+        let payload_type = {
+            let parameters = sender.get_parameters(media_engine);
+            let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
 
-        //From SSRC, find the encoding
-        let encoding = encodings
-            .iter()
-            .find(|encoding| {
-                encoding
-                    .rtp_coding_parameters
-                    .ssrc
-                    .is_some_and(|s| s == packet.header.ssrc)
-            })
-            .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
-        // From the encoding, fuzzy_search the codec which contains payload_type
-        let (codec, match_type) = codec_parameters_fuzzy_search(&encoding.codec, codecs);
-        if match_type == CodecMatch::None {
-            return Err(Error::ErrRTPTransceiverCodecUnsupported);
-        }
+            //From SSRC, find the encoding
+            let encoding = encodings
+                .iter()
+                .find(|encoding| {
+                    encoding
+                        .rtp_coding_parameters
+                        .ssrc
+                        .is_some_and(|s| s == packet.header.ssrc)
+                })
+                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+
+            // Prefer the packet's negotiated payload type when it identifies a codec.
+            // This lets reflected/forwarded RTP keep its actual codec even when the sender
+            // was created from a multi-codec track normalized down to a single base encoding.
+            if let Some(codec) = codecs
+                .iter()
+                .find(|codec| codec.payload_type == packet.header.payload_type)
+            {
+                codec.payload_type
+            } else {
+                let (codec, match_type) = codec_parameters_fuzzy_search(&encoding.codec, codecs);
+                if match_type == CodecMatch::None {
+                    return Err(Error::ErrRTPTransceiverCodecUnsupported);
+                }
+                codec.payload_type
+            }
+        };
 
         let track_id = sender.track().track_id().to_string();
-        packet.header.payload_type = codec.payload_type;
+        packet.header.payload_type = payload_type;
         self.peer_connection
             .handle_write(RTCMessage::RtpPacket(track_id, packet))
     }
