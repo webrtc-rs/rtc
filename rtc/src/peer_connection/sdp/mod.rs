@@ -832,7 +832,10 @@ where
                 sender.track(),
             );
 
-            let is_simulcast = encodings.len() > 1;
+            let is_simulcast = encodings.len() > 1
+                && encodings
+                    .iter()
+                    .all(|encoding| !encoding.rtp_coding_parameters.rid.is_empty());
 
             media = media.with_property_attribute(format!(
                 "msid:{} {}",

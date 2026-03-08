@@ -1325,4 +1325,79 @@ where
         // Clean up unreferenced codecs
         self.pipeline_context.stats.cleanup_unreferenced_codecs();
     }
+
+    pub(super) fn codec_preferences_from_encodings(
+        &self,
+        kind: RtpCodecKind,
+        encodings: &[crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters],
+    ) -> Result<Vec<RTCRtpCodecParameters>> {
+        let media_engine_codecs = self.media_engine.get_codecs_by_kind(kind);
+        let mut codec_preferences = vec![];
+
+        for encoding in encodings {
+            if encoding.codec.mime_type.is_empty() {
+                continue;
+            }
+
+            let (codec, match_type) =
+                codec_parameters_fuzzy_search(&encoding.codec, &media_engine_codecs);
+            if match_type == CodecMatch::None {
+                return Err(Error::ErrRTPTransceiverCodecUnsupported);
+            }
+
+            if !codec_preferences
+                .iter()
+                .any(|preference: &RTCRtpCodecParameters| {
+                    preference.payload_type == codec.payload_type
+                })
+            {
+                codec_preferences.push(codec);
+            }
+        }
+
+        Ok(codec_preferences)
+    }
+
+    pub(super) fn normalize_sender_track(
+        &self,
+        track: MediaStreamTrack,
+        mut send_encodings: Vec<crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters>,
+    ) -> Result<(
+        MediaStreamTrack,
+        Vec<crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters>,
+        Vec<RTCRtpCodecParameters>,
+    )> {
+        for encoding in &mut send_encodings {
+            if encoding.rtp_coding_parameters.ssrc.is_none() {
+                encoding.rtp_coding_parameters.ssrc = Some(rand::random::<u32>());
+            }
+        }
+
+        let codec_preferences =
+            self.codec_preferences_from_encodings(track.kind(), &send_encodings)?;
+        let has_rid = send_encodings
+            .iter()
+            .any(|encoding| !encoding.rtp_coding_parameters.rid.is_empty());
+        let all_have_rid = send_encodings
+            .iter()
+            .all(|encoding| !encoding.rtp_coding_parameters.rid.is_empty());
+        if send_encodings.len() > 1 && has_rid && !all_have_rid {
+            return Err(Error::ErrRTPSenderRidNil);
+        }
+
+        let is_simulcast = send_encodings.len() > 1 && all_have_rid;
+        if !is_simulcast {
+            send_encodings.truncate(1);
+        }
+
+        let track = MediaStreamTrack::new(
+            track.stream_id().clone(),
+            track.track_id().clone(),
+            track.label().clone(),
+            track.kind(),
+            send_encodings.clone(),
+        );
+
+        Ok((track, send_encodings, codec_preferences))
+    }
 }

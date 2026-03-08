@@ -287,9 +287,12 @@ use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use crate::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
 use crate::rtp_transceiver::rtp_sender::internal::RTCRtpSenderInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    CodecMatch, RtpCodecKind, codec_parameters_fuzzy_search,
+};
 use crate::rtp_transceiver::{
     RTCRtpReceiverId, RTCRtpSenderId, RTCRtpTransceiver, RTCRtpTransceiverId,
     RTCRtpTransceiverInit, internal::RTCRtpTransceiverInternal,
@@ -1895,6 +1898,8 @@ where
         }
 
         let send_encodings = self.send_encodings_from_track(&track);
+        let (track, send_encodings, codec_preferences) =
+            self.normalize_sender_track(track, send_encodings)?;
         for (id, transceiver) in self.rtp_transceivers.iter_mut().enumerate() {
             if !transceiver.stopped()
                 && transceiver.kind() == track.kind()
@@ -1902,6 +1907,10 @@ where
             {
                 let mut sender =
                     RTCRtpSenderInternal::new(track.kind(), track, vec![], send_encodings);
+
+                if transceiver.get_codec_preferences().is_empty() && !codec_preferences.is_empty() {
+                    transceiver.set_codec_preferences(codec_preferences, &self.media_engine)?;
+                }
 
                 sender.set_codec_preferences(transceiver.get_codec_preferences().to_vec());
 
@@ -1917,7 +1926,7 @@ where
             }
         }
 
-        let transceiver = self.new_transceiver_from_track(
+        let mut transceiver = self.new_transceiver_from_track(
             track,
             RTCRtpTransceiverInit {
                 direction: RTCRtpTransceiverDirection::Sendrecv,
@@ -1925,6 +1934,9 @@ where
                 send_encodings,
             },
         )?;
+        if !codec_preferences.is_empty() {
+            transceiver.set_codec_preferences(codec_preferences, &self.media_engine)?;
+        }
         Ok(RTCRtpSenderId(self.add_rtp_transceiver(transceiver)))
     }
 
@@ -2011,18 +2023,29 @@ where
             return Err(Error::ErrInvalidDirection);
         }
 
-        let transceiver = self.new_transceiver_from_track(
-            track,
-            if let Some(init) = init {
-                init
-            } else {
-                RTCRtpTransceiverInit {
-                    direction: RTCRtpTransceiverDirection::Sendrecv,
-                    streams: vec![],
-                    send_encodings: vec![],
-                }
-            },
-        )?;
+        let mut init = if let Some(init) = init {
+            init
+        } else {
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Sendrecv,
+                streams: vec![],
+                send_encodings: vec![],
+            }
+        };
+
+        let send_encodings = if init.send_encodings.is_empty() {
+            self.send_encodings_from_track(&track)
+        } else {
+            init.send_encodings.clone()
+        };
+        let (track, send_encodings, codec_preferences) =
+            self.normalize_sender_track(track, send_encodings)?;
+        init.send_encodings = send_encodings;
+
+        let mut transceiver = self.new_transceiver_from_track(track, init)?;
+        if !codec_preferences.is_empty() {
+            transceiver.set_codec_preferences(codec_preferences, &self.media_engine)?;
+        }
 
         Ok(self.add_rtp_transceiver(transceiver))
     }
@@ -2054,19 +2077,6 @@ where
         let transceiver = match init.direction {
             RTCRtpTransceiverDirection::Sendonly | RTCRtpTransceiverDirection::Sendrecv => {
                 let mut init = init;
-                if init.send_encodings.first().is_none_or(|encoding| {
-                    encoding.rtp_coding_parameters.rid.is_empty()
-                        && encoding.rtp_coding_parameters.ssrc.is_none()
-                }) {
-                    return Err(Error::ErrRTPSenderNoBaseEncoding);
-                }
-
-                for encoding in &mut init.send_encodings {
-                    if encoding.rtp_coding_parameters.ssrc.is_none() {
-                        encoding.rtp_coding_parameters.ssrc = Some(rand::random::<u32>());
-                    }
-                }
-
                 let track = MediaStreamTrack::new(
                     math_rand_alpha(16), // MediaStreamId
                     math_rand_alpha(16), // MediaStreamTrackId
@@ -2074,7 +2084,15 @@ where
                     kind,
                     init.send_encodings.clone(),
                 );
-                self.new_transceiver_from_track(track, init)?
+                let (track, send_encodings, codec_preferences) =
+                    self.normalize_sender_track(track, init.send_encodings)?;
+                init.send_encodings = send_encodings;
+
+                let mut transceiver = self.new_transceiver_from_track(track, init)?;
+                if !codec_preferences.is_empty() {
+                    transceiver.set_codec_preferences(codec_preferences, &self.media_engine)?;
+                }
+                transceiver
             }
             RTCRtpTransceiverDirection::Recvonly => {
                 RTCRtpTransceiverInternal::new(kind, None, init)
