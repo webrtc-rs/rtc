@@ -382,7 +382,8 @@ impl Agent {
         {
             debug!(
                 "Ignoring local candidate with type {:?} (not in configured candidate types: {:?})",
-                c.candidate_type(), self.candidate_types
+                c.candidate_type(),
+                self.candidate_types
             );
             return Ok(false);
         }
