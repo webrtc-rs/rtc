@@ -374,12 +374,7 @@ impl Agent {
         }
 
         // Filter by candidate type if candidate_types is configured.
-        // PeerReflexive candidates are discovered dynamically during connectivity checks
-        // (RFC 8445) and are always allowed regardless of the configured candidate types.
-        if !self.candidate_types.is_empty()
-            && c.candidate_type() != CandidateType::PeerReflexive
-            && !self.candidate_types.contains(&c.candidate_type())
-        {
+        if !self.candidate_types.is_empty() && !self.candidate_types.contains(&c.candidate_type()) {
             debug!(
                 "Ignoring local candidate with type {:?} (not in configured candidate types: {:?})",
                 c.candidate_type(),
