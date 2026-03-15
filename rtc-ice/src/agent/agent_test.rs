@@ -2472,12 +2472,14 @@ fn test_candidate_type_filtering() -> Result<()> {
         "Relay local candidate should be accepted"
     );
 
-    assert!(
-        agent.local_candidates.len() == 1,
+    assert_eq!(
+        agent.local_candidates.len(),
+        1,
         "Only the relay candidate should be stored"
     );
-    assert!(
-        agent.remote_candidates.len() == 1,
+    assert_eq!(
+        agent.remote_candidates.len(),
+        1,
         "Remote host candidate should be stored"
     );
 

@@ -374,10 +374,11 @@ impl Agent {
         }
 
         // Filter by candidate type if candidate_types is configured.
-        if !self.candidate_types.is_empty() && !self.candidate_types.contains(&c.candidate_type()) {
+        let candidate_type = c.candidate_type();
+        if !self.candidate_types.is_empty() && !self.candidate_types.contains(&candidate_type) {
             debug!(
                 "Ignoring local candidate with type {:?} (not in configured candidate types: {:?})",
-                c.candidate_type(),
+                candidate_type,
                 self.candidate_types
             );
             return Ok(false);
