@@ -71,23 +71,21 @@ impl DataChannel {
     ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
-        if !config.negotiated {
-            let msg = Message::DataChannelOpen(DataChannelOpen {
-                channel_type: config.channel_type,
-                priority: config.priority,
-                reliability_parameter: config.reliability_parameter,
-                label: config.label.bytes().collect(),
-                protocol: config.protocol.bytes().collect(),
-            })
-            .marshal()?;
+        let msg = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: config.channel_type,
+            priority: config.priority,
+            reliability_parameter: config.reliability_parameter,
+            label: config.label.bytes().collect(),
+            protocol: config.protocol.bytes().collect(),
+        })
+        .marshal()?;
 
-            data_channel.write_outs.push_back(DataChannelMessage {
-                association_handle,
-                stream_id,
-                ppi: PayloadProtocolIdentifier::Dcep,
-                payload: msg,
-            });
-        }
+        data_channel.write_outs.push_back(DataChannelMessage {
+            association_handle,
+            stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: msg,
+        });
 
         Ok(data_channel)
     }
