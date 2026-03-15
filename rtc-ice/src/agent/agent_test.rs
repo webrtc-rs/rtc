@@ -2409,3 +2409,80 @@ fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
     agent.close()?;
     Ok(())
 }
+
+#[test]
+fn test_candidate_type_filtering() -> Result<()> {
+    // Create an agent with only Relay candidate type allowed (simulates RTCIceTransportPolicy::Relay)
+    let config = Arc::new(AgentConfig {
+        candidate_types: vec![CandidateType::Relay],
+        ..Default::default()
+    });
+    let mut agent = Agent::new(config)?;
+
+    // Host local candidate should be rejected
+    let host_local = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.1.1".to_owned(),
+            port: 5000,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    assert!(
+        !agent.add_local_candidate(host_local)?,
+        "Host local candidate should be filtered out"
+    );
+
+    // Remote candidates of any type should still be accepted (relay policy only filters local)
+    let host_remote = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.1.3".to_owned(),
+            port: 5003,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    assert!(
+        agent.add_remote_candidate(host_remote)?,
+        "Remote candidates should be accepted regardless of candidate_types"
+    );
+
+    // Relay local candidate should be accepted
+    let relay_local = CandidateRelayConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "1.2.3.4".to_owned(),
+            port: 5004,
+            component: 1,
+            ..Default::default()
+        },
+        rel_addr: "4.3.2.1".to_owned(),
+        rel_port: 5005,
+        ..Default::default()
+    }
+    .new_candidate_relay()?;
+    assert!(
+        agent.add_local_candidate(relay_local)?,
+        "Relay local candidate should be accepted"
+    );
+
+    assert_eq!(
+        agent.local_candidates.len(),
+        1,
+        "Only the relay candidate should be stored"
+    );
+    assert_eq!(
+        agent.remote_candidates.len(),
+        1,
+        "Remote host candidate should be stored"
+    );
+
+    agent.close()?;
+    Ok(())
+}

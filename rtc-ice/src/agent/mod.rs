@@ -373,6 +373,16 @@ impl Agent {
             }
         }
 
+        // Filter by candidate type if candidate_types is configured.
+        let candidate_type = c.candidate_type();
+        if !self.candidate_types.is_empty() && !self.candidate_types.contains(&candidate_type) {
+            debug!(
+                "Ignoring local candidate with type {:?} (not in configured candidate types: {:?})",
+                candidate_type, self.candidate_types
+            );
+            return Ok(false);
+        }
+
         if c.candidate_type() == CandidateType::Host
             && self.mdns_mode == MulticastDnsMode::QueryAndGather
             && c.network_type == NetworkType::Udp4
