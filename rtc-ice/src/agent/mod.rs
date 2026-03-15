@@ -378,8 +378,7 @@ impl Agent {
         if !self.candidate_types.is_empty() && !self.candidate_types.contains(&candidate_type) {
             debug!(
                 "Ignoring local candidate with type {:?} (not in configured candidate types: {:?})",
-                candidate_type,
-                self.candidate_types
+                candidate_type, self.candidate_types
             );
             return Ok(false);
         }
