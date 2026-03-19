@@ -2,7 +2,7 @@ use crate::association::Association;
 use crate::association::state::AssociationState;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
-use crate::{ErrorCauseCode, Event, Side};
+use crate::{ErrorCauseCode, Event, FlushIds, Side};
 use shared::error::{Error, Result};
 
 use crate::util::{ByteSlice, BytesArray, BytesSource};
@@ -202,6 +202,22 @@ impl Stream<'_> {
         } else {
             Err(Error::ErrStreamClosed)
         }
+    }
+
+    /// Pushes a flush signal into the stream, which can be collected later by polling
+    /// the connection after all previous messages are processed.
+    /// The flush signal is not sent to the remote peer.
+    pub fn flush(&mut self, ids: FlushIds) -> Result<()> {
+
+        if !self.is_writable() {
+            return Err(Error::ErrStreamClosed);
+        }
+
+        let Some(s) = self.association.streams.get_mut(&self.stream_identifier)
+            else { return Err(Error::ErrStreamClosed); };
+        let unordered = s.unordered;
+
+        self.association.send_flush(ids, unordered)
     }
 
     pub fn is_readable(&self) -> bool {

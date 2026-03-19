@@ -129,6 +129,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     message: RTCMessageInternal::Raw(message),
                 });
             }
+            RTCMessageInternal::Flush(message) => {
+                // pass along the flush message
+                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                    now: msg.now,
+                    transport: msg.transport,
+                    message: RTCMessageInternal::Flush(message),
+                });
+            }
             _ => {
                 debug!("drop non-RAW packet {:?}", msg.message);
             }

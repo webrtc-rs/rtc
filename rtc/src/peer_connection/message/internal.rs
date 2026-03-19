@@ -1,6 +1,7 @@
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::media_stream::track::MediaStreamTrackId;
+use crate::peer_connection::handler::FlushId;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use interceptor::Packet;
@@ -47,11 +48,30 @@ pub(crate) enum RTPMessage {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct FlushMessage {
+    pub(crate) id: FlushId,
+    pub(crate) association_handle: usize,
+    pub(crate) stream_id: u16
+}
+
+impl FlushMessage {
+    pub(crate) fn new(id: FlushId) -> Self {
+        Self {
+            id,
+            // we will gather the values below later in the processing chain
+            association_handle: 0,
+            stream_id: 0
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum RTCMessageInternal {
     Raw(BytesMut),
     Stun(STUNMessage),
     Dtls(DTLSMessage),
     Rtp(RTPMessage),
+    Flush(FlushMessage)
 }
 
 impl RTCMessageInternal {
@@ -93,6 +113,7 @@ impl RTCMessageInternal {
                     }
                 },
             },
+            RTCMessageInternal::Flush(_) => 0
         }
     }
 }

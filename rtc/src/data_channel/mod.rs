@@ -57,6 +57,7 @@ pub use init::RTCDataChannelInit;
 pub use message::RTCDataChannelMessage;
 
 pub use state::RTCDataChannelState;
+use crate::peer_connection::handler::FlushId;
 
 /// Represents a WebRTC data channel for bidirectional peer-to-peer data transfer.
 ///
@@ -268,6 +269,22 @@ where
                         data: BytesMut::from(s.into().as_str()),
                     },
                 ))
+        } else {
+            Err(Error::ErrDataChannelClosed)
+        }
+    }
+
+    /// `flush` sends a signal that indicates when all previous data channel messages are
+    /// finished sending.
+    /// After calling `flush`, a future call to `RTCPeerConnection::poll_flush` will emit a signal
+    /// with the same `id` indicating that all socket messages corresponding to the previous
+    /// data channel messages have been delivered via `RTCPeerConnection::poll_write`.
+    pub fn flush(&mut self, id: i64) -> Result<()> {
+        if self.peer_connection.data_channels.contains_key(&self.id) {
+            self.peer_connection.flush(FlushId {
+                flush_id: id,
+                data_channel_id: self.id
+            })
         } else {
             Err(Error::ErrDataChannelClosed)
         }

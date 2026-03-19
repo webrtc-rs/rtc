@@ -26,13 +26,14 @@ use crate::param::{
 use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
-use crate::{AssociationEvent, Payload, Side};
+use crate::{AssociationEvent, FlushIds, Payload, Side};
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
 use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
 use timer::{ACK_INTERVAL, RtoManager, Timer, TimerTable};
 
 use crate::association::stream::RecvSendState;
+use crate::queue::pending_queue::{FlushEntry, QueueEntry};
 use bytes::Bytes;
 use log::{debug, error, trace, warn};
 use rand::random;
@@ -429,6 +430,22 @@ impl Association {
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<TransportMessage<Payload>> {
+
+        // first, see if the next queue entry is a flush signal
+        if let Some(ids) = self.pop_pending_flush() {
+            trace!("polled flush({})", ids.flush_id);
+            return Some(TransportMessage {
+                now,
+                transport: TransportContext {
+                    local_addr: self.local_addr,
+                    peer_addr: self.remote_addr,
+                    ecn: None,
+                    transport_protocol: Default::default(),
+                },
+                message: Payload::Flush(ids),
+            });
+        }
+
         let (contents, _) = self.gather_outbound(now);
         if contents.is_empty() {
             None
@@ -2375,6 +2392,24 @@ impl Association {
         self.bundle_data_chunks_into_packets(chunks)
     }
 
+    fn pop_pending_flush(&mut self) -> Option<FlushIds> {
+        
+        // if the first queue entry is a flush signal, pop it off
+        if let Some(QueueEntry::Flush(e)) = self.pending_queue.peek() {
+            let unordered = e.unordered;
+            match self.pending_queue.pop(true, unordered) {
+                Some(QueueEntry::Flush(e)) => Some(e.ids),
+                _ => None
+            }
+        } else {
+            None
+        }
+
+        // TODO: is popping off the pending queue enough to guarantee all the previous messages
+        //       have been written to the final output queue?
+        // TODO: pop multiple consecutive flush signals?
+    }
+
     /// pop_pending_data_chunks_to_send pops chunks from the pending queues as many as
     /// the cwnd and rwnd allows to send.
     fn pop_pending_data_chunks_to_send(
@@ -2392,7 +2427,7 @@ impl Association {
             //      is 0), the data sender can always have one DATA chunk in flight to
             //      the receiver if allowed by cwnd (see rule B, below).
 
-            while let Some(c) = self.pending_queue.peek() {
+            while let Some(QueueEntry::Payload(c)) = self.pending_queue.peek() {
                 let (beginning_fragment, unordered, data_len, stream_identifier) = (
                     c.beginning_fragment,
                     c.unordered,
@@ -2434,7 +2469,7 @@ impl Association {
             // the data sender can always have one DATA chunk in flight to the receiver
             if chunks.is_empty() && self.inflight_queue.is_empty() {
                 // Send zero window probe
-                if let Some(c) = self.pending_queue.peek() {
+                if let Some(QueueEntry::Payload(c)) = self.pending_queue.peek() {
                     let (beginning_fragment, unordered) = (c.beginning_fragment, c.unordered);
 
                     if let Some(chunk) = self.move_pending_data_chunk_to_inflight_queue(
@@ -2608,7 +2643,7 @@ impl Association {
         unordered: bool,
         now: Instant,
     ) -> Option<ChunkPayloadData> {
-        if let Some(mut c) = self.pending_queue.pop(beginning_fragment, unordered) {
+        if let Some(QueueEntry::Payload(mut c)) = self.pending_queue.pop(beginning_fragment, unordered) {
             // Mark all fragements are in-flight now
             if c.ending_fragment {
                 c.set_all_inflight();
@@ -2665,7 +2700,7 @@ impl Association {
             ..Default::default()
         };
 
-        self.pending_queue.push(c);
+        self.pending_queue.push(QueueEntry::Payload(c));
         self.awake_write_loop();
 
         Ok(())
@@ -2680,8 +2715,21 @@ impl Association {
 
         // Push the chunks into the pending queue first.
         for c in chunks {
-            self.pending_queue.push(c);
+            self.pending_queue.push(QueueEntry::Payload(c));
         }
+
+        self.awake_write_loop();
+        Ok(())
+    }
+
+    pub(crate) fn send_flush(&mut self, ids: FlushIds, unordered: bool) -> Result<()> {
+
+        let state = self.state();
+        if state != AssociationState::Established {
+            return Err(Error::ErrPayloadDataStateNotExist);
+        }
+
+        self.pending_queue.push(QueueEntry::Flush(FlushEntry { ids, unordered }));
 
         self.awake_write_loop();
         Ok(())

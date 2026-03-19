@@ -1,9 +1,9 @@
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
+use crate::peer_connection::handler::{FlushId, DEFAULT_TIMEOUT_DURATION};
 use crate::peer_connection::message::internal::{
-    DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
+    DTLSMessage, FlushMessage, RTCMessageInternal, TaggedRTCMessageInternal
 };
 use crate::peer_connection::transport::sctp::RTCSctpTransport;
 use bytes::BytesMut;
@@ -13,7 +13,7 @@ use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
     AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
-    Payload, PayloadProtocolIdentifier, StreamEvent,
+    FlushIds, Payload, PayloadProtocolIdentifier, StreamEvent
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -223,17 +223,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         })
                     }
                     SctpMessage::Outbound(transmit) => {
-                        if let Payload::RawEncode(raw_data) = transmit.message {
-                            for raw in raw_data {
-                                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                                    now: transmit.now,
-                                    transport: transmit.transport,
-                                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
-                                        BytesMut::from(&raw[..]),
-                                    )),
-                                });
-                            }
-                        }
+                        write_transmit(transmit, &mut self.ctx.write_outs);
                     }
                 }
             }
@@ -338,18 +328,39 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             }
 
             for transmit in transmits {
-                if let Payload::RawEncode(raw_data) = transmit.message {
-                    for raw in raw_data {
-                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                            now: transmit.now,
-                            transport: transmit.transport,
-                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(
-                                &raw[..],
-                            ))),
-                        });
-                    }
-                }
+                write_transmit(transmit, &mut self.ctx.write_outs);
             }
+
+        } else if let RTCMessageInternal::Flush(message) = msg.message {
+
+            debug!("flush({}) initiated for channel {}", message.id.flush_id, message.id.data_channel_id);
+
+            // get the connection indicated by the flush message
+            let Some(conn) = self
+                .ctx
+                .sctp_transport
+                .sctp_associations
+                .get_mut(&AssociationHandle(message.association_handle))
+                else { return Err(Error::ErrAssociationNotExisted); };
+
+            // push the flush into the SCTP stream
+            let mut stream = conn.stream(message.stream_id)?;
+            stream.flush(FlushIds {
+                flush_id: message.id.flush_id,
+                data_channel_id: message.id.data_channel_id,
+                association_handle: message.association_handle,
+                stream_id: message.stream_id
+            })?;
+
+            // handle transmits
+            let mut transmits = vec![];
+            while let Some(x) = conn.poll_transmit(msg.now) {
+                transmits.extend(split_transmit(x));
+            }
+            for transmit in transmits {
+                write_transmit(transmit, &mut self.ctx.write_outs);
+            }
+
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -435,17 +446,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         }
 
         for transmit in transmits {
-            if let Payload::RawEncode(raw_data) = transmit.message {
-                for raw in raw_data {
-                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: transmit.now,
-                        transport: transmit.transport,
-                        message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(
-                            &raw[..],
-                        ))),
-                    });
-                }
-            }
+            write_transmit(transmit, &mut self.ctx.write_outs);
         }
 
         Ok(())
@@ -472,16 +473,68 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 }
 
 fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<Payload>> {
+
     let mut transmits: Vec<TransportMessage<Payload>> = Vec::new();
-    if let Payload::RawEncode(contents) = transmit.message {
-        for content in contents {
+
+    match transmit.message {
+
+        Payload::RawEncode(contents) => {
+            for content in contents {
+                transmits.push(TransportMessage {
+                    now: transmit.now,
+                    transport: transmit.transport,
+                    message: Payload::RawEncode(vec![content]),
+                })
+            }
+        }
+
+        // pass through flush messages intact
+        Payload::Flush(ids) => {
             transmits.push(TransportMessage {
                 now: transmit.now,
                 transport: transmit.transport,
-                message: Payload::RawEncode(vec![content]),
+                message: Payload::Flush(ids),
             })
         }
+
+        _ => ()
     }
 
     transmits
+}
+
+fn write_transmit(transmit: TransportMessage<Payload>, write_outs: &mut VecDeque<TaggedRTCMessageInternal>) {
+    match transmit.message {
+
+        Payload::RawEncode(raw_data) => {
+            for raw in raw_data {
+                write_outs.push_back(TaggedRTCMessageInternal {
+                    now: transmit.now,
+                    transport: transmit.transport,
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(
+                        &raw[..],
+                    ))),
+                });
+            }
+        }
+
+        // pass the flush message along to the write out queue
+        Payload::Flush(ids) => {
+            debug!("flush({}) completed for channel {}", ids.flush_id, ids.data_channel_id);
+            write_outs.push_back(TaggedRTCMessageInternal {
+                now: transmit.now,
+                transport: transmit.transport,
+                message: RTCMessageInternal::Flush(FlushMessage {
+                    id: FlushId {
+                        flush_id: ids.flush_id,
+                        data_channel_id: ids.data_channel_id
+                    },
+                    association_handle: ids.association_handle,
+                    stream_id: ids.stream_id
+                })
+            });
+        }
+
+        _ => {}  // drop all other messages
+    }
 }

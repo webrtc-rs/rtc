@@ -220,6 +220,28 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     msg.transport.peer_addr
                 );
             }
+        } else if let RTCMessageInternal::Flush(mut message) = msg.message {
+
+            // lookup the data channel referenced by the flush message
+            let data_channel = self
+                .data_channels
+                .get_mut(&message.id.data_channel_id)
+                .ok_or(Error::ErrDataChannelNotExisted)?
+                .data_channel
+                .as_mut()
+                .ok_or(Error::ErrDataChannelNotExisted)?;
+            
+            // add the data channel info to the message
+            message.association_handle = data_channel.association_handle();
+            message.stream_id = data_channel.stream_identifier();
+
+            // pass the message along to the next pipeline stage
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                now: msg.now,
+                transport: msg.transport,
+                message: RTCMessageInternal::Flush(message),
+            });
+            
         } else {
             // Bypass
             debug!("bypass DataChannel write {:?}", msg.transport.peer_addr);

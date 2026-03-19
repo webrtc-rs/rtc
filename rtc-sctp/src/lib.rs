@@ -105,4 +105,14 @@ use crate::packet::PartialDecode;
 pub enum Payload {
     PartialDecode(PartialDecode),
     RawEncode(Vec<Bytes>),
+    Flush(FlushIds)
+}
+
+
+#[derive(Debug, Clone)]
+pub struct FlushIds {
+    pub flush_id: i64,
+    pub data_channel_id: u16,
+    pub association_handle: usize,
+    pub stream_id: u16
 }

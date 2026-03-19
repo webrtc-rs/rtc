@@ -198,7 +198,7 @@ const FRAG_BEGIN: usize = 1;
 const FRAG_MIDDLE: usize = 2;
 const FRAG_END: usize = 3;
 
-fn make_data_chunk(tsn: u32, unordered: bool, frag: usize) -> ChunkPayloadData {
+fn make_data_chunk(tsn: u32, unordered: bool, frag: usize) -> QueueEntry {
     let mut b = false;
     let mut e = false;
 
@@ -214,7 +214,7 @@ fn make_data_chunk(tsn: u32, unordered: bool, frag: usize) -> ChunkPayloadData {
         _ => {}
     };
 
-    ChunkPayloadData {
+    QueueEntry::Payload(ChunkPayloadData {
         tsn,
         unordered,
         beginning_fragment: b,
@@ -225,7 +225,7 @@ fn make_data_chunk(tsn: u32, unordered: bool, frag: usize) -> ChunkPayloadData {
             b.freeze()
         },
         ..Default::default()
-    }
+    })
 }
 
 #[test]
@@ -236,13 +236,13 @@ fn test_pending_base_queue_push_and_pop() -> Result<()> {
     pq.push_back(make_data_chunk(2, false, NO_FRAGMENT));
 
     for i in 0..3 {
-        let c = pq.get(i);
+        let c = pq.get(i).map(QueueEntry::as_payload);
         assert!(c.is_some(), "should not be none");
         assert_eq!(i as u32, c.unwrap().tsn, "TSN should match");
     }
 
     for i in 0..3 {
-        let c = pq.pop_front();
+        let c = pq.pop_front().map(QueueEntry::into_payload);
         assert!(c.is_some(), "should not be none");
         assert_eq!(i, c.unwrap().tsn, "TSN should match");
     }
@@ -251,7 +251,7 @@ fn test_pending_base_queue_push_and_pop() -> Result<()> {
     pq.push_back(make_data_chunk(4, false, NO_FRAGMENT));
 
     for i in 3..5 {
-        let c = pq.pop_front();
+        let c = pq.pop_front().map(QueueEntry::into_payload);
         assert!(c.is_some(), "should not be none");
         assert_eq!(i, c.unwrap().tsn, "TSN should match");
     }
@@ -283,7 +283,7 @@ fn test_pending_queue_push_and_pop() -> Result<()> {
     assert_eq!(30, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 0..3 {
-        let c = pq.peek();
+        let c = pq.peek().map(QueueEntry::as_payload);
         assert!(c.is_some(), "peek error");
         let c = c.unwrap();
         assert_eq!(i, c.tsn, "TSN should match");
@@ -301,7 +301,7 @@ fn test_pending_queue_push_and_pop() -> Result<()> {
     assert_eq!(20, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 3..5 {
-        let c = pq.peek();
+        let c = pq.peek().map(QueueEntry::as_payload);
         assert!(c.is_some(), "peek error");
         let c = c.unwrap();
         assert_eq!(i, c.tsn, "TSN should match");
@@ -329,7 +329,7 @@ fn test_pending_queue_unordered_wins() -> Result<()> {
     pq.push(make_data_chunk(3, true, NO_FRAGMENT));
     assert_eq!(40, pq.get_num_bytes(), "total bytes mismatch");
 
-    let c = pq.peek();
+    let c = pq.peek().map(QueueEntry::as_payload);
     assert!(c.is_some(), "peek error");
     let c = c.unwrap();
     assert_eq!(1, c.tsn, "TSN should match");
@@ -337,7 +337,7 @@ fn test_pending_queue_unordered_wins() -> Result<()> {
     let result = pq.pop(beginning_fragment, unordered);
     assert!(result.is_some(), "should not error");
 
-    let c = pq.peek();
+    let c = pq.peek().map(QueueEntry::as_payload);
     assert!(c.is_some(), "peek error");
     let c = c.unwrap();
     assert_eq!(3, c.tsn, "TSN should match");
@@ -345,7 +345,7 @@ fn test_pending_queue_unordered_wins() -> Result<()> {
     let result = pq.pop(beginning_fragment, unordered);
     assert!(result.is_some(), "should not error");
 
-    let c = pq.peek();
+    let c = pq.peek().map(QueueEntry::as_payload);
     assert!(c.is_some(), "peek error");
     let c = c.unwrap();
     assert_eq!(0, c.tsn, "TSN should match");
@@ -353,7 +353,7 @@ fn test_pending_queue_unordered_wins() -> Result<()> {
     let result = pq.pop(beginning_fragment, unordered);
     assert!(result.is_some(), "should not error");
 
-    let c = pq.peek();
+    let c = pq.peek().map(QueueEntry::as_payload);
     assert!(c.is_some(), "peek error");
     let c = c.unwrap();
     assert_eq!(2, c.tsn, "TSN should match");
@@ -379,7 +379,7 @@ fn test_pending_queue_fragments() -> Result<()> {
     let expects = vec![3, 4, 5, 0, 1, 2];
 
     for exp in expects {
-        let c = pq.peek();
+        let c = pq.peek().map(QueueEntry::as_payload);
         assert!(c.is_some(), "peek error");
         let c = c.unwrap();
         assert_eq!(exp, c.tsn, "TSN should match");
@@ -398,7 +398,7 @@ fn test_pending_queue_selection_persistence() -> Result<()> {
     let mut pq = PendingQueue::new();
     pq.push(make_data_chunk(0, false, FRAG_BEGIN));
 
-    let c = pq.peek();
+    let c = pq.peek().map(QueueEntry::as_payload);
     assert!(c.is_some(), "peek error");
     let c = c.unwrap();
     assert_eq!(0, c.tsn, "TSN should match");
@@ -413,7 +413,7 @@ fn test_pending_queue_selection_persistence() -> Result<()> {
     let expects = vec![2, 3, 1];
 
     for exp in expects {
-        let c = pq.peek();
+        let c = pq.peek().map(QueueEntry::as_payload);
         assert!(c.is_some(), "peek error");
         let c = c.unwrap();
         assert_eq!(exp, c.tsn, "TSN should match");
