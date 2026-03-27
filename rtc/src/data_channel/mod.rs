@@ -34,7 +34,7 @@
 //! * [RFC 8831 - WebRTC Data Channels](https://www.rfc-editor.org/rfc/rfc8831.html)
 //! * [RFC 8832 - WebRTC Data Channel Establishment Protocol](https://www.rfc-editor.org/rfc/rfc8832.html)
 
-use crate::peer_connection::RTCPeerConnection;
+use crate::peer_connection::{RTCPeerConnection, FlushId};
 use crate::peer_connection::message::RTCMessage;
 use bytes::BytesMut;
 use interceptor::{Interceptor, NoopInterceptor};
@@ -57,7 +57,6 @@ pub use init::RTCDataChannelInit;
 pub use message::RTCDataChannelMessage;
 
 pub use state::RTCDataChannelState;
-use crate::peer_connection::handler::FlushId;
 
 /// Represents a WebRTC data channel for bidirectional peer-to-peer data transfer.
 ///

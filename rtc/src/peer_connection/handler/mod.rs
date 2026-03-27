@@ -7,7 +7,7 @@ pub(crate) mod interceptor;
 pub(crate) mod sctp;
 pub(crate) mod srtp;
 
-use crate::peer_connection::RTCPeerConnection;
+use crate::peer_connection::{FlushId, RTCPeerConnection};
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::{RTCEvent, RTCEventInternal};
 use crate::peer_connection::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
@@ -28,8 +28,6 @@ use crate::peer_connection::message::{
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use crate::data_channel::RTCDataChannelId;
-use crate::peer_connection::message::internal::FlushMessage;
 use ::interceptor::Interceptor;
 use ::interceptor::Packet;
 use log::warn;
@@ -101,15 +99,6 @@ macro_rules! for_each_handler {
     (reverse: $macro:ident!($($args:tt)*)) => {
         reverse_handlers!(process_handler_list!(call_macro: $macro!($($args)*)))
     };
-}
-
-
-/// A unique identifier for a flush signal on a data channel
-#[derive(Debug, Clone)]
-pub struct FlushId {
-    /// a caller-chosen value that will be presented again when the flush signal is eventually polled
-    pub flush_id: i64,
-    pub data_channel_id: RTCDataChannelId
 }
 
 
@@ -200,28 +189,6 @@ where
             &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
-    }
-
-    /// `flush` sends a signal that indicates when all previous messages on the given data channel
-    /// are finished sending.
-    /// After calling `flush`, a future call to `poll_flush` will emit a signal
-    /// with the same `id` indicating that all socket messages corresponding to the previous
-    /// data channel messages have been delivered via `poll_write`.
-    pub fn flush(&mut self, id: FlushId) -> Result<(),Error> {
-        let mut endpoint_handler = self.get_endpoint_handler();
-        use sansio::Protocol;
-        endpoint_handler.handle_write(TaggedRTCMessageInternal {
-            now: Instant::now(),
-            transport: Default::default(),
-            message: RTCMessageInternal::Flush(FlushMessage::new(id))
-        })
-    }
-
-    /// `poll_flush` will return the signal given to `flush` after all previous
-    /// data channel messages have been delivered via `poll_write`.
-    pub fn poll_flush(&mut self) -> Option<FlushId> {
-        self.pipeline_context.flush_outs.as_mut()
-            .and_then(|flush_outs| flush_outs.pop_front())
     }
 }
 

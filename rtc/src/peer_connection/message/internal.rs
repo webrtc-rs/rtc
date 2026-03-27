@@ -1,7 +1,7 @@
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::handler::FlushId;
+use crate::peer_connection::FlushId;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use interceptor::Packet;
