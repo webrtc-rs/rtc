@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod error_code_test;
+
 use crate::attributes::*;
 use crate::checks::*;
 use crate::message::*;
