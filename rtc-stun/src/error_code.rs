@@ -17,7 +17,7 @@ pub struct ErrorCodeAttribute {
 
 impl fmt::Display for ErrorCodeAttribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match String::from_utf8(self.reason.clone()) {
+        let reason = match String::from_utf8_lossy(self.reason.clone()) {
             Ok(reason) => reason,
             Err(_) => return Err(fmt::Error {}),
         };
