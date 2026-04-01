@@ -656,6 +656,16 @@ impl SettingEngine {
         self.multicast_dns.mode = multicast_dns_mode
     }
 
+    /// Returns the current mDNS mode.
+    pub fn multicast_dns_mode(&self) -> MulticastDnsMode {
+        self.multicast_dns.mode
+    }
+
+    /// Returns the current mDNS local IP override, if any.
+    pub fn multicast_dns_local_ip(&self) -> Option<std::net::IpAddr> {
+        self.multicast_dns.local_ip
+    }
+
     /// set_ice_multicast_dns_host_name sets a static HostName to be used by ice instead of generating one on startup
     /// This should only be used for a single PeerConnection. Having multiple PeerConnections with the same HostName will cause
     /// undefined behavior
