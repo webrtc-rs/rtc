@@ -8,7 +8,7 @@ use crate::peer_connection::message::internal::{
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_RTX};
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{
@@ -312,12 +312,31 @@ where
                     if let Some(receiver) = transceiver.receiver() {
                         receiver.get_coding_parameters().iter().any(|coding| {
                             coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc)
+                                // Also match RTX/FEC repair SSRCs so repair packets are routed to
+                                // the primary stream's receiver rather than silently dropped.
+                                || coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
+                                || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
                         })
                     } else {
                         false
                     }
                 })
         {
+            // If the SSRC belongs to a repair (RTX/FEC) sub-stream, route it to the primary
+            // stream's receiver without firing track-open events or updating codec state.
+            let is_repair_ssrc = transceiver.receiver().as_ref().is_some_and(|receiver| {
+                receiver.get_coding_parameters().iter().any(|coding| {
+                    coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
+                        || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
+                })
+            });
+            if is_repair_ssrc {
+                return transceiver
+                    .receiver()
+                    .as_ref()
+                    .map(|r| r.track().track_id().clone());
+            }
+
             // Get kind and mid before borrowing receiver mutably
             let kind = transceiver.kind();
             let mid = transceiver.mid().clone().unwrap_or_default();
@@ -336,13 +355,14 @@ where
                     receiver.track().track_id().clone(),
                 );
 
+                // For primary streams, look up the primary codec only (not RTX/FEC codecs).
+                // RTX/FEC packets are routed via the early-return above.
                 let track_codec = if is_track_codec_empty
                     && let Some(rtp_header) = rtp_header
                     && let Some(codec) = receiver
                         .get_codec_preferences()
                         .iter()
                         .find(|codec| codec.payload_type == rtp_header.payload_type)
-                //TODO: what about RTX/FEC stream?
                 {
                     Some(codec.rtp_codec.clone())
                 } else {
@@ -446,7 +466,9 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    // Accept both primary and RTX codecs here; the rrid branch handles repair
+                    // packets (it only needs the codec lookup to succeed to enter the block).
+                    .find(|codec| codec.payload_type == rtp_header.payload_type)
                     .cloned()
             {
                 if !rrid.is_empty() {
@@ -589,7 +611,15 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    // Only match primary codecs here; RTX/FEC repair packets are handled
+                    // via find_track_id_by_ssrc once their SSRC is registered.
+                    .find(|codec| {
+                        codec.payload_type == rtp_header.payload_type
+                            && !codec
+                                .rtp_codec
+                                .mime_type
+                                .eq_ignore_ascii_case(MIME_TYPE_RTX)
+                    })
                     .cloned()
             {
                 let receive_codings = vec![RTCRtpCodingParameters {
