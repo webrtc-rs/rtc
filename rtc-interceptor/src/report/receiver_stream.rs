@@ -139,12 +139,12 @@ impl ReceiverStream {
 
         self.total_lost += total_lost_since_report;
 
-        // allow up to 24 bits
-        if total_lost_since_report > 0xFFFFFF {
-            total_lost_since_report = 0xFFFFFF;
+        // allow up to signed 24 bits (RFC 3550 §6.4.1: total_lost is i32)
+        if total_lost_since_report > 0x7FFFFF {
+            total_lost_since_report = 0x7FFFFF;
         }
-        if self.total_lost > 0xFFFFFF {
-            self.total_lost = 0xFFFFFF
+        if self.total_lost > 0x7FFFFF {
+            self.total_lost = 0x7FFFFF
         }
 
         // Calculate DLSR (Delay Since Last SR) - RFC 3550
