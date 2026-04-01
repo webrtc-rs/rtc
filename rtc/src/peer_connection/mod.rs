@@ -1469,6 +1469,36 @@ where
 
                 self.ice_transport_mut()
                     .set_remote_credentials(remote_ufrag.clone(), remote_pwd.clone())?;
+
+                // RFC 8842: on ICE restart the DTLS transport must re-handshake over the new
+                // ICE path.  Extract updated remote fingerprint from the new SDP and reset the
+                // DTLS endpoint so the next ICESelectedCandidatePairChange triggers a fresh
+                // handshake.
+                let (remote_fingerprint, remote_fingerprint_hash) =
+                    extract_fingerprint(parsed_remote_description)?;
+                let remote_dtls_role = RTCDtlsRole::from(parsed_remote_description);
+
+                // Determine local ICE role for DTLS role derivation.
+                let remote_is_lite = is_lite_set(parsed_remote_description);
+                let local_ice_role = if (we_offer
+                    && remote_is_lite == self.setting_engine.candidates.ice_lite)
+                    || (remote_is_lite && !self.setting_engine.candidates.ice_lite)
+                {
+                    RTCIceRole::Controlling
+                } else {
+                    RTCIceRole::Controlled
+                };
+
+                self.dtls_transport_mut().restart(
+                    local_ice_role,
+                    DTLSParameters {
+                        role: remote_dtls_role,
+                        fingerprints: vec![RTCDtlsFingerprint {
+                            algorithm: remote_fingerprint_hash,
+                            value: remote_fingerprint,
+                        }],
+                    },
+                )?;
             }
 
             for candidate in candidates {

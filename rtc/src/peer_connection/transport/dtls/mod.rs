@@ -110,18 +110,13 @@ impl RTCDtlsTransport {
         DEFAULT_DTLS_ROLE_ANSWER
     }
 
-    pub(crate) fn prepare_transport(
-        &mut self,
-        ice_role: RTCIceRole,
-        remote_dtls_parameters: DTLSParameters,
+    /// Build a DTLS HandshakeConfig from remote fingerprints.
+    /// Does not check or change transport state — callable from both initial start and restart.
+    fn make_handshake_config(
+        &self,
+        remote_dtls_parameters: &DTLSParameters,
     ) -> Result<Arc<::dtls::config::HandshakeConfig>> {
-        if self.state != RTCDtlsTransportState::New {
-            return Err(Error::ErrInvalidDTLSStart);
-        }
-
-        self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
-
-        let remote_fingerprints = remote_dtls_parameters.fingerprints;
+        let remote_fingerprints = remote_dtls_parameters.fingerprints.clone();
         let verify_peer_certificate: VerifyPeerCertificateFn = Arc::new(
             move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| -> Result<()> {
                 if certs.is_empty() {
@@ -153,7 +148,6 @@ impl RTCDtlsTransport {
         } else {
             return Err(Error::ErrNonCertificate);
         };
-        self.state_change(RTCDtlsTransportState::Connecting);
 
         Ok(Arc::new(
             ::dtls::config::ConfigBuilder::default()
@@ -171,6 +165,69 @@ impl RTCDtlsTransport {
                 .with_replay_protection_window(self.replay_protection.dtls)
                 .build(self.dtls_role == RTCDtlsRole::Client, None)?,
         ))
+    }
+
+    pub(crate) fn prepare_transport(
+        &mut self,
+        ice_role: RTCIceRole,
+        remote_dtls_parameters: DTLSParameters,
+    ) -> Result<Arc<::dtls::config::HandshakeConfig>> {
+        if self.state != RTCDtlsTransportState::New {
+            return Err(Error::ErrInvalidDTLSStart);
+        }
+
+        self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
+        self.state_change(RTCDtlsTransportState::Connecting);
+        self.make_handshake_config(&remote_dtls_parameters)
+    }
+
+    /// Re-initialise the DTLS transport for re-handshake after a failed/lost session.
+    ///
+    /// If DTLS is `Connected`, the existing session is kept alive — it survives ICE
+    /// restarts because the new ICE path is transparent to DTLS.  Only when DTLS is
+    /// `Failed`, `Closed`, or `Connecting` (handshake was in-flight and lost) is the
+    /// endpoint replaced so the next `ICESelectedCandidatePairChange` event triggers a
+    /// fresh handshake.  No-ops if state is `New` (initial `start_transports` handles it).
+    pub(crate) fn restart(
+        &mut self,
+        local_ice_role: RTCIceRole,
+        remote_dtls_parameters: DTLSParameters,
+    ) -> Result<()> {
+        match self.state {
+            // Not started yet — initial start_transports handles this path.
+            RTCDtlsTransportState::New => return Ok(()),
+            // Session is live; keep it across the ICE restart transparently.
+            RTCDtlsTransportState::Connected => return Ok(()),
+            // Failed / Closed / Connecting-but-lost → rebuild and re-handshake.
+            _ => {}
+        }
+
+        // Derive and update the role (may differ if ICE role swapped during restart).
+        self.dtls_role = self.derive_role(local_ice_role, remote_dtls_parameters.role);
+
+        let dtls_handshake_config = self.make_handshake_config(&remote_dtls_parameters)?;
+
+        self.state_change(RTCDtlsTransportState::Connecting);
+
+        if self.dtls_role == RTCDtlsRole::Client {
+            // Client: create a fresh endpoint and store the handshake config so the
+            // next ICESelectedCandidatePairChange event triggers connect().
+            self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
+                TransportContext::default().local_addr,
+                TransportProtocol::UDP,
+                None,
+            ));
+            self.dtls_handshake_config = Some(dtls_handshake_config);
+        } else {
+            // Server: create a new accepting endpoint with the updated config.
+            self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
+                TransportContext::default().local_addr,
+                TransportProtocol::UDP,
+                Some(dtls_handshake_config),
+            ));
+        }
+
+        Ok(())
     }
 
     pub(crate) fn role(&self) -> RTCDtlsRole {
