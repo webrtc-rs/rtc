@@ -388,50 +388,15 @@ where
             handler.close()?;
         }));
 
+        // W3C WebRTC §close steps #4–#10 are implemented in individual handler close() methods:
+        //   InterceptorHandler::close() → interceptor.close()
+        //   DataChannelHandler::close() → closes all RTCDataChannelInternal instances
+        //   SctpHandler::close()        → closes all SCTP associations + endpoint
+        //   DtlsHandler::close()        → dtls_transport.stop()
+        //   IceHandler::close()         → ice_transport.agent.close()
+        //
+        // The for_each_handler!(forward: ...) loop above invokes each handler's close() in order.
         let close_errs: Vec<Error> = vec![];
-
-        /* TODO:
-        if let Err(err) = self.interceptor.close().await {
-            close_errs.push(Error::new(format!("interceptor: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #4)
-        {
-            let mut rtp_transceivers = self.internal.rtp_transceivers.lock().await;
-            for t in &*rtp_transceivers {
-                if let Err(err) = t.stop().await {
-                    close_errs.push(Error::new(format!("rtp_transceivers: {err}")));
-                }
-            }
-            rtp_transceivers.clear();
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #5)
-        {
-            let mut data_channels = self.internal.sctp_transport.data_channels.lock().await;
-            for d in &*data_channels {
-                if let Err(err) = d.close().await {
-                    close_errs.push(Error::new(format!("data_channels: {err}")));
-                }
-            }
-            data_channels.clear();
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #6)
-        if let Err(err) = self.internal.sctp_transport.stop().await {
-            close_errs.push(Error::new(format!("sctp_transport: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #7)
-        if let Err(err) = self.internal.dtls_transport.stop().await {
-            close_errs.push(Error::new(format!("dtls_transport: {err}")));
-        }
-
-        // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #8, #9, #10)
-        if let Err(err) = self.internal.ice_transport.stop().await {
-            close_errs.push(Error::new(format!("ice_transport: {err}")));
-        }
-         */
 
         self.update_connection_state(true);
 
