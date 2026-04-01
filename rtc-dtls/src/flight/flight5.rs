@@ -395,10 +395,22 @@ impl Flight for Flight5 {
 
             plain_text.extend_from_slice(&merged);
 
+            let cert_ref = certificate.as_ref().ok_or_else(|| {
+                (
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::InternalError,
+                    }),
+                    Some(Error::Other(
+                        "no local certificate available for DTLS flight5".to_owned(),
+                    )),
+                )
+            })?;
+
             // Find compatible signature scheme
             let signature_hash_algo = match select_signature_scheme(
                 &cfg.local_signature_schemes,
-                &certificate.as_ref().unwrap().private_key,
+                &cert_ref.private_key,
             ) {
                 Ok(s) => s,
                 Err(err) => {
@@ -414,7 +426,7 @@ impl Flight for Flight5 {
 
             let cert_verify = match generate_certificate_verify(
                 &plain_text,
-                &certificate.as_ref().unwrap().private_key, /*, signature_hash_algo.hash*/
+                &cert_ref.private_key,
             ) {
                 Ok(cert) => cert,
                 Err(err) => {

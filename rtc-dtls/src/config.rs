@@ -344,7 +344,7 @@ impl ConfigBuilder {
                 gen_self_signed_root_cert(),
             ))
             .build()
-            .unwrap(),
+            .map_err(|e| Error::Other(e.to_string()))?,
             client_cert_verifier: None,
             retransmit_interval,
             initial_epoch: 0,
@@ -441,11 +441,12 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
+            // Safety: gen_self_signed_root_cert uses hardcoded empty subject; build() cannot fail.
             server_cert_verifier: rustls::client::WebPkiServerVerifier::builder(Arc::new(
                 gen_self_signed_root_cert(),
             ))
             .build()
-            .unwrap(),
+            .expect("WebPkiServerVerifier::build with self-signed root cannot fail"),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,

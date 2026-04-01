@@ -54,9 +54,13 @@ impl Certificate {
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
     ) -> Result<Self> {
-        let params = rcgen::CertificateParams::new(subject_alt_names).unwrap();
-        let key_pair = rcgen::KeyPair::generate_for(alg).unwrap();
-        let cert = params.self_signed(&key_pair).unwrap();
+        let params = rcgen::CertificateParams::new(subject_alt_names)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let key_pair = rcgen::KeyPair::generate_for(alg)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let cert = params
+            .self_signed(&key_pair)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
@@ -179,10 +183,13 @@ impl PartialEq for CryptoPrivateKey {
 
 impl Clone for CryptoPrivateKey {
     fn clone(&self) -> Self {
+        // Safety: `serialized_der` is always produced by `from_key_pair` which serialises a
+        // valid key.  Re-parsing the same bytes cannot fail, so these unwraps are sound.
         match self.kind {
             CryptoPrivateKeyKind::Ed25519(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(
-                    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&self.serialized_der).unwrap(),
+                    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&self.serialized_der)
+                        .expect("CryptoPrivateKey::clone: Ed25519 DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
@@ -193,13 +200,14 @@ impl Clone for CryptoPrivateKey {
                         &self.serialized_der,
                         &SystemRandom::new(),
                     )
-                    .unwrap(),
+                    .expect("CryptoPrivateKey::clone: ECDSA DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
             CryptoPrivateKeyKind::Rsa256(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Rsa256(
-                    ring::rsa::KeyPair::from_pkcs8(&self.serialized_der).unwrap(),
+                    ring::rsa::KeyPair::from_pkcs8(&self.serialized_der)
+                        .expect("CryptoPrivateKey::clone: RSA DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
