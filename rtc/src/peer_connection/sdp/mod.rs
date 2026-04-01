@@ -970,6 +970,11 @@ pub(crate) struct MediaSection {
     pub(crate) mid: String,
     pub(crate) transceiver_index: usize,
     pub(crate) data: bool,
+    /// RFC 8829 §5.3.1: this m-line should be reflected as rejected (port=0) in the answer.
+    /// Used when the remote offer contains a rejected m-line (no direction attribute / port=0).
+    pub(crate) rejected: bool,
+    /// Media kind string ("video", "audio") — only meaningful when `rejected` is true.
+    pub(crate) rejected_kind: String,
     pub(crate) match_extensions: HashMap<String, u16>,
     pub(crate) rid_map: Vec<SimulcastRid>,
 }
@@ -1062,6 +1067,39 @@ where
         };
 
         for (i, m) in media_sections.iter().enumerate() {
+            // RFC 8829 §5.3.1: reflect rejected m-lines (port=0) in the answer.
+            // These must appear in the same position as in the offer to preserve m-line indexing.
+            if m.rejected {
+                d = d.with_media(MediaDescription {
+                    media_name: MediaName {
+                        media: m.rejected_kind.clone(),
+                        port: RangedPort { value: 0, range: None },
+                        protos: vec![
+                            "UDP".to_owned(),
+                            "TLS".to_owned(),
+                            "RTP".to_owned(),
+                            "SAVPF".to_owned(),
+                        ],
+                        formats: vec!["0".to_owned()],
+                    },
+                    media_title: None,
+                    connection_information: Some(ConnectionInformation {
+                        network_type: "IN".to_owned(),
+                        address_type: "IP4".to_owned(),
+                        address: Some(Address {
+                            address: "0.0.0.0".to_owned(),
+                            ttl: None,
+                            range: None,
+                        }),
+                    }),
+                    bandwidth: vec![],
+                    encryption_key: None,
+                    attributes: vec![],
+                }
+                .with_value_attribute(ATTR_KEY_MID.to_owned(), m.mid.clone()));
+                continue; // rejected m-lines are not added to BUNDLE
+            }
+
             if m.data && m.transceiver_index != usize::MAX {
                 return Err(Error::ErrSDPMediaSectionMediaDataChanInvalid);
             } else if !m.data && m.transceiver_index >= transceivers.len() {

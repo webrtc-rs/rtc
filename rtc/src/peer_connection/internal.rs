@@ -242,9 +242,21 @@ where
 
                     let kind = RtpCodecKind::from(media.media_name.media.as_str());
                     let direction = get_peer_direction(media);
-                    if kind == RtpCodecKind::Unspecified
-                        || direction == RTCRtpTransceiverDirection::Unspecified
-                    {
+                    if kind == RtpCodecKind::Unspecified {
+                        continue;
+                    }
+
+                    if direction == RTCRtpTransceiverDirection::Unspecified {
+                        // Rejected m-line in the offer (port=0, no direction attribute).
+                        // RFC 8829 §5.3.1: the answer MUST reflect it as rejected to
+                        // preserve m-line indexing across both sides.
+                        media_sections.push(MediaSection {
+                            mid: mid_value.to_owned(),
+                            rejected: true,
+                            rejected_kind: media.media_name.media.clone(),
+                            transceiver_index: usize::MAX,
+                            ..Default::default()
+                        });
                         continue;
                     }
 
