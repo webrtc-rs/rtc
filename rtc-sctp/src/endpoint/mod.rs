@@ -130,7 +130,11 @@ impl Endpoint {
         let known_ch = if dst_cid > 0 {
             self.association_ids.get(&dst_cid).cloned()
         } else {
-            //TODO: improve INIT handling for DoS attack
+            // INIT packets arrive with verification_tag=0 (per RFC 4960 §8.5.1).
+            // Full DoS hardening would require per-source-address rate limiting or
+            // stateless cookie exchange (RFC 4960 §5.1.3); the global
+            // server_config.concurrent_associations limit in handle_first_packet()
+            // provides coarse-grained protection in the meantime.
             if partial_decode.first_chunk_type == CT_INIT {
                 if let Some(dst_cid) = partial_decode.initiate_tag {
                     self.association_ids.get(&dst_cid).cloned()

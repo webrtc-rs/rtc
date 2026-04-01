@@ -142,8 +142,6 @@ pub(crate) fn codec_parameters_fuzzy_search(
 ) -> (RTCRtpCodecParameters, CodecMatch) {
     let needle_fmtp = fmtp::parse(&needle_rtp_codec.mime_type, &needle_rtp_codec.sdp_fmtp_line);
 
-    //TODO: add unicode case-folding equal support
-
     // First attempt to match on mime_type + sdpfmtp_line
     for c in haystack {
         let cfmpt = fmtp::parse(&c.rtp_codec.mime_type, &c.rtp_codec.sdp_fmtp_line);
@@ -154,7 +152,8 @@ pub(crate) fn codec_parameters_fuzzy_search(
 
     // Fallback to just mime_type
     for c in haystack {
-        if c.rtp_codec.mime_type.to_uppercase() == needle_rtp_codec.mime_type.to_uppercase() {
+        // MIME types are ASCII-only; eq_ignore_ascii_case is sufficient and allocation-free.
+        if c.rtp_codec.mime_type.eq_ignore_ascii_case(&needle_rtp_codec.mime_type) {
             return (c.clone(), CodecMatch::Partial);
         }
     }
