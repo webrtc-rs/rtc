@@ -289,7 +289,12 @@ where
     pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
+        let previous = self.peer_connection.rtp_transceivers[self.id].direction();
         self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
+        // Per W3C WebRTC §5.5: changing direction must trigger renegotiation.
+        if direction != previous {
+            self.peer_connection.trigger_negotiation_needed();
+        }
     }
 
     /// Returns the negotiated direction of the transceiver.

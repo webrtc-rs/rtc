@@ -847,7 +847,7 @@ where
     }
 
     /// Helper to trigger a negotiation needed.
-    pub(super) fn trigger_negotiation_needed(&mut self) {
+    pub(crate) fn trigger_negotiation_needed(&mut self) {
         if !self.do_negotiation_needed() {
             return;
         }

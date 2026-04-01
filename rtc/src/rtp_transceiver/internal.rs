@@ -155,9 +155,6 @@ where
 
         if direction != previous_direction {
             trace!("Changing direction of transceiver from {previous_direction} to {direction}");
-
-            //TODO: https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
-            // Update the negotiation-needed flag for connection.
         }
     }
 
