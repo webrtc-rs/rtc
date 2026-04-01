@@ -206,6 +206,7 @@
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
 use rcgen::KeyPair;
+use serde::{Deserialize, Serialize};
 use shared::error::{Error, Result};
 use std::time::SystemTime;
 
@@ -237,7 +238,16 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 /// * [W3C]
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary
-#[derive(Default, Clone, Debug)]
+/// A Configuration defines how peer-to-peer communication via PeerConnection
+/// is established or re-established.
+///
+/// Serialization follows the W3C RTCConfiguration dictionary naming
+/// (`iceServers`, `iceTransportPolicy`, etc.).  Certificates are **excluded**
+/// from serialization because they contain private-key material; use
+/// [`RTCCertificate::serialize_pem`] / [`RTCCertificate::from_pem`] to
+/// persist them separately and re-attach via [`RTCConfigurationBuilder::with_certificates`].
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RTCConfiguration {
     /// ice_servers defines a slice describing servers available to be used by
     /// ICE, such as STUN and TURN servers.
@@ -260,17 +270,9 @@ pub struct RTCConfiguration {
     /// unless it can be successfully authenticated with the provided name.
     pub(crate) peer_identity: String,
 
-    /// certificates describes a set of certificates that the PeerConnection
-    /// uses to authenticate. Valid values for this parameter are created
-    /// through calls to the generate_certificate function. Although any given
-    /// DTLS connection will use only one certificate, this attribute allows the
-    /// caller to provide multiple certificates that support different
-    /// algorithms. The final certificate will be selected based on the DTLS
-    /// handshake, which establishes which certificates are allowed. The
-    /// PeerConnection implementation selects which of the certificates is
-    /// used for a given connection; how certificates are selected is outside
-    /// the scope of this specification. If this value is absent, then a default
-    /// set of certificates is generated for each PeerConnection instance.
+    /// Certificates are excluded from serialization because they contain private-key
+    /// material. Persist them separately with RTCCertificate::serialize_pem().
+    #[serde(skip)]
     pub(crate) certificates: Vec<RTCCertificate>,
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
@@ -749,8 +751,29 @@ mod test {
         }
     }
 
-    // test_configuration_json was Go code that was never ported to Rust.
-    // A Rust equivalent would deserialize the Rust `RTCConfiguration` type used in this
-    // module from JSON and round-trip it.
-    // This can be added as a proper #[test] if JSON serialization is a desired feature.
+    #[test]
+    fn test_configuration_json_round_trip() {
+        let original = RTCConfigurationBuilder::new()
+            .with_ice_servers(vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            }])
+            .with_ice_transport_policy(RTCIceTransportPolicy::All)
+            .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+            .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+            .build();
+
+        let json = serde_json::to_string(&original).expect("serialize");
+        assert!(json.contains("iceServers"), "camelCase key expected");
+        assert!(json.contains("stun:stun.l.google.com:19302"));
+
+        let restored: RTCConfiguration = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.ice_servers.len(), 1);
+        assert_eq!(restored.ice_servers[0].urls[0], "stun:stun.l.google.com:19302");
+        assert_eq!(restored.ice_transport_policy, RTCIceTransportPolicy::All);
+        assert_eq!(restored.bundle_policy, RTCBundlePolicy::MaxBundle);
+        assert_eq!(restored.rtcp_mux_policy, RTCRtcpMuxPolicy::Require);
+        // certificates are skipped — restored config gets empty Vec
+        assert!(restored.certificates.is_empty());
+    }
 }
