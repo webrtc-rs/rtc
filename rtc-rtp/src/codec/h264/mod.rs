@@ -67,20 +67,24 @@ impl H264Payloader {
             self.pps_nalu = Some(nalu.clone());
             return;
         } else if let (Some(sps_nalu), Some(pps_nalu)) = (&self.sps_nalu, &self.pps_nalu) {
-            // Pack current NALU with SPS and PPS as STAP-A
-            let sps_len = (sps_nalu.len() as u16).to_be_bytes();
-            let pps_len = (pps_nalu.len() as u16).to_be_bytes();
+            // Pack current NALU with SPS and PPS as STAP-A.
+            // STAP-A length fields are u16; only pack if both NALUs fit within 65535 bytes.
+            if sps_nalu.len() <= u16::MAX as usize && pps_nalu.len() <= u16::MAX as usize {
+                let sps_len = (sps_nalu.len() as u16).to_be_bytes();
+                let pps_len = (pps_nalu.len() as u16).to_be_bytes();
 
-            let mut stap_a_nalu = Vec::with_capacity(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len());
-            stap_a_nalu.push(OUTPUT_STAP_AHEADER);
-            stap_a_nalu.extend(sps_len);
-            stap_a_nalu.extend_from_slice(sps_nalu);
-            stap_a_nalu.extend(pps_len);
-            stap_a_nalu.extend_from_slice(pps_nalu);
-            if stap_a_nalu.len() <= mtu {
-                payloads.push(Bytes::from(stap_a_nalu));
+                let mut stap_a_nalu =
+                    Vec::with_capacity(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len());
+                stap_a_nalu.push(OUTPUT_STAP_AHEADER);
+                stap_a_nalu.extend(sps_len);
+                stap_a_nalu.extend_from_slice(sps_nalu);
+                stap_a_nalu.extend(pps_len);
+                stap_a_nalu.extend_from_slice(pps_nalu);
+                if stap_a_nalu.len() <= mtu {
+                    payloads.push(Bytes::from(stap_a_nalu));
+                }
             }
-        }
+        } // else if let (Some(sps_nalu), Some(pps_nalu))
 
         if self.sps_nalu.is_some() && self.pps_nalu.is_some() {
             self.sps_nalu = None;

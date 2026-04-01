@@ -127,6 +127,10 @@ impl HevcPayloader {
                 );
                 aggr_nalu.extend_from_slice(&header);
                 for nalu in nalus.drain(..) {
+                    // Aggregation unit length field is u16; skip oversized NALUs.
+                    if nalu.len() > u16::MAX as usize {
+                        continue;
+                    }
                     aggr_nalu.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
                     aggr_nalu.extend_from_slice(&nalu);
                 }

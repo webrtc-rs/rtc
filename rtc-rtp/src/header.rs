@@ -251,7 +251,11 @@ impl Marshal for Header {
             return Err(Error::ErrBufferTooSmall);
         }
 
-        // The first byte contains the version, padding bit, extension bit, and csrc size
+        // The first byte contains the version, padding bit, extension bit, and csrc size.
+        // RFC 3550 §5.1: CC is a 4-bit field, so at most 15 contributing sources are allowed.
+        if self.csrc.len() > 15 {
+            return Err(Error::TooManyCSRCs(self.csrc.len()));
+        }
         let mut b0 = (self.version << VERSION_SHIFT) | self.csrc.len() as u8;
         if self.padding {
             b0 |= 1 << PADDING_SHIFT;
@@ -296,15 +300,25 @@ impl Marshal for Header {
                 // RFC 8285 RTP One Byte Header Extension
                 EXTENSION_PROFILE_ONE_BYTE => {
                     for extension in &self.extensions {
-                        buf.put_u8((extension.id << 4) | (extension.payload.len() as u8 - 1));
+                        // RFC 8285 §4.2: payload must be 1–16 bytes; the length field encodes (len-1).
+                        let len = extension.payload.len();
+                        if len == 0 || len > 16 {
+                            return Err(Error::OneByteHeaderExtensionPayloadTooLarge(len));
+                        }
+                        buf.put_u8((extension.id << 4) | (len as u8 - 1));
                         buf.put(&*extension.payload);
                     }
                 }
                 // RFC 8285 RTP Two Byte Header Extension
                 EXTENSION_PROFILE_TWO_BYTE => {
                     for extension in &self.extensions {
+                        // RFC 8285 §4.3: length field is one byte, so max payload is 255 bytes.
+                        let len = extension.payload.len();
+                        if len > 255 {
+                            return Err(Error::TwoByteHeaderExtensionPayloadTooLarge(len));
+                        }
                         buf.put_u8(extension.id);
-                        buf.put_u8(extension.payload.len() as u8);
+                        buf.put_u8(len as u8);
                         buf.put(&*extension.payload);
                     }
                 }
