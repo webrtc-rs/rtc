@@ -281,7 +281,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                 ::datachannel::data_channel::DataChannel::get_reliability_params(
                                     data_channel_open.channel_type,
                                 );
-                            let mut stream = conn.open_stream(message.stream_id, message.ppi)?;
+                            // For pre-negotiated (out-of-band) channels both peers send
+                            // DataChannelOpen simultaneously.  The remote's message may arrive
+                            // before we process our own outbound one, causing get_or_create_stream
+                            // to auto-create the stream first.  Treat ErrStreamAlreadyExist as
+                            // non-fatal: the stream is open, just update its reliability params.
+                            let mut stream = match conn
+                                .open_stream(message.stream_id, message.ppi)
+                            {
+                                Ok(s) => s,
+                                Err(Error::ErrStreamAlreadyExist) => {
+                                    conn.stream(message.stream_id)?
+                                }
+                                Err(e) => return Err(e),
+                            };
                             stream.set_reliability_params(
                                 unordered,
                                 reliability_type,

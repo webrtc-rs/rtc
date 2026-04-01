@@ -71,23 +71,28 @@ impl DataChannel {
     ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
-        if !config.negotiated {
-            let msg = Message::DataChannelOpen(DataChannelOpen {
-                channel_type: config.channel_type,
-                priority: config.priority,
-                reliability_parameter: config.reliability_parameter,
-                label: config.label.bytes().collect(),
-                protocol: config.protocol.bytes().collect(),
-            })
-            .marshal()?;
+        // Send DataChannelOpen for all channels — including out-of-band negotiated ones.
+        //
+        // For non-negotiated channels this initiates the DCEP handshake per RFC 8832 §3.
+        // For pre-negotiated channels (negotiated=true) the DCEP exchange also opens the
+        // underlying SCTP stream on both sides.  Without it the SCTP association never
+        // registers the stream, causing every subsequent write to fail with
+        // "Stream not existed" (issue webrtc-rs/rtc#61).
+        let msg = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: config.channel_type,
+            priority: config.priority,
+            reliability_parameter: config.reliability_parameter,
+            label: config.label.bytes().collect(),
+            protocol: config.protocol.bytes().collect(),
+        })
+        .marshal()?;
 
-            data_channel.write_outs.push_back(DataChannelMessage {
-                association_handle,
-                stream_id,
-                ppi: PayloadProtocolIdentifier::Dcep,
-                payload: msg,
-            });
-        }
+        data_channel.write_outs.push_back(DataChannelMessage {
+            association_handle,
+            stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: msg,
+        });
 
         Ok(data_channel)
     }
