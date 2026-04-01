@@ -236,7 +236,13 @@ impl Endpoint {
         let server_config = server_config.clone();
         let transport_config = server_config.transport.clone();
 
-        let remote_aid = *partial_decode.initiate_tag.as_ref().unwrap();
+        // The guard above (line ~214) already rejects packets with initiate_tag==None,
+        // but use `?`-style early return here so the safety invariant is compiler-verified.
+        let Some(initiate_tag) = partial_decode.initiate_tag.as_ref() else {
+            debug!("refusing INIT with empty initiate_tag (should have been caught above)");
+            return None;
+        };
+        let remote_aid = *initiate_tag;
         let local_aid = self.new_aid();
 
         let (ch, mut conn) = self.add_association(
