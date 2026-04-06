@@ -16,6 +16,5 @@ fn test_display_invalid_utf8_does_not_panic() {
         reason: vec![0xc0, 0xaf],
     };
     let result = format!("{}", code);
-    assert!(result.starts_with("401: "));
-    assert!(result.contains('\u{FFFD}'));
+    assert_eq!(result, "401: \u{FFFD}\u{FFFD}");
 }
