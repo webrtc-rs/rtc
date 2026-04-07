@@ -56,8 +56,8 @@ impl Certificate {
     ) -> Result<Self> {
         let params = rcgen::CertificateParams::new(subject_alt_names)
             .map_err(|e| Error::Other(e.to_string()))?;
-        let key_pair = rcgen::KeyPair::generate_for(alg)
-            .map_err(|e| Error::Other(e.to_string()))?;
+        let key_pair =
+            rcgen::KeyPair::generate_for(alg).map_err(|e| Error::Other(e.to_string()))?;
         let cert = params
             .self_signed(&key_pair)
             .map_err(|e| Error::Other(e.to_string()))?;

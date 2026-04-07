@@ -424,10 +424,8 @@ impl Flight for Flight5 {
                 }
             };
 
-            let cert_verify = match generate_certificate_verify(
-                &plain_text,
-                &cert_ref.private_key,
-            ) {
+            let cert_verify = match generate_certificate_verify(&plain_text, &cert_ref.private_key)
+            {
                 Ok(cert) => cert,
                 Err(err) => {
                     return Err((
