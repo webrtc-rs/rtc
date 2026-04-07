@@ -293,9 +293,10 @@ where
         // so, [self.id] here is safe.
         let previous = self.peer_connection.rtp_transceivers[self.id].direction();
         self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
+        let current = self.peer_connection.rtp_transceivers[self.id].direction();
         // Per W3C WebRTC §5.5: changing direction must trigger renegotiation.
-        if direction != previous {
-            trace!("Changing direction of transceiver from {previous} to {direction}");
+        if current != previous {
+            trace!("Changing direction of transceiver from {previous} to {current}");
             self.peer_connection.on_transceiver_direction_changed();
         }
     }
