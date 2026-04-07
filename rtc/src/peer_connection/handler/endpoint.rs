@@ -453,10 +453,17 @@ where
                 if !rrid.is_empty() {
                     // rrid identifies the base stream (rid) that this repair/RTX packet belongs to.
                     // Associate the repair SSRC with the base stream's RTX parameters.
-                    if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
-                        match coding.rtx.as_mut() {
+                    match receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
+                        Some(coding) => match coding.rtx.as_mut() {
                             Some(rtx) => rtx.ssrc = ssrc,
                             None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
+                        },
+                        None => {
+                            warn!(
+                                "dropping repair/RTX SSRC association: no base coding parameters \
+                                 found for rrid='{}' (repair_ssrc={}, mid='{}', rid='{}')",
+                                rrid, ssrc, mid, rid,
+                            );
                         }
                     }
 
