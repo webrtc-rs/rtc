@@ -296,7 +296,7 @@ where
         // Per W3C WebRTC §5.5: changing direction must trigger renegotiation.
         if direction != previous {
             trace!("Changing direction of transceiver from {previous} to {direction}");
-            self.peer_connection.trigger_negotiation_needed();
+            self.peer_connection.on_transceiver_direction_changed();
         }
     }
 
@@ -349,5 +349,64 @@ where
         // so, [self.id] here is safe.
         self.peer_connection.rtp_transceivers[self.id]
             .set_codec_preferences(codecs, &self.peer_connection.media_engine)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::peer_connection::RTCPeerConnectionBuilder;
+    use crate::peer_connection::event::RTCPeerConnectionEvent;
+    use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+
+    #[test]
+    fn test_set_direction_triggers_negotiation_on_change() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        let tid = pc
+            .add_transceiver_from_kind(RtpCodecKind::Audio, None)
+            .unwrap();
+
+        // Reset negotiation state machine after add_transceiver triggered it
+        pc.pipeline_context.event_outs.clear();
+        pc.reset_negotiation_state();
+
+        // Changing direction should trigger negotiation
+        let mut t = pc.rtp_transceiver(tid).unwrap();
+        t.set_direction(RTCRtpTransceiverDirection::Sendonly);
+        drop(t);
+
+        assert!(
+            pc.pipeline_context
+                .event_outs
+                .iter()
+                .any(|e| matches!(e, RTCPeerConnectionEvent::OnNegotiationNeededEvent)),
+            "changing direction should trigger OnNegotiationNeededEvent"
+        );
+    }
+
+    #[test]
+    fn test_set_direction_noop_when_unchanged() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        let tid = pc
+            .add_transceiver_from_kind(RtpCodecKind::Audio, None)
+            .unwrap();
+
+        // Reset negotiation state machine after add_transceiver triggered it
+        pc.pipeline_context.event_outs.clear();
+        pc.reset_negotiation_state();
+
+        // Setting the same direction should NOT trigger negotiation
+        let current = pc.rtp_transceivers[tid].direction();
+        let mut t = pc.rtp_transceiver(tid).unwrap();
+        t.set_direction(current);
+        drop(t);
+
+        assert!(
+            !pc.pipeline_context
+                .event_outs
+                .iter()
+                .any(|e| matches!(e, RTCPeerConnectionEvent::OnNegotiationNeededEvent)),
+            "setting the same direction should not trigger OnNegotiationNeededEvent"
+        );
     }
 }

@@ -672,6 +672,12 @@ impl<I> RTCPeerConnection<I>
 where
     I: Interceptor,
 {
+    /// Reset negotiation state for testing purposes.
+    #[cfg(test)]
+    pub(crate) fn reset_negotiation_state(&mut self) {
+        self.negotiation_needed_state = NegotiationNeededState::Empty;
+        self.is_negotiation_ongoing = false;
+    }
     /// Creates an SDP offer to start a new WebRTC connection to a remote peer.
     ///
     /// The offer includes information about the attached media tracks, codecs and options supported
