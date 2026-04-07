@@ -99,6 +99,8 @@
 //TODO: #[cfg(test)]
 //mod rtp_transceiver_test;
 
+use log::trace;
+
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
@@ -293,6 +295,7 @@ where
         self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
         // Per W3C WebRTC §5.5: changing direction must trigger renegotiation.
         if direction != previous {
+            trace!("Changing direction of transceiver from {previous} to {direction}");
             self.peer_connection.trigger_negotiation_needed();
         }
     }
