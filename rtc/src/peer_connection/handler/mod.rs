@@ -388,14 +388,16 @@ where
             handler.close()?;
         }));
 
-        // W3C WebRTC §close steps #4–#10 are implemented in individual handler close() methods:
+        // W3C WebRTC §close shutdown work is implemented in individual handler close() methods,
+        // including:
         //   InterceptorHandler::close() → interceptor.close()
         //   DataChannelHandler::close() → closes all RTCDataChannelInternal instances
         //   SctpHandler::close()        → closes all SCTP associations + endpoint
         //   DtlsHandler::close()        → dtls_transport.stop()
         //   IceHandler::close()         → ice_transport.agent.close()
         //
-        // The for_each_handler!(forward: ...) loop above invokes each handler's close() in order.
+        // The for_each_handler!(forward: ...) loop above invokes these handler close() methods
+        // in order.
         let close_errs: Vec<Error> = vec![];
 
         self.update_connection_state(true);

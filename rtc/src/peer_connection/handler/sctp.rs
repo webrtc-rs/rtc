@@ -467,10 +467,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn close(&mut self) -> Result<()> {
-        // Close all SCTP associations and drain the endpoint so state machines shut down cleanly.
+        // Close all SCTP associations and drop the endpoint.
         let sctp = &mut self.ctx.sctp_transport;
         let mut errs = vec![];
-        for (_, assoc) in sctp.sctp_associations.iter_mut() {
+        for assoc in sctp.sctp_associations.values_mut() {
             if let Err(e) = assoc.close(AssociationError::LocallyClosed) {
                 errs.push(e);
             }
