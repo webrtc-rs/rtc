@@ -147,6 +147,140 @@
 //TODO: #[cfg(test)]
 //TODO: mod sdp_test;
 
+#[cfg(test)]
+mod rejected_mline_tests {
+    use super::*;
+    use interceptor::NoopInterceptor;
+
+    fn default_params() -> PopulateSdpParams {
+        PopulateSdpParams {
+            media_description_fingerprint: false,
+            is_ice_lite: false,
+            is_extmap_allow_mixed: false,
+            connection_role: ConnectionRole::Active,
+            ice_gathering_state: RTCIceGatheringState::Complete,
+            match_bundle_group: None,
+            sctp_max_message_size: 0,
+            ignore_rid_pause_for_recv: false,
+            write_ssrc_attributes_for_simulcast: false,
+        }
+    }
+
+    #[test]
+    fn test_rejected_audio_mline_has_port_zero() {
+        let media_sections = vec![MediaSection {
+            mid: "0".to_owned(),
+            rejected: true,
+            rejected_kind: "audio".to_owned(),
+            transceiver_index: usize::MAX,
+            ..Default::default()
+        }];
+
+        let me = MediaEngine::default();
+        let mut transceivers: Vec<RTCRtpTransceiverInternal<NoopInterceptor>> = vec![];
+        let sdp = RTCPeerConnection::<NoopInterceptor>::populate_sdp(
+            SessionDescription::default(),
+            &[],
+            &me,
+            &mut transceivers,
+            &[],
+            &RTCIceParameters::default(),
+            &media_sections,
+            default_params(),
+        )
+        .unwrap();
+
+        assert_eq!(sdp.media_descriptions.len(), 1);
+        let desc = &sdp.media_descriptions[0];
+        assert_eq!(desc.media_name.media, "audio");
+        assert_eq!(desc.media_name.port.value, 0);
+        assert_eq!(desc.media_name.protos, vec!["UDP", "TLS", "RTP", "SAVPF"]);
+        assert_eq!(desc.media_name.formats, vec!["0"]);
+        assert!(desc.connection_information.is_some());
+    }
+
+    #[test]
+    fn test_rejected_application_mline_uses_sctp_proto() {
+        let media_sections = vec![MediaSection {
+            mid: "0".to_owned(),
+            rejected: true,
+            rejected_kind: "application".to_owned(),
+            transceiver_index: usize::MAX,
+            ..Default::default()
+        }];
+
+        let me = MediaEngine::default();
+        let mut transceivers: Vec<RTCRtpTransceiverInternal<NoopInterceptor>> = vec![];
+        let sdp = RTCPeerConnection::<NoopInterceptor>::populate_sdp(
+            SessionDescription::default(),
+            &[],
+            &me,
+            &mut transceivers,
+            &[],
+            &RTCIceParameters::default(),
+            &media_sections,
+            default_params(),
+        )
+        .unwrap();
+
+        assert_eq!(sdp.media_descriptions.len(), 1);
+        let desc = &sdp.media_descriptions[0];
+        assert_eq!(desc.media_name.media, "application");
+        assert_eq!(desc.media_name.port.value, 0);
+        assert_eq!(desc.media_name.protos, vec!["UDP", "DTLS", "SCTP"]);
+        assert_eq!(desc.media_name.formats, vec!["webrtc-datachannel"]);
+    }
+
+    #[test]
+    fn test_rejected_mline_not_added_to_bundle() {
+        let media_sections = vec![
+            MediaSection {
+                mid: "0".to_owned(),
+                rejected: true,
+                rejected_kind: "video".to_owned(),
+                transceiver_index: usize::MAX,
+                ..Default::default()
+            },
+            MediaSection {
+                mid: "1".to_owned(),
+                rejected: true,
+                rejected_kind: "audio".to_owned(),
+                transceiver_index: usize::MAX,
+                ..Default::default()
+            },
+        ];
+
+        let me = MediaEngine::default();
+        let mut transceivers: Vec<RTCRtpTransceiverInternal<NoopInterceptor>> = vec![];
+        let sdp = RTCPeerConnection::<NoopInterceptor>::populate_sdp(
+            SessionDescription::default(),
+            &[],
+            &me,
+            &mut transceivers,
+            &[],
+            &RTCIceParameters::default(),
+            &media_sections,
+            default_params(),
+        )
+        .unwrap();
+
+        // Rejected m-lines should NOT appear in the BUNDLE group
+        let bundle = sdp
+            .attributes
+            .iter()
+            .find(|a| a.key == "group" && a.value.as_deref().unwrap_or("").starts_with("BUNDLE"));
+        assert!(
+            bundle.is_none(),
+            "BUNDLE group should not be present when all m-lines are rejected"
+        );
+
+        // Both m-lines should be present with port=0
+        assert_eq!(sdp.media_descriptions.len(), 2);
+        assert_eq!(sdp.media_descriptions[0].media_name.port.value, 0);
+        assert_eq!(sdp.media_descriptions[1].media_name.port.value, 0);
+    }
+}
+
 pub(crate) mod sdp_type;
 pub(crate) mod session_description;
 
@@ -1066,37 +1200,55 @@ where
             *count += 1;
         };
 
-        for (i, m) in media_sections.iter().enumerate() {
+        let mut candidates_added = false;
+        for m in media_sections.iter() {
             // RFC 8829 §5.3.1: reflect rejected m-lines (port=0) in the answer.
             // These must appear in the same position as in the offer to preserve m-line indexing.
             if m.rejected {
-                d = d.with_media(MediaDescription {
-                    media_name: MediaName {
-                        media: m.rejected_kind.clone(),
-                        port: RangedPort { value: 0, range: None },
-                        protos: vec![
+                let (rejected_protos, rejected_formats) = if m.rejected_kind == "application" {
+                    (
+                        vec!["UDP".to_owned(), "DTLS".to_owned(), "SCTP".to_owned()],
+                        vec!["webrtc-datachannel".to_owned()],
+                    )
+                } else {
+                    (
+                        vec![
                             "UDP".to_owned(),
                             "TLS".to_owned(),
                             "RTP".to_owned(),
                             "SAVPF".to_owned(),
                         ],
-                        formats: vec!["0".to_owned()],
-                    },
-                    media_title: None,
-                    connection_information: Some(ConnectionInformation {
-                        network_type: "IN".to_owned(),
-                        address_type: "IP4".to_owned(),
-                        address: Some(Address {
-                            address: "0.0.0.0".to_owned(),
-                            ttl: None,
-                            range: None,
+                        vec!["0".to_owned()],
+                    )
+                };
+
+                d = d.with_media(
+                    MediaDescription {
+                        media_name: MediaName {
+                            media: m.rejected_kind.clone(),
+                            port: RangedPort {
+                                value: 0,
+                                range: None,
+                            },
+                            protos: rejected_protos,
+                            formats: rejected_formats,
+                        },
+                        media_title: None,
+                        connection_information: Some(ConnectionInformation {
+                            network_type: "IN".to_owned(),
+                            address_type: "IP4".to_owned(),
+                            address: Some(Address {
+                                address: "0.0.0.0".to_owned(),
+                                ttl: None,
+                                range: None,
+                            }),
                         }),
-                    }),
-                    bandwidth: vec![],
-                    encryption_key: None,
-                    attributes: vec![],
-                }
-                .with_value_attribute(ATTR_KEY_MID.to_owned(), m.mid.clone()));
+                        bandwidth: vec![],
+                        encryption_key: None,
+                        attributes: vec![],
+                    }
+                    .with_value_attribute(ATTR_KEY_MID.to_owned(), m.mid.clone()),
+                );
                 continue; // rejected m-lines are not added to BUNDLE
             }
 
@@ -1106,7 +1258,8 @@ where
                 return Err(Error::ErrSDPMediaSectionTrackInvalid);
             }
 
-            let should_add_candidates = i == 0;
+            let should_add_candidates = !candidates_added;
+            candidates_added = true;
 
             let should_add_id = if m.data {
                 let params = AddDataMediaSectionParams {

@@ -229,6 +229,19 @@ where
                         return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
                     }
 
+                    // RFC 8829 §5.3.1: rejected m-lines (port=0) in the offer MUST be
+                    // reflected as rejected in the answer to preserve m-line indexing.
+                    if media.media_name.port.value == 0 {
+                        media_sections.push(MediaSection {
+                            mid: mid_value.to_owned(),
+                            rejected: true,
+                            rejected_kind: media.media_name.media.clone(),
+                            transceiver_index: usize::MAX,
+                            ..Default::default()
+                        });
+                        continue;
+                    }
+
                     if media.media_name.media == MEDIA_SECTION_APPLICATION {
                         media_sections.push(MediaSection {
                             mid: mid_value.to_owned(),
@@ -241,22 +254,7 @@ where
                     }
 
                     let kind = RtpCodecKind::from(media.media_name.media.as_str());
-                    let direction = get_peer_direction(media);
                     if kind == RtpCodecKind::Unspecified {
-                        continue;
-                    }
-
-                    if direction == RTCRtpTransceiverDirection::Unspecified {
-                        // Rejected m-line in the offer (port=0, no direction attribute).
-                        // RFC 8829 §5.3.1: the answer MUST reflect it as rejected to
-                        // preserve m-line indexing across both sides.
-                        media_sections.push(MediaSection {
-                            mid: mid_value.to_owned(),
-                            rejected: true,
-                            rejected_kind: media.media_name.media.clone(),
-                            transceiver_index: usize::MAX,
-                            ..Default::default()
-                        });
                         continue;
                     }
 
