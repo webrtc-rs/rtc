@@ -21,7 +21,7 @@ pub(crate) struct ReceiverStream {
     jitter: f64,
     last_sender_report: u32,
     last_sender_report_time: Option<Instant>,
-    total_lost: u32,
+    total_lost: i32,
 }
 
 impl ReceiverStream {
@@ -137,14 +137,14 @@ impl ReceiverStream {
             }
         };
 
-        self.total_lost += total_lost_since_report;
+        self.total_lost += total_lost_since_report as i32;
 
-        // allow up to 24 bits
-        if total_lost_since_report > 0xFFFFFF {
-            total_lost_since_report = 0xFFFFFF;
+        // Clamp to signed 24-bit range per RFC 3550 §6.4.1
+        if total_lost_since_report > 0x7FFFFF {
+            total_lost_since_report = 0x7FFFFF;
         }
-        if self.total_lost > 0xFFFFFF {
-            self.total_lost = 0xFFFFFF
+        if self.total_lost > 0x7FFFFF {
+            self.total_lost = 0x7FFFFF;
         }
 
         // Calculate DLSR (Delay Since Last SR) - RFC 3550
@@ -461,9 +461,9 @@ mod tests {
 
     #[test]
     fn test_receiver_stream_24bit_loss_clamping() {
-        // Test that total_lost is clamped to 24 bits (0xFFFFFF)
+        // Test that total_lost is clamped to signed 24-bit max (0x7FFFFF)
         let mut stream = ReceiverStream::new(123456, 90000);
-        stream.total_lost = 0xFFFFFE; // Almost at max
+        stream.total_lost = 0x7FFFFE; // Almost at signed 24-bit max
 
         let now = Instant::now();
 
@@ -473,7 +473,7 @@ mod tests {
 
         let rr = stream.generate_report(now);
 
-        // Should be clamped to 0xFFFFFF
-        assert_eq!(rr.reports[0].total_lost, 0xFFFFFF);
+        // Should be clamped to signed 24-bit max (0x7FFFFF)
+        assert_eq!(rr.reports[0].total_lost, 0x7FFFFF);
     }
 }
