@@ -13,6 +13,7 @@ use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventIni
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability, RTCRtpRtxParameters,
+    rtp_codec::find_rtx_payload_type,
 };
 use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
 use crate::statistics::accumulator::RTCStatsAccumulator;
@@ -458,6 +459,23 @@ where
                             None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
                         }
                     }
+
+                    // Register the repair stream with the interceptor so RTX
+                    // packets are actually demuxed and forwarded.
+                    let parameters = receiver.get_parameters(self.media_engine);
+                    let rtx_pt = find_rtx_payload_type(
+                        codec.payload_type,
+                        &parameters.rtp_parameters.codecs,
+                    )
+                    .unwrap_or_default();
+                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                        self.interceptor,
+                        true,
+                        ssrc,
+                        rtx_pt,
+                        &codec.rtp_codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
                 } else {
                     if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                         coding.ssrc = Some(ssrc);
