@@ -667,19 +667,9 @@ mod tests {
         let mut handler = SctpHandler::new(&mut ctx);
         let result = handler.handle_write(msg2);
 
-        match result {
-            Err(err) => {
-                let debug = format!("{err:?}");
-                assert!(
-                    debug.contains("ErrStreamAlreadyExist"),
-                    "expected ErrStreamAlreadyExist for duplicate negotiated stream, got: {debug}"
-                );
-            }
-            Ok(()) => {
-                panic!(
-                    "duplicate open_stream on the same stream ID should fail with ErrStreamAlreadyExist"
-                );
-            }
-        }
+        assert!(
+            matches!(result, Err(shared::error::Error::ErrStreamAlreadyExist)),
+            "expected ErrStreamAlreadyExist for duplicate negotiated stream, got: {result:?}"
+        );
     }
 }
