@@ -702,4 +702,38 @@ mod test {
 
         Ok(())
     }
+
+    /// Verify `from_key_pair` with Ed25519 successfully calls `from_params`
+    /// and `CryptoPrivateKey::from_key_pair` internally, producing valid
+    /// fingerprints.
+    #[test]
+    fn test_from_key_pair_ed25519_produces_fingerprints() -> Result<()> {
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
+        let cert = RTCCertificate::from_key_pair(kp)?;
+        let fps = cert.get_fingerprints();
+        assert_eq!(fps.len(), 1);
+        assert_eq!(fps[0].algorithm, "sha-256");
+        Ok(())
+    }
+
+    /// Verify `from_existing` creates a valid certificate with custom expiration.
+    #[test]
+    fn test_from_existing_with_custom_expiry() -> Result<()> {
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+        let cert = RTCCertificate::from_key_pair(kp)?;
+        let custom_expires = SystemTime::now() + Duration::from_secs(3600);
+        let cert2 = RTCCertificate::from_existing(cert.dtls_certificate.clone(), custom_expires);
+        assert_eq!(cert2.expires, custom_expires);
+        assert_eq!(cert, cert2); // PartialEq ignores expires
+        Ok(())
+    }
+
+    /// Verify `from_key_pair` rejects unsupported key types.
+    #[test]
+    fn test_from_key_pair_unsupported_rejects() {
+        // PKCS_ECDSA_P384_SHA384 is not in the supported list
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+        let result = RTCCertificate::from_key_pair(kp);
+        assert!(result.is_err());
+    }
 }

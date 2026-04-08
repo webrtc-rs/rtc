@@ -510,6 +510,60 @@ impl Default for HandshakeConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+
+    /// Verify `PlaceholderServerCertVerifier::verify_server_cert` returns an error.
+    #[test]
+    fn placeholder_verify_server_cert_rejects() {
+        let v = PlaceholderServerCertVerifier;
+        let dummy_cert = CertificateDer::from(vec![0u8; 1]);
+        let name = ServerName::try_from("localhost").unwrap();
+        let result = v.verify_server_cert(&dummy_cert, &[], &name, &[], UnixTime::now());
+        assert!(result.is_err());
+    }
+
+    /// Verify `PlaceholderServerCertVerifier::supported_verify_schemes` returns empty.
+    #[test]
+    fn placeholder_supported_verify_schemes_empty() {
+        let v = PlaceholderServerCertVerifier;
+        assert!(v.supported_verify_schemes().is_empty());
+    }
+
+    /// Verify `HandshakeConfig::default()` uses the placeholder verifier.
+    #[test]
+    fn handshake_config_default_uses_placeholder() {
+        let cfg = HandshakeConfig::default();
+        // The placeholder verifier returns empty supported schemes.
+        assert!(
+            cfg.server_cert_verifier
+                .supported_verify_schemes()
+                .is_empty()
+        );
+    }
+
+    /// Verify `ConfigBuilder::build()` successfully creates a config with explicit fields.
+    #[test]
+    fn config_builder_build_sets_fields() {
+        let cert = Certificate::generate_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let cfg = ConfigBuilder::default()
+            .with_certificates(vec![cert])
+            .with_server_name("localhost".to_string())
+            .build(false, None)
+            .unwrap();
+        // The builder installs a real verifier, not the placeholder.
+        // A real verifier has non-empty supported_verify_schemes.
+        assert!(
+            !cfg.server_cert_verifier
+                .supported_verify_schemes()
+                .is_empty()
+        );
+        assert_eq!(cfg.maximum_retransmit_number, 7);
+    }
+}
+
 impl HandshakeConfig {
     pub(crate) fn get_certificate(&self, server_name: &str) -> Result<Certificate> {
         if self.local_certificates.is_empty() {

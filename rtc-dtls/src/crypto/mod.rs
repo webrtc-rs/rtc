@@ -549,4 +549,122 @@ mod test {
 
         Ok(())
     }
+
+    use super::*;
+
+    /// Test `CryptoPrivateKey::kind()` accessor for each key variant.
+    #[test]
+    fn test_crypto_private_key_kind_accessor() -> Result<()> {
+        // Ed25519
+        let kp_ed = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk_ed = CryptoPrivateKey::from_key_pair(&kp_ed)?;
+        assert!(
+            matches!(pk_ed.kind(), CryptoPrivateKeyKind::Ed25519(_)),
+            "expected Ed25519 kind"
+        );
+
+        // ECDSA
+        let kp_ec = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk_ec = CryptoPrivateKey::from_key_pair(&kp_ec)?;
+        assert!(
+            matches!(pk_ec.kind(), CryptoPrivateKeyKind::Ecdsa256(_)),
+            "expected Ecdsa256 kind"
+        );
+
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::serialized_der()` accessor returns non-empty bytes.
+    #[test]
+    fn test_crypto_private_key_serialized_der_accessor() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(
+            !pk.serialized_der().is_empty(),
+            "serialized_der should not be empty"
+        );
+        // Should match what the key pair serialises
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::clone()` for Ed25519 keys.
+    #[test]
+    fn test_clone_ed25519() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        let cloned = pk.clone();
+        assert_eq!(pk, cloned);
+        assert!(matches!(cloned.kind(), CryptoPrivateKeyKind::Ed25519(_)));
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::clone()` for ECDSA keys.
+    #[test]
+    fn test_clone_ecdsa() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        let cloned = pk.clone();
+        assert_eq!(pk, cloned);
+        assert!(matches!(cloned.kind(), CryptoPrivateKeyKind::Ecdsa256(_)));
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::from_key_pair` for Ed25519.
+    #[test]
+    fn test_from_key_pair_ed25519() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ed25519(_)));
+        assert_eq!(pk.serialized_der, kp.serialize_der());
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::from_key_pair` for ECDSA P-256.
+    #[test]
+    fn test_from_key_pair_ecdsa() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ecdsa256(_)));
+        assert_eq!(pk.serialized_der, kp.serialize_der());
+        Ok(())
+    }
+
+    /// Test `TryFrom<&KeyPair>` delegates to `from_key_pair`.
+    #[test]
+    fn test_try_from_key_pair() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::try_from(&kp)?;
+        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ed25519(_)));
+        Ok(())
+    }
+
+    /// Test `generate_certificate_verify` succeeds with Ed25519 key.
+    #[test]
+    fn test_generate_certificate_verify_ed25519() -> Result<()> {
+        let cert = Certificate::generate_self_signed_with_alg(
+            vec!["localhost".to_owned()],
+            &rcgen::PKCS_ED25519,
+        )?;
+        let sig = generate_certificate_verify(b"test handshake data", &cert.private_key)?;
+        assert!(!sig.is_empty(), "signature should not be empty");
+        Ok(())
+    }
+
+    /// Test `generate_certificate_verify` succeeds with ECDSA key.
+    #[test]
+    fn test_generate_certificate_verify_ecdsa() -> Result<()> {
+        let cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
+        let sig = generate_certificate_verify(b"test handshake data", &cert.private_key)?;
+        assert!(!sig.is_empty(), "signature should not be empty");
+        Ok(())
+    }
 }
