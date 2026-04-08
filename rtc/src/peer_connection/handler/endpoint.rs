@@ -8,7 +8,7 @@ use crate::peer_connection::message::internal::{
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_RTX};
+use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{
@@ -23,6 +23,18 @@ use shared::error::{Error, Result};
 use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
+
+/// Returns `true` if the given MIME type identifies a repair codec (RTX or FEC)
+/// rather than a primary media codec. The check is case-insensitive and covers
+/// all RTX variants (e.g. `video/rtx`, `audio/rtx`) as well as FEC types
+/// (`video/ulpfec`, `video/flexfec`, `video/flexfec-03`).
+fn is_repair_mime_type(mime_type: &str) -> bool {
+    let mt = mime_type.to_ascii_lowercase();
+    mt.ends_with("/rtx")
+        || mt.ends_with("/ulpfec")
+        || mt.ends_with("/flexfec")
+        || mt.ends_with("/flexfec-03")
+}
 
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
@@ -304,38 +316,51 @@ where
         ssrc: SSRC,
         rtp_header: Option<&rtp::Header>,
     ) -> Option<MediaStreamTrackId> {
-        if let Some((id, transceiver)) =
-            self.rtp_transceivers
-                .iter_mut()
-                .enumerate()
-                .find(|(_, transceiver)| {
-                    if let Some(receiver) = transceiver.receiver() {
-                        receiver.get_coding_parameters().iter().any(|coding| {
-                            coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc)
-                                // Also match RTX/FEC repair SSRCs so repair packets are routed to
-                                // the primary stream's receiver rather than silently dropped.
-                                || coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
-                                || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
-                        })
-                    } else {
-                        false
+        // Determine whether the SSRC matches a primary or repair (RTX/FEC) sub-stream
+        // in a single pass, avoiding redundant receiver/coding-parameter lookups.
+        //
+        // First, classify the SSRC across all transceivers. We record whether the match
+        // was against a primary SSRC or a repair (RTX/FEC) SSRC so the subsequent code
+        // can take the right path without re-scanning coding parameters.
+        let ssrc_match = self
+            .rtp_transceivers
+            .iter()
+            .enumerate()
+            .find_map(|(id, transceiver)| {
+                let receiver = transceiver.receiver().as_ref()?;
+                let mut is_repair = false;
+                let matched = receiver.get_coding_parameters().iter().any(|coding| {
+                    if coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc) {
+                        return true;
                     }
-                })
-        {
+                    // Also match RTX/FEC repair SSRCs so repair packets are routed to
+                    // the primary stream's receiver rather than silently dropped.
+                    if coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
+                        || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
+                    {
+                        is_repair = true;
+                        return true;
+                    }
+                    false
+                });
+                if matched {
+                    // Grab the track_id while we have the receiver borrowed immutably,
+                    // so repair packets can be returned without a second lookup.
+                    let track_id = receiver.track().track_id().clone();
+                    Some((id, is_repair, track_id))
+                } else {
+                    None
+                }
+            });
+
+        if let Some((id, is_repair, repair_track_id)) = ssrc_match {
             // If the SSRC belongs to a repair (RTX/FEC) sub-stream, route it to the primary
             // stream's receiver without firing track-open events or updating codec state.
-            let is_repair_ssrc = transceiver.receiver().as_ref().is_some_and(|receiver| {
-                receiver.get_coding_parameters().iter().any(|coding| {
-                    coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
-                        || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
-                })
-            });
-            if is_repair_ssrc {
-                return transceiver
-                    .receiver()
-                    .as_ref()
-                    .map(|r| r.track().track_id().clone());
+            if is_repair {
+                return Some(repair_track_id);
             }
+
+            let transceiver = &mut self.rtp_transceivers[id];
 
             // Get kind and mid before borrowing receiver mutably
             let kind = transceiver.kind();
@@ -359,11 +384,10 @@ where
                 // RTX/FEC packets are routed via the early-return above.
                 let track_codec = if is_track_codec_empty
                     && let Some(rtp_header) = rtp_header
-                    && let Some(codec) = receiver
-                        .get_codec_preferences()
-                        .iter()
-                        .find(|codec| codec.payload_type == rtp_header.payload_type)
-                {
+                    && let Some(codec) = receiver.get_codec_preferences().iter().find(|codec| {
+                        codec.payload_type == rtp_header.payload_type
+                            && !is_repair_mime_type(&codec.rtp_codec.mime_type)
+                    }) {
                     Some(codec.rtp_codec.clone())
                 } else {
                     None
@@ -615,10 +639,7 @@ where
                     // via find_track_id_by_ssrc once their SSRC is registered.
                     .find(|codec| {
                         codec.payload_type == rtp_header.payload_type
-                            && !codec
-                                .rtp_codec
-                                .mime_type
-                                .eq_ignore_ascii_case(MIME_TYPE_RTX)
+                            && !is_repair_mime_type(&codec.rtp_codec.mime_type)
                     })
                     .cloned()
             {
@@ -732,5 +753,46 @@ where
         };
 
         Some((mid, rid, rrid))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: RTX must be excluded regardless of media type (video/rtx, audio/rtx)
+    /// and case variations so it is never selected as a primary codec.
+    #[test]
+    fn is_repair_mime_type_detects_rtx_variants() {
+        // Standard RTX
+        assert!(is_repair_mime_type("video/rtx"));
+        // Hypothetical audio RTX
+        assert!(is_repair_mime_type("audio/rtx"));
+        // Case-insensitive
+        assert!(is_repair_mime_type("Video/RTX"));
+        assert!(is_repair_mime_type("VIDEO/RTX"));
+    }
+
+    /// Regression: all FEC mime types must be treated as repair codecs.
+    #[test]
+    fn is_repair_mime_type_detects_fec_variants() {
+        assert!(is_repair_mime_type("video/ulpfec"));
+        assert!(is_repair_mime_type("video/flexfec"));
+        assert!(is_repair_mime_type("video/flexfec-03"));
+        // Case-insensitive
+        assert!(is_repair_mime_type("Video/ULPFEC"));
+        assert!(is_repair_mime_type("VIDEO/FLEXFEC"));
+        assert!(is_repair_mime_type("VIDEO/FLEXFEC-03"));
+    }
+
+    /// Primary media codecs must NOT be classified as repair.
+    #[test]
+    fn is_repair_mime_type_rejects_primary_codecs() {
+        assert!(!is_repair_mime_type("video/VP8"));
+        assert!(!is_repair_mime_type("video/VP9"));
+        assert!(!is_repair_mime_type("video/H264"));
+        assert!(!is_repair_mime_type("audio/opus"));
+        assert!(!is_repair_mime_type("audio/PCMU"));
+        assert!(!is_repair_mime_type(""));
     }
 }
