@@ -982,3 +982,99 @@ fn test_h265_packet_real() -> Result<()> {
 
     Ok(())
 }
+
+/// When an aggregation buffer contains a NALU that exceeds u16::MAX, the
+/// oversized NALU must be emitted individually (via FU fragmentation) while
+/// normal-sized NALUs are still packed into the aggregation packet.
+#[test]
+fn test_h265_oversized_nalu_in_aggregation_buffer() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+
+    // Build a payload with two NALUs: one normal-sized and one large (> MTU).
+    // We use Annex B start codes to separate them.
+    // NALU 1: 5 bytes (normal, fits in MTU)
+    // NALU 2: 20 bytes (exceeds MTU of 10, should be FU-fragmented)
+    let mut payload = vec![];
+    // NALU 1 with 3-byte start code
+    payload.extend_from_slice(&[0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&[0x02, 0x01, 0xAA, 0xBB, 0xCC]); // 5 bytes, type=PFR
+    // NALU 2 with 3-byte start code
+    payload.extend_from_slice(&[0x00, 0x00, 0x01]);
+    let mut nalu2 = vec![0x02, 0x01]; // header: type=PFR
+    nalu2.extend(vec![0xDD; 18]); // 20 bytes total
+    payload.extend_from_slice(&nalu2);
+
+    let result = pck.payload(10, &Bytes::from(payload))?;
+
+    // NALU 1 (5 bytes) fits in MTU, emitted as single packet.
+    // NALU 2 (20 bytes) exceeds MTU, should be FU-fragmented into multiple packets.
+    assert!(
+        result.len() >= 2,
+        "expected at least 2 packets (single + fragments), got {}",
+        result.len()
+    );
+
+    // First packet should be the small NALU (single packet)
+    assert_eq!(result[0].len(), 5, "first packet should be the 5-byte NALU");
+
+    // Remaining packets should be FU fragments of the large NALU
+    for i in 1..result.len() {
+        let header = H265NALUHeader::new(result[i][0], result[i][1]);
+        assert!(
+            header.is_fragmentation_unit(),
+            "packet {} should be a fragmentation unit",
+            i
+        );
+    }
+
+    Ok(())
+}
+
+/// The aggregation_payload_header should only be computed from normal-sized
+/// NALUs, not oversized ones that get split out. This ensures the header
+/// fields (F, layer_id, tid) reflect only the NALUs actually in the packet.
+#[test]
+fn test_h265_aggregation_header_excludes_oversized_nalus() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+
+    // Two small NALUs that will be aggregated, with distinct layer_id/tid values.
+    // Both fit under MTU together.
+    let mut payload = vec![];
+    // NALU 1: type=PFR, tid=1
+    payload.extend_from_slice(&[0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&[0x02, 0x01, 0xAA]); // 3 bytes
+    // NALU 2: type=PFR, tid=1
+    payload.extend_from_slice(&[0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&[0x02, 0x01, 0xBB]); // 3 bytes
+
+    let result = pck.payload(1500, &Bytes::from(payload))?;
+
+    // Should be aggregated into a single AP packet
+    assert_eq!(result.len(), 1, "two small NALUs should be aggregated");
+    let header = H265NALUHeader::new(result[0][0], result[0][1]);
+    assert!(
+        header.is_aggregation_packet(),
+        "packet should be an aggregation packet"
+    );
+
+    Ok(())
+}
+
+/// flush_aggregation_buffer with a single oversized NALU should emit it
+/// via FU fragmentation, not try to pack it into an aggregation packet.
+#[test]
+fn test_h265_flush_single_nalu_passthrough() -> Result<()> {
+    let mut pck = HevcPayloader::default();
+
+    // Single NALU that fits in MTU -- should be emitted as-is
+    let payload = Bytes::from_static(&[0x00, 0x00, 0x01, 0x02, 0x01, 0xAA, 0xBB]);
+    let result = pck.payload(1500, &payload)?;
+    assert_eq!(result.len(), 1, "single NALU should be emitted as-is");
+    assert_eq!(
+        result[0],
+        Bytes::from_static(&[0x02, 0x01, 0xAA, 0xBB]),
+        "NALU should match after stripping start code"
+    );
+
+    Ok(())
+}

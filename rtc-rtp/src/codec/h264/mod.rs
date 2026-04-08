@@ -117,7 +117,7 @@ impl H264Payloader {
             let sps_nalu = self.sps_nalu.clone().unwrap();
             let pps_nalu = self.pps_nalu.clone().unwrap();
 
-            // Pack current NALU with SPS and PPS as STAP-A.
+            // Pack the cached SPS and PPS into a STAP-A.
             // STAP-A length fields are u16; only pack if both NALUs fit within 65535 bytes.
             if sps_nalu.len() <= u16::MAX as usize && pps_nalu.len() <= u16::MAX as usize {
                 let sps_len = (sps_nalu.len() as u16).to_be_bytes();
@@ -132,6 +132,11 @@ impl H264Payloader {
                 stap_a_nalu.extend_from_slice(&pps_nalu);
                 if stap_a_nalu.len() <= mtu {
                     payloads.push(Bytes::from(stap_a_nalu));
+                } else {
+                    // STAP-A exceeds MTU; emit SPS and PPS individually
+                    // (they will be fragmented via FU-A if needed).
+                    Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
+                    Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
                 }
             } else {
                 // SPS or PPS exceeds u16::MAX; fall back to emitting them as

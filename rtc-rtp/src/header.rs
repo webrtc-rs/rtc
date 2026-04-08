@@ -513,6 +513,9 @@ impl Header {
     }
 }
 
+// Tests are kept inline (rather than in a separate header_test.rs file) because
+// header.rs is a flat module file, not a mod.rs directory module.  Moving them
+// to a sibling file would require restructuring the crate layout for no benefit.
 #[cfg(test)]
 mod tests {
     use super::*;

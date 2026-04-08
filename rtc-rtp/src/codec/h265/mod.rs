@@ -121,9 +121,9 @@ impl HevcPayloader {
                 payloads.push(nalus.pop().expect("single buffered NAL exists"));
             }
             _ => {
-                let header = Self::aggregation_payload_header(nalus);
                 // Separate oversized NALUs that exceed the u16 length field
-                // *before* computing capacity, to avoid massive pre-allocation.
+                // *before* computing the aggregation header or capacity,
+                // to avoid massive pre-allocation and incorrect header values.
                 let mut oversized = Vec::new();
                 let mut normal = Vec::new();
                 for nalu in nalus.drain(..) {
@@ -135,6 +135,7 @@ impl HevcPayloader {
                 }
                 // Only build an aggregation packet if there are normal-sized NALUs.
                 if !normal.is_empty() {
+                    let header = Self::aggregation_payload_header(&normal);
                     let mut aggr_nalu = BytesMut::with_capacity(
                         NAL_HEADER_SIZE + normal.iter().map(|nalu| 2 + nalu.len()).sum::<usize>(),
                     );
