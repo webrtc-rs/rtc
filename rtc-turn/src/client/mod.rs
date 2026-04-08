@@ -448,7 +448,7 @@ impl Client {
         debug!("client.Allocate call PerformTransaction 1");
         let mut tid = self.perform_transaction(
             &msg,
-            self.turn_server_addr().ok_or(Error::ErrNilTurnSocket)?,
+            self.turn_server_addr_or_err()?,
             TransactionType::AllocateAttempt,
         );
         tid.0[TRANSACTION_ID_SIZE - 1] = tid.0[TRANSACTION_ID_SIZE - 1].wrapping_add(1);
@@ -514,7 +514,7 @@ impl Client {
                 debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
                     &msg,
-                    self.turn_server_addr().ok_or(Error::ErrNilTurnSocket)?,
+                    self.turn_server_addr_or_err()?,
                     TransactionType::AllocateRequest(nonce),
                 );
             }
@@ -557,6 +557,11 @@ impl Client {
     /// Returns the TURN server address, if configured.
     pub fn turn_server_addr(&self) -> Option<SocketAddr> {
         self.turn_serv_addr
+    }
+
+    /// Returns the TURN server address or an error if not configured.
+    fn turn_server_addr_or_err(&self) -> Result<SocketAddr> {
+        self.turn_serv_addr.ok_or(Error::ErrNilTurnSocket)
     }
 
     /// Returns the local address this client is bound to.

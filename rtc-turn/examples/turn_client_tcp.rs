@@ -46,7 +46,8 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.debug {
-        let log_level = log::LevelFilter::from_str(&cli.log_level).unwrap();
+        let log_level = log::LevelFilter::from_str(&cli.log_level)
+            .map_err(|e| Error::Other(format!("invalid log level '{}': {e}", cli.log_level)))?;
         env_logger::Builder::new()
             .format(|buf, record| {
                 writeln!(
@@ -66,7 +67,9 @@ fn main() -> Result<()> {
     let host = cli.host;
     let port = cli.port;
     let user = cli.user;
-    let cred: Vec<&str> = user.splitn(2, '=').collect();
+    let (username, password) = user.split_once('=').ok_or_else(|| {
+        Error::Other("invalid --user format: expected 'username=password'".to_string())
+    })?;
     let realm = cli.realm;
 
     let turn_server_addr = format!("{host}:{port}");
@@ -88,8 +91,8 @@ fn main() -> Result<()> {
         turn_serv_addr: turn_server_addr,
         local_addr,
         transport_protocol: TransportProtocol::TCP,
-        username: cred[0].to_string(),
-        password: cred[1].to_string(),
+        username: username.to_string(),
+        password: password.to_string(),
         realm: realm.to_string(),
         software: String::new(),
         rto_in_ms: 0,
@@ -101,17 +104,12 @@ fn main() -> Result<()> {
     let allocate_tid = client.allocate()?;
     let mut relayed_addr = None;
 
-    let (stop_tx, stop_rx) = crossbeam_channel::bounded::<()>(1);
+    let (stop_tx, stop_rx) = crossbeam_channel::unbounded::<()>();
     println!("Press Ctrl-C to stop");
-    std::thread::spawn(move || {
-        let mut stop_tx = Some(stop_tx);
-        ctrlc::set_handler(move || {
-            if let Some(stop_tx) = stop_tx.take() {
-                let _ = stop_tx.send(());
-            }
-        })
-        .expect("Error setting Ctrl-C handler");
-    });
+    ctrlc::set_handler(move || {
+        let _ = stop_tx.send(());
+    })
+    .expect("Error setting Ctrl-C handler");
 
     // RFC 4571 decoder for inbound TCP frames.
     let mut decoder = TcpFrameDecoder::new();
@@ -159,7 +157,10 @@ fn main() -> Result<()> {
                 }
                 Event::AllocateError(_, err) => return Err(err),
                 Event::CreatePermissionResponse(tid, peer_addr) => {
-                    println!("CreatePermission for peer addr {} is granted (tid={:?})", peer_addr, tid);
+                    println!(
+                        "CreatePermission for peer addr {} is granted (tid={:?})",
+                        peer_addr, tid
+                    );
                 }
                 Event::CreatePermissionError(_, err) => return Err(err),
                 Event::DataIndicationOrChannelData(_, from, data) => {
@@ -187,11 +188,7 @@ fn main() -> Result<()> {
         // RFC 4571: each TURN message is prefixed with a 2-byte big-endian length.
         match read_tcp_input(&mut stream, &mut buf, &mut decoder) {
             Some(data) => {
-                trace!(
-                    "tcp.recv {} bytes from {}",
-                    data.len(),
-                    peer_addr
-                );
+                trace!("tcp.recv {} bytes from {}", data.len(), peer_addr);
                 let msg = TransportMessage {
                     now: Instant::now(),
                     transport: TransportContext {
@@ -207,10 +204,7 @@ fn main() -> Result<()> {
             None => {
                 // No complete frame yet — sleep briefly to avoid busy-polling.
                 if !delay_from_now.is_zero() {
-                    std::thread::sleep(std::cmp::min(
-                        delay_from_now,
-                        Duration::from_millis(5),
-                    ));
+                    std::thread::sleep(std::cmp::min(delay_from_now, Duration::from_millis(5)));
                 }
             }
         }
