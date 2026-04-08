@@ -50,6 +50,52 @@ impl H264Payloader {
         (-1, -1)
     }
 
+    /// Emit a NALU as a single packet or fragment it via FU-A, without
+    /// special-casing SPS/PPS (which `emit()` would re-stash).
+    fn emit_single_or_fragment(nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
+        if nalu.is_empty() {
+            return;
+        }
+
+        let nalu_ref_idc = nalu[0] & NALU_REF_IDC_BITMASK;
+        let nalu_type = nalu[0] & NALU_TYPE_BITMASK;
+
+        // Single NALU
+        if nalu.len() <= mtu {
+            payloads.push(nalu.clone());
+            return;
+        }
+
+        // FU-A fragmentation
+        let max_fragment_size = mtu as isize - FUA_HEADER_SIZE as isize;
+        let mut nalu_data_index: isize = 1;
+        let nalu_data_length = nalu.len() as isize - nalu_data_index;
+        let mut nalu_data_remaining = nalu_data_length;
+
+        if std::cmp::min(max_fragment_size, nalu_data_remaining) <= 0 {
+            return;
+        }
+
+        while nalu_data_remaining > 0 {
+            let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
+            let mut out = BytesMut::with_capacity(FUA_HEADER_SIZE + current_fragment_size as usize);
+            out.put_u8(FUA_NALU_TYPE | nalu_ref_idc);
+            let mut b1 = nalu_type;
+            if nalu_data_remaining == nalu_data_length {
+                b1 |= 1 << 7; // start bit
+            } else if nalu_data_remaining - current_fragment_size == 0 {
+                b1 |= 1 << 6; // end bit
+            }
+            out.put_u8(b1);
+            out.put(
+                &nalu[nalu_data_index as usize..(nalu_data_index + current_fragment_size) as usize],
+            );
+            payloads.push(out.freeze());
+            nalu_data_remaining -= current_fragment_size;
+            nalu_data_index += current_fragment_size;
+        }
+    }
+
     fn emit(&mut self, nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
         if nalu.is_empty() {
             return;
@@ -90,8 +136,10 @@ impl H264Payloader {
             } else {
                 // SPS or PPS exceeds u16::MAX; fall back to emitting them as
                 // separate NALUs (which will be fragmented via FU-A if needed).
-                self.emit(&sps_nalu, mtu, payloads);
-                self.emit(&pps_nalu, mtu, payloads);
+                // We cannot use self.emit() here because it would re-stash SPS/PPS
+                // NALUs instead of actually outputting them. Push single or fragment directly.
+                Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
+                Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
             }
         } // else if self.sps_nalu.is_some() && self.pps_nalu.is_some()
 

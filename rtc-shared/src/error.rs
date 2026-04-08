@@ -281,7 +281,7 @@ pub enum Error {
     #[error(
         "one-byte header extension payload length {0} is outside the RFC 8285 valid range of 1-16 bytes"
     )]
-    OneByteHeaderExtensionPayloadTooLarge(usize),
+    OneByteHeaderExtensionPayloadOutOfRange(usize),
     #[error("two-byte header extension payload length {0} exceeds maximum of 255 bytes")]
     TwoByteHeaderExtensionPayloadTooLarge(usize),
     #[error("NALU length {0} exceeds u16::MAX (65535 bytes)")]

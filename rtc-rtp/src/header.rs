@@ -300,10 +300,14 @@ impl Marshal for Header {
                 // RFC 8285 RTP One Byte Header Extension
                 EXTENSION_PROFILE_ONE_BYTE => {
                     for extension in &self.extensions {
+                        // RFC 8285 §4.2: IDs 0 and 15 are reserved.
+                        if !(1..=14).contains(&extension.id) {
+                            return Err(Error::ErrRfc8285oneByteHeaderIdrange);
+                        }
                         // RFC 8285 §4.2: payload must be 1–16 bytes; the length field encodes (len-1).
                         let len = extension.payload.len();
                         if len == 0 || len > 16 {
-                            return Err(Error::OneByteHeaderExtensionPayloadTooLarge(len));
+                            return Err(Error::OneByteHeaderExtensionPayloadOutOfRange(len));
                         }
                         buf.put_u8((extension.id << 4) | (len as u8 - 1));
                         buf.put(&*extension.payload);
@@ -312,6 +316,11 @@ impl Marshal for Header {
                 // RFC 8285 RTP Two Byte Header Extension
                 EXTENSION_PROFILE_TWO_BYTE => {
                     for extension in &self.extensions {
+                        // RFC 8285 §4.3: ID 0 is padding in two-byte format;
+                        // marshaling it as an extension would confuse receivers.
+                        if extension.id == 0 {
+                            return Err(Error::ErrRfc8285twoByteHeaderIdrange);
+                        }
                         // RFC 8285 §4.3: length field is one byte, so max payload is 255 bytes.
                         let len = extension.payload.len();
                         if len > 255 {
@@ -507,6 +516,7 @@ impl Header {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared::error::Error;
     use shared::marshal::Marshal;
 
     /// Helper: create a minimal valid header and marshal it, returning the result.
@@ -514,6 +524,8 @@ mod tests {
         let mut buf = vec![0u8; header.marshal_size()];
         header.marshal_to(&mut &mut buf[..])
     }
+
+    // -- CSRC validation --
 
     #[test]
     fn test_too_many_csrcs() {
@@ -529,20 +541,31 @@ mod tests {
     }
 
     #[test]
+    fn test_max_csrcs_valid() {
+        let header = Header {
+            csrc: vec![0u32; 15],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+
+    // -- One-byte extension payload size validation --
+
+    #[test]
     fn test_one_byte_extension_payload_zero_length() {
         let header = Header {
             extension: true,
             extension_profile: EXTENSION_PROFILE_ONE_BYTE,
             extensions: vec![Extension {
                 id: 1,
-                payload: Bytes::new(), // 0 bytes — invalid
+                payload: Bytes::new(),
             }],
             ..Default::default()
         };
         let err = marshal_header(&header).unwrap_err();
         assert!(
-            matches!(err, Error::OneByteHeaderExtensionPayloadTooLarge(0)),
-            "expected OneByteHeaderExtensionPayloadTooLarge(0), got {err:?}"
+            matches!(err, Error::OneByteHeaderExtensionPayloadOutOfRange(0)),
+            "expected OneByteHeaderExtensionPayloadOutOfRange(0), got {err:?}"
         );
     }
 
@@ -553,38 +576,20 @@ mod tests {
             extension_profile: EXTENSION_PROFILE_ONE_BYTE,
             extensions: vec![Extension {
                 id: 1,
-                payload: Bytes::from(vec![0u8; 17]), // 17 bytes — exceeds limit of 16
+                payload: Bytes::from(vec![0u8; 17]),
             }],
             ..Default::default()
         };
         let err = marshal_header(&header).unwrap_err();
         assert!(
-            matches!(err, Error::OneByteHeaderExtensionPayloadTooLarge(17)),
-            "expected OneByteHeaderExtensionPayloadTooLarge(17), got {err:?}"
-        );
-    }
-
-    #[test]
-    fn test_two_byte_extension_payload_too_large() {
-        let header = Header {
-            extension: true,
-            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
-            extensions: vec![Extension {
-                id: 1,
-                payload: Bytes::from(vec![0u8; 256]), // 256 bytes — exceeds limit of 255
-            }],
-            ..Default::default()
-        };
-        let err = marshal_header(&header).unwrap_err();
-        assert!(
-            matches!(err, Error::TwoByteHeaderExtensionPayloadTooLarge(256)),
-            "expected TwoByteHeaderExtensionPayloadTooLarge(256), got {err:?}"
+            matches!(err, Error::OneByteHeaderExtensionPayloadOutOfRange(17)),
+            "expected OneByteHeaderExtensionPayloadOutOfRange(17), got {err:?}"
         );
     }
 
     #[test]
     fn test_valid_one_byte_extension_boundaries() {
-        // 1 byte payload — minimum valid
+        // 1 byte payload -- minimum valid
         let header_min = Header {
             extension: true,
             extension_profile: EXTENSION_PROFILE_ONE_BYTE,
@@ -596,7 +601,7 @@ mod tests {
         };
         assert!(marshal_header(&header_min).is_ok());
 
-        // 16 byte payload — maximum valid
+        // 16 byte payload -- maximum valid
         let header_max = Header {
             extension: true,
             extension_profile: EXTENSION_PROFILE_ONE_BYTE,
@@ -609,9 +614,28 @@ mod tests {
         assert!(marshal_header(&header_max).is_ok());
     }
 
+    // -- Two-byte extension payload size validation --
+
+    #[test]
+    fn test_two_byte_extension_payload_too_large() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 256]),
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::TwoByteHeaderExtensionPayloadTooLarge(256)),
+            "expected TwoByteHeaderExtensionPayloadTooLarge(256), got {err:?}"
+        );
+    }
+
     #[test]
     fn test_valid_two_byte_extension_boundary() {
-        // 255 byte payload — maximum valid
         let header = Header {
             extension: true,
             extension_profile: EXTENSION_PROFILE_TWO_BYTE,
@@ -624,11 +648,117 @@ mod tests {
         assert!(marshal_header(&header).is_ok());
     }
 
+    // -- One-byte extension ID validation (RFC 8285 section 4.2) --
+
     #[test]
-    fn test_max_csrcs_valid() {
-        // 15 CSRCs is the maximum allowed
+    fn test_one_byte_extension_id_zero_rejected() {
         let header = Header {
-            csrc: vec![0u32; 15],
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 0,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::ErrRfc8285oneByteHeaderIdrange),
+            "expected ErrRfc8285oneByteHeaderIdrange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_one_byte_extension_id_fifteen_rejected() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 15,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::ErrRfc8285oneByteHeaderIdrange),
+            "expected ErrRfc8285oneByteHeaderIdrange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_one_byte_extension_id_fourteen_valid() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 14,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+
+    // -- Two-byte extension ID validation (RFC 8285 section 4.3) --
+
+    #[test]
+    fn test_two_byte_extension_id_zero_rejected() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 0,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::ErrRfc8285twoByteHeaderIdrange),
+            "expected ErrRfc8285twoByteHeaderIdrange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_two_byte_extension_id_one_valid() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+
+    #[test]
+    fn test_two_byte_extension_id_255_valid() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 255,
+                payload: Bytes::from(vec![0xAB]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+
+    // -- Two-byte zero-length payload (valid per RFC 8285) --
+
+    #[test]
+    fn test_two_byte_extension_zero_length_payload_valid() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::new(),
+            }],
             ..Default::default()
         };
         assert!(marshal_header(&header).is_ok());

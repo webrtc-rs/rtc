@@ -122,26 +122,32 @@ impl HevcPayloader {
             }
             _ => {
                 let header = Self::aggregation_payload_header(nalus);
-                let mut aggr_nalu = BytesMut::with_capacity(
-                    NAL_HEADER_SIZE + nalus.iter().map(|nalu| 2 + nalu.len()).sum::<usize>(),
-                );
-                aggr_nalu.extend_from_slice(&header);
-                // Separate oversized NALUs that exceed the u16 length field;
-                // they will be emitted individually (fragmented via FUs).
+                // Separate oversized NALUs that exceed the u16 length field
+                // *before* computing capacity, to avoid massive pre-allocation.
                 let mut oversized = Vec::new();
+                let mut normal = Vec::new();
                 for nalu in nalus.drain(..) {
                     if nalu.len() > u16::MAX as usize {
                         oversized.push(nalu);
-                        continue;
+                    } else {
+                        normal.push(nalu);
                     }
-                    aggr_nalu.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
-                    aggr_nalu.extend_from_slice(&nalu);
                 }
-                // Only emit the aggregation packet if it contains at least one NALU.
-                if aggr_nalu.len() > NAL_HEADER_SIZE && aggr_nalu.len() <= mtu {
-                    payloads.push(aggr_nalu.freeze());
+                // Only build an aggregation packet if there are normal-sized NALUs.
+                if !normal.is_empty() {
+                    let mut aggr_nalu = BytesMut::with_capacity(
+                        NAL_HEADER_SIZE + normal.iter().map(|nalu| 2 + nalu.len()).sum::<usize>(),
+                    );
+                    aggr_nalu.extend_from_slice(&header);
+                    for nalu in &normal {
+                        aggr_nalu.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
+                        aggr_nalu.extend_from_slice(nalu);
+                    }
+                    if aggr_nalu.len() <= mtu {
+                        payloads.push(aggr_nalu.freeze());
+                    }
                 }
-                // Emit oversized NALUs individually so they get fragmented.
+                // Emit oversized NALUs individually so they get fragmented via FUs.
                 for nalu in &oversized {
                     Self::emit(nalu, mtu, payloads);
                 }
