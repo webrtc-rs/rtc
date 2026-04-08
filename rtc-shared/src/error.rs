@@ -278,7 +278,9 @@ pub enum Error {
     HeaderExtensionPayloadNot32BitWords,
     #[error("too many CSRCs: {0} exceeds the 4-bit CC field maximum of 15")]
     TooManyCSRCs(usize),
-    #[error("one-byte header extension payload length {0} exceeds RFC 8285 maximum of 16 bytes")]
+    #[error(
+        "one-byte header extension payload length {0} is outside the RFC 8285 valid range of 1-16 bytes"
+    )]
     OneByteHeaderExtensionPayloadTooLarge(usize),
     #[error("two-byte header extension payload length {0} exceeds maximum of 255 bytes")]
     TwoByteHeaderExtensionPayloadTooLarge(usize),

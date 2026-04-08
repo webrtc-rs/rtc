@@ -503,3 +503,134 @@ impl Header {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::marshal::Marshal;
+
+    /// Helper: create a minimal valid header and marshal it, returning the result.
+    fn marshal_header(header: &Header) -> shared::error::Result<usize> {
+        let mut buf = vec![0u8; header.marshal_size()];
+        header.marshal_to(&mut &mut buf[..])
+    }
+
+    #[test]
+    fn test_too_many_csrcs() {
+        let header = Header {
+            csrc: vec![0u32; 16],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::TooManyCSRCs(16)),
+            "expected TooManyCSRCs(16), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_one_byte_extension_payload_zero_length() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::new(), // 0 bytes — invalid
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::OneByteHeaderExtensionPayloadTooLarge(0)),
+            "expected OneByteHeaderExtensionPayloadTooLarge(0), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_one_byte_extension_payload_too_large() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 17]), // 17 bytes — exceeds limit of 16
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::OneByteHeaderExtensionPayloadTooLarge(17)),
+            "expected OneByteHeaderExtensionPayloadTooLarge(17), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_two_byte_extension_payload_too_large() {
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 256]), // 256 bytes — exceeds limit of 255
+            }],
+            ..Default::default()
+        };
+        let err = marshal_header(&header).unwrap_err();
+        assert!(
+            matches!(err, Error::TwoByteHeaderExtensionPayloadTooLarge(256)),
+            "expected TwoByteHeaderExtensionPayloadTooLarge(256), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_valid_one_byte_extension_boundaries() {
+        // 1 byte payload — minimum valid
+        let header_min = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 1]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header_min).is_ok());
+
+        // 16 byte payload — maximum valid
+        let header_max = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_ONE_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 16]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header_max).is_ok());
+    }
+
+    #[test]
+    fn test_valid_two_byte_extension_boundary() {
+        // 255 byte payload — maximum valid
+        let header = Header {
+            extension: true,
+            extension_profile: EXTENSION_PROFILE_TWO_BYTE,
+            extensions: vec![Extension {
+                id: 1,
+                payload: Bytes::from(vec![0u8; 255]),
+            }],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+
+    #[test]
+    fn test_max_csrcs_valid() {
+        // 15 CSRCs is the maximum allowed
+        let header = Header {
+            csrc: vec![0u32; 15],
+            ..Default::default()
+        };
+        assert!(marshal_header(&header).is_ok());
+    }
+}
