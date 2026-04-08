@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "TURN Client TCP")]
-#[command(author = "Brainwires <brainwires@github>")]
+#[command(author = "Brainwires <brainwires@github.com>")]
 #[command(version = "0.1.0")]
 #[command(about = "An example of TURN Client over TCP (RFC 6062)", long_about = None)]
 struct Cli {
@@ -82,9 +82,10 @@ fn main() -> Result<()> {
 
     println!("TCP connected: {} → {}", local_addr, peer_addr);
 
-    // Configure the TCP stream for non-blocking reads in the polling loop.
-    stream.set_nonblocking(true)?;
+    // Use a cloned handle for writes (blocking with timeout) and non-blocking for reads.
     let mut stream_write = stream.try_clone()?;
+    stream_write.set_write_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_nonblocking(true)?;
 
     let cfg = ClientConfig {
         stun_serv_addr: turn_server_addr.clone(),
@@ -187,7 +188,7 @@ fn main() -> Result<()> {
         // Non-blocking read from TCP socket.
         // RFC 4571: each TURN message is prefixed with a 2-byte big-endian length.
         match read_tcp_input(&mut stream, &mut buf, &mut decoder) {
-            Some(data) => {
+            Ok(Some(data)) => {
                 trace!("tcp.recv {} bytes from {}", data.len(), peer_addr);
                 let msg = TransportMessage {
                     now: Instant::now(),
@@ -201,11 +202,15 @@ fn main() -> Result<()> {
                 };
                 client.handle_read(msg)?;
             }
-            None => {
+            Ok(None) => {
                 // No complete frame yet — sleep briefly to avoid busy-polling.
                 if !delay_from_now.is_zero() {
                     std::thread::sleep(std::cmp::min(delay_from_now, Duration::from_millis(5)));
                 }
+            }
+            Err(e) => {
+                eprintln!("TCP connection closed: {e}");
+                break;
             }
         }
 
@@ -217,24 +222,26 @@ fn main() -> Result<()> {
 }
 
 /// Read from a non-blocking TCP stream, decode RFC 4571 frames.
-/// Returns the next complete TURN message payload (without the 2-byte length header),
-/// or `None` if no complete frame is available yet.
+/// Returns `Ok(Some(data))` with the next complete TURN message payload,
+/// `Ok(None)` if no complete frame is available yet, or `Err` on EOF / fatal error.
 fn read_tcp_input(
     stream: &mut TcpStream,
     buf: &mut Vec<u8>,
     decoder: &mut TcpFrameDecoder,
-) -> Option<Vec<u8>> {
+) -> std::result::Result<Option<Vec<u8>>, std::io::Error> {
     // Drain available bytes into the decoder.
     loop {
         match stream.read(buf.as_mut_slice()) {
-            Ok(0) => break, // EOF
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::ConnectionReset,
+                    "TCP connection closed by peer (EOF)",
+                ));
+            }
             Ok(n) => decoder.extend_from_slice(&buf[..n]),
             Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-            Err(e) => {
-                eprintln!("TCP read error: {e}");
-                break;
-            }
+            Err(e) => return Err(e),
         }
     }
-    decoder.next_packet()
+    Ok(decoder.next_packet())
 }
