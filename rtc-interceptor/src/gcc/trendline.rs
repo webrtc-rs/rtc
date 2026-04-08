@@ -205,8 +205,16 @@ mod tests {
             f.update(send, recv);
         }
         // Threshold must stay within its hard bounds — never hit the floor or ceiling.
-        assert!(f.threshold > 6.0, "threshold should be above floor: {}", f.threshold);
-        assert!(f.threshold < 600.0, "threshold should be below ceiling: {}", f.threshold);
+        assert!(
+            f.threshold > 6.0,
+            "threshold should be above floor: {}",
+            f.threshold
+        );
+        assert!(
+            f.threshold < 600.0,
+            "threshold should be below ceiling: {}",
+            f.threshold
+        );
         // With sustained high gradient the filter must detect overuse.
         assert_eq!(
             f.signal(),

@@ -320,6 +320,121 @@ mod tests {
     }
 
     #[test]
+    fn test_initial_delay_clamped_to_bounds() {
+        // initial_delay > max_delay should be clamped down.
+        let s = JitterBufferStream::new(
+            90000,
+            None,
+            Duration::from_secs(5),     // initial_delay (too high)
+            Duration::from_millis(10),  // min_delay
+            Duration::from_millis(200), // max_delay
+        );
+        assert_eq!(s.target_delay, Duration::from_millis(200));
+
+        // initial_delay < min_delay should be clamped up.
+        let s2 = JitterBufferStream::new(
+            90000,
+            None,
+            Duration::from_millis(1),   // initial_delay (too low)
+            Duration::from_millis(50),  // min_delay
+            Duration::from_millis(500), // max_delay
+        );
+        assert_eq!(s2.target_delay, Duration::from_millis(50));
+
+        // initial_delay within bounds stays unchanged.
+        let s3 = JitterBufferStream::new(
+            90000,
+            None,
+            Duration::from_millis(100),
+            Duration::from_millis(50),
+            Duration::from_millis(500),
+        );
+        assert_eq!(s3.target_delay, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_parse_playout_delay() {
+        // 12-bit min + 12-bit max, each in units of 10ms.
+        // min = 0x005 (5 * 10 = 50ms), max = 0x014 (20 * 10 = 200ms)
+        // byte 0 = min >> 4 = 0x00
+        // byte 1 = (min & 0xF) << 4 | max >> 8 = 0x50
+        // byte 2 = max & 0xFF = 0x14
+        let data = [0x00, 0x50, 0x14];
+        let (min, max) = JitterBufferStream::parse_playout_delay(&data).unwrap();
+        assert_eq!(min, Duration::from_millis(50));
+        assert_eq!(max, Duration::from_millis(200));
+
+        // Too-short data returns None.
+        assert!(JitterBufferStream::parse_playout_delay(&[0x00, 0x00]).is_none());
+    }
+
+    #[test]
+    fn test_playout_delay_applied_after_compute_release() {
+        // Verify that compute_release() runs with stream-wide min/max, and
+        // the per-packet playout-delay extension only narrows the final release
+        // for that specific packet.
+        let ext_id = 3u8;
+        let min = Duration::from_millis(10);
+        let max = Duration::from_secs(2);
+        let initial = Duration::from_millis(50);
+        let mut s = JitterBufferStream::new(90000, Some(ext_id), initial, min, max);
+
+        let now = Instant::now();
+
+        // Build an RTP packet with a playout-delay extension.
+        // Sender requests min=100ms, max=150ms.
+        // min_raw=10 (10*10ms=100ms), max_raw=15 (15*10ms=150ms)
+        // byte 0 = 10 >> 4 = 0x00
+        // byte 1 = (10 & 0xF) << 4 | 15 >> 8 = 0xA0
+        // byte 2 = 15 & 0xFF = 0x0F
+        let playout_ext_data = bytes::Bytes::from_static(&[0x00, 0xA0, 0x0F]);
+        let mut rtp_pkt = rtp::Packet {
+            header: rtp::header::Header {
+                ssrc: 1,
+                sequence_number: 1,
+                timestamp: 0,
+                extension: true,
+                extension_profile: rtp::header::EXTENSION_PROFILE_ONE_BYTE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        rtp_pkt
+            .header
+            .set_extension(ext_id, playout_ext_data)
+            .unwrap();
+
+        let tagged = TransportMessage {
+            now,
+            transport: TransportContext::default(),
+            message: Packet::Rtp(rtp_pkt),
+        };
+        s.insert(now, tagged);
+
+        // The stream-wide min/max are 10ms and 2s, so compute_release uses
+        // target_delay = 50ms (the clamped initial). The per-packet extension
+        // requests min=100ms, max=150ms. effective_min = max(10, 100) = 100ms,
+        // effective_max = min(2000, max(150, 100)) = 150ms.
+        // So the release should be clamped to at least 100ms from `now`.
+        let (_, _, release, _) = &s.buffer[0];
+        let delay_from_now = release.duration_since(now);
+        assert!(
+            delay_from_now >= Duration::from_millis(100),
+            "expected release >= 100ms, got {:?}",
+            delay_from_now
+        );
+        assert!(
+            delay_from_now <= Duration::from_millis(150),
+            "expected release <= 150ms, got {:?}",
+            delay_from_now
+        );
+
+        // Verify stream-wide min/max are unchanged (not permanently tightened).
+        assert_eq!(s.min_delay, min);
+        assert_eq!(s.max_delay, max);
+    }
+
+    #[test]
     fn test_next_wake_time_is_min_of_release_and_force() {
         let delay = Duration::from_millis(50);
         let max = Duration::from_millis(200);

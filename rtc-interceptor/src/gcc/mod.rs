@@ -45,7 +45,6 @@ mod trendline;
 
 use crate::stream_info::StreamInfo;
 use crate::{Interceptor, Packet, TaggedPacket, interceptor};
-use bytes::Bytes;
 use log::trace;
 use rate_controller::AimdRateController;
 use rtcp::transport_feedbacks::transport_layer_cc::{
@@ -81,8 +80,11 @@ impl GccHandle {
     pub fn target_bitrate_bps(&self) -> Option<u32> {
         self.inner
             .lock()
-            .map(|g| g.target_bitrate_bps)
-            .unwrap_or(None)
+            .unwrap_or_else(|e| {
+                log::warn!("gcc: shared mutex poisoned, recovering last estimate");
+                e.into_inner()
+            })
+            .target_bitrate_bps
     }
 }
 
@@ -188,7 +190,7 @@ impl<P: Interceptor> GccInterceptor<P> {
             && let Some(&ext_id) = self.local_streams.get(&rtp.header.ssrc)
             && let Some(ext_bytes) = rtp.header.get_extension(ext_id)
         {
-            let mut buf = Bytes::copy_from_slice(ext_bytes.as_ref());
+            let mut buf = ext_bytes.clone();
             if let Ok(tcc_ext) = TransportCcExtension::unmarshal(&mut buf) {
                 let seq = tcc_ext.transport_sequence;
                 let send_ms = msg.now.duration_since(self.start_time).as_secs_f64() * 1000.0;
@@ -208,12 +210,10 @@ impl<P: Interceptor> GccInterceptor<P> {
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         if let Packet::Rtcp(ref rtcp_pkts) = msg.message {
             let now = msg.now;
-            // Process feedback packets by reference to avoid cloning.
-            let feedbacks: Vec<&TransportLayerCc> = rtcp_pkts
+            for fb in rtcp_pkts
                 .iter()
                 .filter_map(|pkt| pkt.as_any().downcast_ref::<TransportLayerCc>())
-                .collect();
-            for fb in feedbacks {
+            {
                 self.process_feedback(fb, now);
             }
         }
@@ -265,9 +265,13 @@ impl<P: Interceptor> GccInterceptor<P> {
             estimate
         );
 
-        if let Ok(mut shared) = self.shared.lock() {
-            shared.target_bitrate_bps = Some(estimate as u32);
-        }
+        self.shared
+            .lock()
+            .unwrap_or_else(|e| {
+                log::warn!("gcc: shared mutex poisoned, recovering to publish estimate");
+                e.into_inner()
+            })
+            .target_bitrate_bps = Some(estimate as u32);
     }
 
     /// Reconstruct `(send_time_ms, recv_time_ms)` pairs from a TWCC feedback packet.
@@ -584,6 +588,73 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(loss_fraction(&fb), 0.0);
+    }
+
+    #[test]
+    fn test_loss_fraction_empty_chunks() {
+        let fb = TransportLayerCc {
+            packet_chunks: vec![],
+            ..Default::default()
+        };
+        assert_eq!(loss_fraction(&fb), 0.0);
+    }
+
+    #[test]
+    fn test_loss_fraction_status_vector_mixed() {
+        use rtcp::transport_feedbacks::transport_layer_cc::{StatusVectorChunk, SymbolSizeTypeTcc};
+        // 3 received + 2 lost = 60% received, 40% loss.
+        let chunk = PacketStatusChunk::StatusVectorChunk(StatusVectorChunk {
+            type_tcc: StatusChunkTypeTcc::StatusVectorChunk,
+            symbol_size: SymbolSizeTypeTcc::TwoBit,
+            symbol_list: vec![
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedLargeDelta,
+                SymbolTypeTcc::PacketNotReceived,
+                SymbolTypeTcc::PacketReceivedSmallDelta,
+            ],
+        });
+        let fb = TransportLayerCc {
+            packet_chunks: vec![chunk],
+            recv_deltas: vec![
+                RecvDelta {
+                    type_tcc_packet: SymbolTypeTcc::PacketReceivedSmallDelta,
+                    delta: 10_000,
+                },
+                RecvDelta {
+                    type_tcc_packet: SymbolTypeTcc::PacketReceivedLargeDelta,
+                    delta: 20_000,
+                },
+                RecvDelta {
+                    type_tcc_packet: SymbolTypeTcc::PacketReceivedSmallDelta,
+                    delta: 10_000,
+                },
+            ],
+            ..Default::default()
+        };
+        let loss = loss_fraction(&fb);
+        assert!((loss - 0.4).abs() < 1e-9, "expected 40% loss, got {loss}");
+    }
+
+    #[test]
+    fn test_builder_custom_bitrate_bounds() {
+        let (builder, _handle) = GccInterceptorBuilder::<()>::new();
+        let builder = builder
+            .with_min_bitrate(100_000)
+            .with_max_bitrate(5_000_000);
+        assert_eq!(builder.min_bitrate_bps, 100_000);
+        assert_eq!(builder.max_bitrate_bps, 5_000_000);
+    }
+
+    #[test]
+    fn test_gcc_handle_clone_shares_state() {
+        let (_builder, handle) = GccInterceptorBuilder::<()>::new();
+        let handle2 = handle.clone();
+        assert!(handle.target_bitrate_bps().is_none());
+        assert!(handle2.target_bitrate_bps().is_none());
+        // Write through the shared mutex.
+        handle.inner.lock().unwrap().target_bitrate_bps = Some(500_000);
+        assert_eq!(handle2.target_bitrate_bps(), Some(500_000));
     }
 
     #[test]

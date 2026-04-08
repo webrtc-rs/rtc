@@ -60,7 +60,12 @@ impl AimdRateController {
     /// - `signal`: delay-based overuse signal from the trendline filter
     /// - `loss_fraction`: fraction of lost packets in the latest feedback window (`0.0`–`1.0`)
     /// - `now`: current wall-clock time for computing the elapsed interval
-    pub(crate) fn update(&mut self, signal: OveruseSignal, loss_fraction: f64, now: Instant) -> f64 {
+    pub(crate) fn update(
+        &mut self,
+        signal: OveruseSignal,
+        loss_fraction: f64,
+        now: Instant,
+    ) -> f64 {
         let dt_s = self
             .last_update
             .map(|t| now.duration_since(t).as_secs_f64().min(1.0))
@@ -142,7 +147,10 @@ mod tests {
         // Warm up to 1 Mbps.
         ctrl.estimate_bps = 1_000_000.0;
         let after = ctrl.update(OveruseSignal::Overusing, 0.0, t0);
-        assert!(after < 1_000_000.0, "rate should decrease on Overuse: {after}");
+        assert!(
+            after < 1_000_000.0,
+            "rate should decrease on Overuse: {after}"
+        );
         assert!(
             (after - 850_000.0).abs() < 5_000.0,
             "decrease should be ~×0.85: {after}"
