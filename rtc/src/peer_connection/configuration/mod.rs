@@ -750,6 +750,7 @@ mod test {
     }
 
     // test_configuration_json was Go code that was never ported to Rust.
-    // A Rust equivalent would deserialize RTCConfiguration from JSON and round-trip it.
+    // A Rust equivalent would deserialize the Rust `RTCConfiguration` type used in this
+    // module from JSON and round-trip it.
     // This can be added as a proper #[test] if JSON serialization is a desired feature.
 }
