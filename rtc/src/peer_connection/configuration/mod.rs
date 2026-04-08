@@ -247,7 +247,7 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 /// [`RTCCertificate::serialize_pem`] / [`RTCCertificate::from_pem`] to
 /// persist them separately and re-attach via [`RTCConfigurationBuilder::with_certificates`].
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct RTCConfiguration {
     /// ice_servers defines a slice describing servers available to be used by
     /// ICE, such as STUN and TURN servers.
@@ -764,16 +764,58 @@ mod test {
             .build();
 
         let json = serde_json::to_string(&original).expect("serialize");
-        assert!(json.contains("iceServers"), "camelCase key expected");
-        assert!(json.contains("stun:stun.l.google.com:19302"));
 
+        // Validate camelCase keys and values via structured parsing
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert_eq!(
+            value["iceServers"][0]["urls"][0],
+            serde_json::Value::String("stun:stun.l.google.com:19302".to_owned())
+        );
+        assert_eq!(
+            value["iceTransportPolicy"],
+            serde_json::Value::String("all".to_owned())
+        );
+        assert_eq!(
+            value["bundlePolicy"],
+            serde_json::Value::String("max-bundle".to_owned())
+        );
+        assert_eq!(
+            value["rtcpMuxPolicy"],
+            serde_json::Value::String("require".to_owned())
+        );
+
+        // Deserialize back and verify round-trip fidelity
         let restored: RTCConfiguration = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored.ice_servers.len(), 1);
-        assert_eq!(restored.ice_servers[0].urls[0], "stun:stun.l.google.com:19302");
+        assert_eq!(
+            restored.ice_servers[0].urls[0],
+            "stun:stun.l.google.com:19302"
+        );
         assert_eq!(restored.ice_transport_policy, RTCIceTransportPolicy::All);
         assert_eq!(restored.bundle_policy, RTCBundlePolicy::MaxBundle);
         assert_eq!(restored.rtcp_mux_policy, RTCRtcpMuxPolicy::Require);
         // certificates are skipped — restored config gets empty Vec
         assert!(restored.certificates.is_empty());
+    }
+
+    #[test]
+    fn test_configuration_json_partial_deserialize() {
+        // Only iceServers provided — all other fields should get defaults
+        let json = r#"{"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}]}"#;
+        let config: RTCConfiguration = serde_json::from_str(json).expect("partial deserialize");
+        assert_eq!(config.ice_servers.len(), 1);
+        assert_eq!(
+            config.ice_servers[0].urls[0],
+            "stun:stun.l.google.com:19302"
+        );
+        // Fields not present in JSON should be their Default values
+        assert_eq!(
+            config.ice_transport_policy,
+            RTCIceTransportPolicy::Unspecified
+        );
+        assert_eq!(config.bundle_policy, RTCBundlePolicy::Unspecified);
+        assert_eq!(config.rtcp_mux_policy, RTCRtcpMuxPolicy::Unspecified);
+        assert!(config.certificates.is_empty());
+        assert_eq!(config.ice_candidate_pool_size, 0);
     }
 }
