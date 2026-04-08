@@ -1107,7 +1107,7 @@ pub(crate) struct MediaSection {
     /// RFC 8829 §5.3.1: this m-line should be reflected as rejected (port=0) in the answer.
     /// Used when the remote offer contains a rejected m-line (no direction attribute / port=0).
     pub(crate) rejected: bool,
-    /// Media kind string ("video", "audio") — only meaningful when `rejected` is true.
+    /// Media kind string ("video", "audio", or "application") — only meaningful when `rejected` is true.
     pub(crate) rejected_kind: String,
     pub(crate) match_extensions: HashMap<String, u16>,
     pub(crate) rid_map: Vec<SimulcastRid>,
@@ -1259,7 +1259,6 @@ where
             }
 
             let should_add_candidates = !candidates_added;
-            candidates_added = true;
 
             let should_add_id = if m.data {
                 let params = AddDataMediaSectionParams {
@@ -1294,6 +1293,8 @@ where
                 d = d1;
                 should_add_id
             };
+
+            candidates_added = true;
 
             if should_add_id {
                 if bundle_match(params.match_bundle_group.as_ref(), &m.mid) {
