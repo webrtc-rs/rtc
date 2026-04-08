@@ -611,7 +611,8 @@ mod tests {
                 let debug = format!("{err:?}");
                 assert!(
                     debug.contains("ErrPayloadDataStateNotExist"),
-                    "expected ErrPayloadDataStateNotExist from attempted wire write, got: {debug}"
+                    "in-band dial must fail with ErrPayloadDataStateNotExist when the \
+                     association is not yet established, but got: {debug}"
                 );
             }
             Ok(()) => {

@@ -300,7 +300,7 @@ fn test_data_channel_non_negotiated_sends_dcep() -> Result<()> {
     close_association_pair(a0, a1);
 
     Ok(())
-}
+} // end test_data_channel_open_close
 
 /*
 #[tokio::test]

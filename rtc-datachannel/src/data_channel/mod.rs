@@ -33,9 +33,10 @@ pub struct DataChannelMessage {
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
     pub payload: BytesMut,
-    /// When `true` this is an internal-only control message for a pre-negotiated
-    /// channel.  The SCTP handler opens the stream but does **not** send the DCEP
-    /// payload over the wire.
+    /// When `true`, the channel was created via out-of-band (pre-negotiated)
+    /// negotiation.  The SCTP handler opens the stream but does **not** send
+    /// the DCEP open message over the wire, because both peers already agree
+    /// on the channel parameters.
     pub negotiated: bool,
 }
 
@@ -120,6 +121,7 @@ impl DataChannel {
             stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: msg,
+            // Forward the negotiated flag so the SCTP handler can skip the DCEP write.
             negotiated: config.negotiated,
         });
 
