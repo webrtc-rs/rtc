@@ -238,8 +238,6 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 /// * [W3C]
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary
-/// A Configuration defines how peer-to-peer communication via PeerConnection
-/// is established or re-established.
 ///
 /// Serialization follows the W3C RTCConfiguration dictionary naming
 /// (`iceServers`, `iceTransportPolicy`, etc.).  Certificates are **excluded**
@@ -270,8 +268,10 @@ pub struct RTCConfiguration {
     /// unless it can be successfully authenticated with the provided name.
     pub(crate) peer_identity: String,
 
-    /// Certificates are excluded from serialization because they contain private-key
-    /// material. Persist them separately with RTCCertificate::serialize_pem().
+    /// Certificates are excluded from both serialization and deserialization because
+    /// they contain private-key material.  Persist them separately with
+    /// `RTCCertificate::serialize_pem()` / `RTCCertificate::from_pem()` and re-attach
+    /// via [`RTCConfigurationBuilder::with_certificates`].
     #[serde(skip)]
     pub(crate) certificates: Vec<RTCCertificate>,
 
@@ -753,6 +753,11 @@ mod test {
 
     #[test]
     fn test_configuration_json_round_trip() {
+        // Build a config with a non-empty certificates vec so we can prove
+        // that serde(skip) actually omits them from the JSON output.
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("generate key pair");
+        let cert = RTCCertificate::from_key_pair(kp).expect("create certificate");
+
         let original = RTCConfigurationBuilder::new()
             .with_ice_servers(vec![RTCIceServer {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -761,7 +766,11 @@ mod test {
             .with_ice_transport_policy(RTCIceTransportPolicy::All)
             .with_bundle_policy(RTCBundlePolicy::MaxBundle)
             .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+            .with_certificates(vec![cert])
             .build();
+
+        // Confirm our original actually carries a certificate
+        assert_eq!(original.certificates.len(), 1);
 
         let json = serde_json::to_string(&original).expect("serialize");
 
@@ -784,6 +793,12 @@ mod test {
             serde_json::Value::String("require".to_owned())
         );
 
+        // Certificates must NOT appear in the serialized JSON
+        assert!(
+            value.get("certificates").is_none(),
+            "certificates should be omitted from JSON (serde skip)"
+        );
+
         // Deserialize back and verify round-trip fidelity
         let restored: RTCConfiguration = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored.ice_servers.len(), 1);
@@ -794,7 +809,7 @@ mod test {
         assert_eq!(restored.ice_transport_policy, RTCIceTransportPolicy::All);
         assert_eq!(restored.bundle_policy, RTCBundlePolicy::MaxBundle);
         assert_eq!(restored.rtcp_mux_policy, RTCRtcpMuxPolicy::Require);
-        // certificates are skipped — restored config gets empty Vec
+        // certificates are skipped during both serialization and deserialization
         assert!(restored.certificates.is_empty());
     }
 
