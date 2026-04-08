@@ -32,6 +32,10 @@ pub struct DataChannelMessage {
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
     pub payload: BytesMut,
+    /// When `true` this is an internal-only control message for a pre-negotiated
+    /// channel.  The SCTP handler opens the stream but does **not** send the DCEP
+    /// payload over the wire.
+    pub negotiated: bool,
 }
 
 /// DataChannel represents a data channel
@@ -71,13 +75,17 @@ impl DataChannel {
     ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
-        // Send DataChannelOpen for all channels — including out-of-band negotiated ones.
+        // Build a DCEP DataChannelOpen that the SCTP handler intercepts to
+        // register the underlying SCTP stream.
         //
-        // For non-negotiated channels this initiates the DCEP handshake per RFC 8832 §3.
-        // For pre-negotiated channels (negotiated=true) the DCEP exchange also opens the
-        // underlying SCTP stream on both sides.  Without it the SCTP association never
-        // registers the stream, causing every subsequent write to fail with
-        // "Stream not existed" (issue webrtc-rs/rtc#61).
+        // For in-band channels (negotiated=false) the message is also sent over
+        // the wire to initiate the DCEP handshake per RFC 8832 sec. 3.
+        //
+        // For pre-negotiated channels (negotiated=true) the message is
+        // internal-only: the SCTP handler opens the stream and sets its
+        // reliability parameters but does NOT send DCEP to the peer.  Without
+        // this the SCTP association never registers the stream, causing every
+        // subsequent write to fail with "Stream not existed" (issue #61).
         let msg = Message::DataChannelOpen(DataChannelOpen {
             channel_type: config.channel_type,
             priority: config.priority,
@@ -92,6 +100,7 @@ impl DataChannel {
             stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: msg,
+            negotiated: config.negotiated,
         });
 
         Ok(data_channel)
@@ -194,6 +203,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: ack,
+            ..Default::default()
         });
         Ok(())
     }
@@ -205,6 +215,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: close,
+            ..Default::default()
         });
         Ok(())
     }
@@ -217,6 +228,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            ..Default::default()
         });
         Ok(())
     }
@@ -229,6 +241,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            ..Default::default()
         });
         Ok(())
     }
