@@ -4,7 +4,10 @@ use std::time::Instant;
 const PACKETS_PER_ENTRY: usize = 64;
 
 /// Maximum value for `total_lost` per RFC 3550 §6.4.1.
-/// The field is a signed 24-bit integer, so the positive maximum is 0x7F_FFFF.
+///
+/// The wire format is a signed 24-bit integer.  We store it as `u32` but
+/// clamp to the signed-positive maximum (`0x7F_FFFF`) so the sign bit
+/// stays clear when the value is serialised into the 24-bit RTCP field.
 const MAX_TOTAL_LOST: u32 = 0x7F_FFFF;
 
 pub(crate) struct ReceiverStream {
