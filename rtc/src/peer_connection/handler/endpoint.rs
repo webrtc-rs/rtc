@@ -488,7 +488,22 @@ where
                             &codec.rtp_codec,
                             &parameters.rtp_parameters.header_extensions,
                         );
+
+                        // Update the stats accumulator so RTX packets are
+                        // attributed to the primary stream's stats (the inbound
+                        // stream accumulator may already exist from the base
+                        // stream's OnOpen event).
+                        if let Some(primary_ssrc) = receiver
+                            .get_coding_parameters()
+                            .iter()
+                            .find(|c| c.rid == rrid)
+                            .and_then(|c| c.ssrc)
+                        {
+                            self.stats.update_inbound_rtx_ssrc(primary_ssrc, ssrc);
+                        }
                     }
+
+                    return Some(receiver.track().track_id().clone());
                 } else {
                     if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                         coding.ssrc = Some(ssrc);
