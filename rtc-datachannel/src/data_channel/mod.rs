@@ -88,7 +88,12 @@ impl DataChannel {
         }
     }
 
-    /// Dial opens a data channels over SCTP
+    /// Dial opens a data channel over SCTP.
+    ///
+    /// A DCEP `DataChannelOpen` message is always constructed so that the SCTP
+    /// handler registers the underlying stream.  For **in-band** channels the
+    /// message is also sent over the wire (RFC 8832 sec. 3); for
+    /// **pre-negotiated** channels it stays internal-only (see issue #61).
     pub fn dial(
         config: DataChannelConfig,
         association_handle: usize,

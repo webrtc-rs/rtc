@@ -606,21 +606,14 @@ mod tests {
 
         // The non-negotiated path tries to write the DCEP payload over the
         // wire, which fails because the association is not yet established.
-        match result {
-            Err(err) => {
-                let debug = format!("{err:?}");
-                assert!(
-                    debug.contains("ErrPayloadDataStateNotExist"),
-                    "in-band dial must fail with ErrPayloadDataStateNotExist when the \
-                     association is not yet established, but got: {debug}"
-                );
-            }
-            Ok(()) => {
-                panic!(
-                    "in-band DataChannelOpen should attempt a wire write and fail on a non-established association"
-                );
-            }
-        }
+        assert!(
+            matches!(
+                result,
+                Err(shared::error::Error::ErrPayloadDataStateNotExist)
+            ),
+            "in-band dial must fail with ErrPayloadDataStateNotExist when the \
+             association is not yet established, but got: {result:?}"
+        );
     }
 
     /// When both peers open the same negotiated stream, the second
