@@ -33,8 +33,8 @@ jobs:
           name: changelog
           path: CHANGELOG.md
 
-  publish:
-    name: Publish to crates.io
+  release:
+    name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: changelog
     steps:

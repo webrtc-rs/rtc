@@ -26,8 +26,12 @@ FUZZ_CRATES=(
 for CRATE in "${FUZZ_CRATES[@]}"; do
     pushd "$CRATE/fuzz"
 
-    # List all fuzz targets for this crate
-    TARGETS=$(cargo fuzz list 2>/dev/null || true)
+    # List all fuzz targets for this crate (fail build if cargo-fuzz is broken)
+    TARGETS=$(cargo fuzz list)
+    if [ -z "$TARGETS" ]; then
+        echo "ERROR: No fuzz targets found for $CRATE" >&2
+        exit 1
+    fi
 
     for TARGET in $TARGETS; do
         cargo fuzz build \
