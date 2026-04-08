@@ -15,7 +15,7 @@ use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
 use rtc::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
-use sansio::Protocol;
+use rtc::sansio::Protocol;
 
 fn drain_events(pc: &mut rtc::peer_connection::RTCPeerConnection) -> Vec<RTCPeerConnectionEvent> {
     let mut events = vec![];
@@ -51,11 +51,16 @@ fn make_media_engine() -> MediaEngine {
     me
 }
 
-fn build_pc(
-    dtls_role: RTCDtlsRole,
-    addr: &str,
-    port: u16,
-) -> rtc::peer_connection::RTCPeerConnection {
+/// Bind a UDP socket to `127.0.0.1:0` and return the OS-assigned port.
+fn ephemeral_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .expect("bind ephemeral UDP port")
+        .local_addr()
+        .expect("local_addr")
+        .port()
+}
+
+fn build_pc(dtls_role: RTCDtlsRole, port: u16) -> rtc::peer_connection::RTCPeerConnection {
     let mut se = SettingEngine::default();
     se.set_answering_dtls_role(dtls_role).unwrap();
 
@@ -76,7 +81,7 @@ fn build_pc(
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
-            address: addr.to_owned(),
+            address: "127.0.0.1".to_owned(),
             port,
             component: 1,
             ..Default::default()
@@ -93,8 +98,8 @@ fn build_pc(
 
 #[test]
 fn test_set_direction_change_triggers_renegotiation() {
-    let mut offer_pc = build_pc(RTCDtlsRole::Server, "127.0.0.1", 10000);
-    let mut answer_pc = build_pc(RTCDtlsRole::Client, "127.0.0.1", 10001);
+    let mut offer_pc = build_pc(RTCDtlsRole::Server, ephemeral_port());
+    let mut answer_pc = build_pc(RTCDtlsRole::Client, ephemeral_port());
 
     // Add a recvonly audio transceiver on the offer side.
     let tid = offer_pc
