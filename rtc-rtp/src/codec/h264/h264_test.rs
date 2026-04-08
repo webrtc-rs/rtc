@@ -304,12 +304,10 @@ fn test_h264_stap_a_exceeds_mtu_emits_individually() -> Result<()> {
 fn test_h264_oversized_sps_uses_fua_fragmentation() -> Result<()> {
     let mut pck = H264Payloader::default();
 
-    // Build a large SPS that exceeds u16::MAX (but we'll use a smaller one
-    // to avoid allocating 64KB in tests; the code path is the same).
-    // SPS: 20 bytes, PPS: 3 bytes, MTU: 10
-    // STAP-A would be 1 + 2+20 + 2+3 = 28 bytes, well over MTU=10.
+    // Build a large SPS that genuinely exceeds u16::MAX (65535 bytes).
+    // This ensures we actually hit the `sps_nalu.len() > u16::MAX` branch.
     let mut sps_data = vec![0x67]; // NALU type 7, with ref_idc bits set
-    sps_data.extend(vec![0xAA; 19]);
+    sps_data.extend(vec![0xAA; 70_000]);
     let sps = Bytes::from(sps_data);
 
     let pps = Bytes::from_static(&[0x68, 0xCC, 0xDD]); // NALU type 8, with ref_idc bits
@@ -321,9 +319,9 @@ fn test_h264_oversized_sps_uses_fua_fragmentation() -> Result<()> {
     assert!(res.is_empty(), "PPS alone should be stashed");
 
     // Trigger emission with a small non-SPS/PPS NALU
-    let result = pck.payload(10, &Bytes::from_static(&[0x65, 0x01, 0x02]))?;
+    let result = pck.payload(1500, &Bytes::from_static(&[0x65, 0x01, 0x02]))?;
 
-    // SPS (20 bytes) should be FU-A fragmented into multiple packets.
+    // SPS (70001 bytes) exceeds u16::MAX, so it should be FU-A fragmented.
     // PPS (3 bytes) fits in a single packet.
     // IDR (3 bytes) fits in a single packet.
     assert!(

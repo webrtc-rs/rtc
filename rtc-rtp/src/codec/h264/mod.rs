@@ -137,11 +137,6 @@ impl H264Payloader {
                     // SPS and PPS separately so they are not silently dropped.
                     Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
                     Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
-                } else {
-                    // STAP-A exceeds MTU; emit SPS and PPS individually
-                    // (they will be fragmented via FU-A if needed).
-                    Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
-                    Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
                 }
             } else {
                 // SPS or PPS exceeds u16::MAX; fall back to emitting them as
