@@ -26,6 +26,7 @@ pub struct DataChannelConfig {
 }
 
 /// DataChannelMessage is used to data sent over SCTP
+#[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct DataChannelMessage {
     pub association_handle: usize,
@@ -36,6 +37,25 @@ pub struct DataChannelMessage {
     /// channel.  The SCTP handler opens the stream but does **not** send the DCEP
     /// payload over the wire.
     pub negotiated: bool,
+}
+
+impl DataChannelMessage {
+    /// Creates a new `DataChannelMessage` with all fields specified.
+    pub fn new(
+        association_handle: usize,
+        stream_id: u16,
+        ppi: PayloadProtocolIdentifier,
+        payload: BytesMut,
+        negotiated: bool,
+    ) -> Self {
+        Self {
+            association_handle,
+            stream_id,
+            ppi,
+            payload,
+            negotiated,
+        }
+    }
 }
 
 /// DataChannel represents a data channel

@@ -152,15 +152,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                 while let Some(chunks) = stream.read_sctp()? {
                                     let n = chunks
                                         .read(&mut self.ctx.sctp_transport.internal_buffer)?;
-                                    messages.push(SctpMessage::Inbound(DataChannelMessage {
-                                        association_handle: ch.0,
-                                        stream_id: id,
-                                        ppi: chunks.ppi,
-                                        payload: BytesMut::from(
+                                    messages.push(SctpMessage::Inbound(DataChannelMessage::new(
+                                        ch.0,
+                                        id,
+                                        chunks.ppi,
+                                        BytesMut::from(
                                             &self.ctx.sctp_transport.internal_buffer[0..n],
                                         ),
-                                        ..Default::default()
-                                    }));
+                                        false,
+                                    )));
                                 }
                             }
                             Event::Stream(StreamEvent::BufferedAmountLow { id }) => {
@@ -562,13 +562,13 @@ mod tests {
         let msg = TaggedRTCMessageInternal {
             now: Instant::now(),
             transport: TransportContext::default(),
-            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage::new(
                 association_handle,
-                stream_id: 42,
-                ppi: PayloadProtocolIdentifier::Dcep,
+                42,
+                PayloadProtocolIdentifier::Dcep,
                 payload,
-                negotiated: true,
-            })),
+                true,
+            ))),
         };
 
         let mut handler = SctpHandler::new(&mut ctx);
@@ -592,13 +592,13 @@ mod tests {
         let msg = TaggedRTCMessageInternal {
             now: Instant::now(),
             transport: TransportContext::default(),
-            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage::new(
                 association_handle,
-                stream_id: 43,
-                ppi: PayloadProtocolIdentifier::Dcep,
+                43,
+                PayloadProtocolIdentifier::Dcep,
                 payload,
-                negotiated: false,
-            })),
+                false,
+            ))),
         };
 
         let mut handler = SctpHandler::new(&mut ctx);
@@ -606,9 +606,79 @@ mod tests {
 
         // The non-negotiated path tries to write the DCEP payload over the
         // wire, which fails because the association is not yet established.
-        assert!(
-            result.is_err(),
-            "in-band DataChannelOpen should fail on a non-established association"
-        );
+        match result {
+            Err(err) => {
+                let debug = format!("{err:?}");
+                assert!(
+                    debug.contains("ErrPayloadDataStateNotExist"),
+                    "expected ErrPayloadDataStateNotExist from attempted wire write, got: {debug}"
+                );
+            }
+            Ok(()) => {
+                panic!(
+                    "in-band DataChannelOpen should attempt a wire write and fail on a non-established association"
+                );
+            }
+        }
+    }
+
+    /// When both peers open the same negotiated stream, the second
+    /// `open_stream` call must fail with `ErrStreamAlreadyExist`.  This
+    /// exercises the peer-race scenario described in RFC 8832 where both
+    /// sides send `DATA_CHANNEL_OPEN` for the same pre-negotiated stream ID.
+    #[test]
+    fn negotiated_dial_duplicate_stream_returns_already_exist() {
+        let (mut ctx, association_handle) = make_ctx_with_association();
+        let payload = make_dcep_open_payload();
+
+        // First dial: opens stream 50 successfully.
+        let msg1 = TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage::new(
+                association_handle,
+                50,
+                PayloadProtocolIdentifier::Dcep,
+                payload.clone(),
+                true,
+            ))),
+        };
+
+        let mut handler = SctpHandler::new(&mut ctx);
+        handler
+            .handle_write(msg1)
+            .expect("first negotiated open must succeed");
+
+        // Second dial on the same stream ID: simulates the peer race where
+        // both sides send DATA_CHANNEL_OPEN for the same negotiated channel.
+        let msg2 = TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage::new(
+                association_handle,
+                50,
+                PayloadProtocolIdentifier::Dcep,
+                payload,
+                true,
+            ))),
+        };
+
+        let mut handler = SctpHandler::new(&mut ctx);
+        let result = handler.handle_write(msg2);
+
+        match result {
+            Err(err) => {
+                let debug = format!("{err:?}");
+                assert!(
+                    debug.contains("ErrStreamAlreadyExist"),
+                    "expected ErrStreamAlreadyExist for duplicate negotiated stream, got: {debug}"
+                );
+            }
+            Ok(()) => {
+                panic!(
+                    "duplicate open_stream on the same stream ID should fail with ErrStreamAlreadyExist"
+                );
+            }
+        }
     }
 }
