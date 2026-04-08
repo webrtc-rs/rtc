@@ -395,11 +395,20 @@ impl Flight for Flight5 {
 
             plain_text.extend_from_slice(&merged);
 
-            // Safety: this block is guarded by `!cfg.local_certificates.is_empty()`,
-            // so `certificate` was set to `Some(..)` above and cannot be `None` here.
-            let cert_ref = certificate
-                .as_ref()
-                .expect("certificate is Some when local_certificates is non-empty");
+            // Note: this path is currently unreachable because the outer guard
+            // ensures `!cfg.local_certificates.is_empty()`, but we keep the
+            // graceful error return rather than panicking for defense-in-depth.
+            let cert_ref = certificate.as_ref().ok_or_else(|| {
+                (
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::InternalError,
+                    }),
+                    Some(Error::Other(
+                        "no local certificate available for DTLS flight5".to_owned(),
+                    )),
+                )
+            })?;
 
             // Find compatible signature scheme
             let signature_hash_algo = match select_signature_scheme(
