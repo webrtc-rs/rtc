@@ -153,7 +153,10 @@ pub(crate) fn codec_parameters_fuzzy_search(
     // Fallback to just mime_type
     for c in haystack {
         // MIME types are ASCII-only; eq_ignore_ascii_case is sufficient and allocation-free.
-        if c.rtp_codec.mime_type.eq_ignore_ascii_case(&needle_rtp_codec.mime_type) {
+        if c.rtp_codec
+            .mime_type
+            .eq_ignore_ascii_case(&needle_rtp_codec.mime_type)
+        {
             return (c.clone(), CodecMatch::Partial);
         }
     }

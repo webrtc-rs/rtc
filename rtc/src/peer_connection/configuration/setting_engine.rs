@@ -173,7 +173,7 @@ impl Default for MulticastDNS {
         Self {
             timeout: Some(Duration::from_secs(10)),
             // mDNS is opt-in: callers enable it via set_multicast_dns_mode().
-            // The async wrapper also requires with_mdns_mode() to create the multicast socket.
+            // Any async wrapper must also be configured to create and bind the multicast socket.
             mode: MulticastDnsMode::Disabled,
             local_name: "".to_string(),
             local_ip: None,
