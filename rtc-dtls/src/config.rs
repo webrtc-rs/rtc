@@ -270,7 +270,7 @@ impl ConfigBuilder {
         }
 
         for cert in &self.certificates {
-            match cert.private_key.kind {
+            match cert.private_key.kind() {
                 CryptoPrivateKeyKind::Ed25519(_) => {}
                 CryptoPrivateKeyKind::Ecdsa256(_) => {}
                 _ => return Err(Error::ErrInvalidPrivateKey),
@@ -423,6 +423,13 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     certs
 }
 
+/// Internal handshake configuration used by the DTLS state machine.
+///
+/// **Do not construct via `HandshakeConfig::default()` directly.** The default
+/// `server_cert_verifier` is a placeholder that always rejects certificates,
+/// making a default-constructed `HandshakeConfig` unsuitable for real
+/// handshakes. Use [`ConfigBuilder`] instead, which installs a proper
+/// verifier via [`ConfigBuilder::build()`].
 #[derive(Clone)]
 pub struct HandshakeConfig {
     pub(crate) local_psk_callback: Option<PskCallback>,

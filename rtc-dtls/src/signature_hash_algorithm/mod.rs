@@ -96,7 +96,7 @@ pub struct SignatureHashAlgorithm {
 impl SignatureHashAlgorithm {
     // is_compatible checks that given private key is compatible with the signature scheme.
     pub(crate) fn is_compatible(&self, private_key: &CryptoPrivateKey) -> bool {
-        match &private_key.kind {
+        match private_key.kind() {
             CryptoPrivateKeyKind::Ed25519(_) => self.signature == SignatureAlgorithm::Ed25519,
             CryptoPrivateKeyKind::Ecdsa256(_) => self.signature == SignatureAlgorithm::Ecdsa,
             CryptoPrivateKeyKind::Rsa256(_) => self.signature == SignatureAlgorithm::Rsa,

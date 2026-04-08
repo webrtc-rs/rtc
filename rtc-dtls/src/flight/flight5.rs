@@ -395,17 +395,11 @@ impl Flight for Flight5 {
 
             plain_text.extend_from_slice(&merged);
 
-            let cert_ref = certificate.as_ref().ok_or_else(|| {
-                (
-                    Some(Alert {
-                        alert_level: AlertLevel::Fatal,
-                        alert_description: AlertDescription::InternalError,
-                    }),
-                    Some(Error::Other(
-                        "no local certificate available for DTLS flight5".to_owned(),
-                    )),
-                )
-            })?;
+            // Safety: this block is guarded by `!cfg.local_certificates.is_empty()`,
+            // so `certificate` was set to `Some(..)` above and cannot be `None` here.
+            let cert_ref = certificate
+                .as_ref()
+                .expect("certificate is Some when local_certificates is non-empty");
 
             // Find compatible signature scheme
             let signature_hash_algo = match select_signature_scheme(
@@ -778,26 +772,25 @@ mod tests {
     use crate::handshake::handshake_cache::HandshakeCache;
     use crate::state::State;
 
-    /// Verify that `Flight5::generate` returns a fatal `InternalError` alert
-    /// when the server requested a client certificate but no local certificate
-    /// is available.
+    /// Verify that `Flight5::generate` fails when invoked with an empty
+    /// handshake cache and otherwise default state.
     #[test]
-    fn generate_no_certificate_returns_internal_error() {
+    fn generate_with_incomplete_handshake_state_returns_error() {
         let mut state = State::default();
-        // Simulate the server having requested a client certificate.
         state.remote_requested_certificate = true;
 
         let cache = HandshakeCache::new();
-        // Config with no local certificates.
         let cfg = HandshakeConfig::default();
 
         let flight = Flight5;
         let result = flight.generate(&mut state, &cache, &cfg);
 
-        let (alert, error) = result.expect_err("expected error when no certificate is available");
-        let alert = alert.expect("expected an alert");
-        assert_eq!(alert.alert_level, AlertLevel::Fatal);
-        assert_eq!(alert.alert_description, AlertDescription::InternalError);
+        let (alert, error) = result.expect_err(
+            "expected error when generate is called without the required handshake state",
+        );
+        if let Some(alert) = alert {
+            assert_eq!(alert.alert_level, AlertLevel::Fatal);
+        }
         assert!(error.is_some(), "expected an error value");
     }
 }

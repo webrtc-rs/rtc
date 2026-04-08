@@ -110,7 +110,7 @@ impl Certificate {
     pub fn serialize_pem(&self) -> String {
         let mut data = vec![pem::Pem::new(
             "PRIVATE_KEY".to_string(),
-            self.private_key.serialized_der.clone(),
+            self.private_key.serialized_der().to_vec(),
         )];
         for rustls_cert in &self.certificate {
             data.push(pem::Pem::new(
@@ -152,15 +152,16 @@ pub enum CryptoPrivateKeyKind {
 
 /// Private key.
 ///
-/// Fields are `pub(crate)` to enforce the invariant that `kind` and
-/// `serialized_der` are always consistent.  External code should construct
-/// instances via [`CryptoPrivateKey::from_key_pair`] or the
-/// [`TryFrom<&KeyPair>`] impl; crate-internal code that accesses the fields
-/// directly must maintain this invariant.
+/// Fields are intentionally private to enforce the invariant that `kind` and
+/// `serialized_der` are always consistent.  Construct instances via
+/// [`CryptoPrivateKey::from_key_pair`] or the [`TryFrom<&KeyPair>`] impl;
+/// use the [`kind()`](CryptoPrivateKey::kind) and
+/// [`serialized_der()`](CryptoPrivateKey::serialized_der) accessors to
+/// inspect the key.
 #[derive(Debug)]
 pub struct CryptoPrivateKey {
-    pub(crate) kind: CryptoPrivateKeyKind,
-    pub(crate) serialized_der: Vec<u8>,
+    kind: CryptoPrivateKeyKind,
+    serialized_der: Vec<u8>,
 }
 
 impl CryptoPrivateKey {
@@ -199,8 +200,9 @@ impl PartialEq for CryptoPrivateKey {
 
 impl Clone for CryptoPrivateKey {
     fn clone(&self) -> Self {
-        // Safety: `serialized_der` is always produced by `from_key_pair`
-        // which serialises a valid key.  Re-parsing the same DER bytes cannot fail.
+        // Safety: fields are fully private, so `serialized_der` is always
+        // produced by `from_key_pair` (or `TryFrom<&KeyPair>`) which serialises
+        // a valid key.  Re-parsing the same DER bytes cannot fail.
         match &self.kind {
             CryptoPrivateKeyKind::Ed25519(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(
@@ -621,8 +623,8 @@ mod test {
         let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
             .map_err(|e| Error::Other(e.to_string()))?;
         let pk = CryptoPrivateKey::from_key_pair(&kp)?;
-        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ed25519(_)));
-        assert_eq!(pk.serialized_der, kp.serialize_der());
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ed25519(_)));
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
         Ok(())
     }
 
@@ -632,8 +634,8 @@ mod test {
         let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
             .map_err(|e| Error::Other(e.to_string()))?;
         let pk = CryptoPrivateKey::from_key_pair(&kp)?;
-        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ecdsa256(_)));
-        assert_eq!(pk.serialized_der, kp.serialize_der());
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ecdsa256(_)));
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
         Ok(())
     }
 
@@ -643,7 +645,7 @@ mod test {
         let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
             .map_err(|e| Error::Other(e.to_string()))?;
         let pk = CryptoPrivateKey::try_from(&kp)?;
-        assert!(matches!(pk.kind, CryptoPrivateKeyKind::Ed25519(_)));
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ed25519(_)));
         Ok(())
     }
 
