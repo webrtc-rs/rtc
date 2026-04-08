@@ -208,14 +208,18 @@ fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
     Ok(())
 }
 
-/// Pre-negotiated (out-of-band) channels must NOT send a DCEP DataChannelOpen
-/// over the wire.  `dial()` should still produce an outbound message so the
-/// SCTP handler can open the underlying stream, but that message must carry
-/// `negotiated = true` so the handler suppresses the wire write.
+/// Pre-negotiated (out-of-band) channels rely on the `SctpHandler` to suppress
+/// the DCEP DataChannelOpen payload on the wire.  This test verifies the
+/// `dial()` side of that contract: the outbound `DataChannelMessage` must carry
+/// `negotiated = true` so the SCTP handler knows to open the stream without
+/// sending the DCEP payload to the remote peer.
+///
+/// Note: the handler-side suppression is exercised by integration tests in the
+/// `rtc` crate; this unit test only covers the flagging produced by `dial()`.
 ///
 /// Regression test for <https://github.com/webrtc-rs/rtc/issues/61>.
 #[test]
-fn test_data_channel_negotiated_no_dcep_on_wire() -> Result<()> {
+fn test_data_channel_negotiated_dial_flags_message() -> Result<()> {
     let (a0, _a1) = create_new_association_pair()?;
     let stream_id = 42;
 
