@@ -96,9 +96,6 @@
 //!
 //! See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 
-//TODO: #[cfg(test)]
-//mod rtp_transceiver_test;
-
 use log::trace;
 
 use crate::media_stream::MediaStreamId;
