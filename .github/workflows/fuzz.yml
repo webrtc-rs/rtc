@@ -64,5 +64,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes-${{ matrix.crate }}
-          path: ${{ matrix.crate }}/fuzz/artifacts/
+          path: ${{ matrix.crate }}/fuzz/artifacts/**
           if-no-files-found: ignore

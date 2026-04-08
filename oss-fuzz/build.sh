@@ -33,15 +33,18 @@ for CRATE in "${FUZZ_CRATES[@]}"; do
         cargo fuzz build \
             --fuzz-dir . \
             --release \
-            -O \
-            "$TARGET" \
-            -- \
-            $LIB_FUZZING_ENGINE \
-            $RUSTFLAGS
+            "$TARGET"
 
         # Copy the compiled binary to $OUT
-        cp "target/x86_64-unknown-linux-gnu/release/$TARGET" "$OUT/${CRATE//-/_}_$TARGET" || \
-        cp "target/release/fuzzing/$TARGET" "$OUT/${CRATE//-/_}_$TARGET" || true
+        OUTPUT_PATH="$OUT/${CRATE//-/_}_$TARGET"
+        if [ -f "target/x86_64-unknown-linux-gnu/release/$TARGET" ]; then
+            cp "target/x86_64-unknown-linux-gnu/release/$TARGET" "$OUTPUT_PATH"
+        elif [ -f "target/release/fuzzing/$TARGET" ]; then
+            cp "target/release/fuzzing/$TARGET" "$OUTPUT_PATH"
+        else
+            echo "ERROR: Failed to locate built fuzz target binary for $CRATE/$TARGET" >&2
+            exit 1
+        fi
     done
 
     popd

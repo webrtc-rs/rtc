@@ -1,8 +1,8 @@
 homepage: "https://github.com/webrtc-rs/rtc"
 language: rust
-primary_contact: "maintainer@example.com"
+primary_contact: "security@webrtc.rs"
 auto_ccs:
-  - "maintainer@example.com"
+  - "security@webrtc.rs"
 fuzzing_engines:
   - libfuzzer
   - afl
