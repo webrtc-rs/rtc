@@ -2522,10 +2522,11 @@ impl Association {
             let reliability_value = s.reliability_value;
 
             if reliability_type == ReliabilityType::Rexmit {
-                // RFC 3758 §5.3.1: abandon when transmitted MORE THAN max_retransmits times.
-                // Use `>` not `>=`: with max_retransmits=N the chunk may be sent N+1 times total
-                // (1 initial + N retransmissions), so abandon when nsent > N (reliability_value).
-                // Using `>=` would incorrectly abandon after only N total sends (one too few).
+                // RFC 3758 §5.3.1: `max_retransmits` / `reliability_value` is a retransmission
+                // limit, while `c.nsent` counts total sends including the initial transmission.
+                // Therefore with max_retransmits = N, the chunk may be sent N + 1 times total
+                // (1 initial send + N retransmissions), and should be abandoned only once
+                // `c.nsent > reliability_value`. Using `>=` would abandon one send too early.
                 // Fixes: webrtc-rs/webrtc#776
                 if c.nsent > reliability_value {
                     c.set_abandoned(true);

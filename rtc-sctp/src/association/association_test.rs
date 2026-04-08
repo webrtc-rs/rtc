@@ -460,3 +460,88 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
 
     Ok(())
 }
+
+/// Regression test for the PR-SCTP max_retransmits off-by-one fix.
+///
+/// `check_partial_reliability_status` uses `nsent > reliability_value` (not
+/// `>=`).  `nsent` counts total sends and `reliability_value` equals
+/// `max_retransmits`.  With `>=`, a chunk with `max_retransmits=0` would be
+/// abandoned even at `nsent=0` (before being sent at all), and one with
+/// `max_retransmits=1` would be abandoned after only the initial send.
+/// This test encodes the correct boundary so the off-by-one cannot regress.
+#[test]
+fn test_check_partial_reliability_rexmit_boundary() {
+    let now = Instant::now();
+    let side = Side::Client;
+
+    // Build a streams map with a single stream using Rexmit reliability.
+    let make_streams = |reliability_value: u32| -> HashMap<u16, StreamState> {
+        let mut streams = HashMap::new();
+        let mut ss = StreamState::new(side, 0, 1400, PayloadProtocolIdentifier::Binary);
+        ss.reliability_type = ReliabilityType::Rexmit;
+        ss.reliability_value = reliability_value;
+        streams.insert(0, ss);
+        streams
+    };
+
+    // --- max_retransmits = 0 ---
+    // With `>`, abandon when nsent > 0, i.e. after at least one send.
+    // With `>=` (the bug), abandon when nsent >= 0, i.e. always -- even before sending.
+    let streams = make_streams(0);
+
+    // nsent=0: not yet sent at all. Must NOT be abandoned.
+    // This is the critical assertion that fails with `>=`.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 0,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "max_retransmits=0, nsent=0: must not abandon before any send"
+    );
+
+    // nsent=1: sent once (the initial transmission). nsent(1) > 0 is true, so
+    // the chunk is now eligible for abandonment.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 1,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        c.abandoned,
+        "max_retransmits=0, nsent=1: must abandon (no retransmissions allowed)"
+    );
+
+    // --- max_retransmits = 1 ---
+    // With `>`, abandon when nsent > 1, i.e. after two or more sends.
+    // With `>=` (the bug), abandon when nsent >= 1, i.e. after just the initial send.
+    let streams = make_streams(1);
+
+    // nsent=1: initial send only. Must NOT be abandoned.
+    // This assertion fails with `>=`.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 1,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "max_retransmits=1, nsent=1: must not abandon (only initial send so far)"
+    );
+
+    // nsent=2: initial + 1 retransmission. nsent(2) > 1 is true, abandon.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 2,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        c.abandoned,
+        "max_retransmits=1, nsent=2: must abandon (retransmission limit exceeded)"
+    );
+}
