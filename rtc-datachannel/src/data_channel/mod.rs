@@ -77,6 +77,8 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
+    /// Creates a new `DataChannel` with the given configuration, association
+    /// handle, and SCTP stream identifier.  Counters start at zero.
     fn new(config: DataChannelConfig, association_handle: usize, stream_id: u16) -> Self {
         Self {
             config,
