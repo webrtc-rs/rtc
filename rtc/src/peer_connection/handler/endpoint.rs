@@ -13,7 +13,6 @@ use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventIni
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
 use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability, RTCRtpRtxParameters,
-    rtp_codec::find_rtx_payload_type,
 };
 use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
 use crate::statistics::accumulator::RTCStatsAccumulator;
@@ -453,36 +452,43 @@ where
                 if !rrid.is_empty() {
                     // rrid identifies the base stream (rid) that this repair/RTX packet belongs to.
                     // Associate the repair SSRC with the base stream's RTX parameters.
-                    match receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
-                        Some(coding) => match coding.rtx.as_mut() {
-                            Some(rtx) => rtx.ssrc = ssrc,
-                            None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
-                        },
-                        None => {
-                            warn!(
-                                "dropping repair/RTX SSRC association: no base coding parameters \
-                                 found for rrid='{}' (repair_ssrc={}, mid='{}', rid='{}')",
-                                rrid, ssrc, mid, rid,
-                            );
-                        }
-                    }
+                    let has_base_coding =
+                        match receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
+                            Some(coding) => {
+                                match coding.rtx.as_mut() {
+                                    Some(rtx) => rtx.ssrc = ssrc,
+                                    None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
+                                }
+                                true
+                            }
+                            None => {
+                                warn!(
+                                    "dropping repair/RTX SSRC association: no base coding \
+                                     parameters found for rrid='{}' (repair_ssrc={}, mid='{}', \
+                                     rid='{}')",
+                                    rrid, ssrc, mid, rid,
+                                );
+                                false
+                            }
+                        };
 
-                    // Register the repair stream with the interceptor so RTX
-                    // packets are actually demuxed and forwarded.
-                    let parameters = receiver.get_parameters(self.media_engine);
-                    let rtx_pt = find_rtx_payload_type(
-                        codec.payload_type,
-                        &parameters.rtp_parameters.codecs,
-                    )
-                    .unwrap_or_default();
-                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                        self.interceptor,
-                        true,
-                        ssrc,
-                        rtx_pt,
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
+                    if has_base_coding {
+                        // Register the repair stream with the interceptor so RTX
+                        // packets are actually demuxed and forwarded. Use the
+                        // actual packet payload type here: in this branch `codec`
+                        // corresponds to the repair/RTX packet, so looking up an
+                        // RTX PT from `codec.payload_type` would fail (it is
+                        // already the RTX PT).
+                        let parameters = receiver.get_parameters(self.media_engine);
+                        RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                            self.interceptor,
+                            true,
+                            ssrc,
+                            codec.payload_type,
+                            &codec.rtp_codec,
+                            &parameters.rtp_parameters.header_extensions,
+                        );
+                    }
                 } else {
                     if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                         coding.ssrc = Some(ssrc);

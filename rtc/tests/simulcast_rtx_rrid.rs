@@ -15,7 +15,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngi
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::RTCMessage;
-use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
+use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -263,8 +263,10 @@ async fn test_simulcast_rtx_rrid_association() -> Result<()> {
                 _ => {}
             }
         }
-        while let Some(RTCMessage::RtpPacket(_, _)) = answerer_pc.poll_read() {
-            packets_received += 1;
+        while let Some(msg) = answerer_pc.poll_read() {
+            if let RTCMessage::RtpPacket(_, _) = msg {
+                packets_received += 1;
+            }
         }
 
         // Send packets once connected
