@@ -491,3 +491,124 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
 
     transmits
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
+    use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
+    use datachannel::message::message_channel_open::DataChannelOpen;
+    use sansio::Protocol;
+    use shared::marshal::Marshal;
+
+    /// Build a `SctpHandlerContext` whose SCTP endpoint has exactly one
+    /// association so that `handle_write` can reach the DCEP dispatch code.
+    fn make_ctx_with_association() -> (SctpHandlerContext, usize) {
+        let mut sctp_transport = RTCSctpTransport::new(
+            crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize::default(),
+        );
+        sctp_transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 65536,
+                },
+                5000,
+                5000,
+            )
+            .expect("start sctp transport");
+
+        // Trigger a client-side connect to create an association.
+        let endpoint = sctp_transport.sctp_endpoint.as_mut().unwrap();
+        let config = sctp_transport.sctp_transport_config.clone().unwrap();
+        let (ch, conn) = endpoint
+            .connect(
+                sctp::ClientConfig::new(config),
+                TransportContext::default().peer_addr,
+            )
+            .expect("connect");
+        let association_handle = ch.0;
+        sctp_transport.sctp_associations.insert(ch, conn);
+
+        (SctpHandlerContext::new(sctp_transport), association_handle)
+    }
+
+    /// Build a serialised DCEP DataChannelOpen payload.
+    fn make_dcep_open_payload() -> BytesMut {
+        let msg = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: datachannel::message::message_channel_open::ChannelType::Reliable,
+            priority: 0,
+            reliability_parameter: 0,
+            label: b"test-label".to_vec(),
+            protocol: b"".to_vec(),
+        });
+        msg.marshal().expect("marshal DataChannelOpen")
+    }
+
+    /// A negotiated (pre-negotiated / out-of-band) DataChannelOpen must set
+    /// `is_dcep_internal_control_message = true` so the SCTP handler does NOT
+    /// forward the DCEP payload over the wire.
+    ///
+    /// With a not-yet-established association the stream is writable (default
+    /// `ReadWritable` state) but `send_payload_data` would fail with
+    /// `ErrPayloadDataStateNotExist` if the handler tried to write the DCEP
+    /// payload.  The fact that `handle_write` returns `Ok(())` proves the
+    /// negotiated branch suppressed the wire write.
+    #[test]
+    fn negotiated_datachannel_open_suppresses_wire_write() {
+        let (mut ctx, association_handle) = make_ctx_with_association();
+        let payload = make_dcep_open_payload();
+
+        let msg = TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                association_handle,
+                stream_id: 42,
+                ppi: PayloadProtocolIdentifier::Dcep,
+                payload,
+                negotiated: true,
+            })),
+        };
+
+        let mut handler = SctpHandler::new(&mut ctx);
+        handler
+            .handle_write(msg)
+            .expect("handle_write must succeed for negotiated channel (wire write suppressed)");
+    }
+
+    /// A non-negotiated (in-band) DataChannelOpen does NOT suppress the wire
+    /// write. Because the stream defaults to `ReadWritable`, `write_with_ppi`
+    /// is attempted but fails with `ErrPayloadDataStateNotExist` since the
+    /// SCTP association has not completed its handshake.
+    ///
+    /// This confirms that the `negotiated` flag is the deciding factor: the
+    /// negotiated test above succeeds precisely because the write is suppressed.
+    #[test]
+    fn non_negotiated_datachannel_open_attempts_wire_write() {
+        let (mut ctx, association_handle) = make_ctx_with_association();
+        let payload = make_dcep_open_payload();
+
+        let msg = TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(DataChannelMessage {
+                association_handle,
+                stream_id: 43,
+                ppi: PayloadProtocolIdentifier::Dcep,
+                payload,
+                negotiated: false,
+            })),
+        };
+
+        let mut handler = SctpHandler::new(&mut ctx);
+        let result = handler.handle_write(msg);
+
+        // The non-negotiated path tries to write the DCEP payload over the
+        // wire, which fails because the association is not yet established.
+        assert!(
+            result.is_err(),
+            "in-band DataChannelOpen should fail on a non-established association"
+        );
+    }
+}
