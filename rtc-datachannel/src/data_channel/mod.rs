@@ -25,7 +25,7 @@ pub struct DataChannelConfig {
     pub protocol: String,
 }
 
-/// DataChannelMessage is used to data sent over SCTP
+/// DataChannelMessage is used for data sent over SCTP.
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct DataChannelMessage {
