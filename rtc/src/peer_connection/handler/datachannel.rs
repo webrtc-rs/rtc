@@ -335,7 +335,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 errs.push(e);
             }
         }
-        self.data_channels.clear();
+        // Do NOT clear data_channels here: public RTCDataChannel methods
+        // (label(), ready_state(), etc.) use unwrap() on map lookups, so
+        // clearing the map would panic if the application still holds a
+        // DataChannel handle after PeerConnection::close().
         flatten_errs(errs)
     }
 }

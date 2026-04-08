@@ -378,30 +378,87 @@ where
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-close (step #3)
         self.signaling_state = RTCSignalingState::Closed;
 
-        // Try closing everything and collect the errors
-        // Shutdown strategy:
-        // 1. All Conn close by closing their underlying Conn.
-        // 2. A Mux stops this chain. It won't close the underlying
-        //    Conn if one of the endpoints is closed down. To
-        //    continue the chain the Mux has to be closed.
-        for_each_handler!(forward: process_handler!(self, handler, {
-            handler.close()?;
+        // Close handlers in reverse order (Endpoint→Interceptor→SRTP→DataChannel→SCTP→
+        // DTLS→ICE→Demuxer) so that higher-level protocols (DataChannels, SCTP) shut down
+        // before the transports they depend on (DTLS, ICE).
+        // Collect all errors instead of short-circuiting so every handler gets a chance
+        // to clean up even if an earlier one fails.
+        let mut close_errs: Vec<Error> = vec![];
+        for_each_handler!(reverse: process_handler!(self, handler, {
+            if let Err(e) = handler.close() {
+                close_errs.push(e);
+            }
         }));
 
-        // W3C WebRTC §close shutdown work is implemented in individual handler close() methods,
-        // including:
+        // W3C WebRTC §close shutdown work is implemented in individual handler close() methods:
         //   InterceptorHandler::close() → interceptor.close()
         //   DataChannelHandler::close() → closes all RTCDataChannelInternal instances
         //   SctpHandler::close()        → closes all SCTP associations + endpoint
         //   DtlsHandler::close()        → dtls_transport.stop()
         //   IceHandler::close()         → ice_transport.agent.close()
-        //
-        // The for_each_handler!(forward: ...) loop above invokes these handler close() methods
-        // in order.
-        let close_errs: Vec<Error> = vec![];
 
         self.update_connection_state(true);
 
         flatten_errs(close_errs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer_connection::RTCPeerConnectionBuilder;
+    use sansio::Protocol;
+
+    #[test]
+    fn close_transitions_to_closed_state() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        assert_ne!(pc.peer_connection_state, RTCPeerConnectionState::Closed);
+        assert_ne!(pc.signaling_state, RTCSignalingState::Closed);
+
+        pc.close().unwrap();
+
+        assert_eq!(pc.peer_connection_state, RTCPeerConnectionState::Closed);
+        assert_eq!(pc.signaling_state, RTCSignalingState::Closed);
+    }
+
+    #[test]
+    fn close_is_idempotent() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        pc.close().unwrap();
+        // Second close should be a no-op (early return for already-closed)
+        pc.close().unwrap();
+        assert_eq!(pc.peer_connection_state, RTCPeerConnectionState::Closed);
+    }
+
+    #[test]
+    fn close_preserves_data_channels_in_map() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        // Create a data channel before closing
+        let dc = pc.create_data_channel("test", None).unwrap();
+        let dc_id = dc.id();
+        assert!(pc.data_channels.contains_key(&dc_id));
+
+        pc.close().unwrap();
+
+        // Data channels must remain in the map so that public RTCDataChannel
+        // methods (label(), ready_state(), etc.) which use unwrap() don't panic.
+        assert!(
+            pc.data_channels.contains_key(&dc_id),
+            "data_channels map must not be cleared on close"
+        );
+    }
+
+    #[test]
+    fn close_with_data_channel_does_not_panic() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        let dc = pc.create_data_channel("my-dc", None).unwrap();
+        let dc_id = dc.id();
+        pc.close().unwrap();
+
+        // After close, public accessors on the data channel must still work
+        // (they unwrap() the map entry).
+        let dc = pc.data_channel(dc_id).unwrap();
+        assert_eq!(dc.label(), "my-dc");
+        let _ = dc.ready_state();
     }
 }
