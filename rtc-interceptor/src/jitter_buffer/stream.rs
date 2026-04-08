@@ -70,8 +70,12 @@ impl JitterBufferStream {
         if self.started {
             let rtp_diff = rtp_ts.wrapping_sub(self.last_rtp_ts);
             // Only update for forward-advancing RTP timestamps (rtp_diff in (0, 2^31)).
-            if rtp_diff > 0 && rtp_diff < 0x8000_0000 {
-                let arrival_diff = now.duration_since(self.last_arrival).as_secs_f64();
+            if rtp_diff > 0
+                && rtp_diff < 0x8000_0000
+                && self.clock_rate > 0
+                && let Some(arrival_diff) = now.checked_duration_since(self.last_arrival)
+            {
+                let arrival_diff = arrival_diff.as_secs_f64();
                 let d = (arrival_diff * self.clock_rate as f64 - rtp_diff as f64).abs();
                 // RFC 3550 §A.8: J(i) = J(i-1) + (|D(i,i-1)| - J(i-1)) / 16
                 self.jitter += (d - self.jitter) / 16.0;
@@ -116,27 +120,37 @@ impl JitterBufferStream {
         };
 
         // Reject packets at or before the last released sequence.
-        if let Some(last) = self.last_released {
-            if !Self::seq_is_after(seq, last) {
-                return false;
-            }
+        if let Some(last) = self.last_released
+            && !Self::seq_is_after(seq, last)
+        {
+            return false;
         }
 
-        // Apply playout-delay extension hints from the sender.
-        if let (Packet::Rtp(rtp), Some(ext_id)) = (&pkt.message, self.playout_delay_ext_id) {
-            if let Some(ext_bytes) = rtp.header.get_extension(ext_id) {
-                if let Some((sender_min, sender_max)) =
-                    Self::parse_playout_delay(ext_bytes.as_ref())
-                {
-                    // Sender's min raises our floor; sender's max lowers our ceiling.
-                    self.min_delay = self.min_delay.max(sender_min);
-                    self.max_delay = self.max_delay.min(sender_max.max(self.min_delay));
-                    self.target_delay = self.target_delay.max(sender_min).min(self.max_delay);
-                }
-            }
-        }
-
+        // Compute the release time (this also updates target_delay via jitter estimate).
         let release = self.compute_release(now, rtp_ts);
+
+        // Apply playout-delay extension hints from the sender for this packet only.
+        // We compute effective bounds without permanently mutating the configured
+        // min/max so that subsequent packets with different (or absent) hints are
+        // not permanently clamped.
+        let release = if let (Packet::Rtp(rtp), Some(ext_id)) =
+            (&pkt.message, self.playout_delay_ext_id)
+            && let Some(ext_bytes) = rtp.header.get_extension(ext_id)
+            && let Some((sender_min, sender_max)) = Self::parse_playout_delay(ext_bytes.as_ref())
+        {
+            // Sender's min raises our floor; sender's max lowers our ceiling.
+            let effective_min = self.min_delay.max(sender_min);
+            let effective_max = self.max_delay.min(sender_max.max(effective_min));
+            let clamped_delay = self.target_delay.max(effective_min).min(effective_max);
+            now + clamped_delay
+        } else {
+            release
+        };
+
+        // Reject duplicate sequence numbers already in the buffer.
+        if self.buffer.iter().any(|(s, _, _, _)| *s == seq) {
+            return false;
+        }
 
         // Insert at the correct sorted position (ascending sequence order).
         let pos = self
@@ -281,26 +295,27 @@ mod tests {
 
     #[test]
     fn test_jitter_adapts_target_delay() {
-        let delay = Duration::from_millis(20);
-        let mut s =
-            JitterBufferStream::new(90000, None, delay, delay, Duration::from_secs(2));
+        let initial = Duration::from_millis(5);
+        let min = Duration::from_millis(5);
+        let mut s = JitterBufferStream::new(90000, None, initial, min, Duration::from_secs(2));
         let base = Instant::now();
-        // Feed packets with increasing inter-arrival variation to grow jitter.
-        // RTP timestamps advance at 90 kHz rate but arrival times vary significantly.
-        for i in 0u32..20 {
-            // Nominal arrival every 33ms (30fps), but with 50ms extra jitter on even packets.
-            let arrival = base
-                + Duration::from_millis(33 * i as u64)
-                + if i % 2 == 0 { Duration::from_millis(50) } else { Duration::ZERO };
+        let mut elapsed_ms = 0u64;
+        // Feed packets with variable but strictly increasing arrival times to grow jitter.
+        // RTP timestamps advance at 90 kHz rate while packet spacing alternates between
+        // shorter and longer gaps, producing inter-arrival variation without time going
+        // backwards.
+        for i in 0u32..40 {
+            elapsed_ms += if i % 2 == 0 { 50 } else { 15 };
+            let arrival = base + Duration::from_millis(elapsed_ms);
             let ts = i * 3000; // 90kHz / 30fps = 3000 units per frame
             s.insert(arrival, make_rtp(1, i as u16 + 1, ts));
         }
-        // After significant jitter, target_delay should be above initial 20ms.
+        // After significant jitter, target_delay should be above initial 5ms.
         assert!(
-            s.target_delay > delay,
+            s.target_delay > initial,
             "target_delay {:?} should have grown above {:?}",
             s.target_delay,
-            delay
+            initial
         );
     }
 

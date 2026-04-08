@@ -100,6 +100,7 @@ impl<P> JitterBufferBuilder<P> {
             max_delay: self.max_delay,
             initial_delay: self.initial_delay,
             streams: HashMap::new(),
+            last_now: None,
         }
     }
 }
@@ -120,6 +121,10 @@ pub struct JitterBufferInterceptor<P> {
 
     /// Per-SSRC jitter buffer state, created in `bind_remote_stream`.
     streams: HashMap<u32, JitterBufferStream>,
+
+    /// Monotonic timestamp tracked from `handle_read` / `handle_timeout` calls,
+    /// used by `poll_read` instead of `Instant::now()` to avoid wall-clock dependency.
+    last_now: Option<Instant>,
 }
 
 #[interceptor]
@@ -127,27 +132,36 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
     /// Buffer incoming RTP for tracked SSRCs; pass everything else through immediately.
     #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(ref rtp) = msg.message {
-            if let Some(stream) = self.streams.get_mut(&rtp.header.ssrc) {
-                // insert() returns false only for already-released sequences; drop those.
-                stream.insert(msg.now, msg);
-                return Ok(());
-            }
+        // Track the latest timestamp for use by poll_read.
+        self.last_now = Some(msg.now);
+        if let Packet::Rtp(ref rtp) = msg.message
+            && let Some(stream) = self.streams.get_mut(&rtp.header.ssrc)
+        {
+            // insert() returns false only for already-released sequences; drop those.
+            stream.insert(msg.now, msg);
+            return Ok(());
         }
         // RTCP, or RTP from an unbound SSRC → forward without delay.
         self.inner.handle_read(msg)
     }
 
     /// Flush ready buffered packets into the inner chain, then poll the inner chain.
+    ///
+    /// Uses the latest timestamp seen from `handle_read`/`handle_timeout` rather
+    /// than `Instant::now()`, so the interceptor stays deterministic and avoids
+    /// panics when buffered arrivals are in the future relative to wall-clock time.
     #[overrides]
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.drain_ready(Instant::now());
+        if let Some(now) = self.last_now {
+            self.drain_ready(now);
+        }
         self.inner.poll_read()
     }
 
     /// Drain ready packets on each timer tick so buffers don't stall between app polls.
     #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
+        self.last_now = Some(now);
         self.drain_ready(now);
         self.inner.handle_timeout(now)
     }
@@ -155,7 +169,11 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
     /// Return the earliest scheduled release time so the driver wakes at the right moment.
     #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        let buf_eto = self.streams.values().filter_map(|s| s.next_wake_time()).min();
+        let buf_eto = self
+            .streams
+            .values()
+            .filter_map(|s| s.next_wake_time())
+            .min();
         let inner_eto = self.inner.poll_timeout();
         match (buf_eto, inner_eto) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -250,19 +268,18 @@ mod tests {
         TransportMessage {
             now: Instant::now(),
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![Box::new(
-                rtcp::receiver_report::ReceiverReport {
-                    ssrc,
-                    ..Default::default()
-                },
-            )]),
+            message: Packet::Rtcp(vec![Box::new(rtcp::receiver_report::ReceiverReport {
+                ssrc,
+                ..Default::default()
+            })]),
         }
     }
 
     /// Build a chain with a short initial delay for testing.
-    fn make_chain(initial_ms: u64, max_ms: u64) -> impl Protocol<TaggedPacket, TaggedPacket, ()>
-        + crate::Interceptor
-    {
+    fn make_chain(
+        initial_ms: u64,
+        max_ms: u64,
+    ) -> impl Protocol<TaggedPacket, TaggedPacket, ()> + crate::Interceptor {
         Registry::new()
             .with(
                 JitterBufferBuilder::new()
@@ -344,7 +361,10 @@ mod tests {
         // At max_delay + 1ms: seq 1 must be force-released even without seq 2.
         let force_time = base + Duration::from_millis(max_ms + 1);
         chain.handle_timeout(force_time).unwrap();
-        assert!(chain.poll_read().is_some(), "seq 1 should be force-released");
+        assert!(
+            chain.poll_read().is_some(),
+            "seq 1 should be force-released"
+        );
     }
 
     #[test]
@@ -391,10 +411,13 @@ mod tests {
 
         // Packet from an unbound SSRC must not be buffered — forwarded immediately.
         chain.handle_read(make_rtp_at(ssrc, 1, 0, base)).unwrap();
-        // handle_timeout at exactly base (no delay passed) — noop inner releases it.
+        // handle_timeout at exactly base (no delay passed) should not hold the packet back.
         chain.handle_timeout(base).unwrap();
-        // poll_read delegates to inner.poll_read (noop returns None), which is fine.
-        // The important thing is no panic and no indefinite buffering.
+        // The packet should be immediately readable from the inner chain rather than buffered.
+        assert!(
+            chain.poll_read().is_some(),
+            "unbound SSRC packets should pass through immediately"
+        );
     }
 
     #[test]
@@ -408,7 +431,10 @@ mod tests {
         chain.handle_read(make_rtp_at(ssrc, 1, 0, base)).unwrap();
 
         let wake = chain.poll_timeout();
-        assert!(wake.is_some(), "should have a wake time after buffering a packet");
+        assert!(
+            wake.is_some(),
+            "should have a wake time after buffering a packet"
+        );
         // Wake time should be approximately base + initial_delay.
         let wake = wake.unwrap();
         assert!(wake > base, "wake time must be in the future");
