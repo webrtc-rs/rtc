@@ -79,7 +79,10 @@ impl GccHandle {
     /// Returns the latest estimated available send bandwidth in bps, or `None`
     /// if no TWCC feedback has been processed yet.
     pub fn target_bitrate_bps(&self) -> Option<u32> {
-        self.inner.lock().map(|g| g.target_bitrate_bps).unwrap_or(None)
+        self.inner
+            .lock()
+            .map(|g| g.target_bitrate_bps)
+            .unwrap_or(None)
     }
 }
 
@@ -102,7 +105,9 @@ impl<P> GccInterceptorBuilder<P> {
         let shared = Arc::new(Mutex::new(GccShared {
             target_bitrate_bps: None,
         }));
-        let handle = GccHandle { inner: shared.clone() };
+        let handle = GccHandle {
+            inner: shared.clone(),
+        };
         let builder = Self {
             min_bitrate_bps: 30_000,
             max_bitrate_bps: 2_500_000,
@@ -155,11 +160,11 @@ pub struct GccInterceptor<P> {
     /// SSRC → TWCC header extension ID, populated in `bind_local_stream`.
     local_streams: HashMap<u32, u8>,
 
-    /// Send-time log: transport-wide seq → (send_time_ms_from_start, packet_size_bytes).
+    /// Send-time log: transport-wide seq → send_time_ms_from_start.
     ///
     /// Ring-buffer semantics: entries more than 512 sequence numbers behind the
     /// current head are pruned to bound memory usage.
-    send_times: HashMap<u16, (f64, usize)>,
+    send_times: HashMap<u16, f64>,
 
     /// Monotonic baseline for converting `Instant` values to milliseconds.
     start_time: Instant,
@@ -173,28 +178,25 @@ pub struct GccInterceptor<P> {
 
 #[interceptor]
 impl<P: Interceptor> GccInterceptor<P> {
-    /// Snoop on outgoing RTP: record `(send_time_ms, size)` keyed by TWCC seq.
+    /// Snoop on outgoing RTP: record send_time_ms keyed by TWCC seq.
     ///
     /// Must be inner to [`TwccSenderInterceptor`] so the sequence number has
     /// already been stamped by the time this method is called.
     #[overrides]
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(ref rtp) = msg.message {
-            if let Some(&ext_id) = self.local_streams.get(&rtp.header.ssrc) {
-                if let Some(ext_bytes) = rtp.header.get_extension(ext_id) {
-                    let mut buf = Bytes::copy_from_slice(ext_bytes.as_ref());
-                    if let Ok(tcc_ext) = TransportCcExtension::unmarshal(&mut buf) {
-                        let seq = tcc_ext.transport_sequence;
-                        let send_ms = msg.now.duration_since(self.start_time).as_secs_f64() * 1000.0;
-                        let size = rtp.payload.len() + 12;
-                        self.send_times.insert(seq, (send_ms, size));
+        if let Packet::Rtp(ref rtp) = msg.message
+            && let Some(&ext_id) = self.local_streams.get(&rtp.header.ssrc)
+            && let Some(ext_bytes) = rtp.header.get_extension(ext_id)
+        {
+            let mut buf = Bytes::copy_from_slice(ext_bytes.as_ref());
+            if let Ok(tcc_ext) = TransportCcExtension::unmarshal(&mut buf) {
+                let seq = tcc_ext.transport_sequence;
+                let send_ms = msg.now.duration_since(self.start_time).as_secs_f64() * 1000.0;
+                self.send_times.insert(seq, send_ms);
 
-                        // Prune entries > 512 sequence numbers behind the current head.
-                        if self.send_times.len() > 512 {
-                            self.send_times
-                                .retain(|&s, _| seq.wrapping_sub(s) <= 512);
-                        }
-                    }
+                // Prune entries > 512 sequence numbers behind the current head.
+                if self.send_times.len() > 512 {
+                    self.send_times.retain(|&s, _| seq.wrapping_sub(s) <= 512);
                 }
             }
         }
@@ -206,16 +208,12 @@ impl<P: Interceptor> GccInterceptor<P> {
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         if let Packet::Rtcp(ref rtcp_pkts) = msg.message {
             let now = msg.now;
-            // Collect feedback packets first to avoid borrow issues.
-            let feedbacks: Vec<TransportLayerCc> = rtcp_pkts
+            // Process feedback packets by reference to avoid cloning.
+            let feedbacks: Vec<&TransportLayerCc> = rtcp_pkts
                 .iter()
-                .filter_map(|pkt| {
-                    pkt.as_any()
-                        .downcast_ref::<TransportLayerCc>()
-                        .cloned()
-                })
+                .filter_map(|pkt| pkt.as_any().downcast_ref::<TransportLayerCc>())
                 .collect();
-            for fb in &feedbacks {
+            for fb in feedbacks {
                 self.process_feedback(fb, now);
             }
         }
@@ -226,10 +224,10 @@ impl<P: Interceptor> GccInterceptor<P> {
     #[overrides]
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         use crate::twcc::stream_supports_twcc;
-        if let Some(ext_id) = stream_supports_twcc(info) {
-            if ext_id != 0 {
-                self.local_streams.insert(info.ssrc, ext_id);
-            }
+        if let Some(ext_id) = stream_supports_twcc(info)
+            && ext_id != 0
+        {
+            self.local_streams.insert(info.ssrc, ext_id);
         }
         self.inner.bind_local_stream(info);
     }
@@ -285,39 +283,64 @@ impl<P: Interceptor> GccInterceptor<P> {
         let mut result = Vec::new();
 
         for chunk in &fb.packet_chunks {
-            let statuses = expand_chunk(chunk);
-            for status in statuses {
-                let has_delta = matches!(
-                    status,
-                    SymbolTypeTcc::PacketReceivedSmallDelta
-                        | SymbolTypeTcc::PacketReceivedLargeDelta
-                );
-                if has_delta {
-                    if delta_idx < fb.recv_deltas.len() {
-                        recv_us += fb.recv_deltas[delta_idx].delta;
-                        delta_idx += 1;
-
-                        if let Some(&(send_ms, _)) = self.send_times.get(&seq) {
-                            let recv_ms = recv_us as f64 / 1000.0;
-                            result.push((send_ms, recv_ms));
-                        }
+            // Iterate chunk contents inline to avoid allocating a Vec per chunk.
+            match chunk {
+                PacketStatusChunk::RunLengthChunk(rlc) => {
+                    for _ in 0..rlc.run_length {
+                        self.process_status(
+                            rlc.packet_status_symbol,
+                            fb,
+                            &mut recv_us,
+                            &mut delta_idx,
+                            seq,
+                            &mut result,
+                        );
+                        seq = seq.wrapping_add(1);
                     }
                 }
-                seq = seq.wrapping_add(1);
+                PacketStatusChunk::StatusVectorChunk(svc) => {
+                    for &status in &svc.symbol_list {
+                        self.process_status(
+                            status,
+                            fb,
+                            &mut recv_us,
+                            &mut delta_idx,
+                            seq,
+                            &mut result,
+                        );
+                        seq = seq.wrapping_add(1);
+                    }
+                }
             }
         }
 
         result
     }
-}
 
-/// Expand a `PacketStatusChunk` into a flat list of per-packet symbols.
-fn expand_chunk(chunk: &PacketStatusChunk) -> Vec<SymbolTypeTcc> {
-    match chunk {
-        PacketStatusChunk::RunLengthChunk(rlc) => {
-            vec![rlc.packet_status_symbol; rlc.run_length as usize]
+    /// Helper: process one packet status symbol during send/recv pair extraction.
+    #[inline]
+    fn process_status(
+        &self,
+        status: SymbolTypeTcc,
+        fb: &TransportLayerCc,
+        recv_us: &mut i64,
+        delta_idx: &mut usize,
+        seq: u16,
+        result: &mut Vec<(f64, f64)>,
+    ) {
+        if matches!(
+            status,
+            SymbolTypeTcc::PacketReceivedSmallDelta | SymbolTypeTcc::PacketReceivedLargeDelta
+        ) && *delta_idx < fb.recv_deltas.len()
+        {
+            *recv_us += fb.recv_deltas[*delta_idx].delta;
+            *delta_idx += 1;
+
+            if let Some(&send_ms) = self.send_times.get(&seq) {
+                let recv_ms = *recv_us as f64 / 1000.0;
+                result.push((send_ms, recv_ms));
+            }
         }
-        PacketStatusChunk::StatusVectorChunk(svc) => svc.symbol_list.clone(),
     }
 }
 
@@ -355,7 +378,7 @@ fn loss_fraction(fb: &TransportLayerCc) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Registry, RTPHeaderExtension, twcc::TRANSPORT_CC_URI};
+    use crate::{RTPHeaderExtension, Registry, twcc::TRANSPORT_CC_URI};
     use rtcp::transport_feedbacks::transport_layer_cc::{
         RecvDelta, RunLengthChunk, StatusChunkTypeTcc, TYPE_TCC_DELTA_SCALE_FACTOR,
     };
@@ -444,7 +467,7 @@ mod tests {
         use crate::TwccSenderBuilder;
         let (gcc_builder, handle) = GccInterceptorBuilder::new();
         let chain = Registry::new()
-            .with(gcc_builder.build())              // GCC inner
+            .with(gcc_builder.build()) // GCC inner
             .with(TwccSenderBuilder::new().build()) // TwccSender outer
             .build();
         (chain, handle)
@@ -460,7 +483,11 @@ mod tests {
         // Send 5 packets; TwccSender will stamp seq 0..4.
         for i in 0..5u16 {
             chain
-                .handle_write(make_rtp(ssrc, i, base + Duration::from_millis(i as u64 * 33)))
+                .handle_write(make_rtp(
+                    ssrc,
+                    i,
+                    base + Duration::from_millis(i as u64 * 33),
+                ))
                 .unwrap();
         }
 
@@ -469,7 +496,11 @@ mod tests {
         let recv_us: Vec<i64> = (0..5).map(|i: i64| i * 33_000 + 20_000).collect();
 
         chain
-            .handle_read(make_twcc_feedback(0, &recv_us, base + Duration::from_millis(200)))
+            .handle_read(make_twcc_feedback(
+                0,
+                &recv_us,
+                base + Duration::from_millis(200),
+            ))
             .unwrap();
 
         assert!(
@@ -483,7 +514,9 @@ mod tests {
         let (mut chain, handle) = make_chain();
         let ssrc = 2001u32;
         chain.bind_local_stream(&stream_info_with_twcc(ssrc));
-        chain.handle_write(make_rtp(ssrc, 0, Instant::now())).unwrap();
+        chain
+            .handle_write(make_rtp(ssrc, 0, Instant::now()))
+            .unwrap();
         // No feedback yet.
         assert!(handle.target_bitrate_bps().is_none());
     }
@@ -528,7 +561,9 @@ mod tests {
         };
         chain.bind_local_stream(&info);
         // Just verify no panic and no estimate without TWCC feedback.
-        chain.handle_write(make_rtp(ssrc, 1, Instant::now())).unwrap();
+        chain
+            .handle_write(make_rtp(ssrc, 1, Instant::now()))
+            .unwrap();
     }
 
     #[test]
