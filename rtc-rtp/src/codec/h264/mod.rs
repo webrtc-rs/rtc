@@ -133,6 +133,11 @@ impl H264Payloader {
                 if stap_a_nalu.len() <= mtu {
                     payloads.push(Bytes::from(stap_a_nalu));
                 } else {
+                    // STAP-A does not fit within the MTU; fall back to emitting
+                    // SPS and PPS separately so they are not silently dropped.
+                    Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
+                    Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
+                } else {
                     // STAP-A exceeds MTU; emit SPS and PPS individually
                     // (they will be fragmented via FU-A if needed).
                     Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
