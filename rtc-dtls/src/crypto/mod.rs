@@ -152,9 +152,11 @@ pub enum CryptoPrivateKeyKind {
 
 /// Private key.
 ///
-/// Fields are intentionally private to enforce the invariant that `kind` and
-/// `serialized_der` are always consistent.  Construct instances via
-/// [`CryptoPrivateKey::from_key_pair`] or the [`TryFrom<&KeyPair>`] impl.
+/// Fields are `pub(crate)` to enforce the invariant that `kind` and
+/// `serialized_der` are always consistent.  External code should construct
+/// instances via [`CryptoPrivateKey::from_key_pair`] or the
+/// [`TryFrom<&KeyPair>`] impl; crate-internal code that accesses the fields
+/// directly must maintain this invariant.
 #[derive(Debug)]
 pub struct CryptoPrivateKey {
     pub(crate) kind: CryptoPrivateKeyKind,
@@ -197,9 +199,9 @@ impl PartialEq for CryptoPrivateKey {
 
 impl Clone for CryptoPrivateKey {
     fn clone(&self) -> Self {
-        // Safety: fields are private, so `serialized_der` is always produced by `from_key_pair`
+        // Safety: `serialized_der` is always produced by `from_key_pair`
         // which serialises a valid key.  Re-parsing the same DER bytes cannot fail.
-        match self.kind {
+        match &self.kind {
             CryptoPrivateKeyKind::Ed25519(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(
                     Ed25519KeyPair::from_pkcs8_maybe_unchecked(&self.serialized_der)

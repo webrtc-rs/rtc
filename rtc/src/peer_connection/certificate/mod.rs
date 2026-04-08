@@ -338,7 +338,9 @@ impl RTCCertificate {
     fn from_params(params: CertificateParams, key_pair: KeyPair) -> Result<Self> {
         let not_after = params.not_after;
 
-        let x509_cert = params.self_signed(&key_pair).unwrap();
+        let x509_cert = params.self_signed(&key_pair).map_err(|err| {
+            Error::Other(format!("failed to generate self-signed certificate: {err}"))
+        })?;
         let private_key = CryptoPrivateKey::from_key_pair(&key_pair)?;
 
         let expires = if cfg!(target_arch = "arm") {

@@ -771,3 +771,33 @@ fn initalize_cipher_suite(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handshake::handshake_cache::HandshakeCache;
+    use crate::state::State;
+
+    /// Verify that `Flight5::generate` returns a fatal `InternalError` alert
+    /// when the server requested a client certificate but no local certificate
+    /// is available.
+    #[test]
+    fn generate_no_certificate_returns_internal_error() {
+        let mut state = State::default();
+        // Simulate the server having requested a client certificate.
+        state.remote_requested_certificate = true;
+
+        let cache = HandshakeCache::new();
+        // Config with no local certificates.
+        let cfg = HandshakeConfig::default();
+
+        let flight = Flight5;
+        let result = flight.generate(&mut state, &cache, &cfg);
+
+        let (alert, error) = result.expect_err("expected error when no certificate is available");
+        let alert = alert.expect("expected an alert");
+        assert_eq!(alert.alert_level, AlertLevel::Fatal);
+        assert_eq!(alert.alert_description, AlertDescription::InternalError);
+        assert!(error.is_some(), "expected an error value");
+    }
+}

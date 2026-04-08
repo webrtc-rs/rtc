@@ -476,6 +476,12 @@ impl fmt::Debug for HandshakeConfig {
 }
 
 impl Default for HandshakeConfig {
+    /// Creates a `HandshakeConfig` with placeholder values.
+    ///
+    /// **Warning:** The default `server_cert_verifier` is a placeholder that
+    /// always rejects certificates.  Do not use `HandshakeConfig::default()`
+    /// directly for real handshakes; instead, go through [`ConfigBuilder`] which
+    /// installs a proper verifier via `build()`.
     fn default() -> Self {
         HandshakeConfig {
             local_psk_callback: None,
