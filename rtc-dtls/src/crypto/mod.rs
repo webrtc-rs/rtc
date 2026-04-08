@@ -151,12 +151,26 @@ pub enum CryptoPrivateKeyKind {
 }
 
 /// Private key.
+///
+/// Fields are intentionally private to enforce the invariant that `kind` and
+/// `serialized_der` are always consistent.  Construct instances via
+/// [`CryptoPrivateKey::from_key_pair`] or the [`TryFrom<&KeyPair>`] impl.
 #[derive(Debug)]
 pub struct CryptoPrivateKey {
-    /// Keypair.
-    pub kind: CryptoPrivateKeyKind,
-    /// DER-encoded keypair.
-    pub serialized_der: Vec<u8>,
+    pub(crate) kind: CryptoPrivateKeyKind,
+    pub(crate) serialized_der: Vec<u8>,
+}
+
+impl CryptoPrivateKey {
+    /// Returns a reference to the key kind.
+    pub fn kind(&self) -> &CryptoPrivateKeyKind {
+        &self.kind
+    }
+
+    /// Returns the DER-encoded key bytes.
+    pub fn serialized_der(&self) -> &[u8] {
+        &self.serialized_der
+    }
 }
 
 impl PartialEq for CryptoPrivateKey {
@@ -183,8 +197,8 @@ impl PartialEq for CryptoPrivateKey {
 
 impl Clone for CryptoPrivateKey {
     fn clone(&self) -> Self {
-        // Safety: `serialized_der` is always produced by `from_key_pair` which serialises a
-        // valid key.  Re-parsing the same bytes cannot fail, so these unwraps are sound.
+        // Safety: fields are private, so `serialized_der` is always produced by `from_key_pair`
+        // which serialises a valid key.  Re-parsing the same DER bytes cannot fail.
         match self.kind {
             CryptoPrivateKeyKind::Ed25519(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(

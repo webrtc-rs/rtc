@@ -186,11 +186,8 @@
 use std::ops::Add;
 use std::time::{Duration, SystemTime};
 
-use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
+use dtls::crypto::CryptoPrivateKey;
 use rcgen::{CertificateParams, KeyPair};
-use ring::rand::SystemRandom;
-use ring::rsa;
-use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
@@ -342,39 +339,7 @@ impl RTCCertificate {
         let not_after = params.not_after;
 
         let x509_cert = params.self_signed(&key_pair).unwrap();
-        let serialized_der = key_pair.serialize_der();
-
-        let private_key = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ed25519(
-                    Ed25519KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_ECDSA_P256_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ecdsa256(
-                    EcdsaKeyPair::from_pkcs8(
-                        &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-                        &serialized_der,
-                        &SystemRandom::new(),
-                    )
-                    .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_RSA_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Rsa256(
-                    rsa::KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else {
-            return Err(Error::Other("Unsupported key_pair".to_owned()));
-        };
+        let private_key = CryptoPrivateKey::from_key_pair(&key_pair)?;
 
         let expires = if cfg!(target_arch = "arm") {
             // Workaround for issue overflow when adding duration to instant on armv7

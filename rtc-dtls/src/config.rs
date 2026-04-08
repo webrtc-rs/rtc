@@ -13,9 +13,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustls::client::danger::ServerCertVerifier;
-use rustls::pki_types::CertificateDer;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::danger::ClientCertVerifier;
+use rustls::{DigitallySignedStruct, SignatureScheme as RustlsSignatureScheme};
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
@@ -349,14 +350,64 @@ impl ConfigBuilder {
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
+            maximum_retransmit_number: 7,
             replay_protection_window,
-            ..Default::default()
+            name_to_certificate: HashMap::new(),
         })
     }
 }
 
 pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
+
+/// A placeholder [`ServerCertVerifier`] used only by `HandshakeConfig::default()`.
+///
+/// [`ConfigBuilder::build()`] always replaces this with a real
+/// [`WebPkiServerVerifier`](rustls::client::WebPkiServerVerifier),
+/// so the placeholder methods are never called in practice.
+#[derive(Debug)]
+struct PlaceholderServerCertVerifier;
+
+impl ServerCertVerifier for PlaceholderServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<RustlsSignatureScheme> {
+        vec![]
+    }
+}
 
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     let mut certs = rustls::RootCertStore::empty();
@@ -441,12 +492,8 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            // Safety: gen_self_signed_root_cert uses hardcoded empty subject; build() cannot fail.
-            server_cert_verifier: rustls::client::WebPkiServerVerifier::builder(Arc::new(
-                gen_self_signed_root_cert(),
-            ))
-            .build()
-            .expect("WebPkiServerVerifier::build with self-signed root cannot fail"),
+            // Placeholder: ConfigBuilder::build() always replaces this with a real verifier.
+            server_cert_verifier: Arc::new(PlaceholderServerCertVerifier),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
