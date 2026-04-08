@@ -1060,13 +1060,14 @@ fn test_h265_aggregation_header_excludes_oversized_nalus() -> Result<()> {
     Ok(())
 }
 
-/// flush_aggregation_buffer with a single oversized NALU should emit it
-/// via FU fragmentation, not try to pack it into an aggregation packet.
+/// flush_aggregation_buffer with a single in-MTU NALU should emit it
+/// as-is after stripping the Annex-B start code, not wrap it in an
+/// aggregation packet.
 #[test]
 fn test_h265_flush_single_nalu_passthrough() -> Result<()> {
     let mut pck = HevcPayloader::default();
 
-    // Single NALU that fits in MTU -- should be emitted as-is
+    // Single NALU that fits in the MTU; it should be emitted as-is.
     let payload = Bytes::from_static(&[0x00, 0x00, 0x01, 0x02, 0x01, 0xAA, 0xBB]);
     let result = pck.payload(1500, &payload)?;
     assert_eq!(result.len(), 1, "single NALU should be emitted as-is");
