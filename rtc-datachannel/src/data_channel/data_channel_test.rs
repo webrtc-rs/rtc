@@ -220,7 +220,7 @@ fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
 /// Regression test for <https://github.com/webrtc-rs/rtc/issues/61>.
 #[test]
 fn test_data_channel_negotiated_dial_flags_message() -> Result<()> {
-    let (a0, _a1) = create_new_association_pair()?;
+    let (a0, a1) = create_new_association_pair()?;
     let stream_id = 42;
 
     let cfg = DataChannelConfig {
@@ -256,7 +256,7 @@ fn test_data_channel_negotiated_dial_flags_message() -> Result<()> {
     assert_eq!(dc.config(), &cfg);
 
     dc.close()?;
-    close_association_pair(a0, _a1);
+    close_association_pair(a0, a1);
 
     Ok(())
 }

@@ -26,6 +26,9 @@ pub struct DataChannelConfig {
 }
 
 /// DataChannelMessage is used for data sent over SCTP.
+// Note: #[non_exhaustive] is intentional — this crate is pre-1.0 (0.20.0-alpha)
+// and adding the `negotiated` field would otherwise be a semver-breaking change
+// for downstream code that constructs `DataChannelMessage` via struct literals.
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct DataChannelMessage {
