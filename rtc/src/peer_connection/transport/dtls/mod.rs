@@ -177,29 +177,25 @@ impl RTCDtlsTransport {
         }
 
         self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
+        let dtls_handshake_config = self.make_handshake_config(&remote_dtls_parameters)?;
         self.state_change(RTCDtlsTransportState::Connecting);
-        self.make_handshake_config(&remote_dtls_parameters)
+        Ok(dtls_handshake_config)
     }
 
-    /// Re-initialise the DTLS transport for re-handshake after a failed/lost session.
+    /// Re-initialise the DTLS transport for re-handshake after an ICE restart.
     ///
-    /// If DTLS is `Connected`, the existing session is kept alive — it survives ICE
-    /// restarts because the new ICE path is transparent to DTLS.  Only when DTLS is
-    /// `Failed`, `Closed`, or `Connecting` (handshake was in-flight and lost) is the
-    /// endpoint replaced so the next `ICESelectedCandidatePairChange` event triggers a
-    /// fresh handshake.  No-ops if state is `New` (initial `start_transports` handles it).
+    /// When DTLS is `Connected`, `Failed`, `Closed`, or `Connecting` (handshake was
+    /// in-flight and lost), the endpoint is replaced so the next
+    /// `ICESelectedCandidatePairChange` event triggers a fresh handshake.
+    /// No-ops if state is `New` (initial `start_transports` handles it).
     pub(crate) fn restart(
         &mut self,
         local_ice_role: RTCIceRole,
         remote_dtls_parameters: DTLSParameters,
     ) -> Result<()> {
-        match self.state {
+        if self.state == RTCDtlsTransportState::New {
             // Not started yet — initial start_transports handles this path.
-            RTCDtlsTransportState::New => return Ok(()),
-            // Session is live; keep it across the ICE restart transparently.
-            RTCDtlsTransportState::Connected => return Ok(()),
-            // Failed / Closed / Connecting-but-lost → rebuild and re-handshake.
-            _ => {}
+            return Ok(());
         }
 
         // Derive and update the role (may differ if ICE role swapped during restart).
@@ -220,6 +216,8 @@ impl RTCDtlsTransport {
             self.dtls_handshake_config = Some(dtls_handshake_config);
         } else {
             // Server: create a new accepting endpoint with the updated config.
+            // Clear any stale client handshake config from a previous role.
+            self.dtls_handshake_config = None;
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
                 TransportContext::default().local_addr,
                 TransportProtocol::UDP,
