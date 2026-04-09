@@ -138,7 +138,8 @@ impl HevcPayloader {
             if nalu.len() > u16::MAX as usize {
                 // Flush any accumulated normal NALUs as an AP (or single)
                 Self::flush_normal_nalus(&mut pending_normal, mtu, payloads);
-                // Emit the oversized NALU individually (FU fragmentation)
+                // Emit the oversized NALU individually via FU fragmentation;
+                // it cannot be placed in an AP because the 16-bit size field would overflow.
                 Self::emit(&nalu, mtu, payloads);
             } else {
                 pending_normal.push(nalu);

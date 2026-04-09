@@ -308,7 +308,7 @@ fn test_h264_oversized_sps_uses_fua_fragmentation() -> Result<()> {
     // This ensures we actually hit the `sps_nalu.len() > u16::MAX` branch.
     let mut sps_data = vec![0x67]; // NALU type 7, with ref_idc bits set
     sps_data.extend(vec![0xAA; 70_000]);
-    let sps = Bytes::from(sps_data);
+    let sps = Bytes::from(sps_data); // 70001 bytes, well above u16::MAX threshold
 
     let pps = Bytes::from_static(&[0x68, 0xCC, 0xDD]); // NALU type 8, with ref_idc bits
 

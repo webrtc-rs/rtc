@@ -1002,10 +1002,11 @@ fn test_h265_oversized_nalu_in_aggregation_buffer() -> Result<()> {
     nalu2.extend(vec![0xDD; 70_000]); // 70002 bytes total, exceeds u16::MAX
     payload.extend_from_slice(&nalu2);
 
-    let result = pck.payload(1500, &Bytes::from(payload))?;
+    let result = pck.payload(1500, &Bytes::from(payload))?; // packetize mixed-size NALUs
 
-    // NALU 1 (5 bytes) fits in MTU, emitted as single packet.
-    // NALU 2 (70002 bytes) exceeds u16::MAX, should be FU-fragmented.
+    // NALU 1 (5 bytes) fits in MTU, emitted as a single RTP packet.
+    // NALU 2 (70002 bytes) exceeds u16::MAX and cannot fit in an AP size field,
+    // so it must be FU-fragmented into multiple RTP packets.
     assert!(
         result.len() >= 2,
         "expected at least 2 packets (single + fragments), got {}",
@@ -1062,7 +1063,7 @@ fn test_h265_aggregation_header_excludes_oversized_nalus() -> Result<()> {
     let header = H265NALUHeader::new(result[0][0], result[0][1]);
     assert!(
         header.is_aggregation_packet(),
-        "first packet should be an aggregation packet containing only normal NALUs"
+        "first packet should be an AP containing only the two normal-sized NALUs"
     );
 
     // Remaining packets should be FU fragments of the oversized NALU

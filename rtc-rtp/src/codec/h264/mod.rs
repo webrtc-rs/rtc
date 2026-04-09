@@ -131,6 +131,7 @@ impl H264Payloader {
                 stap_a_nalu.extend(pps_len);
                 stap_a_nalu.extend_from_slice(&pps_nalu);
                 if stap_a_nalu.len() <= mtu {
+                    // STAP-A fits within MTU, emit as aggregate
                     payloads.push(Bytes::from(stap_a_nalu));
                 } else {
                     // STAP-A does not fit within the MTU; fall back to emitting
@@ -146,7 +147,7 @@ impl H264Payloader {
                 Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
                 Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
             }
-        } // else if self.sps_nalu.is_some() && self.pps_nalu.is_some()
+        } // end SPS+PPS STAP-A / fallback emission block
 
         if self.sps_nalu.is_some() && self.pps_nalu.is_some() {
             self.sps_nalu = None;
