@@ -284,6 +284,8 @@ pub enum Error {
     OneByteHeaderExtensionPayloadOutOfRange(usize),
     #[error("two-byte header extension payload length {0} exceeds maximum of 255 bytes")]
     TwoByteHeaderExtensionPayloadTooLarge(usize),
+    #[error("total extension payload length {0} exceeds u16::MAX (65535 bytes)")]
+    ExtensionPayloadTotalOverflow(usize),
     #[error("NALU length {0} exceeds u16::MAX (65535 bytes)")]
     NaluTooLarge(usize),
     #[error("audio level overflow")]

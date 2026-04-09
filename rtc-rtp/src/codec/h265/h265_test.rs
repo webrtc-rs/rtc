@@ -1078,11 +1078,10 @@ fn test_h265_aggregation_header_excludes_oversized_nalus() -> Result<()> {
     Ok(())
 }
 
-/// flush_aggregation_buffer with a single in-MTU NALU should emit it
-/// as-is after stripping the Annex-B start code, not wrap it in an
-/// aggregation packet.
+/// A single oversized NALU (> MTU) passed through flush_aggregation_buffer
+/// should be FU-fragmented into multiple packets via emit().
 #[test]
-fn test_h265_flush_single_nalu_passthrough() -> Result<()> {
+fn test_h265_flush_single_oversized_nalu_fu_fragmentation() -> Result<()> {
     let mut pck = HevcPayloader::default();
 
     // Single NALU larger than MTU to trigger FU fragmentation. This tests

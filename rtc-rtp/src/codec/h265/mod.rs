@@ -127,6 +127,11 @@ impl HevcPayloader {
         // NALUs into an AP, but when an oversized NALU (> u16::MAX) is
         // encountered, flush the current AP first, then emit the oversized
         // NALU individually (it will be FU-fragmented).
+        //
+        // Defense-in-depth: In practice, payload() sends any nalu.len() > mtu
+        // directly to emit() before it reaches this buffer, so the u16::MAX
+        // branch below is currently unreachable (MTU << u16::MAX). The check
+        // is retained to guard against future callers or MTU changes.
         let mut pending_normal: Vec<Bytes> = Vec::new();
 
         for nalu in nalus.drain(..) {
