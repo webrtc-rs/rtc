@@ -137,7 +137,7 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
         if let Packet::Rtp(ref rtp) = msg.message
             && let Some(stream) = self.streams.get_mut(&rtp.header.ssrc)
         {
-            // insert() returns false only for already-released sequences; drop those.
+            // insert() returns false for already-released sequences or duplicates; drop those.
             stream.insert(msg.now, msg);
             return Ok(());
         }
