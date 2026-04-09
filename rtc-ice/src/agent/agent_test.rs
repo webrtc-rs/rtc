@@ -2486,3 +2486,76 @@ fn test_candidate_type_filtering() -> Result<()> {
     agent.close()?;
     Ok(())
 }
+
+// Verify that check_keepalive sends a STUN ping even when media traffic has
+// recently updated the candidate timestamps (RFC 7675).
+#[test]
+fn test_keepalive_sent_during_media_flow() -> Result<()> {
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+
+    // Set up a selected pair
+    let host_local = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.1.1".to_owned(),
+            port: 19216,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(host_local)?;
+
+    let relay_remote = CandidateRelayConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "1.2.3.4".to_owned(),
+            port: 12340,
+            component: 1,
+            ..Default::default()
+        },
+        rel_addr: "4.3.2.1".to_owned(),
+        rel_port: 43210,
+        ..Default::default()
+    }
+    .new_candidate_relay()?;
+    a.add_remote_candidate(relay_remote)?;
+
+    a.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "remoteufrag".to_string(),
+        pwd: "remotepwd".to_string(),
+    });
+    a.is_controlling = true;
+
+    a.add_pair(0, 0);
+    a.set_selected_pair(Some(0));
+
+    // Simulate recent media activity on both candidates
+    a.local_candidates[0].seen(true);
+    a.remote_candidates[0].seen(false);
+
+    // Pretend the last consent ping was long ago such that the interval has elapsed
+    a.last_consent_sent = Instant::now() - Duration::from_secs(10);
+
+    // Drain any events/writes from setup
+    a.write_outs.clear();
+
+    // First call should send a consent ping immediately
+    a.check_keepalive();
+    assert!(
+        !a.write_outs.is_empty(),
+        "check_keepalive must send a STUN ping even when media timestamps are fresh"
+    );
+
+    // Drain and call again; interval hasn't elapsed, so no second ping
+    a.write_outs.clear();
+    a.check_keepalive();
+    assert!(
+        a.write_outs.is_empty(),
+        "check_keepalive must not send again before keepalive_interval elapses"
+    );
+
+    a.close()?;
+    Ok(())
+}

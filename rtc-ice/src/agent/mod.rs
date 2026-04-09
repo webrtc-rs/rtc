@@ -134,6 +134,8 @@ pub struct Agent {
     // How often should we send keepalive packets?
     // 0 means never
     pub(crate) keepalive_interval: Duration,
+    // When the last STUN consent ping was sent.
+    pub(crate) last_consent_sent: Instant,
     // How often should we run our internal taskLoop to check for state changes when connecting
     pub(crate) check_interval: Duration,
     pub(crate) checking_duration: Instant,
@@ -179,6 +181,7 @@ impl Default for Agent {
             disconnected_timeout: Default::default(),
             failed_timeout: Default::default(),
             keepalive_interval: Default::default(),
+            last_consent_sent: Instant::now(),
             check_interval: Default::default(),
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
@@ -322,6 +325,7 @@ impl Agent {
             } else {
                 config.check_interval
             },
+            last_consent_sent: Instant::now(),
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
             last_connection_state: ConnectionState::Unspecified,
@@ -875,9 +879,8 @@ impl Agent {
         valid
     }
 
-    /// Sends STUN Binding Indications to the selected pair.
-    /// if no packet has been sent on that pair in the last keepaliveInterval.
-    /// Note: the caller should hold the agent lock.
+    /// Sends STUN Binding Requests to the selected pair at `keepalive_interval` to
+    /// maintain consent freshness (RFC 7675).
     pub(crate) fn check_keepalive(&mut self) {
         let (local_index, remote_index, pair_index) = {
             self.selected_pair
@@ -890,23 +893,12 @@ impl Agent {
 
         if let (Some(local_index), Some(remote_index), Some(pair_index)) =
             (local_index, remote_index, pair_index)
+            && self.keepalive_interval != Duration::from_secs(0)
+            && self.last_consent_sent.elapsed() >= self.keepalive_interval
         {
-            let last_sent =
-                Instant::now().duration_since(self.local_candidates[local_index].last_sent());
-
-            let last_received =
-                Instant::now().duration_since(self.remote_candidates[remote_index].last_received());
-
-            if (self.keepalive_interval != Duration::from_secs(0))
-                && ((last_sent > self.keepalive_interval)
-                    || (last_received > self.keepalive_interval))
-            {
-                // we use binding request instead of indication to support refresh consent schemas
-                // see https://tools.ietf.org/html/rfc7675
-                // Track consent request sent
-                self.candidate_pairs[pair_index].on_consent_request_sent();
-                self.ping_candidate(local_index, remote_index);
-            }
+            self.last_consent_sent = Instant::now();
+            self.candidate_pairs[pair_index].on_consent_request_sent();
+            self.ping_candidate(local_index, remote_index);
         }
     }
 
