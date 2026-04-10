@@ -180,12 +180,14 @@ use std::time::Instant;
 mod noop;
 mod registry;
 
+pub(crate) mod gcc;
 pub(crate) mod jitter_buffer;
 pub(crate) mod nack;
 pub(crate) mod report;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use gcc::{GccHandle, GccInterceptorBuilder};
 pub use jitter_buffer::{JitterBufferBuilder, JitterBufferInterceptor};
 pub use nack::{
     generator::{NackGeneratorBuilder, NackGeneratorInterceptor},
