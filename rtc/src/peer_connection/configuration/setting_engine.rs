@@ -172,7 +172,9 @@ impl Default for MulticastDNS {
     fn default() -> Self {
         Self {
             timeout: Some(Duration::from_secs(10)),
-            mode: MulticastDnsMode::Disabled, //TODO: Re-enable it to QueryOnly
+            // mDNS is opt-in: callers enable it via set_multicast_dns_mode().
+            // Any async wrapper must also be configured to create and bind the multicast socket.
+            mode: MulticastDnsMode::Disabled,
             local_name: "".to_string(),
             local_ip: None,
         }

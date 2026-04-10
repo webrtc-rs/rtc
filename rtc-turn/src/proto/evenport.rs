@@ -34,7 +34,9 @@ impl fmt::Display for EvenPort {
 }
 
 const EVEN_PORT_SIZE: usize = 1;
-const FIRST_BIT_SET: u8 = 0b10000000; //FIXME? (1 << 8) - 1;
+// RFC 5766 §14.6: only the most-significant bit (R flag) is meaningful;
+// remaining bits are reserved and must be zero.  0b10000000 = 1 << 7 is correct.
+const FIRST_BIT_SET: u8 = 0b10000000;
 
 impl Setter for EvenPort {
     /// Adds `EVEN-PORT` to message.
