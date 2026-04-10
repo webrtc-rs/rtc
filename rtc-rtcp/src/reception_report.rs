@@ -29,6 +29,12 @@ pub struct ReceptionReport {
     pub fraction_lost: u8,
     /// The total number of RTP data packets from source SSRC that have
     /// been lost since the beginning of reception.
+    ///
+    /// RFC 3550 §6.4.1 defines this as a signed 24-bit integer on the wire
+    /// (negative values can occur when duplicates arrive).  We store it as
+    /// `u32` and clamp to `0x7F_FFFF` so the sign bit stays clear during
+    /// serialisation.  A future revision may switch to `i32` to fully
+    /// represent the negative-loss (duplicate) case.
     pub total_lost: u32,
     /// The least significant 16 bits contain the highest sequence number received
     /// in an RTP data packet from source SSRC, and the most significant 16 bits extend
@@ -116,8 +122,9 @@ impl Marshal for ReceptionReport {
 
         buf.put_u8(self.fraction_lost);
 
-        // pack TotalLost into 24 bits
-        if self.total_lost >= (1 << 25) {
+        // Pack TotalLost into 24 bits (RFC 3550 §6.4.1).
+        // Values above 0xFF_FFFF cannot be represented in 24 bits.
+        if self.total_lost > 0xFF_FFFF {
             return Err(Error::InvalidTotalLost);
         }
 

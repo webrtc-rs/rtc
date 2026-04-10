@@ -191,7 +191,31 @@ fn test_receiver_report_roundtrip() {
             None,
         ),
         (
-            "totallost overflow",
+            "totallost at 24-bit max",
+            ReceiverReport {
+                ssrc: 1,
+                reports: vec![ReceptionReport {
+                    total_lost: 0xFF_FFFF,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            None,
+        ),
+        (
+            "totallost overflow at 24-bit boundary",
+            ReceiverReport {
+                ssrc: 1,
+                reports: vec![ReceptionReport {
+                    total_lost: 0x100_0000,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            Some(Error::InvalidTotalLost),
+        ),
+        (
+            "totallost overflow large",
             ReceiverReport {
                 ssrc: 1,
                 reports: vec![ReceptionReport {
