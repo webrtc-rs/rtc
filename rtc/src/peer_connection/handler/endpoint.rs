@@ -1075,15 +1075,15 @@ mod tests {
             0,
         );
 
-        // Simulate the rrid branch: directly call register_rtx_ssrc as the
+        // Simulate the rrid branch: directly call update_inbound_rtx_ssrc as the
         // endpoint handler would after processing an rrid header extension.
-        stats.register_rtx_ssrc(RTX_SSRC, PRIMARY_SSRC);
+        stats.update_inbound_rtx_ssrc(PRIMARY_SSRC, RTX_SSRC);
 
         // Now on_rtx_packet_received_if_rtx should find the RTX SSRC
         let tracked = stats.on_rtx_packet_received_if_rtx(RTX_SSRC, 100);
         assert!(
             tracked,
-            "RTX packets must be tracked after register_rtx_ssrc"
+            "RTX packets must be tracked after update_inbound_rtx_ssrc"
         );
     }
 
