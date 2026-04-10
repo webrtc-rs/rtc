@@ -1,0 +1,73 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Run criterion benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-bench-
+
+      - name: Run benchmarks (rtc-rtp)
+        run: cargo bench -p rtc-rtp -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-rtcp)
+        run: cargo bench -p rtc-rtcp -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-stun)
+        run: cargo bench -p rtc-stun -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-sdp)
+        run: cargo bench -p rtc-sdp -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-srtp)
+        run: cargo bench -p rtc-srtp -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-turn)
+        run: cargo bench -p rtc-turn -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Run benchmarks (rtc-media)
+        run: cargo bench -p rtc-media -- --output-format bencher | tee -a bench-all.txt
+
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        with:
+          name: WebRTC-RS Criterion Benchmarks
+          tool: cargo
+          output-file-path: bench-all.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          # Alert if performance degrades by more than 10%
+          alert-threshold: '110%'
+          comment-on-alert: true
+          fail-on-alert: false
+          benchmark-data-dir-path: docs/benchmarks

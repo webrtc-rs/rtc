@@ -1,0 +1,68 @@
+name: Fuzz
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration per target in seconds'
+        required: false
+        default: '30'
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: ${{ github.event.inputs.duration || '30' }}
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - rtc-dtls
+          - rtc-sctp
+          - rtc-rtcp
+          - rtc-sdp
+          - rtc-stun
+          - rtc-rtp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain (required by cargo-fuzz)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-fuzz-${{ matrix.crate }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-fuzz-${{ matrix.crate }}-
+
+      - name: Run fuzz targets (${{ matrix.crate }})
+        working-directory: ${{ matrix.crate }}/fuzz
+        run: |
+          TARGETS=$(cargo fuzz list)
+          for TARGET in $TARGETS; do
+            echo "==> Fuzzing $TARGET for ${FUZZ_DURATION}s"
+            cargo fuzz run "$TARGET" -- \
+              -max_total_time="${FUZZ_DURATION}" \
+              -error_exitcode=77 \
+              2>&1 | tail -5
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.crate }}
+          path: ${{ matrix.crate }}/fuzz/artifacts/**
+          if-no-files-found: ignore
