@@ -48,7 +48,7 @@ impl JitterBufferStream {
             last_arrival: Instant::now(),
             jitter: 0.0,
             started: false,
-            target_delay: initial_delay,
+            target_delay: initial_delay.max(min_delay).min(max_delay),
             min_delay,
             max_delay,
         }
@@ -329,5 +329,45 @@ mod tests {
         let wake = s.next_wake_time().expect("should have a wake time");
         // Wake time should be <= arrival + max_delay
         assert!(wake <= now + max + Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_initial_delay_clamped_to_bounds() {
+        let min = Duration::from_millis(20);
+        let max = Duration::from_millis(200);
+
+        // initial_delay above max_delay should be clamped down to max_delay
+        let s_high = JitterBufferStream::new(
+            90000,
+            None,
+            Duration::from_secs(5), // way above max
+            min,
+            max,
+        );
+        assert_eq!(
+            s_high.target_delay, max,
+            "initial_delay above max_delay must be clamped to max_delay"
+        );
+
+        // initial_delay below min_delay should be clamped up to min_delay
+        let s_low = JitterBufferStream::new(
+            90000,
+            None,
+            Duration::from_millis(1), // below min
+            min,
+            max,
+        );
+        assert_eq!(
+            s_low.target_delay, min,
+            "initial_delay below min_delay must be clamped to min_delay"
+        );
+
+        // initial_delay within bounds should be unchanged
+        let mid = Duration::from_millis(100);
+        let s_mid = JitterBufferStream::new(90000, None, mid, min, max);
+        assert_eq!(
+            s_mid.target_delay, mid,
+            "initial_delay within bounds must be unchanged"
+        );
     }
 }
