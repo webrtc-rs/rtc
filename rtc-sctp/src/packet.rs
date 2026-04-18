@@ -133,38 +133,23 @@ impl PartialDecode {
                 return Err(Error::ErrParseSctpChunkNotEnoughData);
             }
 
+            let chunk_buf = slice_chunk(&self.remaining, offset)?;
             let ct = ChunkType(self.remaining[offset]);
             let c: Box<dyn Chunk> = match ct {
-                CT_INIT => Box::new(ChunkInit::unmarshal(&self.remaining.slice(offset..))?),
-                CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&self.remaining.slice(offset..))?),
-                CT_ABORT => Box::new(ChunkAbort::unmarshal(&self.remaining.slice(offset..))?),
-                CT_COOKIE_ECHO => {
-                    Box::new(ChunkCookieEcho::unmarshal(&self.remaining.slice(offset..))?)
-                }
-                CT_COOKIE_ACK => {
-                    Box::new(ChunkCookieAck::unmarshal(&self.remaining.slice(offset..))?)
-                }
-                CT_HEARTBEAT => {
-                    Box::new(ChunkHeartbeat::unmarshal(&self.remaining.slice(offset..))?)
-                }
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(
-                    &self.remaining.slice(offset..),
-                )?),
-                CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(
-                    &self.remaining.slice(offset..),
-                )?),
-                CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&self.remaining.slice(offset..))?),
-                CT_FORWARD_TSN => {
-                    Box::new(ChunkForwardTsn::unmarshal(&self.remaining.slice(offset..))?)
-                }
-                CT_ERROR => Box::new(ChunkError::unmarshal(&self.remaining.slice(offset..))?),
-                CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&self.remaining.slice(offset..))?),
-                CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(
-                    &self.remaining.slice(offset..),
-                )?),
-                CT_SHUTDOWN_COMPLETE => Box::new(ChunkShutdownComplete::unmarshal(
-                    &self.remaining.slice(offset..),
-                )?),
+                CT_INIT => Box::new(ChunkInit::unmarshal(&chunk_buf)?),
+                CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&chunk_buf)?),
+                CT_ABORT => Box::new(ChunkAbort::unmarshal(&chunk_buf)?),
+                CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
+                CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
+                CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
+                CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
+                CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN_COMPLETE => Box::new(ChunkShutdownComplete::unmarshal(&chunk_buf)?),
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
@@ -178,6 +163,17 @@ impl PartialDecode {
             chunks,
         })
     }
+}
+
+fn slice_chunk(raw: &Bytes, offset: usize) -> Result<Bytes> {
+    let chunk_length = u16::from_be_bytes([raw[offset + 2], raw[offset + 3]]) as usize;
+    if chunk_length < CHUNK_HEADER_SIZE {
+        return Err(Error::ErrChunkHeaderInvalidLength);
+    }
+    if offset + chunk_length > raw.len() {
+        return Err(Error::ErrChunkHeaderNotEnoughSpace);
+    }
+    Ok(raw.slice(offset..offset + chunk_length))
 }
 
 #[derive(Default, Debug)]
@@ -234,24 +230,23 @@ impl Packet {
                 return Err(Error::ErrParseSctpChunkNotEnoughData);
             }
 
+            let chunk_buf = slice_chunk(raw, offset)?;
             let ct = ChunkType(raw[offset]);
             let c: Box<dyn Chunk> = match ct {
-                CT_INIT => Box::new(ChunkInit::unmarshal(&raw.slice(offset..))?),
-                CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&raw.slice(offset..))?),
-                CT_ABORT => Box::new(ChunkAbort::unmarshal(&raw.slice(offset..))?),
-                CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&raw.slice(offset..))?),
-                CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&raw.slice(offset..))?),
-                CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&raw.slice(offset..))?),
-                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&raw.slice(offset..))?),
-                CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&raw.slice(offset..))?),
-                CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&raw.slice(offset..))?),
-                CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&raw.slice(offset..))?),
-                CT_ERROR => Box::new(ChunkError::unmarshal(&raw.slice(offset..))?),
-                CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&raw.slice(offset..))?),
-                CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&raw.slice(offset..))?),
-                CT_SHUTDOWN_COMPLETE => {
-                    Box::new(ChunkShutdownComplete::unmarshal(&raw.slice(offset..))?)
-                }
+                CT_INIT => Box::new(ChunkInit::unmarshal(&chunk_buf)?),
+                CT_INIT_ACK => Box::new(ChunkInit::unmarshal(&chunk_buf)?),
+                CT_ABORT => Box::new(ChunkAbort::unmarshal(&chunk_buf)?),
+                CT_COOKIE_ECHO => Box::new(ChunkCookieEcho::unmarshal(&chunk_buf)?),
+                CT_COOKIE_ACK => Box::new(ChunkCookieAck::unmarshal(&chunk_buf)?),
+                CT_HEARTBEAT => Box::new(ChunkHeartbeat::unmarshal(&chunk_buf)?),
+                CT_PAYLOAD_DATA => Box::new(ChunkPayloadData::unmarshal(&chunk_buf)?),
+                CT_SACK => Box::new(ChunkSelectiveAck::unmarshal(&chunk_buf)?),
+                CT_RECONFIG => Box::new(ChunkReconfig::unmarshal(&chunk_buf)?),
+                CT_FORWARD_TSN => Box::new(ChunkForwardTsn::unmarshal(&chunk_buf)?),
+                CT_ERROR => Box::new(ChunkError::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN => Box::new(ChunkShutdown::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN_ACK => Box::new(ChunkShutdownAck::unmarshal(&chunk_buf)?),
+                CT_SHUTDOWN_COMPLETE => Box::new(ChunkShutdownComplete::unmarshal(&chunk_buf)?),
                 _ => return Err(Error::ErrUnmarshalUnknownChunkType),
             };
 
@@ -474,6 +469,95 @@ mod test {
             );
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_unmarshal_variable_length_chunks_followed_by_other_chunks() -> Result<()> {
+        use crate::chunk::chunk_payload_data::PayloadProtocolIdentifier;
+        use crate::chunk::{ErrorCause, PROTOCOL_VIOLATION, UNRECOGNIZED_CHUNK_TYPE};
+
+        let original = Packet {
+            common_header: CommonHeader {
+                source_port: 5000,
+                destination_port: 5000,
+                verification_tag: 0xdeadbeef,
+            },
+            chunks: vec![
+                Box::new(ChunkForwardTsn {
+                    new_cumulative_tsn: 3,
+                    streams: vec![],
+                }),
+                Box::new(ChunkAbort {
+                    error_causes: vec![ErrorCause {
+                        code: PROTOCOL_VIOLATION,
+                        ..Default::default()
+                    }],
+                }),
+                Box::new(ChunkError {
+                    error_causes: vec![ErrorCause {
+                        code: UNRECOGNIZED_CHUNK_TYPE,
+                        raw: Bytes::from_static(&[0xc0, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x03]),
+                    }],
+                }),
+                Box::new(ChunkShutdown {
+                    cumulative_tsn_ack: 0x12345678,
+                }),
+                Box::new(ChunkPayloadData {
+                    unordered: true,
+                    beginning_fragment: true,
+                    ending_fragment: true,
+                    tsn: 4,
+                    stream_identifier: 1,
+                    payload_type: PayloadProtocolIdentifier::Binary,
+                    user_data: Bytes::from_static(&[0xaa, 0xbb, 0xcc, 0xdd]),
+                    ..Default::default()
+                }),
+            ],
+        };
+        let raw = original.marshal()?;
+        let parsed = Packet::unmarshal(&raw)?;
+
+        assert_eq!(parsed.chunks.len(), 5);
+
+        let fwd = parsed.chunks[0]
+            .as_any()
+            .downcast_ref::<ChunkForwardTsn>()
+            .expect("chunks[0] should be FORWARD-TSN");
+        assert_eq!(fwd.new_cumulative_tsn, 3);
+        assert!(fwd.streams.is_empty());
+
+        let abort = parsed.chunks[1]
+            .as_any()
+            .downcast_ref::<ChunkAbort>()
+            .expect("chunks[1] should be ABORT");
+        assert_eq!(abort.error_causes.len(), 1);
+        assert_eq!(abort.error_causes[0].error_cause_code(), PROTOCOL_VIOLATION);
+
+        let err = parsed.chunks[2]
+            .as_any()
+            .downcast_ref::<ChunkError>()
+            .expect("chunks[2] should be ERROR");
+        assert_eq!(err.error_causes.len(), 1);
+        assert_eq!(
+            err.error_causes[0].error_cause_code(),
+            UNRECOGNIZED_CHUNK_TYPE
+        );
+
+        let shutdown = parsed.chunks[3]
+            .as_any()
+            .downcast_ref::<ChunkShutdown>()
+            .expect("chunks[3] should be SHUTDOWN");
+        assert_eq!(shutdown.cumulative_tsn_ack, 0x12345678);
+
+        let data = parsed.chunks[4]
+            .as_any()
+            .downcast_ref::<ChunkPayloadData>()
+            .expect("chunks[4] should be DATA");
+        assert_eq!(data.tsn, 4);
+        assert_eq!(data.stream_identifier, 1);
+        assert_eq!(data.payload_type, PayloadProtocolIdentifier::Binary);
+        assert_eq!(&data.user_data[..], &[0xaa, 0xbb, 0xcc, 0xdd]);
         Ok(())
     }
 }
