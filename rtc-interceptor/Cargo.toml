@@ -20,5 +20,6 @@ rtp.workspace = true
 rtcp.workspace = true
 rand.workspace = true
 log.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
