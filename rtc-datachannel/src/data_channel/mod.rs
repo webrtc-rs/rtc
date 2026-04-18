@@ -25,13 +25,41 @@ pub struct DataChannelConfig {
     pub protocol: String,
 }
 
-/// DataChannelMessage is used to data sent over SCTP
+/// DataChannelMessage is used for data sent over SCTP.
+// Note: #[non_exhaustive] is intentional — this crate is pre-1.0 (0.20.0-alpha)
+// and adding the `negotiated` field would otherwise be a semver-breaking change
+// for downstream code that constructs `DataChannelMessage` via struct literals.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone)]
 pub struct DataChannelMessage {
     pub association_handle: usize,
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
     pub payload: BytesMut,
+    /// When `true`, the channel was created via out-of-band (pre-negotiated)
+    /// negotiation.  The SCTP handler opens the stream but does **not** send
+    /// the DCEP open message over the wire, because both peers already agree
+    /// on the channel parameters.
+    pub negotiated: bool,
+}
+
+impl DataChannelMessage {
+    /// Creates a new `DataChannelMessage` with all fields specified.
+    pub fn new(
+        association_handle: usize,
+        stream_id: u16,
+        ppi: PayloadProtocolIdentifier,
+        payload: BytesMut,
+        negotiated: bool,
+    ) -> Self {
+        Self {
+            association_handle,
+            stream_id,
+            ppi,
+            payload,
+            negotiated,
+        }
+    }
 }
 
 /// DataChannel represents a data channel
@@ -52,6 +80,8 @@ pub struct DataChannel {
 }
 
 impl DataChannel {
+    /// Creates a new `DataChannel` with the given configuration, association
+    /// handle, and SCTP stream identifier.  Counters start at zero.
     fn new(config: DataChannelConfig, association_handle: usize, stream_id: u16) -> Self {
         Self {
             config,
@@ -63,7 +93,12 @@ impl DataChannel {
         }
     }
 
-    /// Dial opens a data channels over SCTP
+    /// Dial opens a data channel over SCTP.
+    ///
+    /// A DCEP `DataChannelOpen` message is always constructed so that the SCTP
+    /// handler registers the underlying stream.  For **in-band** channels the
+    /// message is also sent over the wire (RFC 8832 sec. 3); for
+    /// **pre-negotiated** channels it stays internal-only (see issue #61).
     pub fn dial(
         config: DataChannelConfig,
         association_handle: usize,
@@ -71,23 +106,34 @@ impl DataChannel {
     ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
-        if !config.negotiated {
-            let msg = Message::DataChannelOpen(DataChannelOpen {
-                channel_type: config.channel_type,
-                priority: config.priority,
-                reliability_parameter: config.reliability_parameter,
-                label: config.label.bytes().collect(),
-                protocol: config.protocol.bytes().collect(),
-            })
-            .marshal()?;
+        // Build a DCEP DataChannelOpen that the SCTP handler intercepts to
+        // register the underlying SCTP stream.
+        //
+        // For in-band channels (negotiated=false) the message is also sent over
+        // the wire to initiate the DCEP handshake per RFC 8832 sec. 3.
+        //
+        // For pre-negotiated channels (negotiated=true) the message is
+        // internal-only: the SCTP handler opens the stream and sets its
+        // reliability parameters but does NOT send DCEP to the peer.  Without
+        // this the SCTP association never registers the stream, causing every
+        // subsequent write to fail with "Stream not existed" (issue #61).
+        let msg = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: config.channel_type,
+            priority: config.priority,
+            reliability_parameter: config.reliability_parameter,
+            label: config.label.bytes().collect(),
+            protocol: config.protocol.bytes().collect(),
+        })
+        .marshal()?;
 
-            data_channel.write_outs.push_back(DataChannelMessage {
-                association_handle,
-                stream_id,
-                ppi: PayloadProtocolIdentifier::Dcep,
-                payload: msg,
-            });
-        }
+        data_channel.write_outs.push_back(DataChannelMessage {
+            association_handle,
+            stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: msg,
+            // Forward the negotiated flag so the SCTP handler can skip the DCEP write.
+            negotiated: config.negotiated,
+        });
 
         Ok(data_channel)
     }
@@ -189,6 +235,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: ack,
+            ..Default::default()
         });
         Ok(())
     }
@@ -200,6 +247,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: close,
+            ..Default::default()
         });
         Ok(())
     }
@@ -212,6 +260,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            ..Default::default()
         });
         Ok(())
     }
@@ -224,6 +273,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            ..Default::default()
         });
         Ok(())
     }

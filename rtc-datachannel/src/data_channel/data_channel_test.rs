@@ -208,6 +208,100 @@ fn test_data_channel_channel_type_reliable_ordered() -> Result<()> {
     Ok(())
 }
 
+/// Pre-negotiated (out-of-band) channels rely on the `SctpHandler` to suppress
+/// the DCEP DataChannelOpen payload on the wire.  This test verifies the
+/// `dial()` side of that contract: the outbound `DataChannelMessage` must carry
+/// `negotiated = true` so the SCTP handler knows to open the stream without
+/// sending the DCEP payload to the remote peer.
+///
+/// Note: the handler-side suppression is exercised by integration tests in the
+/// `rtc` crate; this unit test only covers the flagging produced by `dial()`.
+///
+/// Regression test for <https://github.com/webrtc-rs/rtc/issues/61>.
+#[test]
+fn test_data_channel_negotiated_dial_flags_message() -> Result<()> {
+    let (a0, a1) = create_new_association_pair()?;
+    let stream_id = 42;
+
+    let cfg = DataChannelConfig {
+        channel_type: ChannelType::Reliable,
+        negotiated: true,
+        label: "negotiated-ch".to_string(),
+        protocol: "test-proto".to_string(),
+        ..Default::default()
+    };
+
+    let mut dc = DataChannel::dial(cfg.clone(), a0, stream_id)?;
+
+    // dial() must still produce exactly one outbound DCEP message so the SCTP
+    // handler can register the stream.
+    let msg = dc.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
+    assert_eq!(msg.ppi, PayloadProtocolIdentifier::Dcep);
+    assert_eq!(msg.stream_id, stream_id);
+
+    // The message must be flagged as negotiated so the SCTP handler opens the
+    // stream but does NOT send the DCEP payload to the peer.
+    assert!(
+        msg.negotiated,
+        "negotiated DataChannelOpen must be marked as internal-only"
+    );
+
+    // No further outbound messages should be queued.
+    assert!(
+        dc.poll_write().is_none(),
+        "negotiated dial should produce exactly one outbound message"
+    );
+
+    // Verify the config round-trips correctly.
+    assert_eq!(dc.config(), &cfg);
+
+    dc.close()?;
+    close_association_pair(a0, a1);
+
+    Ok(())
+}
+
+/// Non-negotiated (in-band) channels must send a regular DCEP DataChannelOpen
+/// that can be accepted by the peer.
+#[test]
+fn test_data_channel_non_negotiated_sends_dcep() -> Result<()> {
+    let (a0, a1) = create_new_association_pair()?;
+
+    let cfg = DataChannelConfig {
+        channel_type: ChannelType::Reliable,
+        negotiated: false,
+        label: "in-band".to_string(),
+        ..Default::default()
+    };
+
+    let mut dc0 = DataChannel::dial(cfg.clone(), a0, 100)?;
+
+    let msg = dc0.poll_write().ok_or(Error::ErrAssociationNotExisted)?;
+    assert_eq!(msg.ppi, PayloadProtocolIdentifier::Dcep);
+    // In-band channel: negotiated flag must be false so the SCTP handler sends
+    // the DCEP payload over the wire.
+    assert!(
+        !msg.negotiated,
+        "in-band DataChannelOpen must NOT be marked as internal-only"
+    );
+
+    // The peer should be able to accept this DCEP message.
+    let mut dc1 = DataChannel::accept(
+        DataChannelConfig::default(),
+        a1,
+        msg.stream_id,
+        PayloadProtocolIdentifier::Dcep,
+        &msg.payload,
+    )?;
+    assert_eq!(dc1.config(), &cfg, "remote config should match");
+
+    dc0.close()?;
+    dc1.close()?;
+    close_association_pair(a0, a1);
+
+    Ok(())
+}
+
 /*
 #[tokio::test]
 async fn test_data_channel_channel_type_reliable_unordered() -> Result<()> {
