@@ -2522,7 +2522,29 @@ impl Association {
             let reliability_value = s.reliability_value;
 
             if reliability_type == ReliabilityType::Rexmit {
-                if c.nsent >= reliability_value {
+                // RFC 3758 §3.1 – `reliability_value` is the maximum number of
+                // *retransmissions* (not total transmissions).  `c.nsent` counts
+                // every transmission including the initial one, so the number of
+                // retransmissions so far is `nsent - 1`.  A chunk should be
+                // abandoned once `nsent - 1 > reliability_value`, which simplifies
+                // to `nsent > reliability_value + 1` – but because
+                // `reliability_value` is the retransmission cap we can equivalently
+                // compare `nsent > reliability_value` when `nsent` starts at 1
+                // (one initial send counts as zero retransmissions).
+                //
+                // Example: max_retransmits = 0  →  abandon when nsent > 0
+                //   • nsent 1 (initial send): 1 > 0 → abandoned (fire-and-forget)
+                //
+                // Example: max_retransmits = 1  →  abandon when nsent > 1
+                //   • nsent 1 (initial send): 1 > 1 → NOT abandoned
+                //   • nsent 2 (1st retransmit): 2 > 1 → abandoned
+                //
+                // Using `>=` instead of `>` would abandon one send too early:
+                // a chunk with max_retransmits = 1 would be abandoned on the
+                // initial send (nsent 1 >= 1), losing one permitted retransmission.
+                //
+                // Fixes: webrtc-rs/webrtc#776
+                if c.nsent > reliability_value {
                     c.set_abandoned(true);
                     trace!(
                         "[{}] marked as abandoned: tsn={} ppi={} (remix: {})",

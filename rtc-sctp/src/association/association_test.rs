@@ -460,3 +460,162 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
 
     Ok(())
 }
+
+/// Regression test for the PR-SCTP `max_retransmits` off-by-one fix.
+///
+/// In production code, `nsent` is set to 1 on the initial send and incremented
+/// before each retransmission, so it always represents the total number of
+/// transmissions (initial + retransmissions).  `reliability_value` equals
+/// `max_retransmits`, which is a *retransmission* cap (not a total-send cap).
+///
+/// The correct comparison is `nsent > reliability_value`:
+///   - `max_retransmits=0` (fire-and-forget): abandon when nsent > 0,
+///     i.e. immediately after the initial send (nsent=1).  No retransmissions.
+///   - `max_retransmits=1`: abandon when nsent > 1, i.e. after the initial
+///     send plus one retransmission (nsent=2).
+///
+/// The old `>=` comparison abandoned one send too early: with
+/// `max_retransmits=1`, the chunk was abandoned at nsent=1 (the initial send),
+/// preventing the one permitted retransmission.
+///
+/// All `nsent` values used here mirror real call-site values (nsent >= 1).
+#[test]
+fn test_check_partial_reliability_rexmit_boundary() {
+    let now = Instant::now();
+    let side = Side::Client;
+
+    // Build a streams map with a single stream using Rexmit reliability.
+    let make_streams = |reliability_value: u32| -> HashMap<u16, StreamState> {
+        let mut streams = HashMap::new();
+        let mut ss = StreamState::new(side, 0, 1400, PayloadProtocolIdentifier::Binary);
+        ss.reliability_type = ReliabilityType::Rexmit;
+        ss.reliability_value = reliability_value;
+        streams.insert(0, ss);
+        streams
+    };
+
+    // Helper: create a chunk with the given nsent value (mirrors production
+    // where nsent is always >= 1 when check_partial_reliability_status is
+    // called).
+    let make_chunk = |nsent: u32| -> ChunkPayloadData {
+        ChunkPayloadData {
+            stream_identifier: 0,
+            nsent,
+            ..Default::default()
+        }
+    };
+
+    // --- max_retransmits = 0 (fire-and-forget) ---
+    // Abandon when nsent > 0.  The initial send (nsent=1) already exceeds the
+    // limit, so the chunk is abandoned immediately -- no retransmissions.
+    let streams = make_streams(0);
+
+    // nsent=1: initial send.  1 > 0 is true → abandoned.
+    let mut c = make_chunk(1);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        c.abandoned,
+        "max_retransmits=0, nsent=1: must abandon (fire-and-forget, no retransmissions)"
+    );
+
+    // --- max_retransmits = 1 ---
+    // Abandon when nsent > 1.  The initial send is allowed, plus one
+    // retransmission, so abandonment happens at nsent=2.
+    let streams = make_streams(1);
+
+    // nsent=1: initial send only.  1 > 1 is false → NOT abandoned.
+    // KEY REGRESSION ASSERTION: with `>=`, this would be 1 >= 1 → true,
+    // incorrectly abandoning before the permitted retransmission.
+    let mut c = make_chunk(1);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "max_retransmits=1, nsent=1: must NOT abandon (initial send, retransmission still allowed)"
+    );
+
+    // nsent=2: initial + 1 retransmission.  2 > 1 is true → abandoned.
+    let mut c = make_chunk(2);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        c.abandoned,
+        "max_retransmits=1, nsent=2: must abandon (retransmission limit reached)"
+    );
+
+    // --- max_retransmits = 2 ---
+    // Abandon when nsent > 2.  Verify the boundary at nsent=2 and nsent=3.
+    let streams = make_streams(2);
+
+    // nsent=1: initial send.  1 > 2 is false → NOT abandoned.
+    let mut c = make_chunk(1);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "max_retransmits=2, nsent=1: must NOT abandon (initial send)"
+    );
+
+    // nsent=2: initial + 1 retransmission.  2 > 2 is false → NOT abandoned.
+    // With `>=` this would incorrectly abandon (2 >= 2).
+    let mut c = make_chunk(2);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "max_retransmits=2, nsent=2: must NOT abandon (one more retransmission allowed)"
+    );
+
+    // nsent=3: initial + 2 retransmissions.  3 > 2 is true → abandoned.
+    let mut c = make_chunk(3);
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        c.abandoned,
+        "max_retransmits=2, nsent=3: must abandon (retransmission limit reached)"
+    );
+}
+
+/// Verify that non-Rexmit reliability types and edge cases (missing stream,
+/// DCEP payload) do not trigger abandonment via the Rexmit path.
+#[test]
+fn test_check_partial_reliability_rexmit_no_false_abandon() {
+    let now = Instant::now();
+    let side = Side::Client;
+
+    // Stream with Rexmit reliability, max_retransmits = 0.
+    let mut streams = HashMap::new();
+    let mut ss = StreamState::new(side, 0, 1400, PayloadProtocolIdentifier::Binary);
+    ss.reliability_type = ReliabilityType::Rexmit;
+    ss.reliability_value = 0;
+    streams.insert(0, ss);
+
+    // DCEP chunks are never abandoned regardless of nsent.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 100,
+        payload_type: PayloadProtocolIdentifier::Dcep,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(
+        !c.abandoned,
+        "DCEP payload must never be abandoned by partial reliability"
+    );
+
+    // use_forward_tsn=false disables PR-SCTP entirely.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 0,
+        nsent: 100,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, false, side, &streams);
+    assert!(
+        !c.abandoned,
+        "use_forward_tsn=false: partial reliability is disabled"
+    );
+
+    // Chunk referencing a non-existent stream should not panic or abandon.
+    let mut c = ChunkPayloadData {
+        stream_identifier: 999,
+        nsent: 100,
+        ..Default::default()
+    };
+    Association::check_partial_reliability_status(&mut c, now, true, side, &streams);
+    assert!(!c.abandoned, "missing stream must not cause abandonment");
+}
