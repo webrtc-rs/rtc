@@ -63,6 +63,8 @@ where
             keepalive_interval: setting_engine.timeout.ice_keepalive_interval,
             candidate_types,
             network_types,
+            check_interval: setting_engine.timeout.ice_check_interval.unwrap_or(std::time::Duration::from_millis(0)),
+            max_binding_requests: setting_engine.timeout.ice_max_binding_requests,
             host_acceptance_min_wait: setting_engine.timeout.ice_host_acceptance_min_wait,
             srflx_acceptance_min_wait: setting_engine.timeout.ice_srflx_acceptance_min_wait,
             prflx_acceptance_min_wait: setting_engine.timeout.ice_prflx_acceptance_min_wait,
