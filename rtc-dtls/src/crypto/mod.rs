@@ -54,9 +54,13 @@ impl Certificate {
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
     ) -> Result<Self> {
-        let params = rcgen::CertificateParams::new(subject_alt_names).unwrap();
-        let key_pair = rcgen::KeyPair::generate_for(alg).unwrap();
-        let cert = params.self_signed(&key_pair).unwrap();
+        let params = rcgen::CertificateParams::new(subject_alt_names)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let key_pair =
+            rcgen::KeyPair::generate_for(alg).map_err(|e| Error::Other(e.to_string()))?;
+        let cert = params
+            .self_signed(&key_pair)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
@@ -106,7 +110,7 @@ impl Certificate {
     pub fn serialize_pem(&self) -> String {
         let mut data = vec![pem::Pem::new(
             "PRIVATE_KEY".to_string(),
-            self.private_key.serialized_der.clone(),
+            self.private_key.serialized_der().to_vec(),
         )];
         for rustls_cert in &self.certificate {
             data.push(pem::Pem::new(
@@ -147,12 +151,29 @@ pub enum CryptoPrivateKeyKind {
 }
 
 /// Private key.
+///
+/// Fields are intentionally private to enforce the invariant that `kind` and
+/// `serialized_der` are always consistent.  Construct instances via
+/// [`CryptoPrivateKey::from_key_pair`] or the [`TryFrom<&KeyPair>`] impl;
+/// use the [`kind()`](CryptoPrivateKey::kind) and
+/// [`serialized_der()`](CryptoPrivateKey::serialized_der) accessors to
+/// inspect the key.
 #[derive(Debug)]
 pub struct CryptoPrivateKey {
-    /// Keypair.
-    pub kind: CryptoPrivateKeyKind,
-    /// DER-encoded keypair.
-    pub serialized_der: Vec<u8>,
+    kind: CryptoPrivateKeyKind,
+    serialized_der: Vec<u8>,
+}
+
+impl CryptoPrivateKey {
+    /// Returns a reference to the key kind.
+    pub fn kind(&self) -> &CryptoPrivateKeyKind {
+        &self.kind
+    }
+
+    /// Returns the DER-encoded key bytes.
+    pub fn serialized_der(&self) -> &[u8] {
+        &self.serialized_der
+    }
 }
 
 impl PartialEq for CryptoPrivateKey {
@@ -179,10 +200,14 @@ impl PartialEq for CryptoPrivateKey {
 
 impl Clone for CryptoPrivateKey {
     fn clone(&self) -> Self {
-        match self.kind {
+        // Safety: fields are fully private, so `serialized_der` is always
+        // produced by `from_key_pair` (or `TryFrom<&KeyPair>`) which serialises
+        // a valid key.  Re-parsing the same DER bytes cannot fail.
+        match &self.kind {
             CryptoPrivateKeyKind::Ed25519(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Ed25519(
-                    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&self.serialized_der).unwrap(),
+                    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&self.serialized_der)
+                        .expect("CryptoPrivateKey::clone: Ed25519 DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
@@ -193,13 +218,14 @@ impl Clone for CryptoPrivateKey {
                         &self.serialized_der,
                         &SystemRandom::new(),
                     )
-                    .unwrap(),
+                    .expect("CryptoPrivateKey::clone: ECDSA DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
             CryptoPrivateKeyKind::Rsa256(_) => CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Rsa256(
-                    ring::rsa::KeyPair::from_pkcs8(&self.serialized_der).unwrap(),
+                    ring::rsa::KeyPair::from_pkcs8(&self.serialized_der)
+                        .expect("CryptoPrivateKey::clone: RSA DER re-parse failed"),
                 ),
                 serialized_der: self.serialized_der.clone(),
             },
@@ -523,6 +549,124 @@ mod test {
 
         assert_eq!(loaded_cert, cert);
 
+        Ok(())
+    }
+
+    use super::*;
+
+    /// Test `CryptoPrivateKey::kind()` accessor for each key variant.
+    #[test]
+    fn test_crypto_private_key_kind_accessor() -> Result<()> {
+        // Ed25519
+        let kp_ed = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk_ed = CryptoPrivateKey::from_key_pair(&kp_ed)?;
+        assert!(
+            matches!(pk_ed.kind(), CryptoPrivateKeyKind::Ed25519(_)),
+            "expected Ed25519 kind"
+        );
+
+        // ECDSA
+        let kp_ec = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk_ec = CryptoPrivateKey::from_key_pair(&kp_ec)?;
+        assert!(
+            matches!(pk_ec.kind(), CryptoPrivateKeyKind::Ecdsa256(_)),
+            "expected Ecdsa256 kind"
+        );
+
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::serialized_der()` accessor returns non-empty bytes.
+    #[test]
+    fn test_crypto_private_key_serialized_der_accessor() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(
+            !pk.serialized_der().is_empty(),
+            "serialized_der should not be empty"
+        );
+        // Should match what the key pair serialises
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::clone()` for Ed25519 keys.
+    #[test]
+    fn test_clone_ed25519() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        let cloned = pk.clone();
+        assert_eq!(pk, cloned);
+        assert!(matches!(cloned.kind(), CryptoPrivateKeyKind::Ed25519(_)));
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::clone()` for ECDSA keys.
+    #[test]
+    fn test_clone_ecdsa() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        let cloned = pk.clone();
+        assert_eq!(pk, cloned);
+        assert!(matches!(cloned.kind(), CryptoPrivateKeyKind::Ecdsa256(_)));
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::from_key_pair` for Ed25519.
+    #[test]
+    fn test_from_key_pair_ed25519() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ed25519(_)));
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
+        Ok(())
+    }
+
+    /// Test `CryptoPrivateKey::from_key_pair` for ECDSA P-256.
+    #[test]
+    fn test_from_key_pair_ecdsa() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::from_key_pair(&kp)?;
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ecdsa256(_)));
+        assert_eq!(pk.serialized_der(), kp.serialize_der().as_slice());
+        Ok(())
+    }
+
+    /// Test `TryFrom<&KeyPair>` delegates to `from_key_pair`.
+    #[test]
+    fn test_try_from_key_pair() -> Result<()> {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let pk = CryptoPrivateKey::try_from(&kp)?;
+        assert!(matches!(pk.kind(), CryptoPrivateKeyKind::Ed25519(_)));
+        Ok(())
+    }
+
+    /// Test `generate_certificate_verify` succeeds with Ed25519 key.
+    #[test]
+    fn test_generate_certificate_verify_ed25519() -> Result<()> {
+        let cert = Certificate::generate_self_signed_with_alg(
+            vec!["localhost".to_owned()],
+            &rcgen::PKCS_ED25519,
+        )?;
+        let sig = generate_certificate_verify(b"test handshake data", &cert.private_key)?;
+        assert!(!sig.is_empty(), "signature should not be empty");
+        Ok(())
+    }
+
+    /// Test `generate_certificate_verify` succeeds with ECDSA key.
+    #[test]
+    fn test_generate_certificate_verify_ecdsa() -> Result<()> {
+        let cert = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
+        let sig = generate_certificate_verify(b"test handshake data", &cert.private_key)?;
+        assert!(!sig.is_empty(), "signature should not be empty");
         Ok(())
     }
 }

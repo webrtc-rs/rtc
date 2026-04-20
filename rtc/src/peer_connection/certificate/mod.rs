@@ -186,11 +186,8 @@
 use std::ops::Add;
 use std::time::{Duration, SystemTime};
 
-use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
+use dtls::crypto::CryptoPrivateKey;
 use rcgen::{CertificateParams, KeyPair};
-use ring::rand::SystemRandom;
-use ring::rsa;
-use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
@@ -341,40 +338,10 @@ impl RTCCertificate {
     fn from_params(params: CertificateParams, key_pair: KeyPair) -> Result<Self> {
         let not_after = params.not_after;
 
-        let x509_cert = params.self_signed(&key_pair).unwrap();
-        let serialized_der = key_pair.serialize_der();
-
-        let private_key = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ed25519(
-                    Ed25519KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_ECDSA_P256_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ecdsa256(
-                    EcdsaKeyPair::from_pkcs8(
-                        &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-                        &serialized_der,
-                        &SystemRandom::new(),
-                    )
-                    .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_RSA_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Rsa256(
-                    rsa::KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else {
-            return Err(Error::Other("Unsupported key_pair".to_owned()));
-        };
+        let x509_cert = params.self_signed(&key_pair).map_err(|err| {
+            Error::Other(format!("failed to generate self-signed certificate: {err}"))
+        })?;
+        let private_key = CryptoPrivateKey::from_key_pair(&key_pair)?;
 
         let expires = if cfg!(target_arch = "arm") {
             // Workaround for issue overflow when adding duration to instant on armv7
@@ -734,5 +701,39 @@ mod test {
         assert_eq!(loaded_cert, cert);
 
         Ok(())
+    }
+
+    /// Verify `from_key_pair` with Ed25519 successfully calls `from_params`
+    /// and `CryptoPrivateKey::from_key_pair` internally, producing valid
+    /// fingerprints.
+    #[test]
+    fn test_from_key_pair_ed25519_produces_fingerprints() -> Result<()> {
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
+        let cert = RTCCertificate::from_key_pair(kp)?;
+        let fps = cert.get_fingerprints();
+        assert_eq!(fps.len(), 1);
+        assert_eq!(fps[0].algorithm, "sha-256");
+        Ok(())
+    }
+
+    /// Verify `from_existing` creates a valid certificate with custom expiration.
+    #[test]
+    fn test_from_existing_with_custom_expiry() -> Result<()> {
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+        let cert = RTCCertificate::from_key_pair(kp)?;
+        let custom_expires = SystemTime::now() + Duration::from_secs(3600);
+        let cert2 = RTCCertificate::from_existing(cert.dtls_certificate.clone(), custom_expires);
+        assert_eq!(cert2.expires, custom_expires);
+        assert_eq!(cert, cert2); // PartialEq ignores expires
+        Ok(())
+    }
+
+    /// Verify `from_key_pair` rejects unsupported key types.
+    #[test]
+    fn test_from_key_pair_unsupported_rejects() {
+        // PKCS_ECDSA_P384_SHA384 is not in the supported list
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+        let result = RTCCertificate::from_key_pair(kp);
+        assert!(result.is_err());
     }
 }

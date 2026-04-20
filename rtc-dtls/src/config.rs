@@ -13,9 +13,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustls::client::danger::ServerCertVerifier;
-use rustls::pki_types::CertificateDer;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::danger::ClientCertVerifier;
+use rustls::{DigitallySignedStruct, SignatureScheme as RustlsSignatureScheme};
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
@@ -269,7 +270,7 @@ impl ConfigBuilder {
         }
 
         for cert in &self.certificates {
-            match cert.private_key.kind {
+            match cert.private_key.kind() {
                 CryptoPrivateKeyKind::Ed25519(_) => {}
                 CryptoPrivateKeyKind::Ecdsa256(_) => {}
                 _ => return Err(Error::ErrInvalidPrivateKey),
@@ -344,19 +345,69 @@ impl ConfigBuilder {
                 gen_self_signed_root_cert(),
             ))
             .build()
-            .unwrap(),
+            .map_err(|e| Error::Other(e.to_string()))?,
             client_cert_verifier: None,
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
+            maximum_retransmit_number: 7,
             replay_protection_window,
-            ..Default::default()
+            name_to_certificate: HashMap::new(),
         })
     }
 }
 
 pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
+
+/// A placeholder [`ServerCertVerifier`] used only by `HandshakeConfig::default()`.
+///
+/// [`ConfigBuilder::build()`] always replaces this with a real
+/// [`WebPkiServerVerifier`](rustls::client::WebPkiServerVerifier),
+/// so the placeholder methods are never called in practice.
+#[derive(Debug)]
+struct PlaceholderServerCertVerifier;
+
+impl ServerCertVerifier for PlaceholderServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::General(
+            "PlaceholderServerCertVerifier: must not be used for real verification".into(),
+        ))
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<RustlsSignatureScheme> {
+        vec![]
+    }
+}
 
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     let mut certs = rustls::RootCertStore::empty();
@@ -372,6 +423,13 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     certs
 }
 
+/// Internal handshake configuration used by the DTLS state machine.
+///
+/// **Do not construct via `HandshakeConfig::default()` directly.** The default
+/// `server_cert_verifier` is a placeholder that always rejects certificates,
+/// making a default-constructed `HandshakeConfig` unsuitable for real
+/// handshakes. Use [`ConfigBuilder`] instead, which installs a proper
+/// verifier via [`ConfigBuilder::build()`].
 #[derive(Clone)]
 pub struct HandshakeConfig {
     pub(crate) local_psk_callback: Option<PskCallback>,
@@ -425,6 +483,12 @@ impl fmt::Debug for HandshakeConfig {
 }
 
 impl Default for HandshakeConfig {
+    /// Creates a `HandshakeConfig` with placeholder values.
+    ///
+    /// **Warning:** The default `server_cert_verifier` is a placeholder that
+    /// always rejects certificates.  Do not use `HandshakeConfig::default()`
+    /// directly for real handshakes; instead, go through [`ConfigBuilder`] which
+    /// installs a proper verifier via `build()`.
     fn default() -> Self {
         HandshakeConfig {
             local_psk_callback: None,
@@ -441,11 +505,8 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: rustls::client::WebPkiServerVerifier::builder(Arc::new(
-                gen_self_signed_root_cert(),
-            ))
-            .build()
-            .unwrap(),
+            // Placeholder: ConfigBuilder::build() always replaces this with a real verifier.
+            server_cert_verifier: Arc::new(PlaceholderServerCertVerifier),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
@@ -453,6 +514,60 @@ impl Default for HandshakeConfig {
             maximum_retransmit_number: 7,
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+
+    /// Verify `PlaceholderServerCertVerifier::verify_server_cert` returns an error.
+    #[test]
+    fn placeholder_verify_server_cert_rejects() {
+        let v = PlaceholderServerCertVerifier;
+        let dummy_cert = CertificateDer::from(vec![0u8; 1]);
+        let name = ServerName::try_from("localhost").unwrap();
+        let result = v.verify_server_cert(&dummy_cert, &[], &name, &[], UnixTime::now());
+        assert!(result.is_err());
+    }
+
+    /// Verify `PlaceholderServerCertVerifier::supported_verify_schemes` returns empty.
+    #[test]
+    fn placeholder_supported_verify_schemes_empty() {
+        let v = PlaceholderServerCertVerifier;
+        assert!(v.supported_verify_schemes().is_empty());
+    }
+
+    /// Verify `HandshakeConfig::default()` uses the placeholder verifier.
+    #[test]
+    fn handshake_config_default_uses_placeholder() {
+        let cfg = HandshakeConfig::default();
+        // The placeholder verifier returns empty supported schemes.
+        assert!(
+            cfg.server_cert_verifier
+                .supported_verify_schemes()
+                .is_empty()
+        );
+    }
+
+    /// Verify `ConfigBuilder::build()` successfully creates a config with explicit fields.
+    #[test]
+    fn config_builder_build_sets_fields() {
+        let cert = Certificate::generate_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let cfg = ConfigBuilder::default()
+            .with_certificates(vec![cert])
+            .with_server_name("localhost".to_string())
+            .build(false, None)
+            .unwrap();
+        // The builder installs a real verifier, not the placeholder.
+        // A real verifier has non-empty supported_verify_schemes.
+        assert!(
+            !cfg.server_cert_verifier
+                .supported_verify_schemes()
+                .is_empty()
+        );
+        assert_eq!(cfg.maximum_retransmit_number, 7);
     }
 }
 

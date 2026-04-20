@@ -395,10 +395,25 @@ impl Flight for Flight5 {
 
             plain_text.extend_from_slice(&merged);
 
+            // Note: this path is currently unreachable because the outer guard
+            // ensures `!cfg.local_certificates.is_empty()`, but we keep the
+            // graceful error return rather than panicking for defense-in-depth.
+            let cert_ref = certificate.as_ref().ok_or_else(|| {
+                (
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::InternalError,
+                    }),
+                    Some(Error::Other(
+                        "no local certificate available for DTLS flight5".to_owned(),
+                    )),
+                )
+            })?;
+
             // Find compatible signature scheme
             let signature_hash_algo = match select_signature_scheme(
                 &cfg.local_signature_schemes,
-                &certificate.as_ref().unwrap().private_key,
+                &cert_ref.private_key,
             ) {
                 Ok(s) => s,
                 Err(err) => {
@@ -412,10 +427,8 @@ impl Flight for Flight5 {
                 }
             };
 
-            let cert_verify = match generate_certificate_verify(
-                &plain_text,
-                &certificate.as_ref().unwrap().private_key, /*, signature_hash_algo.hash*/
-            ) {
+            let cert_verify = match generate_certificate_verify(&plain_text, &cert_ref.private_key)
+            {
                 Ok(cert) => cert,
                 Err(err) => {
                     return Err((
@@ -760,4 +773,33 @@ fn initalize_cipher_suite(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handshake::handshake_cache::HandshakeCache;
+    use crate::state::State;
+
+    /// Verify that `Flight5::generate` fails when invoked with an empty
+    /// handshake cache and otherwise default state.
+    #[test]
+    fn generate_with_incomplete_handshake_state_returns_error() {
+        let mut state = State::default();
+        state.remote_requested_certificate = true;
+
+        let cache = HandshakeCache::new();
+        let cfg = HandshakeConfig::default();
+
+        let flight = Flight5;
+        let result = flight.generate(&mut state, &cache, &cfg);
+
+        let (alert, error) = result.expect_err(
+            "expected error when generate is called without the required handshake state",
+        );
+        if let Some(alert) = alert {
+            assert_eq!(alert.alert_level, AlertLevel::Fatal);
+        }
+        assert!(error.is_some(), "expected an error value");
+    }
 }
