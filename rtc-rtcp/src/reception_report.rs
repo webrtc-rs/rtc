@@ -28,8 +28,10 @@ pub struct ReceptionReport {
     /// number with the binary point at the left edge of the field.
     pub fraction_lost: u8,
     /// The total number of RTP data packets from source SSRC that have
-    /// been lost since the beginning of reception.
-    pub total_lost: u32,
+    /// been lost since the beginning of reception.  Per RFC 3550 §6.4.1
+    /// this is a signed 24-bit integer: negative values occur when
+    /// duplicate packets arrive (received > expected).
+    pub total_lost: i32,
     /// The least significant 16 bits contain the highest sequence number received
     /// in an RTP data packet from source SSRC, and the most significant 16 bits extend
     /// that sequence number with the corresponding count of sequence number cycles.
@@ -116,14 +118,15 @@ impl Marshal for ReceptionReport {
 
         buf.put_u8(self.fraction_lost);
 
-        // pack TotalLost into 24 bits
-        if self.total_lost >= (1 << 25) {
+        // Pack TotalLost into 24-bit two's-complement (RFC 3550 §6.4.1).
+        // Valid range is -2^23..=2^23-1.
+        if self.total_lost > 0x7F_FFFF || self.total_lost < -0x80_0000 {
             return Err(Error::InvalidTotalLost);
         }
-
-        buf.put_u8(((self.total_lost >> 16) & 0xFF) as u8);
-        buf.put_u8(((self.total_lost >> 8) & 0xFF) as u8);
-        buf.put_u8((self.total_lost & 0xFF) as u8);
+        let tl = self.total_lost as u32;
+        buf.put_u8(((tl >> 16) & 0xFF) as u8);
+        buf.put_u8(((tl >> 8) & 0xFF) as u8);
+        buf.put_u8((tl & 0xFF) as u8);
 
         buf.put_u32(self.last_sequence_number);
         buf.put_u32(self.jitter);
@@ -171,18 +174,14 @@ impl Unmarshal for ReceptionReport {
         let t0 = raw_packet.get_u8();
         let t1 = raw_packet.get_u8();
         let t2 = raw_packet.get_u8();
-        // TODO: The type of `total_lost` should be `i32`, per the RFC:
-        // The total number of RTP data packets from source SSRC_n that have
-        // been lost since the beginning of reception.  This number is
-        // defined to be the number of packets expected less the number of
-        // packets actually received, where the number of packets received
-        // includes any which are late or duplicates.  Thus, packets that
-        // arrive late are not counted as lost, and the loss may be negative
-        // if there are duplicates.  The number of packets expected is
-        // defined to be the extended last sequence number received, as
-        // defined next, less the initial sequence number received.  This may
-        // be calculated as shown in Appendix A.3.
-        let total_lost = (t2 as u32) | (t1 as u32) << 8 | (t0 as u32) << 16;
+        // RFC 3550 §6.4.1: cumulative number of packets lost is a signed 24-bit integer.
+        // Sign-extend from bit 23 so negative values (duplicates) are handled correctly.
+        let raw = (t2 as u32) | (t1 as u32) << 8 | (t0 as u32) << 16;
+        let total_lost = if raw & 0x80_0000 != 0 {
+            (raw | 0xFF00_0000) as i32 // sign-extend
+        } else {
+            raw as i32
+        };
 
         let last_sequence_number = raw_packet.get_u32();
         let jitter = raw_packet.get_u32();
