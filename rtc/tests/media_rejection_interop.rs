@@ -525,3 +525,123 @@ a=ssrc:22222 cname:test
     log::info!("Test passed: Audio correctly rejected with port=0 in SDP answer");
     Ok(())
 }
+
+/// Test that an offer containing an already-rejected m-line (port=0) is correctly
+/// reflected as rejected in the answer, preserving m-line indexing.
+///
+/// This covers the `media.media_name.port.value == 0` branch in `generate_matched_sdp`
+/// (internal.rs), including the "application" (datachannel) rejected kind path.
+#[tokio::test]
+async fn test_sdp_answer_reflects_pre_rejected_mlines() -> Result<()> {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init()
+        .ok();
+
+    log::info!("Testing SDP answer reflects pre-rejected m-lines from offer");
+
+    // Offer with: video (active), audio (rejected port=0), application/datachannel (rejected port=0)
+    let offer_sdp = r#"v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=extmap-allow-mixed
+a=msid-semantic: WMS
+m=video 9 UDP/TLS/RTP/SAVPF 96
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:test
+a=ice-pwd:testpasswordtestpassword
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00
+a=setup:actpass
+a=mid:0
+a=sendonly
+a=rtcp-mux
+a=rtpmap:96 VP8/90000
+a=ssrc:11111 cname:test
+m=audio 0 UDP/TLS/RTP/SAVPF 0
+c=IN IP4 0.0.0.0
+a=mid:1
+m=application 0 UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+a=mid:2
+"#;
+
+    // Create RTC peer with video-only support
+    let mut rtc_pc = create_rtc_peer_config_video_only()?;
+
+    // Set remote description (offer with pre-rejected audio and application m-lines)
+    let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_sdp.to_string())?;
+    rtc_pc.set_remote_description(rtc_offer)?;
+
+    // Add a dummy local candidate
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let local_addr = socket.local_addr()?;
+    let candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    rtc_pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
+
+    // Create answer
+    let answer = rtc_pc.create_answer(None)?;
+    let answer_sdp = answer.sdp.clone();
+    log::info!("Generated answer SDP:\n{}", answer_sdp);
+
+    let lines: Vec<&str> = answer_sdp.lines().collect();
+
+    // Video m-line should be accepted (non-zero port)
+    let video_mline = lines.iter().find(|l| l.starts_with("m=video"));
+    assert!(video_mline.is_some(), "Answer should contain video m-line");
+    assert!(
+        !video_mline.unwrap().starts_with("m=video 0"),
+        "Video should NOT be rejected"
+    );
+    log::info!("Video m-line (accepted): {}", video_mline.unwrap());
+
+    // Audio m-line should be reflected as rejected (port=0)
+    let audio_mline = lines.iter().find(|l| l.starts_with("m=audio"));
+    assert!(
+        audio_mline.is_some(),
+        "Answer must contain audio m-line to preserve indexing"
+    );
+    assert!(
+        audio_mline.unwrap().starts_with("m=audio 0"),
+        "Pre-rejected audio must remain rejected (port=0), got: {}",
+        audio_mline.unwrap()
+    );
+    log::info!("Audio m-line (rejected): {}", audio_mline.unwrap());
+
+    // Application/datachannel m-line should be reflected as rejected (port=0)
+    let app_mline = lines.iter().find(|l| l.starts_with("m=application"));
+    assert!(
+        app_mline.is_some(),
+        "Answer must contain application m-line to preserve indexing"
+    );
+    assert!(
+        app_mline.unwrap().starts_with("m=application 0"),
+        "Pre-rejected application must remain rejected (port=0), got: {}",
+        app_mline.unwrap()
+    );
+    log::info!("Application m-line (rejected): {}", app_mline.unwrap());
+
+    // Verify there are exactly 3 m-lines in the answer (preserving indexing)
+    let mline_count = lines.iter().filter(|l| l.starts_with("m=")).count();
+    assert_eq!(
+        mline_count, 3,
+        "Answer must have exactly 3 m-lines to match offer indexing"
+    );
+
+    rtc_pc.close()?;
+    log::info!("Test passed: Pre-rejected m-lines correctly reflected in answer");
+    Ok(())
+}

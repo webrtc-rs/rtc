@@ -229,6 +229,19 @@ where
                         return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
                     }
 
+                    // RFC 8829 §5.3.1: rejected m-lines (port=0) in the offer MUST be
+                    // reflected as rejected in the answer to preserve m-line indexing.
+                    if media.media_name.port.value == 0 {
+                        media_sections.push(MediaSection {
+                            mid: mid_value.to_owned(),
+                            rejected: true,
+                            rejected_kind: media.media_name.media.clone(),
+                            transceiver_index: usize::MAX,
+                            ..Default::default()
+                        });
+                        continue;
+                    }
+
                     if media.media_name.media == MEDIA_SECTION_APPLICATION {
                         media_sections.push(MediaSection {
                             mid: mid_value.to_owned(),
@@ -241,10 +254,7 @@ where
                     }
 
                     let kind = RtpCodecKind::from(media.media_name.media.as_str());
-                    let direction = get_peer_direction(media);
-                    if kind == RtpCodecKind::Unspecified
-                        || direction == RTCRtpTransceiverDirection::Unspecified
-                    {
+                    if kind == RtpCodecKind::Unspecified {
                         continue;
                     }
 
@@ -1399,5 +1409,299 @@ where
         );
 
         Ok((track, send_encodings, codec_preferences))
+    }
+}
+
+#[cfg(test)]
+mod rejected_mline_generate_matched_sdp_tests {
+    use super::*;
+    use crate::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
+    use crate::peer_connection::sdp::session_description::RTCSessionDescription;
+    use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+
+    /// Helper: build a peer connection with video-only codec support.
+    fn build_video_only_pc() -> RTCPeerConnection<NoopInterceptor> {
+        let mut me = MediaEngine::default();
+        me.register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_VP8.to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: String::new(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 96,
+            },
+            RtpCodecKind::Video,
+        )
+        .unwrap();
+
+        let mut se = SettingEngine::default();
+        se.set_answering_dtls_role(RTCDtlsRole::Client).unwrap();
+
+        RTCPeerConnectionBuilder::new()
+            .with_media_engine(me)
+            .with_setting_engine(se)
+            .build()
+            .unwrap()
+    }
+
+    /// Offer with audio (port=0) rejected and video active.
+    /// Exercises the `media.media_name.port.value == 0` branch for audio kind.
+    #[test]
+    fn test_generate_matched_sdp_rejected_audio_port_zero() {
+        let offer_sdp = "\
+v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0\r\n\
+a=msid-semantic: WMS\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:test\r\n\
+a=ice-pwd:testpasswordtestpassword\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=setup:actpass\r\n\
+a=mid:0\r\n\
+a=sendonly\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 VP8/90000\r\n\
+a=ssrc:11111 cname:test\r\n\
+m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n";
+
+        let mut pc = build_video_only_pc();
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).unwrap();
+        pc.set_remote_description(offer).unwrap();
+
+        let answer = pc.create_answer(None).unwrap();
+        let lines: Vec<&str> = answer.sdp.lines().collect();
+
+        // Video should be accepted (non-zero port)
+        let video = lines.iter().find(|l| l.starts_with("m=video")).unwrap();
+        assert!(
+            !video.starts_with("m=video 0"),
+            "video must not be rejected"
+        );
+
+        // Audio should be rejected (port=0) in the answer
+        let audio = lines.iter().find(|l| l.starts_with("m=audio")).unwrap();
+        assert!(
+            audio.starts_with("m=audio 0"),
+            "rejected audio m-line must have port 0, got: {audio}"
+        );
+
+        // Must have exactly 2 m-lines
+        let m_count = lines.iter().filter(|l| l.starts_with("m=")).count();
+        assert_eq!(m_count, 2, "answer must preserve m-line count");
+    }
+
+    /// Offer with application/datachannel (port=0) rejected.
+    /// Exercises the `media.media_name.port.value == 0` branch for application kind.
+    #[test]
+    fn test_generate_matched_sdp_rejected_application_port_zero() {
+        let offer_sdp = "\
+v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0\r\n\
+a=msid-semantic: WMS\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:test\r\n\
+a=ice-pwd:testpasswordtestpassword\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=setup:actpass\r\n\
+a=mid:0\r\n\
+a=sendonly\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 VP8/90000\r\n\
+a=ssrc:11111 cname:test\r\n\
+m=application 0 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n";
+
+        let mut pc = build_video_only_pc();
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).unwrap();
+        pc.set_remote_description(offer).unwrap();
+
+        let answer = pc.create_answer(None).unwrap();
+        let lines: Vec<&str> = answer.sdp.lines().collect();
+
+        // Application m-line must be rejected (port=0) with SCTP proto
+        let app = lines
+            .iter()
+            .find(|l| l.starts_with("m=application"))
+            .unwrap();
+        assert!(
+            app.starts_with("m=application 0"),
+            "rejected application m-line must have port 0, got: {app}"
+        );
+    }
+
+    /// First m-line is rejected (port=0), second is active video.
+    /// Tests that ICE candidates are correctly added to the first *non-rejected* m-line.
+    #[test]
+    fn test_generate_matched_sdp_first_mline_rejected() {
+        let offer_sdp = "\
+v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 1\r\n\
+a=msid-semantic: WMS\r\n\
+m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:test\r\n\
+a=ice-pwd:testpasswordtestpassword\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=setup:actpass\r\n\
+a=mid:1\r\n\
+a=sendonly\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 VP8/90000\r\n\
+a=ssrc:22222 cname:test\r\n";
+
+        let mut pc = build_video_only_pc();
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).unwrap();
+        pc.set_remote_description(offer).unwrap();
+
+        let answer = pc.create_answer(None).unwrap();
+        let lines: Vec<&str> = answer.sdp.lines().collect();
+
+        // First m-line (audio) must be rejected
+        let audio = lines.iter().find(|l| l.starts_with("m=audio")).unwrap();
+        assert!(audio.starts_with("m=audio 0"), "audio must be rejected");
+
+        // Second m-line (video) must be accepted
+        let video = lines.iter().find(|l| l.starts_with("m=video")).unwrap();
+        assert!(!video.starts_with("m=video 0"), "video must be accepted");
+
+        // The rejected audio m-line must NOT have ICE attributes
+        // Find the audio section and check for ice-ufrag
+        let mut in_audio = false;
+        let mut audio_has_ice = false;
+        for line in &lines {
+            if line.starts_with("m=audio") {
+                in_audio = true;
+            } else if line.starts_with("m=") {
+                in_audio = false;
+            }
+            if in_audio && line.starts_with("a=ice-ufrag") {
+                audio_has_ice = true;
+            }
+        }
+        assert!(
+            !audio_has_ice,
+            "rejected audio m-line must not contain ICE attributes"
+        );
+    }
+
+    /// All m-lines rejected (port=0). Answer must preserve all with port=0.
+    #[test]
+    fn test_generate_matched_sdp_all_mlines_rejected() {
+        let offer_sdp = "\
+v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=ice-ufrag:test\r\n\
+a=ice-pwd:testpasswordtestpassword\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=msid-semantic: WMS\r\n\
+m=video 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n\
+m=application 0 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:2\r\n";
+
+        let mut pc = build_video_only_pc();
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).unwrap();
+        pc.set_remote_description(offer).unwrap();
+
+        let answer = pc.create_answer(None).unwrap();
+        let lines: Vec<&str> = answer.sdp.lines().collect();
+
+        // All 3 m-lines must be present and rejected
+        let m_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with("m=")).collect();
+        assert_eq!(m_lines.len(), 3, "must have 3 m-lines");
+
+        for m in &m_lines {
+            // Extract the port (second space-separated token)
+            let port: &str = m.split_whitespace().nth(1).unwrap();
+            assert_eq!(port, "0", "all m-lines must have port=0, got: {m}");
+        }
+    }
+
+    /// Mix of rejected and accepted m-lines in various positions.
+    /// audio(rejected) -> video(accepted) -> application(rejected)
+    #[test]
+    fn test_generate_matched_sdp_mixed_rejected_accepted() {
+        let offer_sdp = "\
+v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 1\r\n\
+a=msid-semantic: WMS\r\n\
+m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:test\r\n\
+a=ice-pwd:testpasswordtestpassword\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=setup:actpass\r\n\
+a=mid:1\r\n\
+a=sendonly\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 VP8/90000\r\n\
+a=ssrc:33333 cname:test\r\n\
+m=application 0 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:2\r\n";
+
+        let mut pc = build_video_only_pc();
+        let offer = RTCSessionDescription::offer(offer_sdp.to_string()).unwrap();
+        pc.set_remote_description(offer).unwrap();
+
+        let answer = pc.create_answer(None).unwrap();
+        let lines: Vec<&str> = answer.sdp.lines().collect();
+
+        let m_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with("m=")).collect();
+        assert_eq!(m_lines.len(), 3, "answer must have 3 m-lines");
+
+        // audio rejected
+        assert!(
+            m_lines[0].starts_with("m=audio 0"),
+            "audio must be rejected, got: {}",
+            m_lines[0]
+        );
+        // video accepted
+        assert!(
+            m_lines[1].starts_with("m=video") && !m_lines[1].starts_with("m=video 0"),
+            "video must be accepted, got: {}",
+            m_lines[1]
+        );
+        // application rejected
+        assert!(
+            m_lines[2].starts_with("m=application 0"),
+            "application must be rejected, got: {}",
+            m_lines[2]
+        );
     }
 }
