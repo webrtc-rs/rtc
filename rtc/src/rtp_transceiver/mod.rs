@@ -96,8 +96,7 @@
 //!
 //! See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 
-//TODO: #[cfg(test)]
-//mod rtp_transceiver_test;
+use log::trace;
 
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::RTCPeerConnection;
@@ -289,7 +288,14 @@ where
     pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
+        let previous = self.peer_connection.rtp_transceivers[self.id].direction();
         self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
+        let current = self.peer_connection.rtp_transceivers[self.id].direction();
+        // Per W3C WebRTC §5.5: changing direction must trigger renegotiation.
+        if current != previous {
+            trace!("Changing direction of transceiver from {previous} to {current}");
+            self.peer_connection.on_transceiver_direction_changed();
+        }
     }
 
     /// Returns the negotiated direction of the transceiver.
@@ -341,5 +347,167 @@ where
         // so, [self.id] here is safe.
         self.peer_connection.rtp_transceivers[self.id]
             .set_codec_preferences(codecs, &self.peer_connection.media_engine)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sansio::Protocol;
+
+    use crate::peer_connection::RTCPeerConnectionBuilder;
+    use crate::peer_connection::configuration::RTCConfigurationBuilder;
+    use crate::peer_connection::configuration::media_engine::{MIME_TYPE_OPUS, MediaEngine};
+    use crate::peer_connection::event::RTCPeerConnectionEvent;
+    use crate::peer_connection::transport::{
+        CandidateConfig, CandidateHostConfig, RTCIceCandidate, RTCIceServer,
+    };
+    use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
+
+    /// Bind a UDP socket to `127.0.0.1:0` and return the OS-assigned port.
+    fn ephemeral_port() -> u16 {
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .expect("bind ephemeral UDP port")
+            .local_addr()
+            .expect("local_addr")
+            .port()
+    }
+
+    fn make_media_engine() -> MediaEngine {
+        let mut me = MediaEngine::default();
+        me.register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_OPUS.to_owned(),
+                    clock_rate: 48000,
+                    channels: 2,
+                    sdp_fmtp_line: "".to_owned(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 111,
+                ..Default::default()
+            },
+            RtpCodecKind::Audio,
+        )
+        .unwrap();
+        me
+    }
+
+    fn build_pc() -> crate::peer_connection::RTCPeerConnection {
+        let config = RTCConfigurationBuilder::new()
+            .with_ice_servers(vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            }])
+            .build();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .with_configuration(config)
+            .with_media_engine(make_media_engine())
+            .build()
+            .unwrap();
+
+        let candidate = CandidateHostConfig {
+            base_config: CandidateConfig {
+                network: "udp".to_owned(),
+                address: "127.0.0.1".to_owned(),
+                port: ephemeral_port(),
+                component: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .new_candidate_host()
+        .unwrap();
+        pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json().unwrap())
+            .unwrap();
+
+        pc
+    }
+
+    /// Drain all pending events from a peer connection via the public API.
+    fn drain_events(
+        pc: &mut crate::peer_connection::RTCPeerConnection,
+    ) -> Vec<RTCPeerConnectionEvent> {
+        let mut events = vec![];
+        while let Some(e) = pc.poll_event() {
+            events.push(e);
+        }
+        events
+    }
+
+    fn has_negotiation_needed(events: &[RTCPeerConnectionEvent]) -> bool {
+        events
+            .iter()
+            .any(|e| matches!(e, RTCPeerConnectionEvent::OnNegotiationNeededEvent))
+    }
+
+    #[test]
+    fn test_set_direction_triggers_negotiation_on_change() {
+        let mut offer_pc = build_pc();
+        let mut answer_pc = build_pc();
+
+        let tid = offer_pc
+            .add_transceiver_from_kind(RtpCodecKind::Audio, None)
+            .unwrap();
+
+        // Complete an offer/answer cycle to reach Stable signaling state,
+        // which clears is_negotiation_ongoing via the normal state machine.
+        let offer = offer_pc.create_offer(None).unwrap();
+        offer_pc.set_local_description(offer.clone()).unwrap();
+        answer_pc.set_remote_description(offer).unwrap();
+        let answer = answer_pc.create_answer(None).unwrap();
+        answer_pc.set_local_description(answer.clone()).unwrap();
+        offer_pc.set_remote_description(answer).unwrap();
+
+        // Drain all events from the initial negotiation.
+        drain_events(&mut offer_pc);
+
+        // Changing direction should trigger negotiation
+        {
+            let mut t = offer_pc.rtp_transceiver(tid).unwrap();
+            t.set_direction(RTCRtpTransceiverDirection::Sendonly);
+        }
+
+        let events = drain_events(&mut offer_pc);
+        assert!(
+            has_negotiation_needed(&events),
+            "changing direction should trigger OnNegotiationNeededEvent, but got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_set_direction_noop_when_unchanged() {
+        let mut offer_pc = build_pc();
+        let mut answer_pc = build_pc();
+
+        let tid = offer_pc
+            .add_transceiver_from_kind(RtpCodecKind::Audio, None)
+            .unwrap();
+
+        // Complete an offer/answer cycle to reach Stable signaling state.
+        let offer = offer_pc.create_offer(None).unwrap();
+        offer_pc.set_local_description(offer.clone()).unwrap();
+        answer_pc.set_remote_description(offer).unwrap();
+        let answer = answer_pc.create_answer(None).unwrap();
+        answer_pc.set_local_description(answer.clone()).unwrap();
+        offer_pc.set_remote_description(answer).unwrap();
+
+        // Drain all events from the initial negotiation.
+        drain_events(&mut offer_pc);
+
+        // Setting the same direction should NOT trigger negotiation
+        let current = offer_pc.rtp_transceivers[tid].direction();
+        {
+            let mut t = offer_pc.rtp_transceiver(tid).unwrap();
+            t.set_direction(current);
+        }
+
+        let events = drain_events(&mut offer_pc);
+        assert!(
+            !has_negotiation_needed(&events),
+            "setting the same direction should not trigger OnNegotiationNeededEvent, but got: {events:?}"
+        );
     }
 }

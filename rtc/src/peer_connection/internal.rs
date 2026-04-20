@@ -846,6 +846,12 @@ where
         Err(Error::ErrMaxDataChannelID)
     }
 
+    /// Called by `RTCRtpTransceiver::set_direction` when the direction changes,
+    /// per W3C WebRTC §5.5.
+    pub(crate) fn on_transceiver_direction_changed(&mut self) {
+        self.trigger_negotiation_needed();
+    }
+
     /// Helper to trigger a negotiation needed.
     pub(super) fn trigger_negotiation_needed(&mut self) {
         if !self.do_negotiation_needed() {

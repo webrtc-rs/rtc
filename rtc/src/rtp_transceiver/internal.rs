@@ -149,16 +149,7 @@ where
     ///
     /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
     pub(crate) fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
-        let previous_direction: RTCRtpTransceiverDirection = self.direction;
-
         self.direction = direction;
-
-        if direction != previous_direction {
-            trace!("Changing direction of transceiver from {previous_direction} to {direction}");
-
-            //TODO: https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
-            // Update the negotiation-needed flag for connection.
-        }
     }
 
     /// Returns the negotiated direction of the transceiver.
