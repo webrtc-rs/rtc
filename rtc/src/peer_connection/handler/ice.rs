@@ -206,3 +206,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.ice_transport.agent.close()
     }
 }
+
+impl<'a> shared::WriteQueueQuiescence for IceHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+        self.ctx.write_outs.is_empty()
+    }
+}

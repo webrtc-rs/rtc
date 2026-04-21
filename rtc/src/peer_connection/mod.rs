@@ -2234,4 +2234,13 @@ where
             .stats
             .snapshot_with_selector(now, selector)
     }
+
+    /// Returns true if there are no more data channel messages currently sitting in
+    /// internal outgoing queues.
+    ///
+    /// Call to make sure all outgoing data channel messages have been made available for sending
+    /// (via `poll_write`) before closing this peer connection.
+    pub fn outgoing_queues_empty(&mut self) -> bool {
+        self.pipeline_write_queue_empty()
+    }
 }

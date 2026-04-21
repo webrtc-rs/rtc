@@ -311,3 +311,13 @@ where
         self.interceptor.close()
     }
 }
+
+impl<'a, I> shared::WriteQueueQuiescence for InterceptorHandler<'a, I>
+where
+    I: Interceptor,
+{
+    fn is_write_queue_empty(&self) -> bool {
+        self.interceptor.is_write_queue_empty()
+            && self.ctx.write_outs.is_empty()
+    }
+}

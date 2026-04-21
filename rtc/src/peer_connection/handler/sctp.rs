@@ -485,3 +485,17 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
 
     transmits
 }
+
+impl<'a> shared::WriteQueueQuiescence for SctpHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+
+        // check the SCTP associations
+        for association in self.ctx.sctp_transport.sctp_associations.values() {
+            if !association.is_write_queue_empty() {
+                return false;
+            }
+        }
+
+        self.ctx.write_outs.is_empty()
+    }
+}

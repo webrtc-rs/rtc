@@ -31,7 +31,7 @@ use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Interceptor;
 use ::interceptor::Packet;
 use log::warn;
-use shared::TaggedBytesMut;
+use shared::{TaggedBytesMut, WriteQueueQuiescence};
 use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -187,6 +187,23 @@ where
             &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
+    }
+
+    pub(crate) fn pipeline_write_queue_empty(&mut self) -> bool {
+
+        // check each pipeline stage
+        #[allow(unused_mut)] // yes, we don't actually need mut here, but the handler APIs force mut
+        {
+            for_each_handler!(forward: process_handler!(self, handler, {
+                if !handler.is_write_queue_empty() {
+                    return false;
+                }
+            }));
+        }
+
+        // finally, check the pipeline output itself,
+        // even though a caller can already see if it's empty or not anyway
+        self.pipeline_context.write_outs.is_empty()
     }
 }
 

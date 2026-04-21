@@ -314,6 +314,7 @@ pub trait Interceptor:
         Time = Instant,
         Error = shared::error::Error,
     > + Sized
+    + shared::WriteQueueQuiescence
     + Send
     + Sync
     + 'static

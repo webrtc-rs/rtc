@@ -433,3 +433,9 @@ impl<'a> DtlsHandler<'a> {
         Ok((local_context, remote_context))
     }
 }
+
+impl<'a> shared::WriteQueueQuiescence for DtlsHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+        self.ctx.write_outs.is_empty()
+    }
+}

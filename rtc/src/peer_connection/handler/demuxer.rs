@@ -161,3 +161,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         Ok(())
     }
 }
+
+impl<'a> shared::WriteQueueQuiescence for DemuxerHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+        // can't filter out STUN messages anymore,
+        // and nothing sits in this queue for long anyway,
+        // so say it's always empty
+        true
+    }
+}

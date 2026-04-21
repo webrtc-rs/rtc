@@ -649,3 +649,12 @@ where
         Some((mid, rid, rrid))
     }
 }
+
+impl<'a, I> shared::WriteQueueQuiescence for EndpointHandler<'a, I>
+where
+    I: Interceptor,
+{
+    fn is_write_queue_empty(&self) -> bool {
+        self.ctx.write_outs.is_empty()
+    }
+}

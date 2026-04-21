@@ -388,3 +388,9 @@ impl sansio::Protocol<DataChannelMessage, DataChannelMessage, ()> for DataChanne
         self.write_data_channel_close()
     }
 }
+
+impl shared::WriteQueueQuiescence for DataChannel {
+    fn is_write_queue_empty(&self) -> bool {
+        self.write_outs.is_empty()
+    }
+}

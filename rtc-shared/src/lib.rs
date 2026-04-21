@@ -26,5 +26,5 @@ pub mod util;
 
 pub use transport::{
     EcnCodepoint, FiveTuple, FourTuple, TaggedBytesMut, TransportContext, TransportMessage,
-    TransportProtocol,
+    TransportProtocol, WriteQueueQuiescence
 };

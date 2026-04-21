@@ -2869,3 +2869,13 @@ impl Association {
             .is_none()
     }
 }
+
+
+impl shared::WriteQueueQuiescence for Association {
+    fn is_write_queue_empty(&self) -> bool {
+
+        // only look at the pending queue,
+        // since those are messages that haven't been sent to the write_outs yet
+        self.pending_queue.is_empty()
+    }
+}

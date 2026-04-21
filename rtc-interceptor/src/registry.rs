@@ -197,6 +197,12 @@ mod tests {
         }
     }
 
+    impl<P: Interceptor> shared::WriteQueueQuiescence for TestInterceptor<P> {
+        fn is_write_queue_empty(&self) -> bool {
+            self.inner.is_write_queue_empty()
+        }
+    }
+
     impl<P: Interceptor> Interceptor for TestInterceptor<P> {
         fn bind_local_stream(&mut self, info: &crate::StreamInfo) {
             self.inner.bind_local_stream(info);

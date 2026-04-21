@@ -332,3 +332,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         Ok(())
     }
 }
+
+impl<'a> shared::WriteQueueQuiescence for DataChannelHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+        
+        // check all the data channels
+        for data_channel in self.data_channels.values() {
+            if let Some(data_channel) = data_channel.data_channel.as_ref() {
+                if !data_channel.is_write_queue_empty() {
+                    return false;
+                }
+            }
+        }
+
+        // finally, check the pipeline stage output queue
+        self.ctx.write_outs.is_empty()
+    }
+}

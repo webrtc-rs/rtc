@@ -193,3 +193,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         Ok(())
     }
 }
+
+impl<'a> shared::WriteQueueQuiescence for SrtpHandler<'a> {
+    fn is_write_queue_empty(&self) -> bool {
+        self.ctx.write_outs.is_empty()
+    }
+}

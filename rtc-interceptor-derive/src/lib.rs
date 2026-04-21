@@ -128,6 +128,13 @@ pub fn derive_interceptor(input: TokenStream) -> TokenStream {
             fn __interceptor_inner_mut(&mut self) -> &mut #next_type {
                 &mut self.#next_name
             }
+
+            /// Hidden accessor for the next interceptor (used by #[interceptor] macro)
+            #[doc(hidden)]
+            #[inline(always)]
+            fn __interceptor_inner(&self) -> &#next_type {
+                &self.#next_name
+            }
         }
     };
 
@@ -215,6 +222,7 @@ pub fn interceptor(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Generate Protocol methods that are NOT overridden (using accessor method)
     let protocol_methods = generate_protocol_methods(&override_methods);
     let interceptor_methods = generate_interceptor_methods(&override_methods);
+    let quiescence_methods = generate_quiescence_methods(&override_methods);
 
     // Protocol method names
     let protocol_method_names = [
@@ -235,6 +243,11 @@ pub fn interceptor(_attr: TokenStream, item: TokenStream) -> TokenStream {
         "unbind_local_stream",
         "bind_remote_stream",
         "unbind_remote_stream",
+    ];
+
+    // Quiescence method names
+    let quiescence_method_names = [
+        "is_write_queue_empty"
     ];
 
     // Extract Protocol overridden methods
@@ -267,6 +280,21 @@ pub fn interceptor(_attr: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Extract Quiescence overridden methods
+    let quiescence_override_items: Vec<_> = input
+        .items
+        .iter()
+        .filter(|item| {
+            if let ImplItem::Fn(method) = item {
+                let name = method.sig.ident.to_string();
+                override_methods.contains(&method.sig.ident)
+                    && quiescence_method_names.contains(&name.as_str())
+            } else {
+                false
+            }
+        })
+        .collect();
+
     let expanded = quote! {
         impl #impl_generics sansio::Protocol<
             TaggedPacket,
@@ -286,6 +314,11 @@ pub fn interceptor(_attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #impl_generics Interceptor for #self_ty #where_clause {
             #interceptor_methods
             #(#interceptor_override_items)*
+        }
+
+        impl #impl_generics shared::WriteQueueQuiescence for #self_ty #where_clause {
+            #quiescence_methods
+            #(#quiescence_override_items)*
         }
     };
 
@@ -443,6 +476,21 @@ fn generate_interceptor_methods(override_methods: &[Ident]) -> proc_macro2::Toke
         methods.extend(quote! {
             fn unbind_remote_stream(&mut self, info: &StreamInfo) {
                 self.__interceptor_inner_mut().unbind_remote_stream(info);
+            }
+        });
+    }
+
+    methods
+}
+
+/// Generate Quiescence methods that delegate to inner, excluding overridden ones
+fn generate_quiescence_methods(override_methods: &[Ident]) -> proc_macro2::TokenStream {
+    let mut methods = proc_macro2::TokenStream::new();
+
+    if !override_methods.iter().any(|m| m == "is_write_queue_empty") {
+        methods.extend(quote! {
+            fn is_write_queue_empty(&self) -> bool {
+                self.__interceptor_inner().is_write_queue_empty()
             }
         });
     }

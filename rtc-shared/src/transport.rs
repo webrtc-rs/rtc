@@ -136,3 +136,9 @@ impl From<TransportContext> for FiveTuple {
         }
     }
 }
+
+
+/// Used to check if write queues are empty before shutting down the event loop
+pub trait WriteQueueQuiescence {
+    fn is_write_queue_empty(&self) -> bool;
+}

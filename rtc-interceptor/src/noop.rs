@@ -102,6 +102,13 @@ impl Interceptor for NoopInterceptor {
     fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
+impl shared::WriteQueueQuiescence for NoopInterceptor {
+    fn is_write_queue_empty(&self) -> bool {
+        self.write_queue.is_empty()
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
