@@ -115,10 +115,48 @@ impl HevcPayloader {
     }
 
     fn flush_aggregation_buffer(nalus: &mut Vec<Bytes>, mtu: usize, payloads: &mut Vec<Bytes>) {
+        if nalus.is_empty() {
+            return;
+        }
+        if nalus.len() == 1 {
+            payloads.push(nalus.pop().expect("single buffered NAL exists"));
+            return;
+        }
+
+        // Process NALUs in original order: accumulate consecutive normal-sized
+        // NALUs into an AP, but when an oversized NALU (> u16::MAX) is
+        // encountered, flush the current AP first, then emit the oversized
+        // NALU individually (it will be FU-fragmented).
+        //
+        // Defense-in-depth: In practice, payload() sends any nalu.len() > mtu
+        // directly to emit() before it reaches this buffer, so the u16::MAX
+        // branch below is currently unreachable (MTU << u16::MAX). The check
+        // is retained to guard against future callers or MTU changes.
+        let mut pending_normal: Vec<Bytes> = Vec::new();
+
+        for nalu in nalus.drain(..) {
+            if nalu.len() > u16::MAX as usize {
+                // Flush any accumulated normal NALUs as an AP (or single)
+                Self::flush_normal_nalus(&mut pending_normal, mtu, payloads);
+                // Emit the oversized NALU individually via FU fragmentation;
+                // it cannot be placed in an AP because the 16-bit size field would overflow.
+                Self::emit(&nalu, mtu, payloads);
+            } else {
+                pending_normal.push(nalu);
+            }
+        }
+
+        // Flush any remaining normal NALUs
+        Self::flush_normal_nalus(&mut pending_normal, mtu, payloads);
+    }
+
+    /// Flush accumulated normal-sized NALUs: emit a single NALU directly,
+    /// or pack multiple into an aggregation packet.
+    fn flush_normal_nalus(nalus: &mut Vec<Bytes>, mtu: usize, payloads: &mut Vec<Bytes>) {
         match nalus.len() {
             0 => {}
             1 => {
-                payloads.push(nalus.pop().expect("single buffered NAL exists"));
+                payloads.push(nalus.pop().expect("single normal NAL exists"));
             }
             _ => {
                 let header = Self::aggregation_payload_header(nalus);
@@ -126,10 +164,11 @@ impl HevcPayloader {
                     NAL_HEADER_SIZE + nalus.iter().map(|nalu| 2 + nalu.len()).sum::<usize>(),
                 );
                 aggr_nalu.extend_from_slice(&header);
-                for nalu in nalus.drain(..) {
+                for nalu in nalus.iter() {
                     aggr_nalu.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
-                    aggr_nalu.extend_from_slice(&nalu);
+                    aggr_nalu.extend_from_slice(nalu);
                 }
+                nalus.clear();
                 if aggr_nalu.len() <= mtu {
                     payloads.push(aggr_nalu.freeze());
                 }

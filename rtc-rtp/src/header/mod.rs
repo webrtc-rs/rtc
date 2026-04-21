@@ -251,7 +251,11 @@ impl Marshal for Header {
             return Err(Error::ErrBufferTooSmall);
         }
 
-        // The first byte contains the version, padding bit, extension bit, and csrc size
+        // The first byte contains the version, padding bit, extension bit, and csrc size.
+        // RFC 3550 §5.1: CC is a 4-bit field, so at most 15 contributing sources are allowed.
+        if self.csrc.len() > 15 {
+            return Err(Error::TooManyCSRCs(self.csrc.len())); // reject early to avoid truncating CC
+        }
         let mut b0 = (self.version << VERSION_SHIFT) | self.csrc.len() as u8;
         if self.padding {
             b0 |= 1 << PADDING_SHIFT;
@@ -282,6 +286,9 @@ impl Marshal for Header {
 
             // calculate extensions size and round to 4 bytes boundaries
             let extension_payload_len = self.get_extension_payload_len();
+            if extension_payload_len > u16::MAX as usize {
+                return Err(Error::ExtensionPayloadTotalOverflow(extension_payload_len));
+            }
             if self.extension_profile != EXTENSION_PROFILE_ONE_BYTE
                 && self.extension_profile != EXTENSION_PROFILE_TWO_BYTE
                 && !extension_payload_len.is_multiple_of(4)
@@ -296,15 +303,42 @@ impl Marshal for Header {
                 // RFC 8285 RTP One Byte Header Extension
                 EXTENSION_PROFILE_ONE_BYTE => {
                     for extension in &self.extensions {
-                        buf.put_u8((extension.id << 4) | (extension.payload.len() as u8 - 1));
-                        buf.put(&*extension.payload);
+                        // validate each extension before writing
+                        // RFC 8285 §4.2: IDs 0 and 15 are reserved.
+                        if !(1..=14).contains(&extension.id) {
+                            return Err(Error::ErrRfc8285oneByteHeaderIdrange);
+                        }
+                        // RFC 8285 §4.2: payload must be 1-16 bytes; the 4-bit length field
+                        // encodes (len-1), so 0 is invalid and >16 cannot be represented.
+                        let ext_payload_len = extension.payload.len();
+                        if ext_payload_len == 0 || ext_payload_len > 16 {
+                            return Err(Error::OneByteHeaderExtensionPayloadOutOfRange(
+                                ext_payload_len,
+                            ));
+                        }
+                        // Upper nibble = extension ID, lower nibble = (length - 1)
+                        buf.put_u8((extension.id << 4) | (ext_payload_len as u8 - 1));
+                        buf.put(&*extension.payload); // write validated extension payload
                     }
                 }
                 // RFC 8285 RTP Two Byte Header Extension
                 EXTENSION_PROFILE_TWO_BYTE => {
                     for extension in &self.extensions {
-                        buf.put_u8(extension.id);
-                        buf.put_u8(extension.payload.len() as u8);
+                        // RFC 8285 §4.3: ID 0 is padding in two-byte format;
+                        // marshaling it as an extension would confuse receivers.
+                        if extension.id == 0 {
+                            return Err(Error::ErrRfc8285twoByteHeaderIdrange);
+                        }
+                        // RFC 8285 §4.3: the length field is a single byte, capping
+                        // the maximum extension payload at 255 bytes.
+                        let ext_payload_len = extension.payload.len();
+                        if ext_payload_len > 255 {
+                            return Err(Error::TwoByteHeaderExtensionPayloadTooLarge(
+                                ext_payload_len,
+                            ));
+                        }
+                        buf.put_u8(extension.id); // two-byte format: ID occupies a full byte
+                        buf.put_u8(ext_payload_len as u8);
                         buf.put(&*extension.payload);
                     }
                 }
@@ -362,7 +396,8 @@ impl Header {
                     if !(1..=14).contains(&id) {
                         return Err(Error::ErrRfc8285oneByteHeaderIdrange);
                     }
-                    if payload_len > 16 {
+                    // RFC 8285 §4.2: payload must be 1–16 bytes.
+                    if payload_len == 0 || payload_len > 16 {
                         return Err(Error::ErrRfc8285oneByteHeaderSize);
                     }
                     1
@@ -489,3 +524,6 @@ impl Header {
         }
     }
 }
+
+#[cfg(test)]
+mod header_test;

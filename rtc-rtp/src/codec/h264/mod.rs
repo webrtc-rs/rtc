@@ -50,6 +50,52 @@ impl H264Payloader {
         (-1, -1)
     }
 
+    /// Emit a NALU as a single packet or fragment it via FU-A, without
+    /// special-casing SPS/PPS (which `emit()` would re-stash).
+    fn emit_single_or_fragment(nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
+        if nalu.is_empty() {
+            return;
+        }
+
+        let nalu_ref_idc = nalu[0] & NALU_REF_IDC_BITMASK;
+        let nalu_type = nalu[0] & NALU_TYPE_BITMASK;
+
+        // Single NALU
+        if nalu.len() <= mtu {
+            payloads.push(nalu.clone());
+            return;
+        }
+
+        // FU-A fragmentation
+        let max_fragment_size = mtu as isize - FUA_HEADER_SIZE as isize;
+        let mut nalu_data_index: isize = 1;
+        let nalu_data_length = nalu.len() as isize - nalu_data_index;
+        let mut nalu_data_remaining = nalu_data_length;
+
+        if std::cmp::min(max_fragment_size, nalu_data_remaining) <= 0 {
+            return;
+        }
+
+        while nalu_data_remaining > 0 {
+            let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
+            let mut out = BytesMut::with_capacity(FUA_HEADER_SIZE + current_fragment_size as usize);
+            out.put_u8(FUA_NALU_TYPE | nalu_ref_idc);
+            let mut b1 = nalu_type;
+            if nalu_data_remaining == nalu_data_length {
+                b1 |= 1 << 7; // start bit
+            } else if nalu_data_remaining - current_fragment_size == 0 {
+                b1 |= 1 << 6; // end bit
+            }
+            out.put_u8(b1);
+            out.put(
+                &nalu[nalu_data_index as usize..(nalu_data_index + current_fragment_size) as usize],
+            );
+            payloads.push(out.freeze());
+            nalu_data_remaining -= current_fragment_size;
+            nalu_data_index += current_fragment_size;
+        }
+    }
+
     fn emit(&mut self, nalu: &Bytes, mtu: usize, payloads: &mut Vec<Bytes>) {
         if nalu.is_empty() {
             return;
@@ -66,21 +112,42 @@ impl H264Payloader {
         } else if nalu_type == PPS_NALU_TYPE {
             self.pps_nalu = Some(nalu.clone());
             return;
-        } else if let (Some(sps_nalu), Some(pps_nalu)) = (&self.sps_nalu, &self.pps_nalu) {
-            // Pack current NALU with SPS and PPS as STAP-A
-            let sps_len = (sps_nalu.len() as u16).to_be_bytes();
-            let pps_len = (pps_nalu.len() as u16).to_be_bytes();
+        } else if self.sps_nalu.is_some() && self.pps_nalu.is_some() {
+            // Clone to release the borrow on self so we can call self.emit() below if needed.
+            let sps_nalu = self.sps_nalu.clone().unwrap();
+            let pps_nalu = self.pps_nalu.clone().unwrap();
 
-            let mut stap_a_nalu = Vec::with_capacity(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len());
-            stap_a_nalu.push(OUTPUT_STAP_AHEADER);
-            stap_a_nalu.extend(sps_len);
-            stap_a_nalu.extend_from_slice(sps_nalu);
-            stap_a_nalu.extend(pps_len);
-            stap_a_nalu.extend_from_slice(pps_nalu);
-            if stap_a_nalu.len() <= mtu {
-                payloads.push(Bytes::from(stap_a_nalu));
+            // Pack the cached SPS and PPS into a STAP-A.
+            // STAP-A length fields are u16; only pack if both NALUs fit within 65535 bytes.
+            if sps_nalu.len() <= u16::MAX as usize && pps_nalu.len() <= u16::MAX as usize {
+                let sps_len = (sps_nalu.len() as u16).to_be_bytes();
+                let pps_len = (pps_nalu.len() as u16).to_be_bytes();
+
+                let mut stap_a_nalu =
+                    Vec::with_capacity(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len());
+                stap_a_nalu.push(OUTPUT_STAP_AHEADER);
+                stap_a_nalu.extend(sps_len);
+                stap_a_nalu.extend_from_slice(&sps_nalu);
+                stap_a_nalu.extend(pps_len);
+                stap_a_nalu.extend_from_slice(&pps_nalu);
+                if stap_a_nalu.len() <= mtu {
+                    // STAP-A fits within MTU, emit as aggregate
+                    payloads.push(Bytes::from(stap_a_nalu));
+                } else {
+                    // STAP-A does not fit within the MTU; fall back to emitting
+                    // SPS and PPS separately so they are not silently dropped.
+                    Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
+                    Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
+                }
+            } else {
+                // SPS or PPS exceeds u16::MAX; fall back to emitting them as
+                // separate NALUs (which will be fragmented via FU-A if needed).
+                // We cannot use self.emit() here because it would re-stash SPS/PPS
+                // NALUs instead of actually outputting them. Push single or fragment directly.
+                Self::emit_single_or_fragment(&sps_nalu, mtu, payloads);
+                Self::emit_single_or_fragment(&pps_nalu, mtu, payloads);
             }
-        }
+        } // end SPS+PPS STAP-A / fallback emission block
 
         if self.sps_nalu.is_some() && self.pps_nalu.is_some() {
             self.sps_nalu = None;

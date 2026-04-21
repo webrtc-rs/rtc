@@ -261,3 +261,124 @@ fn test_h264_payloader_payload_sps_and_pps_handling() -> Result<()> {
 
     Ok(())
 }
+
+/// When the combined STAP-A of SPS + PPS exceeds the MTU, both should still
+/// be emitted as individual (possibly FU-A fragmented) packets instead of
+/// being silently dropped.
+#[test]
+fn test_h264_stap_a_exceeds_mtu_emits_individually() -> Result<()> {
+    let mut pck = H264Payloader::default();
+
+    // SPS: 3 bytes (NALU type 7)
+    let sps = Bytes::from_static(&[0x07, 0xAA, 0xBB]);
+    // PPS: 3 bytes (NALU type 8)
+    let pps = Bytes::from_static(&[0x08, 0xCC, 0xDD]);
+
+    let res = pck.payload(1500, &sps)?;
+    assert!(res.is_empty(), "SPS alone should be stashed, not emitted");
+
+    let res = pck.payload(1500, &pps)?;
+    assert!(res.is_empty(), "PPS alone should be stashed, not emitted");
+
+    // Use a tiny MTU so the STAP-A (1 + 2+3 + 2+3 = 11 bytes) exceeds it.
+    // SPS and PPS individually are 3 bytes each, which fits in MTU=5.
+    let result = pck.payload(5, &Bytes::from_static(&[0x05, 0x01, 0x02]))?;
+
+    // Expect: SPS (3 bytes, fits), PPS (3 bytes, fits), then the IDR NALU (3 bytes, fits)
+    assert_eq!(result.len(), 3, "expected SPS + PPS + IDR = 3 packets");
+    assert_eq!(result[0], sps, "first packet should be the SPS NALU");
+    assert_eq!(result[1], pps, "second packet should be the PPS NALU");
+    assert_eq!(
+        result[2],
+        Bytes::from_static(&[0x05, 0x01, 0x02]),
+        "third packet should be the IDR NALU"
+    );
+
+    Ok(())
+}
+
+/// When SPS or PPS are too large for a u16 length field (>65535 bytes), they
+/// should be emitted via FU-A fragmentation using emit_single_or_fragment
+/// rather than being packed into a STAP-A.
+#[test]
+fn test_h264_oversized_sps_uses_fua_fragmentation() -> Result<()> {
+    let mut pck = H264Payloader::default();
+
+    // Build a large SPS that genuinely exceeds u16::MAX (65535 bytes).
+    // This ensures we actually hit the `sps_nalu.len() > u16::MAX` branch.
+    let mut sps_data = vec![0x67]; // NALU type 7, with ref_idc bits set
+    sps_data.extend(vec![0xAA; 70_000]);
+    let sps = Bytes::from(sps_data); // 70001 bytes, well above u16::MAX threshold
+
+    let pps = Bytes::from_static(&[0x68, 0xCC, 0xDD]); // NALU type 8, with ref_idc bits
+
+    let res = pck.payload(1500, &sps)?;
+    assert!(res.is_empty(), "SPS alone should be stashed");
+
+    let res = pck.payload(1500, &pps)?;
+    assert!(res.is_empty(), "PPS alone should be stashed");
+
+    // Trigger emission with a small non-SPS/PPS NALU
+    let result = pck.payload(1500, &Bytes::from_static(&[0x65, 0x01, 0x02]))?;
+
+    // SPS (70001 bytes) exceeds u16::MAX, so it should be FU-A fragmented.
+    // PPS (3 bytes) fits in a single packet.
+    // IDR (3 bytes) fits in a single packet.
+    assert!(
+        result.len() >= 3,
+        "expected at least 3 packets (fragmented SPS + PPS + IDR), got {}",
+        result.len()
+    );
+
+    // Verify the first packet is a FU-A start fragment of the SPS
+    assert_eq!(
+        result[0][0] & NALU_TYPE_BITMASK,
+        FUA_NALU_TYPE,
+        "first packet should be a FU-A fragment"
+    );
+    assert_ne!(
+        result[0][1] & FU_START_BITMASK,
+        0,
+        "first FU-A fragment should have start bit set"
+    );
+
+    Ok(())
+}
+
+/// The emit_single_or_fragment helper should pass through small NALUs directly
+/// and fragment large ones via FU-A.
+#[test]
+fn test_h264_emit_single_or_fragment_small_nalu() {
+    let nalu = Bytes::from_static(&[0x65, 0x01, 0x02, 0x03]);
+    let mut payloads = vec![];
+    H264Payloader::emit_single_or_fragment(&nalu, 10, &mut payloads);
+    assert_eq!(payloads.len(), 1, "small NALU should emit as single packet");
+    assert_eq!(payloads[0], nalu);
+}
+
+#[test]
+fn test_h264_emit_single_or_fragment_large_nalu() {
+    let mut data = vec![0x65]; // IDR NALU type
+    data.extend(vec![0xBB; 20]);
+    let nalu = Bytes::from(data);
+    let mut payloads = vec![];
+    H264Payloader::emit_single_or_fragment(&nalu, 10, &mut payloads);
+    assert!(
+        payloads.len() > 1,
+        "large NALU should be FU-A fragmented into multiple packets"
+    );
+    // First fragment should have FU-A type and start bit
+    assert_eq!(payloads[0][0] & NALU_TYPE_BITMASK, FUA_NALU_TYPE);
+    assert_ne!(payloads[0][1] & FU_START_BITMASK, 0);
+    // Last fragment should have end bit
+    let last = payloads.last().unwrap();
+    assert_ne!(last[1] & FU_END_BITMASK, 0);
+}
+
+#[test]
+fn test_h264_emit_single_or_fragment_empty_nalu() {
+    let nalu = Bytes::new();
+    let mut payloads = vec![];
+    H264Payloader::emit_single_or_fragment(&nalu, 10, &mut payloads);
+    assert!(payloads.is_empty(), "empty NALU should produce no packets");
+}

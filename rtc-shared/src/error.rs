@@ -276,6 +276,20 @@ pub enum Error {
 
     #[error("extension_payload must be in 32-bit words")]
     HeaderExtensionPayloadNot32BitWords,
+    #[error("too many CSRCs: {0} exceeds the 4-bit CC field maximum of 15")]
+    TooManyCSRCs(usize),
+    #[error(
+        "one-byte header extension payload length {0} is outside the RFC 8285 valid range of 1-16 bytes"
+    )]
+    OneByteHeaderExtensionPayloadOutOfRange(usize),
+    #[error(
+        "two-byte header extension payload length {0} exceeds the RFC 8285 maximum of 255 bytes"
+    )]
+    TwoByteHeaderExtensionPayloadTooLarge(usize),
+    #[error("total extension payload length {0} exceeds u16::MAX (65535 bytes)")]
+    ExtensionPayloadTotalOverflow(usize),
+    #[error("NALU length {0} exceeds u16::MAX (65535 bytes)")]
+    NaluTooLarge(usize),
     #[error("audio level overflow")]
     AudioLevelOverflow,
     #[error("playout delay overflow")]
