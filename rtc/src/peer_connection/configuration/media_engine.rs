@@ -77,8 +77,8 @@
 //! # }
 //! ```
 
-//TODO:#[cfg(test)]
-//mod media_engine_test;
+// media_engine_test.rs does not exist — it was never created for this sans-IO crate.
+// #[cfg(test)] mod media_engine_test;
 
 use crate::peer_connection::sdp::{
     codecs_from_media_description, rtp_extensions_from_media_description,

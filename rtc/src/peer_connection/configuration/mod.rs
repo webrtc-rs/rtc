@@ -749,41 +749,8 @@ mod test {
         }
     }
 
-    /*TODO:#[test] fn test_configuration_json() {
-
-         let j = r#"
-            {
-                "iceServers": [{"URLs": ["turn:turn.example.org"],
-                                "username": "jch",
-                                "credential": "topsecret"
-                              }],
-                "iceTransportPolicy": "relay",
-                "bundlePolicy": "balanced",
-                "rtcpMuxPolicy": "require"
-            }"#;
-
-        conf := Configuration{
-            ICEServers: []ICEServer{
-                {
-                    URLs:       []string{"turn:turn.example.org"},
-                    Username:   "jch",
-                    Credential: "topsecret",
-                },
-            },
-            ICETransportPolicy: ICETransportPolicyRelay,
-            BundlePolicy:       BundlePolicyBalanced,
-            RTCPMuxPolicy:      RTCPMuxPolicyRequire,
-        }
-
-        var conf2 Configuration
-        assert.NoError(t, json.Unmarshal([]byte(j), &conf2))
-        assert.Equal(t, conf, conf2)
-
-        j2, err := json.Marshal(conf2)
-        assert.NoError(t, err)
-
-        var conf3 Configuration
-        assert.NoError(t, json.Unmarshal(j2, &conf3))
-        assert.Equal(t, conf2, conf3)
-    }*/
+    // test_configuration_json was Go code that was never ported to Rust.
+    // A Rust equivalent would deserialize the Rust `RTCConfiguration` type used in this
+    // module from JSON and round-trip it.
+    // This can be added as a proper #[test] if JSON serialization is a desired feature.
 }
