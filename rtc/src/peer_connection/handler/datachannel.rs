@@ -11,7 +11,7 @@ use crate::statistics::accumulator::RTCStatsAccumulator;
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;
 use shared::TransportContext;
-use shared::error::{Error, Result};
+use shared::error::{Error, Result, flatten_errs};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -329,6 +329,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn close(&mut self) -> Result<()> {
-        Ok(())
+        let mut errs = vec![];
+        for dc in self.data_channels.values_mut() {
+            if let Err(e) = dc.close() {
+                errs.push(e);
+            }
+        }
+        // Do NOT clear data_channels here: public RTCDataChannel methods
+        // (label(), ready_state(), etc.) use unwrap() on map lookups, so
+        // clearing the map would panic if the application still holds a
+        // DataChannel handle after PeerConnection::close().
+        flatten_errs(errs)
     }
 }

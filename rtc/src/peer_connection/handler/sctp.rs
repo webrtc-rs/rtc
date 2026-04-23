@@ -12,8 +12,8 @@ use datachannel::message::Message;
 use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
-    AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
-    Payload, PayloadProtocolIdentifier, StreamEvent,
+    AssociationError, AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent,
+    EndpointEvent, Event, Payload, PayloadProtocolIdentifier, StreamEvent,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
@@ -467,7 +467,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn close(&mut self) -> Result<()> {
-        Ok(())
+        // Close all SCTP associations and drop the endpoint.
+        let sctp = &mut self.ctx.sctp_transport;
+        let mut errs = vec![];
+        for assoc in sctp.sctp_associations.values_mut() {
+            if let Err(e) = assoc.close(AssociationError::LocallyClosed) {
+                errs.push(e);
+            }
+        }
+        sctp.sctp_associations.clear();
+        sctp.sctp_endpoint = None;
+
+        shared::error::flatten_errs(errs)
     }
 }
 
