@@ -11,7 +11,9 @@ use crate::media_stream::track::MediaStreamTrackId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability, RTCRtpRtxParameters,
+};
 use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet};
@@ -21,6 +23,18 @@ use shared::error::{Error, Result};
 use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
 use std::time::Instant;
+
+/// Returns `true` if the given MIME type identifies a repair codec (RTX or FEC)
+/// rather than a primary media codec. The check is case-insensitive and covers
+/// all RTX variants (e.g. `video/rtx`, `audio/rtx`) as well as FEC types
+/// (`video/ulpfec`, `video/flexfec`, `video/flexfec-03`).
+fn is_repair_mime_type(mime_type: &str) -> bool {
+    let mt = mime_type.to_ascii_lowercase();
+    mt.ends_with("/rtx")
+        || mt.ends_with("/ulpfec")
+        || mt.ends_with("/flexfec")
+        || mt.ends_with("/flexfec-03")
+}
 
 #[derive(Default)]
 pub(crate) struct EndpointHandlerContext {
@@ -302,20 +316,52 @@ where
         ssrc: SSRC,
         rtp_header: Option<&rtp::Header>,
     ) -> Option<MediaStreamTrackId> {
-        if let Some((id, transceiver)) =
-            self.rtp_transceivers
-                .iter_mut()
-                .enumerate()
-                .find(|(_, transceiver)| {
-                    if let Some(receiver) = transceiver.receiver() {
-                        receiver.get_coding_parameters().iter().any(|coding| {
-                            coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc)
-                        })
-                    } else {
-                        false
+        // Determine whether the SSRC matches a primary or repair (RTX/FEC) sub-stream
+        // in a single pass, avoiding redundant receiver/coding-parameter lookups.
+        //
+        // First, classify the SSRC across all transceivers. We record whether the match
+        // was against a primary SSRC or a repair (RTX/FEC) SSRC so the subsequent code
+        // can take the right path without re-scanning coding parameters.
+        let ssrc_match = self
+            .rtp_transceivers
+            .iter()
+            .enumerate()
+            .find_map(|(id, transceiver)| {
+                let receiver = transceiver.receiver().as_ref()?;
+                let mut is_repair = false;
+                let matched = receiver.get_coding_parameters().iter().any(|coding| {
+                    if coding.ssrc.is_some_and(|coding_ssrc| coding_ssrc == ssrc) {
+                        return true;
                     }
-                })
-        {
+                    // Also match RTX/FEC repair SSRCs so repair packets are routed to
+                    // the primary stream's receiver rather than silently dropped.
+                    if coding.rtx.as_ref().is_some_and(|r| r.ssrc == ssrc)
+                        || coding.fec.as_ref().is_some_and(|f| f.ssrc == ssrc)
+                    {
+                        is_repair = true;
+                        return true;
+                    }
+                    false
+                });
+                if matched {
+                    // Grab the track_id while we have the receiver borrowed immutably,
+                    // so repair packets can be returned without a second lookup.
+                    let track_id = receiver.track().track_id().clone();
+                    Some((id, is_repair, track_id))
+                } else {
+                    None
+                }
+            });
+
+        if let Some((id, is_repair, repair_track_id)) = ssrc_match {
+            // If the SSRC belongs to a repair (RTX/FEC) sub-stream, route it to the primary
+            // stream's receiver without firing track-open events or updating codec state.
+            if is_repair {
+                return Some(repair_track_id);
+            }
+
+            let transceiver = &mut self.rtp_transceivers[id];
+
             // Get kind and mid before borrowing receiver mutably
             let kind = transceiver.kind();
             let mid = transceiver.mid().clone().unwrap_or_default();
@@ -334,14 +380,14 @@ where
                     receiver.track().track_id().clone(),
                 );
 
+                // For primary streams, look up the primary codec only (not RTX/FEC codecs).
+                // RTX/FEC packets are routed via the early-return above.
                 let track_codec = if is_track_codec_empty
                     && let Some(rtp_header) = rtp_header
-                    && let Some(codec) = receiver
-                        .get_codec_preferences()
-                        .iter()
-                        .find(|codec| codec.payload_type == rtp_header.payload_type)
-                //TODO: what about RTX/FEC stream?
-                {
+                    && let Some(codec) = receiver.get_codec_preferences().iter().find(|codec| {
+                        codec.payload_type == rtp_header.payload_type
+                            && !is_repair_mime_type(&codec.rtp_codec.mime_type)
+                    }) {
                     Some(codec.rtp_codec.clone())
                 } else {
                     None
@@ -444,11 +490,66 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    // Accept both primary and RTX codecs here; the rrid branch handles repair
+                    // packets (it only needs the codec lookup to succeed to enter the block).
+                    .find(|codec| codec.payload_type == rtp_header.payload_type)
                     .cloned()
             {
                 if !rrid.is_empty() {
-                    //TODO: Add support of handling repair rtp stream id (rrid) #12
+                    // rrid identifies the base stream (rid) that this repair/RTX packet belongs to.
+                    // Associate the repair SSRC with the base stream's RTX parameters.
+                    let has_base_coding =
+                        match receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
+                            Some(coding) => {
+                                match coding.rtx.as_mut() {
+                                    Some(rtx) => rtx.ssrc = ssrc,
+                                    None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
+                                }
+                                true
+                            }
+                            None => {
+                                warn!(
+                                    "dropping repair/RTX SSRC association: no base coding \
+                                     parameters found for rrid='{}' (repair_ssrc={}, mid='{}', \
+                                     rid='{}')",
+                                    rrid, ssrc, mid, rid,
+                                );
+                                false
+                            }
+                        };
+
+                    if has_base_coding {
+                        // Register the repair stream with the interceptor so RTX
+                        // packets are actually demuxed and forwarded. Use the
+                        // actual packet payload type here: in this branch `codec`
+                        // corresponds to the repair/RTX packet, so looking up an
+                        // RTX PT from `codec.payload_type` would fail (it is
+                        // already the RTX PT).
+                        let parameters = receiver.get_parameters(self.media_engine);
+                        RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                            self.interceptor,
+                            true,
+                            ssrc,
+                            codec.payload_type,
+                            &codec.rtp_codec,
+                            &parameters.rtp_parameters.header_extensions,
+                        );
+
+                        // Update the stats accumulator so RTX packets are
+                        // attributed to the primary stream's stats (the inbound
+                        // stream accumulator may already exist from the base
+                        // stream's OnOpen event).
+                        if let Some(primary_ssrc) = receiver
+                            .get_coding_parameters()
+                            .iter()
+                            .find(|c| c.rid == rrid)
+                            .and_then(|c| c.ssrc)
+                        {
+                            self.stats.update_inbound_rtx_ssrc(primary_ssrc, ssrc);
+                        }
+                    }
+
+                    return Some(receiver.track().track_id().clone());
                 } else {
                     if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                         coding.ssrc = Some(ssrc);
@@ -534,7 +635,12 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
+                    // Only match primary codecs here; RTX/FEC repair packets are handled
+                    // via find_track_id_by_ssrc once their SSRC is registered.
+                    .find(|codec| {
+                        codec.payload_type == rtp_header.payload_type
+                            && !is_repair_mime_type(&codec.rtp_codec.mime_type)
+                    })
                     .cloned()
             {
                 let receive_codings = vec![RTCRtpCodingParameters {
@@ -647,5 +753,418 @@ where
         };
 
         Some((mid, rid, rrid))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: RTX must be excluded regardless of media type (video/rtx, audio/rtx)
+    /// and case variations so it is never selected as a primary codec.
+    #[test]
+    fn is_repair_mime_type_detects_rtx_variants() {
+        // Standard RTX
+        assert!(is_repair_mime_type("video/rtx"));
+        // Hypothetical audio RTX
+        assert!(is_repair_mime_type("audio/rtx"));
+        // Case-insensitive
+        assert!(is_repair_mime_type("Video/RTX"));
+        assert!(is_repair_mime_type("VIDEO/RTX"));
+    }
+
+    /// Regression: all FEC mime types must be treated as repair codecs.
+    #[test]
+    fn is_repair_mime_type_detects_fec_variants() {
+        assert!(is_repair_mime_type("video/ulpfec"));
+        assert!(is_repair_mime_type("video/flexfec"));
+        assert!(is_repair_mime_type("video/flexfec-03"));
+        // Case-insensitive
+        assert!(is_repair_mime_type("Video/ULPFEC"));
+        assert!(is_repair_mime_type("VIDEO/FLEXFEC"));
+        assert!(is_repair_mime_type("VIDEO/FLEXFEC-03"));
+    }
+
+    /// Primary media codecs must NOT be classified as repair.
+    #[test]
+    fn is_repair_mime_type_rejects_primary_codecs() {
+        assert!(!is_repair_mime_type("video/VP8"));
+        assert!(!is_repair_mime_type("video/VP9"));
+        assert!(!is_repair_mime_type("video/H264"));
+        assert!(!is_repair_mime_type("audio/opus"));
+        assert!(!is_repair_mime_type("audio/PCMU"));
+        assert!(!is_repair_mime_type(""));
+    }
+
+    // ================================================================
+    // Integration-style regression tests for RTX/FEC packet routing
+    // ================================================================
+
+    use crate::media_stream::track::MediaStreamTrack;
+    use crate::rtp_transceiver::rtp_sender::{
+        RTCRtpCodec, RTCRtpCodecParameters, RTCRtpEncodingParameters, RTCRtpFecParameters,
+        RtpCodecKind,
+    };
+    use crate::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
+    use interceptor::NoopInterceptor;
+
+    const PRIMARY_SSRC: SSRC = 1000;
+    const RTX_SSRC: SSRC = 2000;
+    const FEC_SSRC: SSRC = 3000;
+
+    fn vp8_codec() -> RTCRtpCodec {
+        RTCRtpCodec {
+            mime_type: "video/VP8".to_string(),
+            clock_rate: 90000,
+            ..Default::default()
+        }
+    }
+
+    fn rtx_codec() -> RTCRtpCodec {
+        RTCRtpCodec {
+            mime_type: "video/rtx".to_string(),
+            clock_rate: 90000,
+            ..Default::default()
+        }
+    }
+
+    /// Build a transceiver with a receiver whose track has a primary SSRC
+    /// and whose coding parameters include RTX and FEC sub-streams.
+    fn make_transceiver_with_repair() -> RTCRtpTransceiverInternal<NoopInterceptor> {
+        let mut transceiver = RTCRtpTransceiverInternal::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            },
+        );
+        transceiver.set_mid("0".to_string()).unwrap();
+
+        let receiver = transceiver.receiver_mut().as_mut().unwrap();
+
+        // Set up coding parameters with primary + RTX + FEC SSRCs
+        receiver.set_coding_parameters(vec![RTCRtpCodingParameters {
+            rid: "".to_string(),
+            ssrc: Some(PRIMARY_SSRC),
+            rtx: Some(RTCRtpRtxParameters { ssrc: RTX_SSRC }),
+            fec: Some(RTCRtpFecParameters { ssrc: FEC_SSRC }),
+        }]);
+
+        // Set up the track with the primary SSRC and a non-empty codec
+        // so the SSRC lookup succeeds and finds the codec already set.
+        let track = MediaStreamTrack::new(
+            "stream-1".to_string(),
+            "track-1".to_string(),
+            "video".to_string(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: "".to_string(),
+                    ssrc: Some(PRIMARY_SSRC),
+                    rtx: Some(RTCRtpRtxParameters { ssrc: RTX_SSRC }),
+                    fec: Some(RTCRtpFecParameters { ssrc: FEC_SSRC }),
+                },
+                codec: vp8_codec(),
+                ..Default::default()
+            }],
+        );
+        receiver.set_track(track);
+
+        // Set codec preferences so codec lookups work
+        receiver.set_codec_preferences(vec![
+            RTCRtpCodecParameters {
+                rtp_codec: vp8_codec(),
+                payload_type: 96,
+            },
+            RTCRtpCodecParameters {
+                rtp_codec: rtx_codec(),
+                payload_type: 97,
+            },
+        ]);
+
+        transceiver
+    }
+
+    /// Regression: RTX SSRC must be routed to the primary track (not dropped).
+    #[test]
+    fn find_track_id_by_ssrc_routes_rtx_to_primary_track() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_repair()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        let result = handler.find_track_id_by_ssrc(RTX_SSRC, None);
+        assert_eq!(result, Some("track-1".to_string()));
+    }
+
+    /// Regression: FEC SSRC must be routed to the primary track (not dropped).
+    #[test]
+    fn find_track_id_by_ssrc_routes_fec_to_primary_track() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_repair()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        let result = handler.find_track_id_by_ssrc(FEC_SSRC, None);
+        assert_eq!(result, Some("track-1".to_string()));
+    }
+
+    /// Repair SSRC routing must NOT emit OnOpen events.
+    #[test]
+    fn find_track_id_by_ssrc_no_on_open_for_repair_ssrc() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_repair()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        // Route RTX and FEC packets
+        handler.find_track_id_by_ssrc(RTX_SSRC, None);
+        handler.find_track_id_by_ssrc(FEC_SSRC, None);
+
+        // No OnOpen events should have been emitted
+        assert!(
+            ctx.event_outs.is_empty(),
+            "No events should be emitted for repair SSRC routing"
+        );
+    }
+
+    /// Primary SSRC must still be routed correctly alongside repair SSRCs.
+    #[test]
+    fn find_track_id_by_ssrc_routes_primary_ssrc() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_repair()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        let result = handler.find_track_id_by_ssrc(PRIMARY_SSRC, None);
+        assert_eq!(result, Some("track-1".to_string()));
+    }
+
+    /// An unknown SSRC must not match any track.
+    #[test]
+    fn find_track_id_by_ssrc_returns_none_for_unknown() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_repair()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        let result = handler.find_track_id_by_ssrc(9999, None);
+        assert_eq!(result, None);
+    }
+
+    /// Build a transceiver for simulcast with rid-based coding parameters
+    /// (no SSRC initially set, as is the case before the first RTP packet).
+    fn make_transceiver_with_rid() -> RTCRtpTransceiverInternal<NoopInterceptor> {
+        let mut transceiver = RTCRtpTransceiverInternal::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            },
+        );
+        transceiver.set_mid("0".to_string()).unwrap();
+
+        let receiver = transceiver.receiver_mut().as_mut().unwrap();
+
+        // Coding parameters with rid but no SSRC yet (filled in on first packet)
+        receiver.set_coding_parameters(vec![RTCRtpCodingParameters {
+            rid: "q".to_string(),
+            ssrc: Some(PRIMARY_SSRC),
+            rtx: None,
+            fec: None,
+        }]);
+
+        let track = MediaStreamTrack::new(
+            "stream-1".to_string(),
+            "track-1".to_string(),
+            "video".to_string(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    rid: "q".to_string(),
+                    ssrc: Some(PRIMARY_SSRC),
+                    rtx: None,
+                    fec: None,
+                },
+                codec: vp8_codec(),
+                ..Default::default()
+            }],
+        );
+        receiver.set_track(track);
+
+        receiver.set_codec_preferences(vec![
+            RTCRtpCodecParameters {
+                rtp_codec: vp8_codec(),
+                payload_type: 96,
+            },
+            RTCRtpCodecParameters {
+                rtp_codec: rtx_codec(),
+                payload_type: 97,
+            },
+        ]);
+
+        transceiver
+    }
+
+    /// Regression: rrid packets must route to the primary track and register
+    /// the RTX SSRC in the stats accumulator's reverse lookup map.
+    #[test]
+    fn rrid_branch_registers_rtx_ssrc_in_stats() {
+        let mut ctx = EndpointHandlerContext::default();
+        let mut transceivers = vec![make_transceiver_with_rid()];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        // Pre-create the primary stream's stats entry (simulates the first
+        // primary RTP packet having already been received).
+        stats.get_or_create_inbound_rtp_streams(
+            PRIMARY_SSRC,
+            RtpCodecKind::Video,
+            "track-1",
+            "0",
+            None,
+            None,
+            0,
+        );
+
+        // Simulate the rrid branch: directly call update_inbound_rtx_ssrc as the
+        // endpoint handler would after processing an rrid header extension.
+        stats.update_inbound_rtx_ssrc(PRIMARY_SSRC, RTX_SSRC);
+
+        // Now on_rtx_packet_received_if_rtx should find the RTX SSRC
+        let tracked = stats.on_rtx_packet_received_if_rtx(RTX_SSRC, 100);
+        assert!(
+            tracked,
+            "RTX packets must be tracked after update_inbound_rtx_ssrc"
+        );
+    }
+
+    /// Regression: handle_undeclared_ssrc must not select RTX codec as primary.
+    #[test]
+    fn undeclared_ssrc_rejects_rtx_codec() {
+        let mut ctx = EndpointHandlerContext::default();
+
+        // Build a single transceiver with no codings (undeclared SSRC scenario)
+        let mut transceiver = RTCRtpTransceiverInternal::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            },
+        );
+
+        let receiver = transceiver.receiver_mut().as_mut().unwrap();
+        // Empty coding parameters = no declared SSRCs
+        receiver.set_coding_parameters(vec![]);
+        // Track with no codings
+        let track = MediaStreamTrack::new(
+            "stream-1".to_string(),
+            "track-1".to_string(),
+            "video".to_string(),
+            RtpCodecKind::Video,
+            vec![],
+        );
+        receiver.set_track(track);
+
+        // Codec preferences include both VP8 and RTX
+        receiver.set_codec_preferences(vec![
+            RTCRtpCodecParameters {
+                rtp_codec: vp8_codec(),
+                payload_type: 96,
+            },
+            RTCRtpCodecParameters {
+                rtp_codec: rtx_codec(),
+                payload_type: 97,
+            },
+        ]);
+
+        let mut transceivers = vec![transceiver];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+
+        let mut handler = EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        );
+
+        // Simulate an RTP packet with RTX payload type arriving as undeclared SSRC
+        let rtp_header = rtp::Header {
+            ssrc: 5555,
+            payload_type: 97, // RTX payload type
+            ..Default::default()
+        };
+
+        let result = handler.handle_undeclared_ssrc(&rtp_header);
+        assert_eq!(
+            result, None,
+            "RTX codec must not be selected as the primary codec for undeclared SSRC"
+        );
+
+        // But a VP8 packet should be accepted
+        let rtp_header_vp8 = rtp::Header {
+            ssrc: 5555,
+            payload_type: 96, // VP8 payload type
+            ..Default::default()
+        };
+
+        let result = handler.handle_undeclared_ssrc(&rtp_header_vp8);
+        assert_eq!(
+            result,
+            Some("track-1".to_string()),
+            "Primary codec should be accepted for undeclared SSRC"
+        );
     }
 }

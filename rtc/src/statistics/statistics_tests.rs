@@ -1411,3 +1411,84 @@ fn test_stats_selector_transceiver_isolation() {
         );
     }
 }
+
+/// Verifies that `update_inbound_rtx_ssrc` correctly updates both the
+/// `rtx_ssrc_to_primary` reverse-lookup map and the inbound stream
+/// accumulator's `rtx_ssrc` field. This covers the case where `rrid`
+/// arrives after the base stream's accumulator has already been created.
+#[test]
+fn test_update_inbound_rtx_ssrc() {
+    let mut accumulator = RTCStatsAccumulator::new();
+
+    let primary_ssrc: u32 = 1000;
+    let rtx_ssrc: u32 = 2000;
+    let track_id = "track-1";
+    let mid = "0";
+
+    // Create the inbound stream accumulator first (simulating OnOpen for base stream).
+    // Initially, rtx_ssrc is None because the RTX SSRC is not yet known.
+    accumulator.get_or_create_inbound_rtp_streams(
+        primary_ssrc,
+        RtpCodecKind::Video,
+        track_id,
+        mid,
+        None, // rtx_ssrc not known yet
+        None,
+        0,
+    );
+
+    // Verify initial state: rtx_ssrc should be None
+    let stream = accumulator.inbound_rtp_streams.get(&primary_ssrc).unwrap();
+    assert_eq!(stream.rtx_ssrc, None, "rtx_ssrc should initially be None");
+
+    // Now simulate rrid arrival: update the RTX SSRC association
+    accumulator.update_inbound_rtx_ssrc(primary_ssrc, rtx_ssrc);
+
+    // Verify the inbound stream's rtx_ssrc field is updated
+    let stream = accumulator.inbound_rtp_streams.get(&primary_ssrc).unwrap();
+    assert_eq!(
+        stream.rtx_ssrc,
+        Some(rtx_ssrc),
+        "rtx_ssrc should be updated to the repair SSRC"
+    );
+
+    // Verify the reverse lookup map is updated (used by on_rtx_packet_received_if_rtx)
+    // We can test this indirectly: calling on_rtx_packet_received_if_rtx should now
+    // recognize the RTX SSRC and update the primary stream's retransmission stats.
+    accumulator.on_rtx_packet_received_if_rtx(rtx_ssrc, 50);
+
+    let stream = accumulator.inbound_rtp_streams.get(&primary_ssrc).unwrap();
+    assert_eq!(
+        stream.retransmitted_packets_received, 1,
+        "RTX packet should be attributed to primary stream via reverse lookup"
+    );
+    assert_eq!(
+        stream.retransmitted_bytes_received, 50,
+        "RTX bytes should be attributed to primary stream"
+    );
+}
+
+/// Verifies that `update_inbound_rtx_ssrc` is a no-op when the primary
+/// SSRC does not have an existing inbound stream accumulator (the reverse
+/// lookup is still populated for future use).
+#[test]
+fn test_update_inbound_rtx_ssrc_no_existing_stream() {
+    let mut accumulator = RTCStatsAccumulator::new();
+
+    let primary_ssrc: u32 = 3000;
+    let rtx_ssrc: u32 = 4000;
+
+    // Call update without creating the inbound stream first
+    accumulator.update_inbound_rtx_ssrc(primary_ssrc, rtx_ssrc);
+
+    // The inbound stream should NOT exist
+    assert!(
+        !accumulator.inbound_rtp_streams.contains_key(&primary_ssrc),
+        "No inbound stream should be created by update_inbound_rtx_ssrc"
+    );
+
+    // But the reverse lookup should still be populated so that when the
+    // inbound stream is created later, RTX packets can be attributed.
+    // Verify by calling on_rtx_packet_received_if_rtx (should not panic).
+    accumulator.on_rtx_packet_received_if_rtx(rtx_ssrc, 50);
+}

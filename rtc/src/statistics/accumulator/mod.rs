@@ -432,6 +432,25 @@ impl RTCStatsAccumulator {
             })
     }
 
+    /// Updates the RTX SSRC association for an existing inbound RTP stream.
+    ///
+    /// This is used when `rrid` (repaired RTP stream ID) arrives after the base
+    /// stream's `InboundRtpStreamAccumulator` has already been created. It updates
+    /// both the reverse-lookup map (`rtx_ssrc_to_primary`) and the inbound stream's
+    /// `rtx_ssrc` field so that `on_rtx_packet_received_if_rtx()` can recognize
+    /// these packets and `getStats()` reports the correct `rtxSsrc`.
+    ///
+    /// # Arguments
+    ///
+    /// * `primary_ssrc` - The SSRC of the base/primary stream
+    /// * `rtx_ssrc` - The RTX SSRC to associate with the primary stream
+    pub(crate) fn update_inbound_rtx_ssrc(&mut self, primary_ssrc: SSRC, rtx_ssrc: SSRC) {
+        self.rtx_ssrc_to_primary.insert(rtx_ssrc, primary_ssrc);
+        if let Some(stream) = self.inbound_rtp_streams.get_mut(&primary_ssrc) {
+            stream.rtx_ssrc = Some(rtx_ssrc);
+        }
+    }
+
     /// Gets or creates an outbound stream accumulator for the given SSRC.
     ///
     /// # Arguments
