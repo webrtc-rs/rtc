@@ -1489,6 +1489,12 @@ fn test_update_inbound_rtx_ssrc_no_existing_stream() {
 
     // But the reverse lookup should still be populated so that when the
     // inbound stream is created later, RTX packets can be attributed.
-    // Verify by calling on_rtx_packet_received_if_rtx (should not panic).
+    assert_eq!(
+        accumulator.rtx_ssrc_to_primary.get(&rtx_ssrc),
+        Some(&primary_ssrc),
+        "Reverse lookup should map RTX SSRC to the primary SSRC"
+    );
+
+    // Verify the reverse lookup can be used without panicking.
     accumulator.on_rtx_packet_received_if_rtx(rtx_ssrc, 50);
 }
