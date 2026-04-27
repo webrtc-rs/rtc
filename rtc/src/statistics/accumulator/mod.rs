@@ -445,10 +445,17 @@ impl RTCStatsAccumulator {
     /// * `primary_ssrc` - The SSRC of the base/primary stream
     /// * `rtx_ssrc` - The RTX SSRC to associate with the primary stream
     pub(crate) fn update_inbound_rtx_ssrc(&mut self, primary_ssrc: SSRC, rtx_ssrc: SSRC) {
-        self.rtx_ssrc_to_primary.insert(rtx_ssrc, primary_ssrc);
         if let Some(stream) = self.inbound_rtp_streams.get_mut(&primary_ssrc) {
+            if let Some(old_rtx_ssrc) = stream.rtx_ssrc {
+                if old_rtx_ssrc != rtx_ssrc {
+                    self.rtx_ssrc_to_primary.remove(&old_rtx_ssrc);
+                }
+            }
+
             stream.rtx_ssrc = Some(rtx_ssrc);
         }
+
+        self.rtx_ssrc_to_primary.insert(rtx_ssrc, primary_ssrc);
     }
 
     /// Gets or creates an outbound stream accumulator for the given SSRC.
