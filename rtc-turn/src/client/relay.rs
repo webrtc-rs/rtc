@@ -207,7 +207,7 @@ impl Relay<'_> {
 
                 // indication has no transaction (fire-and-forget)
                 self.client
-                    .write_to(&msg.raw, self.client.turn_server_addr()?);
+                    .write_to(&msg.raw, self.client.turn_server_addr_or_err()?);
                 return Ok(());
             }
 
@@ -271,7 +271,7 @@ impl Relay<'_> {
 
             Ok(self.client.perform_transaction(
                 &msg,
-                self.client.turn_server_addr()?,
+                self.client.turn_server_addr_or_err()?,
                 TransactionType::CreatePermissionRequest(self.relayed_addr, peer_addr_opt),
             ))
         } else {
@@ -337,7 +337,7 @@ impl Relay<'_> {
 
             let _ = self.client.perform_transaction(
                 &msg,
-                self.client.turn_server_addr()?,
+                self.client.turn_server_addr_or_err()?,
                 TransactionType::RefreshRequest(self.relayed_addr),
             );
 
@@ -418,7 +418,7 @@ impl Relay<'_> {
             let mut msg = Message::new();
             msg.build(&setters)?;
 
-            (msg, self.client.turn_server_addr()?)
+            (msg, self.client.turn_server_addr_or_err()?)
         };
 
         debug!("UDPConn.bind call PerformTransaction 1");
@@ -483,7 +483,7 @@ impl Relay<'_> {
         ch_data.encode();
 
         self.client
-            .write_to(&ch_data.raw, self.client.turn_server_addr()?);
+            .write_to(&ch_data.raw, self.client.turn_server_addr_or_err()?);
 
         Ok(())
     }
