@@ -11,7 +11,9 @@ use crate::media_stream::track::MediaStreamTrackId;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability, RTCRtpRtxParameters,
+};
 use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet};
@@ -448,7 +450,60 @@ where
                     .cloned()
             {
                 if !rrid.is_empty() {
-                    //TODO: Add support of handling repair rtp stream id (rrid) #12
+                    // rrid identifies the base stream (rid) that this repair/RTX packet belongs to.
+                    // Associate the repair SSRC with the base stream's RTX parameters.
+                    let has_base_coding =
+                        match receiver.get_coding_parameter_mut_by_rid(rrid.as_str()) {
+                            Some(coding) => {
+                                match coding.rtx.as_mut() {
+                                    Some(rtx) => rtx.ssrc = ssrc,
+                                    None => coding.rtx = Some(RTCRtpRtxParameters { ssrc }),
+                                }
+                                true
+                            }
+                            None => {
+                                warn!(
+                                    "dropping repair/RTX SSRC association: no base coding \
+                                     parameters found for rrid='{}' (repair_ssrc={}, mid='{}', \
+                                     rid='{}')",
+                                    rrid, ssrc, mid, rid,
+                                );
+                                false
+                            }
+                        };
+
+                    if has_base_coding {
+                        // Register the repair stream with the interceptor so RTX
+                        // packets are actually demuxed and forwarded. Use the
+                        // actual packet payload type here: in this branch `codec`
+                        // corresponds to the repair/RTX packet, so looking up an
+                        // RTX PT from `codec.payload_type` would fail (it is
+                        // already the RTX PT).
+                        let parameters = receiver.get_parameters(self.media_engine);
+                        RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                            self.interceptor,
+                            true,
+                            ssrc,
+                            codec.payload_type,
+                            &codec.rtp_codec,
+                            &parameters.rtp_parameters.header_extensions,
+                        );
+
+                        // Update the stats accumulator so RTX packets are
+                        // attributed to the primary stream's stats (the inbound
+                        // stream accumulator may already exist from the base
+                        // stream's OnOpen event).
+                        if let Some(primary_ssrc) = receiver
+                            .get_coding_parameters()
+                            .iter()
+                            .find(|c| c.rid == rrid)
+                            .and_then(|c| c.ssrc)
+                        {
+                            self.stats.update_inbound_rtx_ssrc(primary_ssrc, ssrc);
+                        }
+                    }
+
+                    return Some(receiver.track().track_id().clone());
                 } else {
                     if let Some(coding) = receiver.get_coding_parameter_mut_by_rid(rid.as_str()) {
                         coding.ssrc = Some(ssrc);
