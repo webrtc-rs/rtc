@@ -447,7 +447,7 @@ impl SettingEngine {
     pub fn set_ice_connection_attempts(
         &mut self,
         check_interval: Option<Duration>,
-        max_binding_requests: Option<u16>
+        max_binding_requests: Option<u16>,
     ) {
         self.timeout.ice_check_interval = check_interval;
         self.timeout.ice_max_binding_requests = max_binding_requests
