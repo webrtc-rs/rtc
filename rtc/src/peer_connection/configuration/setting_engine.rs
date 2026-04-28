@@ -141,6 +141,18 @@ pub struct Timeout {
     /// Default: 2 seconds. If media is flowing, no keepalives are sent.
     pub ice_keepalive_interval: Option<Duration>,
 
+    /// Controls how often ICE sends binding requests for a candidate pair.
+    /// When combined with `ice_max_binding_requests`, controls how long ICE will attempt
+    /// to connect a candidate.
+    pub ice_check_interval: Option<Duration>,
+
+    /// The max amount of binding requests ICE will send over a candidate pair for validation
+    /// or nomination, if after max_binding_requests the candidate is yet to answer a binding
+    /// request or a nomination we set the pair as failed.
+    /// When combined with `ice_check_interval`, controls how long ICE will attempt
+    /// to connect a candidate.
+    pub ice_max_binding_requests: Option<u16>,
+
     /// Minimum wait time before accepting host candidates.
     pub ice_host_acceptance_min_wait: Option<Duration>,
 
@@ -421,6 +433,24 @@ impl SettingEngine {
         self.timeout.ice_disconnected_timeout = disconnected_timeout;
         self.timeout.ice_failed_timeout = failed_timeout;
         self.timeout.ice_keepalive_interval = keep_alive_interval;
+    }
+
+    /// Configures ICE connection attempt behavior, including number of connection attempts
+    /// per candidate, and the amount of time between connection attempts.
+    ///
+    /// The default settings configure ICE to attempt to connect a candidate for up to 1.4 seconds.
+    ///
+    /// # Parameters
+    ///
+    /// * `check_interval` - The delay between each connection attempt (default: 200 ms)
+    /// * `max_binding_requests` - Maximum number of connection attempts per candidate (default: 7)
+    pub fn set_ice_connection_attempts(
+        &mut self,
+        check_interval: Option<Duration>,
+        max_binding_requests: Option<u16>,
+    ) {
+        self.timeout.ice_check_interval = check_interval;
+        self.timeout.ice_max_binding_requests = max_binding_requests
     }
 
     /// Sets minimum wait time before accepting host candidates.
