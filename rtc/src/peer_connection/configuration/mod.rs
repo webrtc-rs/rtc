@@ -206,6 +206,7 @@
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
 use rcgen::KeyPair;
+use serde::{Deserialize, Serialize};
 use shared::error::{Error, Result};
 use std::time::SystemTime;
 
@@ -237,7 +238,14 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 /// * [W3C]
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary
-#[derive(Default, Clone, Debug)]
+///
+/// Serialization follows the W3C RTCConfiguration dictionary naming
+/// (`iceServers`, `iceTransportPolicy`, etc.).  Certificates are **excluded**
+/// from serialization because they contain private-key material; use
+/// [`RTCCertificate::serialize_pem`] / [`RTCCertificate::from_pem`] to
+/// persist them separately and re-attach via [`RTCConfigurationBuilder::with_certificates`].
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct RTCConfiguration {
     /// ice_servers defines a slice describing servers available to be used by
     /// ICE, such as STUN and TURN servers.
@@ -260,17 +268,11 @@ pub struct RTCConfiguration {
     /// unless it can be successfully authenticated with the provided name.
     pub(crate) peer_identity: String,
 
-    /// certificates describes a set of certificates that the PeerConnection
-    /// uses to authenticate. Valid values for this parameter are created
-    /// through calls to the generate_certificate function. Although any given
-    /// DTLS connection will use only one certificate, this attribute allows the
-    /// caller to provide multiple certificates that support different
-    /// algorithms. The final certificate will be selected based on the DTLS
-    /// handshake, which establishes which certificates are allowed. The
-    /// PeerConnection implementation selects which of the certificates is
-    /// used for a given connection; how certificates are selected is outside
-    /// the scope of this specification. If this value is absent, then a default
-    /// set of certificates is generated for each PeerConnection instance.
+    /// Certificates are excluded from both serialization and deserialization because
+    /// they contain private-key material.  Persist them separately with
+    /// `RTCCertificate::serialize_pem()` / `RTCCertificate::from_pem()` and re-attach
+    /// via [`RTCConfigurationBuilder::with_certificates`].
+    #[serde(skip)]
     pub(crate) certificates: Vec<RTCCertificate>,
 
     /// ice_candidate_pool_size describes the size of the prefetched ICE pool.
@@ -749,41 +751,86 @@ mod test {
         }
     }
 
-    /*TODO:#[test] fn test_configuration_json() {
+    #[test]
+    fn test_configuration_json_round_trip() {
+        // Build a config with a non-empty certificates vec so we can prove
+        // that serde(skip) actually omits them from the JSON output.
+        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("generate key pair");
+        let cert = RTCCertificate::from_key_pair(kp).expect("create certificate");
 
-         let j = r#"
-            {
-                "iceServers": [{"URLs": ["turn:turn.example.org"],
-                                "username": "jch",
-                                "credential": "topsecret"
-                              }],
-                "iceTransportPolicy": "relay",
-                "bundlePolicy": "balanced",
-                "rtcpMuxPolicy": "require"
-            }"#;
+        let original = RTCConfigurationBuilder::new()
+            .with_ice_servers(vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            }])
+            .with_ice_transport_policy(RTCIceTransportPolicy::All)
+            .with_bundle_policy(RTCBundlePolicy::MaxBundle)
+            .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
+            .with_certificates(vec![cert])
+            .build();
 
-        conf := Configuration{
-            ICEServers: []ICEServer{
-                {
-                    URLs:       []string{"turn:turn.example.org"},
-                    Username:   "jch",
-                    Credential: "topsecret",
-                },
-            },
-            ICETransportPolicy: ICETransportPolicyRelay,
-            BundlePolicy:       BundlePolicyBalanced,
-            RTCPMuxPolicy:      RTCPMuxPolicyRequire,
-        }
+        // Confirm our original actually carries a certificate
+        assert_eq!(original.certificates.len(), 1);
 
-        var conf2 Configuration
-        assert.NoError(t, json.Unmarshal([]byte(j), &conf2))
-        assert.Equal(t, conf, conf2)
+        let json = serde_json::to_string(&original).expect("serialize");
 
-        j2, err := json.Marshal(conf2)
-        assert.NoError(t, err)
+        // Validate camelCase keys and values via structured parsing
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+        assert_eq!(
+            value["iceServers"][0]["urls"][0],
+            serde_json::Value::String("stun:stun.l.google.com:19302".to_owned())
+        );
+        assert_eq!(
+            value["iceTransportPolicy"],
+            serde_json::Value::String("all".to_owned())
+        );
+        assert_eq!(
+            value["bundlePolicy"],
+            serde_json::Value::String("max-bundle".to_owned())
+        );
+        assert_eq!(
+            value["rtcpMuxPolicy"],
+            serde_json::Value::String("require".to_owned())
+        );
 
-        var conf3 Configuration
-        assert.NoError(t, json.Unmarshal(j2, &conf3))
-        assert.Equal(t, conf2, conf3)
-    }*/
+        // Certificates must NOT appear in the serialized JSON
+        assert!(
+            value.get("certificates").is_none(),
+            "certificates should be omitted from JSON (serde skip)"
+        );
+
+        // Deserialize back and verify round-trip fidelity
+        let restored: RTCConfiguration = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.ice_servers.len(), 1);
+        assert_eq!(
+            restored.ice_servers[0].urls[0],
+            "stun:stun.l.google.com:19302"
+        );
+        assert_eq!(restored.ice_transport_policy, RTCIceTransportPolicy::All);
+        assert_eq!(restored.bundle_policy, RTCBundlePolicy::MaxBundle);
+        assert_eq!(restored.rtcp_mux_policy, RTCRtcpMuxPolicy::Require);
+        // certificates are skipped during both serialization and deserialization
+        assert!(restored.certificates.is_empty());
+    }
+
+    #[test]
+    fn test_configuration_json_partial_deserialize() {
+        // Only iceServers provided — all other fields should get defaults
+        let json = r#"{"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}]}"#;
+        let config: RTCConfiguration = serde_json::from_str(json).expect("partial deserialize");
+        assert_eq!(config.ice_servers.len(), 1);
+        assert_eq!(
+            config.ice_servers[0].urls[0],
+            "stun:stun.l.google.com:19302"
+        );
+        // Fields not present in JSON should be their Default values
+        assert_eq!(
+            config.ice_transport_policy,
+            RTCIceTransportPolicy::Unspecified
+        );
+        assert_eq!(config.bundle_policy, RTCBundlePolicy::Unspecified);
+        assert_eq!(config.rtcp_mux_policy, RTCRtcpMuxPolicy::Unspecified);
+        assert!(config.certificates.is_empty());
+        assert_eq!(config.ice_candidate_pool_size, 0);
+    }
 }

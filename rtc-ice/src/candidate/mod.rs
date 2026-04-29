@@ -3,11 +3,12 @@ mod candidate_pair_test;
 #[cfg(test)]
 mod candidate_test;
 
-//TODO: #[cfg(test)]
-//TODO: mod candidate_relay_test;
-/*TODO: #[cfg(test)]
-TODO: mod candidate_server_reflexive_test;
-*/
+// candidate_relay_test and candidate_server_reflexive_test use `turn::auth`,
+// `turn::server`, and `turn::relay` APIs from a different TURN library than
+// rtc-turn. Enabling them requires porting to the rtc-turn API — deferred to a
+// dedicated porting effort.
+// #[cfg(test)] mod candidate_relay_test;
+// #[cfg(test)] mod candidate_server_reflexive_test;
 
 pub mod candidate_host;
 pub mod candidate_pair;

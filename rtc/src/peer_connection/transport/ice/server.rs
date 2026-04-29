@@ -11,6 +11,7 @@ use shared::error::{Error, Result};
 ///
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtciceserver
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct RTCIceServer {
     pub urls: Vec<String>,
     pub username: String,
