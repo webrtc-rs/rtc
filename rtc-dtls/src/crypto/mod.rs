@@ -138,12 +138,29 @@ pub(crate) fn value_key_message(
     plaintext
 }
 
-/// Either ED25519, ECDSA or RSA keypair.
+/// Trait for delegating signing to an external service (e.g., HSM, TPM, cloud KMS).
+///
+/// Implementations must be thread-safe and cloneable. Each DTLS handshake may
+/// clone the signer, so `clone_box` must return a fresh instance that signs
+/// with the same key.
+pub trait CustomSigner: Send + Sync + std::fmt::Debug {
+    /// Sign the given message and return the raw signature bytes.
+    fn sign(&self, message: &[u8]) -> std::result::Result<Vec<u8>, String>;
+
+    /// Clone this signer into a new boxed instance.
+    fn clone_box(&self) -> Box<dyn CustomSigner>;
+}
+
+/// Either ED25519, ECDSA, RSA keypair, or a custom external signer.
 #[derive(Debug)]
 pub enum CryptoPrivateKeyKind {
     Ed25519(Ed25519KeyPair),
     Ecdsa256(EcdsaKeyPair),
     Rsa256(ring::rsa::KeyPair),
+    /// Delegate signing to an external provider. The signer receives the raw
+    /// message bytes and must return a signature in the format expected by the
+    /// negotiated signature algorithm (e.g., ASN.1 DER for ECDSA).
+    Custom(Box<dyn CustomSigner>),
 }
 
 /// Private key.
@@ -172,6 +189,9 @@ impl PartialEq for CryptoPrivateKey {
             ) | (
                 CryptoPrivateKeyKind::Ed25519(_),
                 CryptoPrivateKeyKind::Ed25519(_)
+            ) | (
+                CryptoPrivateKeyKind::Custom(_),
+                CryptoPrivateKeyKind::Custom(_)
             )
         )
     }
@@ -201,6 +221,10 @@ impl Clone for CryptoPrivateKey {
                 kind: CryptoPrivateKeyKind::Rsa256(
                     ring::rsa::KeyPair::from_pkcs8(&self.serialized_der).unwrap(),
                 ),
+                serialized_der: self.serialized_der.clone(),
+            },
+            CryptoPrivateKeyKind::Custom(ref signer) => CryptoPrivateKey {
+                kind: CryptoPrivateKeyKind::Custom(signer.clone_box()),
                 serialized_der: self.serialized_der.clone(),
             },
         }
@@ -286,6 +310,9 @@ pub(crate) fn generate_key_signature(
             .map_err(|e| Error::Other(e.to_string()))?;
 
             signature
+        }
+        CryptoPrivateKeyKind::Custom(signer) => {
+            signer.sign(&msg).map_err(Error::Other)?
         }
     };
 
@@ -408,6 +435,9 @@ pub(crate) fn generate_certificate_verify(
             .map_err(|e| Error::Other(e.to_string()))?;
 
             signature
+        }
+        CryptoPrivateKeyKind::Custom(signer) => {
+            signer.sign(handshake_bodies).map_err(Error::Other)?
         }
     };
 
