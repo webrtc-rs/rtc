@@ -100,6 +100,7 @@ impl SignatureHashAlgorithm {
             CryptoPrivateKeyKind::Ed25519(_) => self.signature == SignatureAlgorithm::Ed25519,
             CryptoPrivateKeyKind::Ecdsa256(_) => self.signature == SignatureAlgorithm::Ecdsa,
             CryptoPrivateKeyKind::Rsa256(_) => self.signature == SignatureAlgorithm::Rsa,
+            CryptoPrivateKeyKind::Custom(_) => true,
         }
     }
 }
