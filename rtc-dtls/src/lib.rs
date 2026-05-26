@@ -26,6 +26,13 @@ pub mod state;
 use cipher_suite::*;
 use extension::extension_use_srtp::SrtpProtectionProfile;
 
+#[cfg(all(feature = "aws-lc-rs", feature = "ring"))]
+compile_error!("At most one of the features \"aws-lc-rs\" and \"ring\" can be enabled.");
+#[cfg(not(any(feature = "aws-lc-rs", feature = "ring")))]
+compile_error!("At least one of the features \"aws-lc-rs\" and \"ring\" must be enabled.");
+#[cfg(feature = "aws-lc-rs")]
+extern crate aws_lc_rs as ring;
+
 pub(crate) fn find_matching_srtp_profile(
     a: &[SrtpProtectionProfile],
     b: &[SrtpProtectionProfile],

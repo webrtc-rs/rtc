@@ -12,8 +12,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = []
+default = ["ring"]
 bench = []
+ring = ["dep:ring"]
+aws-lc-rs = ["dep:aws-lc-rs"]
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
@@ -26,7 +28,8 @@ rand.workspace = true
 base64 = "0.22.1"
 subtle = "2.5.0"
 crc = "3.0.1"
-ring.workspace = true
+ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 md-5 = "0.10"
 
 [dev-dependencies]
