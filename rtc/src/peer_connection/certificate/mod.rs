@@ -188,6 +188,7 @@ use std::time::{Duration, SystemTime};
 
 use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
 use rcgen::{CertificateParams, KeyPair};
+#[cfg(feature = "ring")]
 use ring::rand::SystemRandom;
 use ring::rsa;
 use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
@@ -358,6 +359,7 @@ impl RTCCertificate {
                     EcdsaKeyPair::from_pkcs8(
                         &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
                         &serialized_der,
+                        #[cfg(feature = "ring")]
                         &SystemRandom::new(),
                     )
                     .map_err(|e| Error::Other(e.to_string()))?,
@@ -677,7 +679,10 @@ mod test {
     #[test]
     fn test_generate_certificate_rsa() -> Result<()> {
         let key_pair = KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256);
+        #[cfg(feature = "ring")]
         assert!(key_pair.is_err(), "RcgenError::KeyGenerationUnavailable");
+        #[cfg(feature = "aws-lc-rs")]
+        let _cert = RTCCertificate::from_key_pair(key_pair?)?;
 
         Ok(())
     }

@@ -37,7 +37,7 @@ categories = ["network-programming"]
 rtc = { version = "0.20.0-alpha.1", path = "rtc" }
 signal = { version = "0.20.0-alpha.1", path = "examples/examples/signal", package = "rtc-signal" }
 datachannel = { version = "0.20.0-alpha.1", path = "rtc-datachannel", package = "rtc-datachannel" }
-dtls = { version = "0.20.0-alpha.1", path = "rtc-dtls", package = "rtc-dtls" }
+dtls = { version = "0.20.0-alpha.1", path = "rtc-dtls", package = "rtc-dtls", default-features = false }
 ice = { version = "0.20.0-alpha.1", path = "rtc-ice", package = "rtc-ice" }
 interceptor = { version = "0.20.0-alpha.1", path = "rtc-interceptor", package = "rtc-interceptor" }
 interceptor-derive = { version = "0.20.0-alpha.1", path = "rtc-interceptor-derive", package = "rtc-interceptor-derive" }
@@ -49,7 +49,7 @@ sctp = { version = "0.20.0-alpha.1", path = "rtc-sctp", package = "rtc-sctp" }
 sdp = { version = "0.20.0-alpha.1", path = "rtc-sdp", package = "rtc-sdp" }
 shared = { version = "0.20.0-alpha.1", path = "rtc-shared", package = "rtc-shared", default-features = false }
 srtp = { version = "0.20.0-alpha.1", path = "rtc-srtp", package = "rtc-srtp" }
-stun = { version = "0.20.0-alpha.1", path = "rtc-stun", package = "rtc-stun" }
+stun = { version = "0.20.0-alpha.1", path = "rtc-stun", package = "rtc-stun", default-features = false }
 turn = { version = "0.20.0-alpha.1", path = "rtc-turn", package = "rtc-turn" }
 
 # common dependencies
@@ -57,8 +57,9 @@ sansio = "1"
 bytes = "1.11.0"
 byteorder = "1.5.0"
 log = "0.4.29"
-rcgen = { version = "0.14.6", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.14.6", features = ["pem", "x509-parser"], default-features = false }
 ring = "0.17.14"
+aws-lc-rs = { version = "1.17.0", default-features = false, features = ["aws-lc-sys"] }
 rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
