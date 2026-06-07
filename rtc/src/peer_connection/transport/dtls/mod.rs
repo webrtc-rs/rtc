@@ -124,8 +124,7 @@ impl RTCDtlsTransport {
         // We need a feature gate because
         // `#[cfg(test)]` is not propagated to this crate in integration tests.
         #[cfg(all(feature = "__testing", feature = "aws-lc-rs"))]
-        let _ = rustls::crypto::aws_lc_rs::default_provider()
-            .install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
 
