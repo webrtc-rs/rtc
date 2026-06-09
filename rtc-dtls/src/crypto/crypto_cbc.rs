@@ -112,6 +112,10 @@ impl CryptoCbc {
             .decrypt_padded_vec_mut::<DtlsPadding>(body)
             .map_err(|_| Error::ErrInvalidPacketLength)?;
 
+        if decrypted.len() < Self::MAC_SIZE {
+            return Err(Error::ErrInvalidMac);
+        }
+
         let recv_mac = &decrypted[decrypted.len() - Self::MAC_SIZE..];
         let decrypted = &decrypted[0..decrypted.len() - Self::MAC_SIZE];
         let mac = prf_mac(
