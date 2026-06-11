@@ -32,8 +32,9 @@ x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 x509-parser = "0.16.0"
 der-parser = "9.0.0"
 rcgen.workspace = true
-ring.workspace = true
-rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
+ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
+rustls = { version = "0.23.27", default-features = false, features = ["std"] }
 rkyv = "0.8"
 bytecheck = "0.8"
 subtle = "2.5.0"
@@ -52,7 +53,10 @@ ctrlc.workspace = true
 futures = "0.3.30"
 
 [features]
+default = ["ring"]
 pem = ["dep:pem"]
+ring = ["dep:ring", "rustls/ring", "rcgen/ring"]
+aws-lc-rs = ["dep:aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs"]
 
 #[[example]]
 #name = "dtls_chat_server"
