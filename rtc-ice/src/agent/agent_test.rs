@@ -2559,3 +2559,61 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
     a.close()?;
     Ok(())
 }
+
+#[test]
+fn test_pair_network_type_mismatch() -> Result<()> {
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+
+    let local_v4 = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.1.1".to_owned(),
+            port: 7777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(local_v4)?;
+
+    let remote_v6 = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "2001:db8::1".to_owned(),
+            port: 8888,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote_v6)?;
+
+    assert!(
+        a.candidate_pairs.is_empty(),
+        "IPv4 local and IPv6 remote candidates should not be paired"
+    );
+
+    let remote_v4 = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.1.2".to_owned(),
+            port: 8888,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote_v4)?;
+
+    assert_eq!(
+        a.candidate_pairs.len(),
+        1,
+        "IPv4 local and IPv4 remote candidates should form exactly one pair"
+    );
+
+    a.close()?;
+    Ok(())
+}
