@@ -411,25 +411,11 @@ impl Agent {
 
         self.local_candidates.push(c);
         let local_index = self.local_candidates.len() - 1;
-        let local_tcp_type = self.local_candidates[local_index].tcp_type();
 
         for remote_index in 0..self.remote_candidates.len() {
-            let remote_tcp_type = self.remote_candidates[remote_index].tcp_type();
-
-            // TCP type pairing rules (RFC 6544):
-            // - Active can only pair with Passive
-            // - Passive can only pair with Active
-            // - SimultaneousOpen can pair with SimultaneousOpen
-            // - Unspecified (UDP) can pair with Unspecified
-            let should_pair = match (local_tcp_type, remote_tcp_type) {
-                (TcpType::Active, TcpType::Passive) => true,
-                (TcpType::Passive, TcpType::Active) => true,
-                (TcpType::SimultaneousOpen, TcpType::SimultaneousOpen) => true,
-                (TcpType::Unspecified, TcpType::Unspecified) => true, // UDP candidates
-                _ => false,
-            };
-
-            if should_pair {
+            if self.local_candidates[local_index]
+                .can_pair_with(&self.remote_candidates[remote_index])
+            {
                 self.add_pair(local_index, remote_index);
             }
         }
@@ -493,28 +479,13 @@ impl Agent {
     fn trigger_request_connectivity_check(&mut self, remote_candidates: Vec<Candidate>) {
         for c in remote_candidates {
             if !self.remote_candidates.iter().any(|cand| cand.equal(&c)) {
-                let remote_tcp_type = c.tcp_type();
                 self.remote_candidates.push(c);
                 let remote_index = self.remote_candidates.len() - 1;
 
-                // Apply TCP type pairing rules (RFC 6544)
                 for local_index in 0..self.local_candidates.len() {
-                    let local_tcp_type = self.local_candidates[local_index].tcp_type();
-
-                    // TCP type pairing rules:
-                    // - Active can only pair with Passive
-                    // - Passive can only pair with Active
-                    // - SimultaneousOpen can pair with SimultaneousOpen
-                    // - Unspecified (UDP) can pair with Unspecified
-                    let should_pair = match (local_tcp_type, remote_tcp_type) {
-                        (TcpType::Active, TcpType::Passive) => true,
-                        (TcpType::Passive, TcpType::Active) => true,
-                        (TcpType::SimultaneousOpen, TcpType::SimultaneousOpen) => true,
-                        (TcpType::Unspecified, TcpType::Unspecified) => true, // UDP candidates
-                        _ => false,
-                    };
-
-                    if should_pair {
+                    if self.local_candidates[local_index]
+                        .can_pair_with(&self.remote_candidates[remote_index])
+                    {
                         self.add_pair(local_index, remote_index);
                     }
                 }
