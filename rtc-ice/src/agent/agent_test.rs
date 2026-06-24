@@ -2564,6 +2564,7 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
 fn test_pair_network_type_mismatch() -> Result<()> {
     let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
 
+    // UDP: IPv4 local should not pair with IPv6 remote.
     let local_v4 = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
@@ -2595,6 +2596,7 @@ fn test_pair_network_type_mismatch() -> Result<()> {
         "IPv4 local and IPv6 remote candidates should not be paired"
     );
 
+    // UDP: matching IPv4 should pair.
     let remote_v4 = CandidateHostConfig {
         base_config: CandidateConfig {
             network: "udp".to_owned(),
@@ -2612,6 +2614,59 @@ fn test_pair_network_type_mismatch() -> Result<()> {
         a.candidate_pairs.len(),
         1,
         "IPv4 local and IPv4 remote candidates should form exactly one pair"
+    );
+
+    // TCP: IPv4 active local should not pair with IPv6 passive remote.
+    let local_tcp4_active = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "tcp".to_owned(),
+            address: "192.168.1.3".to_owned(),
+            port: 7778,
+            component: 1,
+            ..Default::default()
+        },
+        tcp_type: TcpType::Active,
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(local_tcp4_active)?;
+
+    let remote_tcp6_passive = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "tcp".to_owned(),
+            address: "2001:db8::2".to_owned(),
+            port: 8889,
+            component: 1,
+            ..Default::default()
+        },
+        tcp_type: TcpType::Passive,
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote_tcp6_passive)?;
+
+    assert_eq!(
+        a.candidate_pairs.len(),
+        1,
+        "TCP4 active local and TCP6 passive remote should not create an additional pair"
+    );
+
+    // TCP: matching IPv4 active/passive should pair.
+    let remote_tcp4_passive = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "tcp".to_owned(),
+            address: "192.168.1.4".to_owned(),
+            port: 8890,
+            component: 1,
+            ..Default::default()
+        },
+        tcp_type: TcpType::Passive,
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote_tcp4_passive)?;
+
+    assert_eq!(
+        a.candidate_pairs.len(),
+        2,
+        "TCP4 active local and TCP4 passive remote should form exactly one pair"
     );
 
     a.close()?;

@@ -347,6 +347,26 @@ impl Candidate {
             && self.related_address() == other.related_address()
     }
 
+    /// Returns true if this candidate can be paired with `other` according to
+    /// ICE candidate pairing rules.
+    ///
+    /// Candidates must share the same network type (protocol and address family)
+    /// and have compatible TCP types (RFC 6544). UDP candidates use
+    /// `TcpType::Unspecified`.
+    pub(crate) fn can_pair_with(&self, other: &Candidate) -> bool {
+        if self.network_type() != other.network_type() {
+            return false;
+        }
+
+        match (self.tcp_type(), other.tcp_type()) {
+            (TcpType::Active, TcpType::Passive) => true,
+            (TcpType::Passive, TcpType::Active) => true,
+            (TcpType::SimultaneousOpen, TcpType::SimultaneousOpen) => true,
+            (TcpType::Unspecified, TcpType::Unspecified) => true, // UDP candidates
+            _ => false,
+        }
+    }
+
     pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
         self.network_type = determine_network_type(&self.network, ip)?;
         self.resolved_addr = SocketAddr::new(*ip, self.port); //TODO:  create_addr(network_type, *ip, self.port);
