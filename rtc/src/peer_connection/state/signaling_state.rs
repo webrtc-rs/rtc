@@ -337,32 +337,24 @@ pub(crate) fn check_next_signaling_state(
             if op == StateChangeOp::SetRemote {
                 match sdp_type {
                     // have-local-offer->SetRemote(answer)->stable
-                    RTCSdpType::Answer => {
-                        if next == RTCSignalingState::Stable {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Answer if next == RTCSignalingState::Stable => {
+                        return Ok(next);
                     }
                     // have-local-offer->SetRemote(pranswer)->have-remote-pranswer
-                    RTCSdpType::Pranswer => {
-                        if next == RTCSignalingState::HaveRemotePranswer {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Pranswer if next == RTCSignalingState::HaveRemotePranswer => {
+                        return Ok(next);
                     }
                     _ => {}
                 }
             } else if op == StateChangeOp::SetLocal {
                 match sdp_type {
                     // have-local-offer->SetLocal(offer)->have-local-offer (reoffer)
-                    RTCSdpType::Offer => {
-                        if next == RTCSignalingState::HaveLocalOffer {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Offer if next == RTCSignalingState::HaveLocalOffer => {
+                        return Ok(next);
                     }
                     // have-local-offer->SetLocal(rollback)->stable
-                    RTCSdpType::Rollback => {
-                        if next == RTCSignalingState::Stable {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Rollback if next == RTCSignalingState::Stable => {
+                        return Ok(next);
                     }
                     _ => {}
                 }
@@ -380,16 +372,12 @@ pub(crate) fn check_next_signaling_state(
             if op == StateChangeOp::SetLocal {
                 match sdp_type {
                     // have-remote-offer->SetLocal(answer)->stable
-                    RTCSdpType::Answer => {
-                        if next == RTCSignalingState::Stable {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Answer if next == RTCSignalingState::Stable => {
+                        return Ok(next);
                     }
                     // have-remote-offer->SetLocal(pranswer)->have-local-pranswer
-                    RTCSdpType::Pranswer => {
-                        if next == RTCSignalingState::HaveLocalPranswer {
-                            return Ok(next);
-                        }
+                    RTCSdpType::Pranswer if next == RTCSignalingState::HaveLocalPranswer => {
+                        return Ok(next);
                     }
                     _ => {}
                 }

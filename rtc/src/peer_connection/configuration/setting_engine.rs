@@ -697,6 +697,10 @@ impl SettingEngine {
         self.multicast_dns.local_ip = local_ip;
     }
 
+    pub fn multicast_dns(&self) -> &MulticastDNS {
+        &self.multicast_dns
+    }
+
     /// Sets static ICE credentials for reproducible sessions.
     ///
     /// By default, ICE generates random credentials (ufrag/password) for each

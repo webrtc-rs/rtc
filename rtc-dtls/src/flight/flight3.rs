@@ -202,10 +202,10 @@ impl Flight for Flight3 {
                         };
                         state.srtp_protection_profile = profile;
                     }
-                    Extension::UseExtendedMasterSecret(_) => {
-                        if cfg.extended_master_secret != ExtendedMasterSecretType::Disable {
-                            state.extended_master_secret = true;
-                        }
+                    Extension::UseExtendedMasterSecret(_)
+                        if cfg.extended_master_secret != ExtendedMasterSecretType::Disable =>
+                    {
+                        state.extended_master_secret = true;
                     }
                     _ => {}
                 };

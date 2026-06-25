@@ -990,12 +990,11 @@ where
                                 }
                             }
                         }
-                        RTCSdpType::Answer => {
+                        RTCSdpType::Answer
                             if m.attribute(transceiver.direction().to_string().as_str())
-                                .is_none()
-                            {
-                                return true;
-                            }
+                                .is_none() =>
+                        {
+                            return true;
                         }
                         _ => {}
                     };
@@ -1188,16 +1187,24 @@ where
         url: Option<&str>,
     ) -> Result<()> {
         let candidate: Candidate = unmarshal_candidate(candidate_value)?;
+        if !self.ice_transport_mut().add_local_candidate(candidate)? {
+            return Ok(());
+        }
+
+        let rtc_candidate = self
+            .ice_transport()
+            .agent
+            .get_local_candidates()
+            .last()
+            .map(RTCIceCandidate::from)
+            .ok_or_else(|| Error::Other("local candidate missing after registration".to_owned()))?;
 
         // Register local candidate with stats accumulator
-        let rtc_candidate: RTCIceCandidate = (&candidate).into();
         let candidate_id = format!("RTCLocalIceCandidate_{}", rtc_candidate.id);
         let (ufrag, _) = self.ice_transport().get_local_user_credentials();
         let accumulator = self.candidate_to_accumulator(&rtc_candidate, ufrag, url);
         self.stats_mut()
             .register_local_candidate(candidate_id, accumulator);
-
-        self.ice_transport_mut().add_local_candidate(candidate)?;
 
         // Emit OnIceCandidateEvent
         self.pipeline_context
