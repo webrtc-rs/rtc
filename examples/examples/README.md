@@ -65,7 +65,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   candidate.
 - ✅ [Trickle ICE ServerReflexive](trickle-ice-srflx): Example demonstrates how to add ServerReflexive (STUN)
   type local candidate.
-- ✅ [Trickle ICE Realy](trickle-ice-relay): Example demonstrates how to add Relay (TURN)
+- ✅ [Trickle ICE Relay](trickle-ice-relay): Example demonstrates how to add Relay (TURN)
   type local candidate.
 - ✅ [Trickle ICE](trickle-ice) Example trickle-ice demonstrates the comprehensive Trickle ICE APIs with all three types
   of ICE candidates. This is important to use since it allows ICE Gathering and Connecting to happen concurrently.
