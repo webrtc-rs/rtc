@@ -272,6 +272,7 @@ impl ConfigBuilder {
             match cert.private_key.kind {
                 CryptoPrivateKeyKind::Ed25519(_) => {}
                 CryptoPrivateKeyKind::Ecdsa256(_) => {}
+                CryptoPrivateKeyKind::Custom(_) => {}
                 _ => return Err(Error::ErrInvalidPrivateKey),
             }
         }
