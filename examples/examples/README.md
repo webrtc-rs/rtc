@@ -27,7 +27,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   receives using the same PeerConnection.
 - ✅ [Play from Disk VPx](play-from-disk-vpx): The play-from-disk-vpx example demonstrates how to send VP8/VP9 video to
   your browser from a file saved to disk.
-- ✅ [Play from Disk H26x](play-from-disk-h264): The play-from-disk-h26x example demonstrates how to send H264/H265 video
+- ✅ [Play from Disk H26x](play-from-disk-h26x): The play-from-disk-h26x example demonstrates how to send H264/H265 video
   to your browser from a file saved to disk.
 - ✅ [Play from Disk Renegotiation](play-from-disk-renegotiation): The play-from-disk-renegotiation example is an
   extension of the play-from-disk example, but demonstrates how you can add/remove video tracks from an already
@@ -48,7 +48,7 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   Simulcast streams. It then returns the media as 3 independent Tracks back to the sender.
 - ✅ [Swap Tracks](swap-tracks): The swap-tracks demonstrates how to swap multiple incoming tracks on a single outgoing
   track.
-- ✅ [RTCP Processing](rtcp-processing) The rtcp-processing example demonstrates how to create a custom
+- ✅ [RTCP Processing](rtcp-processing): The rtcp-processing example demonstrates how to create a custom
   RtcpForwarderInterceptor using the derive macros. This allows access to media statistics and control information.
 - ✅ [Save to Disk AV1](save-to-disk-av1): The save-to-disk-av1 is a simple application that shows how to save a video to
   disk using AV1.

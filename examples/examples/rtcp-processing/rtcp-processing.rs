@@ -29,8 +29,8 @@ use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
-use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters};
 use rtc::sansio::{self, Protocol}; // Required for #[interceptor] macro and Protocol trait methods
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -201,7 +201,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
     // Register VP8 codec for video
     media_engine.register_codec(
         RTCRtpCodecParameters {
-            rtp_codec: rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
+            rtp_codec: RTCRtpCodec {
                 mime_type: MIME_TYPE_VP8.to_string(),
                 clock_rate: 90000,
                 channels: 0,
@@ -217,7 +217,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
     // Register Opus codec for audio
     media_engine.register_codec(
         RTCRtpCodecParameters {
-            rtp_codec: rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
+            rtp_codec: RTCRtpCodec {
                 mime_type: MIME_TYPE_OPUS.to_string(),
                 clock_rate: 48000,
                 channels: 2,
