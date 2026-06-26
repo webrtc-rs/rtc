@@ -358,6 +358,29 @@ impl RTCConfiguration {
             }
         }
 
+        if self.ice_transport_policy == RTCIceTransportPolicy::Relay {
+            let mut has_turn = false;
+            for server in &sanitized_ice_servers {
+                let urls = server.urls()?;
+                for url in urls {
+                    if url.scheme == ice::url::SchemeType::Turn
+                        || url.scheme == ice::url::SchemeType::Turns
+                    {
+                        has_turn = true;
+                        break;
+                    }
+                }
+                if has_turn {
+                    break;
+                }
+            }
+            if !has_turn {
+                return Err(Error::Other(
+                    "Relay-only ICE transport policy configured, but no TURN/TURNS servers are available".to_owned()
+                ));
+            }
+        }
+
         // <https://www.w3.org/TR/webrtc/#constructor> (step #3)
         if !self.certificates.is_empty() {
             let now = SystemTime::now();
@@ -747,6 +770,36 @@ mod test {
             let parsed_urls = cfg.get_ice_servers();
             assert_eq!(parsed_urls[0].urls[0], expected_server_str);
         }
+    }
+
+    #[test]
+    fn test_configuration_validate_relay_policy() {
+        // Relay policy with no ICE servers should fail validation
+        let mut cfg = RTCConfigurationBuilder::new()
+            .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+            .build();
+        assert!(cfg.validate().is_err());
+
+        // Relay policy with STUN server only should fail validation
+        let mut cfg = RTCConfigurationBuilder::new()
+            .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+            .with_ice_servers(vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            }])
+            .build();
+        assert!(cfg.validate().is_err());
+
+        // Relay policy with TURN server should pass validation
+        let mut cfg = RTCConfigurationBuilder::new()
+            .with_ice_transport_policy(RTCIceTransportPolicy::Relay)
+            .with_ice_servers(vec![RTCIceServer {
+                urls: vec!["turn:turn.example.com:3478".to_owned()],
+                username: "user".to_owned(),
+                credential: "pass".to_owned(),
+            }])
+            .build();
+        assert!(cfg.validate().is_ok());
     }
 
     /*TODO:#[test] fn test_configuration_json() {
