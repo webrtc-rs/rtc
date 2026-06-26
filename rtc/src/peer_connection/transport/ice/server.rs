@@ -27,7 +27,7 @@ impl RTCIceServer {
         Ok(())
     }
 
-    pub(crate) fn urls(&self) -> Result<Vec<ice::url::Url>> {
+    pub fn urls(&self) -> Result<Vec<ice::url::Url>> {
         let mut urls = vec![];
 
         for url_str in &self.urls {
