@@ -126,7 +126,7 @@ pub struct CandidateConfig {
     pub foundation: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Candidate {
     pub(crate) id: String,
     pub(crate) network_type: NetworkType,
