@@ -73,18 +73,31 @@ pub enum RTCIceServerTransportProtocol {
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcicecandidate-interface
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCIceCandidate {
+    /// The unique identifier of this candidate.
     pub id: String,
+    /// The foundation of the candidate, used to group candidates of the same type.
     pub foundation: String,
+    /// The priority of this candidate.
     pub priority: u32,
+    /// The IP address of the candidate.
     pub address: String,
+    /// The transport protocol (UDP or TCP) used by this candidate.
     pub protocol: RTCIceProtocol,
+    /// The port number of the candidate.
     pub port: u16,
+    /// The candidate type (host, srflx, prflx, relay).
     pub typ: RTCIceCandidateType,
+    /// The ICE component (1 for RTP, 2 for RTCP).
     pub component: u16,
+    /// The related IP address, if this is a reflexive or relay candidate.
     pub related_address: String,
+    /// The related port number, if this is a reflexive or relay candidate.
     pub related_port: u16,
+    /// The TCP candidate type (active, passive, so), if this is a TCP candidate.
     pub tcp_type: RTCIceTcpCandidateType,
+    /// The relay protocol (UDP, TCP, TLS), if this is a relay candidate.
     pub relay_protocol: RTCIceServerTransportProtocol,
+    /// The URL of the STUN/TURN server used to gather this candidate, if any.
     pub url: Option<String>,
 }
 
@@ -205,10 +218,14 @@ impl fmt::Display for RTCIceCandidate {
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCIceCandidateInit {
+    /// The candidate-attribute string as defined in RFC 5245.
     pub candidate: String,
+    /// The identifier of the "m=" section in the SDP that this candidate is associated with.
     pub sdp_mid: Option<String>,
+    /// The index of the "m=" section in the SDP that this candidate is associated with.
     #[serde(rename = "sdpMLineIndex")]
     pub sdp_mline_index: Option<u16>,
+    /// The username fragment used for ICE authentication.
     pub username_fragment: Option<String>,
     /// The URL of the STUN or TURN server used to gather this candidate.
     ///

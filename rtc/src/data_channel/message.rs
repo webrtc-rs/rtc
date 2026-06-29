@@ -6,6 +6,8 @@ use bytes::BytesMut;
 /// a binary type.
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct RTCDataChannelMessage {
+    /// Whether the message is a text message (UTF-8 encoded string).
     pub is_string: bool,
+    /// The payload data of the message.
     pub data: BytesMut,
 }

@@ -566,6 +566,7 @@ impl MediaStreamTrack {
         self.muted
     }
 
+    /// Sets the muted state of the track.
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
     }
@@ -793,10 +794,12 @@ impl MediaStreamTrack {
             .map(|coding| &coding.codec)
     }
 
+    /// Returns the RTP encoding parameters (codings) configured for this track.
     pub fn codings(&self) -> &[RTCRtpEncodingParameters] {
         &self.codings
     }
 
+    /// Adds an RTP encoding parameter (coding) to the track.
     pub fn add_coding(&mut self, coding: RTCRtpEncodingParameters) {
         self.codings.push(coding);
     }

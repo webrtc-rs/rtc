@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcdatachannelstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCDataChannelState {
+    /// The state is unspecified.
     #[serde(rename = "unspecified")]
     #[default]
     Unspecified = 0,

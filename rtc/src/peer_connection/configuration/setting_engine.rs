@@ -677,6 +677,7 @@ impl SettingEngine {
         Ok(())
     }
 
+    /// Sets the timeout for multicast DNS resolution.
     pub fn set_multicast_dns_timeout(&mut self, timeout: Option<Duration>) {
         self.multicast_dns.timeout = timeout;
     }
@@ -693,10 +694,12 @@ impl SettingEngine {
         self.multicast_dns.local_name = local_name;
     }
 
+    /// Sets the local IP address to use for multicast DNS.
     pub fn set_multicast_dns_local_ip(&mut self, local_ip: Option<IpAddr>) {
         self.multicast_dns.local_ip = local_ip;
     }
 
+    /// Returns the multicast DNS configuration.
     pub fn multicast_dns(&self) -> &MulticastDNS {
         &self.multicast_dns
     }

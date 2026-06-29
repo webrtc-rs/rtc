@@ -273,6 +273,7 @@ where
         }
     }
 
+    /// Closes the data channel.
     pub fn close(&mut self) -> Result<()> {
         if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
             if dc.ready_state == RTCDataChannelState::Closed {

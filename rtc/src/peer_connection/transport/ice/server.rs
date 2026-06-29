@@ -12,8 +12,11 @@ use shared::error::{Error, Result};
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtciceserver
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Hash)]
 pub struct RTCIceServer {
+    /// The URLs representing the STUN or TURN servers.
     pub urls: Vec<String>,
+    /// The username to use when authenticating with a TURN server.
     pub username: String,
+    /// The credential (password or token) to use when authenticating with a TURN server.
     pub credential: String,
 }
 
@@ -27,6 +30,7 @@ impl RTCIceServer {
         Ok(())
     }
 
+    /// Parses and returns the parsed ICE URLs, validating TURN credentials if necessary.
     pub fn urls(&self) -> Result<Vec<ice::url::Url>> {
         let mut urls = vec![];
 

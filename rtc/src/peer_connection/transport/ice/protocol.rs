@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtciceprotocol-enum
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceProtocol {
+    /// The protocol is unspecified.
     #[default]
     Unspecified,
 

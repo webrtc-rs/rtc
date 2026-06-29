@@ -201,8 +201,11 @@ impl From<RTCRtpTransceiverId> for RTCRtpReceiverId {
 /// See [RTCRtpTransceiverInit](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiverinit)
 #[derive(Default, Clone)]
 pub struct RTCRtpTransceiverInit {
+    /// The initial direction of the transceiver.
     pub direction: RTCRtpTransceiverDirection,
+    /// The stream IDs associated with the transceiver's sender.
     pub streams: Vec<MediaStreamId>,
+    /// The encoding parameters to use when sending media.
     pub send_encodings: Vec<RTCRtpEncodingParameters>,
 }
 

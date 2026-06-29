@@ -13,6 +13,7 @@ use std::fmt;
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicetransportstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RTCIceTransportState {
+    /// The transport state is unspecified.
     #[default]
     Unspecified,
 
