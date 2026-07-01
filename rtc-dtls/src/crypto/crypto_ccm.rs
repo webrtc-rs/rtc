@@ -16,7 +16,7 @@ use ccm::KeyInit;
 use ccm::aead::AeadInPlace;
 use ccm::aead::generic_array::GenericArray;
 use ccm::consts::{U8, U12, U16};
-use rand::Rng;
+use rand::RngExt;
 
 use super::*;
 use crate::content::*;

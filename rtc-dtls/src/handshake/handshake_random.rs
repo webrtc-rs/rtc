@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};

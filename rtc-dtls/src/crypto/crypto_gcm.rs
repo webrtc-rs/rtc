@@ -11,7 +11,7 @@ use std::io::Cursor;
 use aes_gcm::aead::AeadInPlace;
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::{Aes128Gcm, KeyInit};
-use rand::Rng;
+use rand::RngExt;
 
 use super::*;
 use crate::content::*;

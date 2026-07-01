@@ -1,7 +1,7 @@
 use super::{param_header::*, param_type::*, *};
 
 use bytes::{Bytes, BytesMut};
-use rand::Rng;
+use rand::RngExt;
 use std::fmt;
 
 #[derive(Default, Debug, Clone, PartialEq)]

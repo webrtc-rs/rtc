@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rtc_stun::addr::{AlternateServer, MappedAddress};
 use rtc_stun::attributes::{
     ATTR_CHANNEL_NUMBER, ATTR_DONT_FRAGMENT, ATTR_ERROR_CODE, ATTR_MESSAGE_INTEGRITY, ATTR_NONCE,

@@ -5,7 +5,7 @@ use crate::attributes::*;
 use shared::error::*;
 
 use base64::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 use std::fmt;
 use std::io::{Read, Write};
 

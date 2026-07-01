@@ -10,7 +10,7 @@
 
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use p256::elliptic_curve::subtle::ConstantTimeEq;
-use rand::Rng;
+use rand::RngExt;
 use std::io::Cursor;
 use std::ops::Not;
 

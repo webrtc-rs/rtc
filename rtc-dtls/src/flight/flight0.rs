@@ -10,7 +10,7 @@ use crate::*;
 use shared::error::Error;
 
 use log::debug;
-use rand::Rng;
+use rand::RngExt;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
