@@ -1104,7 +1104,7 @@ where
         &mut self,
         local_ice_role: RTCIceRole,
         remote_ice_parameters: RTCIceParameters,
-        remote_dtls_parameters: DTLSParameters,
+        remote_dtls_parameters: RTCDtlsParameters,
     ) -> Result<()> {
         // Update ICE role (may change after ICE restart if peer roles swap)
         self.pipeline_context.stats.transport.ice_role = local_ice_role;

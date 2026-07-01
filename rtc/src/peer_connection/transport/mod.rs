@@ -159,6 +159,7 @@ pub(crate) mod ice;
 pub(crate) mod sctp;
 
 pub use dtls::fingerprint::RTCDtlsFingerprint;
+pub use dtls::parameters::RTCDtlsParameters;
 pub use dtls::role::RTCDtlsRole;
 pub use dtls::state::RTCDtlsTransportState;
 

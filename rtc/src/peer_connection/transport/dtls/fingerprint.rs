@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use shared::error::{Error, Result};
 
 /// DTLS certificate fingerprint for authentication.
 ///
@@ -88,7 +89,7 @@ use serde::{Deserialize, Serialize};
 /// [RFC 4572]: https://datatracker.ietf.org/doc/html/rfc4572
 /// [RFC 8122]: https://datatracker.ietf.org/doc/html/rfc8122
 /// [W3C RTCDtlsFingerprint]: https://w3c.github.io/webrtc-pc/#rtcdtlsfingerprint
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCDtlsFingerprint {
     /// Hash function algorithm name.
     ///
@@ -118,4 +119,20 @@ pub struct RTCDtlsFingerprint {
     ///
     /// [RFC 4572 Section 5]: https://datatracker.ietf.org/doc/html/rfc4572#section-5
     pub value: String,
+}
+
+impl TryFrom<&str> for RTCDtlsFingerprint {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        let fields: Vec<&str> = value.split_whitespace().collect();
+        if fields.len() == 2 {
+            Ok(Self {
+                algorithm: fields[0].to_string(),
+                value: fields[1].to_string(),
+            })
+        } else {
+            Err(Error::Other("invalid fingerprint".to_string()))
+        }
+    }
 }

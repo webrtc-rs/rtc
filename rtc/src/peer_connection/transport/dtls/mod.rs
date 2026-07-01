@@ -1,6 +1,6 @@
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
-use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
+use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, RTCDtlsRole};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
@@ -113,7 +113,7 @@ impl RTCDtlsTransport {
     pub(crate) fn prepare_transport(
         &mut self,
         ice_role: RTCIceRole,
-        remote_dtls_parameters: DTLSParameters,
+        remote_dtls_parameters: RTCDtlsParameters,
     ) -> Result<Arc<::dtls::config::HandshakeConfig>> {
         if self.state != RTCDtlsTransportState::New {
             return Err(Error::ErrInvalidDTLSStart);
@@ -180,7 +180,7 @@ impl RTCDtlsTransport {
     pub(crate) fn start(
         &mut self,
         local_ice_role: RTCIceRole,
-        remote_dtls_parameters: DTLSParameters,
+        remote_dtls_parameters: RTCDtlsParameters,
     ) -> Result<()> {
         let dtls_handshake_config =
             self.prepare_transport(local_ice_role, remote_dtls_parameters)?;

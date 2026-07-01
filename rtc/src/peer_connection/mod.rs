@@ -276,7 +276,7 @@ use crate::peer_connection::state::peer_connection_state::{
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
 use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
-use crate::peer_connection::transport::dtls::parameters::DTLSParameters;
+use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{
     DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, RTCDtlsRole,
 };
@@ -1512,7 +1512,7 @@ where
                         password: remote_pwd,
                         ice_lite: remote_is_lite,
                     },
-                    DTLSParameters {
+                    RTCDtlsParameters {
                         role: remote_dtls_role,
                         fingerprints: vec![RTCDtlsFingerprint {
                             algorithm: remote_fingerprint_hash,
