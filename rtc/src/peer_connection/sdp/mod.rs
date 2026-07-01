@@ -1267,42 +1267,50 @@ pub(crate) fn is_lite_set(desc: &SessionDescription) -> bool {
     false
 }
 
-pub(crate) fn get_application_media_section_sctp_port(desc: &SessionDescription) -> Option<u16> {
-    for m in &desc.media_descriptions {
-        if m.media_name.media == MEDIA_SECTION_APPLICATION {
-            return if let Some(sctp_port_attr) =
-                m.attributes.iter().find(|attr| attr.key == "sctp-port")
-            {
-                let sctp_port_value = sctp_port_attr.value.as_ref();
+pub(crate) fn get_application_media_section_sctp_port(
+    media_desc: &MediaDescription,
+) -> Option<u16> {
+    if media_desc.media_name.media == MEDIA_SECTION_APPLICATION {
+        return if let Some(sctp_port_attr) = media_desc
+            .attributes
+            .iter()
+            .find(|attr| attr.key == "sctp-port")
+        {
+            let sctp_port_value = sctp_port_attr.value.as_ref();
 
-                sctp_port_value.and_then(|attr| attr.parse::<u16>().ok())
-            } else if let Some(sctp_port_attr) =
-                m.attributes.iter().find(|attr| attr.key == "sctpmap")
-            {
-                if let Some(sctp_port_attr_value) = sctp_port_attr.value.as_ref() {
-                    sctp_port_attr_value
-                        .split(" ")
-                        .next()
-                        .and_then(|port| u16::from_str(port).ok())
-                } else {
-                    None
-                }
+            sctp_port_value.and_then(|attr| attr.parse::<u16>().ok())
+        } else if let Some(sctp_port_attr) = media_desc
+            .attributes
+            .iter()
+            .find(|attr| attr.key == "sctpmap")
+        {
+            if let Some(sctp_port_attr_value) = sctp_port_attr.value.as_ref() {
+                sctp_port_attr_value
+                    .split(" ")
+                    .next()
+                    .and_then(|port| u16::from_str(port).ok())
             } else {
                 None
-            };
-        }
+            }
+        } else {
+            None
+        };
     }
 
     None
 }
 
 pub(crate) fn get_application_media_section_max_message_size(
-    desc: &SessionDescription,
+    media_desc: &MediaDescription,
 ) -> Option<u32> {
-    get_application_media(desc)?
-        .attribute(ATTR_KEY_MAX_MESSAGE_SIZE)??
-        .parse()
-        .ok()
+    if media_desc.media_name.media == MEDIA_SECTION_APPLICATION {
+        media_desc
+            .attribute(ATTR_KEY_MAX_MESSAGE_SIZE)??
+            .parse()
+            .ok()
+    } else {
+        None
+    }
 }
 
 pub(crate) fn get_by_mid<'a>(

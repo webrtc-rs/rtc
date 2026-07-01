@@ -263,9 +263,10 @@ use crate::peer_connection::handler::ice::IceHandlerContext;
 use crate::peer_connection::handler::sctp::SctpHandlerContext;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
-    extract_fingerprint, extract_ice_details, get_application_media_section_max_message_size,
-    get_application_media_section_sctp_port, get_mid_value, get_peer_direction,
-    has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType, update_sdp_origin,
+    extract_fingerprint, extract_ice_details, get_application_media,
+    get_application_media_section_max_message_size, get_application_media_section_sctp_port,
+    get_mid_value, get_peer_direction, has_ice_trickle_option, is_lite_set, sdp_type::RTCSdpType,
+    update_sdp_origin,
 };
 use crate::peer_connection::state::RTCIceGatheringState;
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
@@ -1135,30 +1136,36 @@ where
             if let Some(remote_description) = self.remote_description().cloned()
                 && let Some(parsed_remote_description) = remote_description.parsed.as_ref()
             {
-                let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
-                    self.dtls_transport().role(),
-                    SCTPTransportCapabilities {
-                        max_message_size: get_application_media_section_max_message_size(
-                            parsed_remote_description,
-                        )
-                        .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
-                    },
-                    get_application_media_section_sctp_port(parsed_local_description)
-                        .unwrap_or(5000),
-                    get_application_media_section_sctp_port(parsed_remote_description)
-                        .unwrap_or(5000),
-                );
+                // only start sctp transport if application media has been negotiated
+                if let (Some(local_application_media), Some(remote_application_media)) = (
+                    get_application_media(parsed_local_description),
+                    get_application_media(parsed_remote_description),
+                ) {
+                    let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
+                        self.dtls_transport().role(),
+                        SCTPTransportCapabilities {
+                            max_message_size: get_application_media_section_max_message_size(
+                                remote_application_media,
+                            )
+                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
+                        },
+                        get_application_media_section_sctp_port(local_application_media)
+                            .unwrap_or(5000),
+                        get_application_media_section_sctp_port(remote_application_media)
+                            .unwrap_or(5000),
+                    );
 
-                // we_answer: we first call set_remote_description,
-                // then, we create_answer() and set_local_description() here
-                // Now we should have done SDP negotiation.
-                // Therefore, it is ready to start sctp and rtp.
-                self.sctp_transport_mut().start(
-                    dtls_role,
-                    remote_caps,
-                    local_sctp_port,
-                    remote_sctp_port,
-                )?;
+                    // we_answer: we first call set_remote_description,
+                    // then, we create_answer() and set_local_description() here
+                    // Now we should have done SDP negotiation.
+                    // Therefore, it is ready to start sctp and rtp.
+                    self.sctp_transport_mut().start(
+                        dtls_role,
+                        remote_caps,
+                        local_sctp_port,
+                        remote_sctp_port,
+                    )?;
+                }
                 self.start_rtp(remote_description)?;
             }
         }
@@ -1521,30 +1528,36 @@ where
                     .as_ref()
                     .and_then(|desc| desc.parsed.as_ref())
             {
-                let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
-                    self.dtls_transport().role(),
-                    SCTPTransportCapabilities {
-                        max_message_size: get_application_media_section_max_message_size(
-                            parsed_remote_description,
-                        )
-                        .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
-                    },
-                    get_application_media_section_sctp_port(parsed_local_description)
-                        .unwrap_or(5000),
-                    get_application_media_section_sctp_port(parsed_remote_description)
-                        .unwrap_or(5000),
-                );
+                // only start sctp transport if application media has been negotiated
+                if let (Some(local_application_media), Some(remote_application_media)) = (
+                    get_application_media(parsed_local_description),
+                    get_application_media(parsed_remote_description),
+                ) {
+                    let (dtls_role, remote_caps, local_sctp_port, remote_sctp_port) = (
+                        self.dtls_transport().role(),
+                        SCTPTransportCapabilities {
+                            max_message_size: get_application_media_section_max_message_size(
+                                remote_application_media,
+                            )
+                            .unwrap_or(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE),
+                        },
+                        get_application_media_section_sctp_port(local_application_media)
+                            .unwrap_or(5000),
+                        get_application_media_section_sctp_port(remote_application_media)
+                            .unwrap_or(5000),
+                    );
 
-                // we_offer: we create_offer() and set_local_description() first
-                // then, after call set_remote_description here,
-                // Now we should have done SDP negotiation.
-                // Therefore, it is ready to start sctp and rtp.
-                self.sctp_transport_mut().start(
-                    dtls_role,
-                    remote_caps,
-                    local_sctp_port,
-                    remote_sctp_port,
-                )?;
+                    // we_offer: we create_offer() and set_local_description() first
+                    // then, after call set_remote_description here,
+                    // Now we should have done SDP negotiation.
+                    // Therefore, it is ready to start sctp and rtp.
+                    self.sctp_transport_mut().start(
+                        dtls_role,
+                        remote_caps,
+                        local_sctp_port,
+                        remote_sctp_port,
+                    )?;
+                }
                 self.start_rtp(remote_description)?;
             }
         }
