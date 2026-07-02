@@ -1,4 +1,6 @@
-use crate::codec::av1::leb128::read_leb128;
+use bytes::BytesMut;
+
+use crate::codec::av1::leb128::{BytesMutExt, leb128_size, read_leb128};
 use crate::codec::av1::obu::{
     OBU_HAS_EXTENSION_BIT, OBU_TYPE_FRAME, OBU_TYPE_FRAME_HEADER, OBU_TYPE_METADATA,
     OBU_TYPE_SEQUENCE_HEADER, OBU_TYPE_TEMPORAL_DELIMITER, OBU_TYPE_TILE_GROUP, OBU_TYPE_TILE_LIST,
@@ -474,4 +476,49 @@ fn read_leb128_5_byte() {
     let (payload_size, leb128_size) = read_leb128(&(bytes.into()));
     assert_eq!(leb128_size, 5);
     assert_eq!(payload_size, 16451);
+}
+
+#[test]
+fn put_leb128_single_byte_values() {
+    // Values that fit in 7 bits encode to a single unchanged byte.
+    for &v in &[0u32, 1, 42, 127] {
+        let mut buf = BytesMut::new();
+        buf.put_leb128(v);
+        assert_eq!(buf.as_ref(), &[v as u8][..]);
+    }
+}
+
+#[test]
+fn put_leb128_128_is_two_bytes() {
+    // Regression test for https://github.com/webrtc-rs/rtc/issues/92: 128 must
+    // encode as [0x80, 0x01], not the previously produced [129, 128, 2].
+    let mut buf = BytesMut::new();
+    buf.put_leb128(128);
+    assert_eq!(buf.as_ref(), &[0x80u8, 0x01][..]);
+}
+
+#[test]
+fn put_leb128_matches_size_and_roundtrips() {
+    // Covers single-byte, multi-byte, and the full-width 5-byte cases. Values
+    // >= 2^28 need five LEB128 bytes, which the previous u32-packing encoder
+    // could not represent (it overflowed / panicked in debug builds).
+    for &v in &[
+        0u32,
+        1,
+        127,
+        128,
+        300,
+        16451,
+        0x0FFF_FFFF,
+        0x1000_0000,
+        u32::MAX,
+    ] {
+        let mut buf = BytesMut::new();
+        buf.put_leb128(v);
+        assert_eq!(buf.len(), leb128_size(v), "encoded length mismatch for {v}");
+
+        let (decoded, size) = read_leb128(&buf.freeze());
+        assert_eq!(decoded, v, "round-trip failed for {v}");
+        assert_eq!(size, leb128_size(v), "read size mismatch for {v}");
+    }
 }
