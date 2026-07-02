@@ -305,10 +305,10 @@ use shared::util::math_rand_alpha;
 #[derive(Clone, Debug)]
 pub struct RTCCertificate {
     /// DTLS certificate containing X.509 certificate chain and private key
-    pub(crate) dtls_certificate: dtls::crypto::Certificate,
+    pub dtls_certificate: dtls::crypto::Certificate,
 
     /// Timestamp after which this certificate is no longer valid
-    pub(crate) expires: SystemTime,
+    pub expires: SystemTime,
 }
 
 impl PartialEq for RTCCertificate {
