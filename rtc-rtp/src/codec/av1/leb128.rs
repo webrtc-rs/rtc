@@ -1,19 +1,5 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-pub fn encode_leb128(mut val: u32) -> u32 {
-    let mut b = 0;
-    loop {
-        b |= val & 0b_0111_1111;
-        val >>= 7;
-        if val != 0 {
-            b |= 0b_1000_0000;
-            b <<= 8;
-        } else {
-            return b;
-        }
-    }
-}
-
 pub fn decode_leb128(mut val: u64) -> u32 {
     let mut b = 0;
     loop {
@@ -53,12 +39,19 @@ pub trait BytesMutExt {
 }
 
 impl BytesMutExt for BytesMut {
-    fn put_leb128(&mut self, n: u32) {
-        let mut encoded = encode_leb128(n);
-        while encoded >= 0b_1000_0000 {
-            self.put_u8(0b_1000_0000 | (encoded & 0b_0111_1111) as u8);
-            encoded >>= 7;
+    /// Appends `n` to the buffer using unsigned LEB128 variable-length encoding,
+    /// as required by the AV1 bitstream/RTP OBU size fields. Each output byte
+    /// carries 7 bits of the value in its low bits; bit 7 is a continuation flag
+    /// that is set on every byte except the last.
+    fn put_leb128(&mut self, mut n: u32) {
+        loop {
+            let byte = (n & 0b_0111_1111) as u8;
+            n >>= 7;
+            if n == 0 {
+                self.put_u8(byte);
+                return;
+            }
+            self.put_u8(byte | 0b_1000_0000);
         }
-        self.put_u8(encoded as u8);
     }
 }
