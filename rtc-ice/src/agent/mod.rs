@@ -140,6 +140,12 @@ pub struct Agent {
     pub(crate) check_interval: Duration,
     pub(crate) checking_duration: Instant,
     pub(crate) last_checking_time: Instant,
+    // When set, a connectivity check has been requested and must be run on the next
+    // `handle_timeout`. Checks are deferred (rather than run inline) so that adding a
+    // candidate can never re-enter `contact()` and mutate agent state - e.g. transition
+    // to `Failed` and drop candidates - while a caller still holds indices into the
+    // candidate vectors. See issue #88.
+    pub(crate) force_candidate_contact: bool,
 
     pub(crate) mdns: Option<Mdns>,
     pub(crate) mdns_queries: HashMap<QueryId, Candidate>,
@@ -185,6 +191,7 @@ impl Default for Agent {
             check_interval: Default::default(),
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
+            force_candidate_contact: false,
             mdns_mode: MulticastDnsMode::Disabled,
             mdns_local_name: "".to_owned(),
             mdns_local_ip: None,
@@ -328,6 +335,7 @@ impl Agent {
             last_consent_sent: Instant::now(),
             checking_duration: Instant::now(),
             last_checking_time: Instant::now(),
+            force_candidate_contact: false,
             last_connection_state: ConnectionState::Unspecified,
 
             mdns,
@@ -670,6 +678,11 @@ impl Agent {
     }
 
     fn contact(&mut self, now: Instant) {
+        // Consume any pending deferred-check request now that we are running one.
+        // Reset before the early returns below so a failed/settled agent does not
+        // keep asking `poll_timeout` for an immediate wake-up.
+        self.force_candidate_contact = false;
+
         if self.connection_state == ConnectionState::Failed {
             // The connection is currently failed so don't send any checks
             // In the future it may be restarted though
@@ -874,9 +887,12 @@ impl Agent {
     }
 
     fn request_connectivity_check(&mut self) {
-        if self.ufrag_pwd.remote_credentials.is_some() {
-            self.contact(Instant::now());
-        }
+        // Defer the connectivity check to `handle_timeout` instead of running it
+        // inline. Running `contact()` here is re-entrant: it can advance the state
+        // to `Failed`, which calls `delete_all_candidates()` and wipes the candidate
+        // and pair vectors while a caller still holds indices into them (for example
+        // `handle_inbound` while adding a peer-reflexive candidate). See issue #88.
+        self.force_candidate_contact = true;
     }
 
     /// Remove all candidates.
@@ -888,6 +904,15 @@ impl Agent {
             self.local_candidates.clear();
         }
         self.remote_candidates.clear();
+
+        // Candidate pairs reference candidates by index, so once the candidates are
+        // removed every pair - and the `selected_pair`/`nominated_pair` indices into
+        // the pair list - is dangling and must be dropped to avoid out-of-bounds
+        // access. `remote_candidates` is always cleared here, so no pair can remain
+        // valid even when the local candidates are kept. See issue #88.
+        self.candidate_pairs.clear();
+        self.selected_pair = None;
+        self.nominated_pair = None;
     }
 
     pub(crate) fn find_remote_candidate(&self, addr: SocketAddr) -> Option<usize> {
@@ -1301,7 +1326,11 @@ impl Agent {
                         if let Ok(added) = self.add_remote_candidate(prflx_candidate)
                             && added
                         {
-                            remote_candidate_index = Some(self.remote_candidates.len() - 1);
+                            // Look the candidate up by address rather than assuming it
+                            // is the last element: `add_remote_candidate` may not have
+                            // appended it (e.g. a duplicate), and this stays correct if
+                            // the vector is ever mutated underneath us. See issue #88.
+                            remote_candidate_index = self.find_remote_candidate(remote_addr);
                         }
                     }
                     Err(err) => {

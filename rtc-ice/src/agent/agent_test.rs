@@ -2672,3 +2672,166 @@ fn test_pair_network_type_mismatch() -> Result<()> {
     a.close()?;
     Ok(())
 }
+
+// Regression test for https://github.com/webrtc-rs/rtc/issues/88 (Issue 1).
+//
+// When the agent transitions to `Failed` it calls `delete_all_candidates`, which
+// empties `local_candidates`/`remote_candidates`. Previously the candidate pairs -
+// and the `selected_pair`/`nominated_pair` indices into them - were left behind, so
+// they referenced candidates that no longer existed. Any later access through a pair,
+// e.g. `get_best_available_candidate_pair`, then indexed out of bounds and panicked:
+//
+//     thread '...' panicked at 'index out of bounds: the len is 0 but the index is 0'
+#[test]
+fn test_transition_to_failed_clears_stale_candidate_pairs() -> Result<()> {
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+
+    let local = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(local)?;
+
+    let remote = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "172.17.0.3".to_owned(),
+            port: 999,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(remote)?;
+
+    // A single local/remote pair now exists; mark it selected and nominated so that
+    // both index-into-pairs fields are populated.
+    assert_eq!(a.candidate_pairs.len(), 1);
+    a.set_selected_pair(Some(0));
+    a.nominated_pair = Some(0);
+
+    // Transition to Failed: this deletes all candidates.
+    a.update_connection_state(ConnectionState::Failed);
+
+    // The pairs and the indices into them must be gone, otherwise they dangle.
+    assert!(
+        a.candidate_pairs.is_empty(),
+        "candidate pairs must be cleared when candidates are deleted"
+    );
+    assert!(a.selected_pair.is_none(), "selected_pair must be reset");
+    assert!(a.nominated_pair.is_none(), "nominated_pair must be reset");
+    assert!(a.local_candidates.is_empty());
+    assert!(a.remote_candidates.is_empty());
+
+    // Before the fix these accessors dereferenced stale pair indices into the emptied
+    // candidate vectors and panicked; now they must simply return `None`.
+    assert!(a.get_selected_candidate_pair().is_none());
+    assert!(a.get_best_available_candidate_pair().is_none());
+
+    a.close()?;
+    Ok(())
+}
+
+// Regression test for https://github.com/webrtc-rs/rtc/issues/88 (Issue 2).
+//
+// Handling an inbound binding request from an unknown address adds a peer-reflexive
+// remote candidate. Previously `add_remote_candidate` ran the connectivity check
+// inline, which could advance the state to `Failed` and clear `remote_candidates`
+// mid-call. The caller then computed `remote_candidates.len() - 1` on an empty vector
+// and panicked ('attempt to subtract with overflow' in debug builds). Deferring the
+// check to `handle_timeout` keeps candidate mutation free of surprising re-entrant
+// state changes.
+#[test]
+fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()> {
+    use sansio::Protocol as _;
+
+    let cfg = AgentConfig {
+        disconnected_timeout: Some(Duration::from_secs(0)),
+        failed_timeout: Some(Duration::from_secs(0)),
+        ..Default::default()
+    };
+    let mut a = Agent::new(Arc::new(cfg))?;
+
+    let local_candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    let local_index = 0;
+    let local_priority = local_candidate.priority();
+    a.add_local_candidate(local_candidate)?;
+
+    a.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: "".to_string(),
+        pwd: "".to_string(),
+    });
+    let username = a.ufrag_pwd.local_credentials.ufrag.clone() + ":";
+    let local_pwd = a.ufrag_pwd.local_credentials.pwd.clone();
+    let tie_breaker = a.tie_breaker;
+
+    // Put the agent in a state where running a connectivity check now would time out
+    // and transition to `Failed` (which deletes all candidates).
+    a.connection_state = ConnectionState::Checking;
+    a.last_connection_state = ConnectionState::Checking;
+    a.checking_duration = Instant::now()
+        .checked_sub(Duration::from_secs(3600))
+        .unwrap_or(a.start_time);
+
+    let remote_addr = SocketAddr::from_str("172.17.0.3:999")?;
+    let mut msg = Message::new();
+    msg.build(&[
+        Box::new(BINDING_REQUEST),
+        Box::new(TransactionId::new()),
+        Box::new(Username::new(ATTR_USERNAME, username)),
+        Box::new(UseCandidateAttr::new()),
+        Box::new(AttrControlling(tie_breaker)),
+        Box::new(PriorityAttr(local_priority)),
+        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(FINGERPRINT),
+    ])?;
+
+    // Before the fix this call panicked while adding the peer-reflexive candidate.
+    a.handle_inbound(Instant::now(), &mut msg, local_index, remote_addr)?;
+
+    // The candidate was added and no re-entrant state change happened during the call.
+    assert_eq!(
+        a.remote_candidates.len(),
+        1,
+        "peer-reflexive remote candidate should have been added"
+    );
+    assert_eq!(
+        a.connection_state,
+        ConnectionState::Checking,
+        "connection state must not change while handling the inbound request"
+    );
+    assert!(
+        a.force_candidate_contact,
+        "a connectivity check should have been deferred to the timeout handler"
+    );
+
+    // The deferred check now runs via the timeout handler, fails, and cleans up fully.
+    a.handle_timeout(Instant::now())?;
+    assert_eq!(a.connection_state, ConnectionState::Failed);
+    assert!(a.candidate_pairs.is_empty());
+    assert!(a.local_candidates.is_empty());
+    assert!(a.remote_candidates.is_empty());
+    assert!(a.selected_pair.is_none());
+    assert!(a.nominated_pair.is_none());
+
+    a.close()?;
+    Ok(())
+}
