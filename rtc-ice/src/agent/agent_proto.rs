@@ -122,7 +122,8 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
         self.trigger_request_connectivity_check(remote_candidates);
 
         if self.ufrag_pwd.remote_credentials.is_some()
-            && self.last_checking_time + self.get_timeout_interval() <= now
+            && (self.force_candidate_contact
+                || self.last_checking_time + self.get_timeout_interval() <= now)
         {
             self.contact(now);
         }
@@ -137,7 +138,14 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
         };
 
         let ice_timeout = if self.ufrag_pwd.remote_credentials.is_some() {
-            Some(self.last_checking_time + self.get_timeout_interval())
+            if self.force_candidate_contact {
+                // A connectivity check was requested; ask the driver to call
+                // `handle_timeout` as soon as possible. `last_checking_time` is in the
+                // past, so the resulting deadline is immediate.
+                Some(self.last_checking_time)
+            } else {
+                Some(self.last_checking_time + self.get_timeout_interval())
+            }
         } else {
             None
         };
