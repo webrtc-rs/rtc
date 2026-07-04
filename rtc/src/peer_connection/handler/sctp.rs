@@ -159,6 +159,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                         payload: BytesMut::from(
                                             &self.ctx.sctp_transport.internal_buffer[0..n],
                                         ),
+                                        negotiated: false,
                                     }));
                                 }
                             }
@@ -287,6 +288,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                 reliability_type,
                                 data_channel_open.reliability_parameter,
                             )?;
+
+                            // Out-of-band negotiated channels (W3C WebRTC
+                            // `RTCDataChannelInit.negotiated`) only open the SCTP
+                            // stream locally; the DCEP handshake must not be sent
+                            // to the peer, which already created its own channel
+                            // with the pre-agreed stream id.
+                            if message.negotiated {
+                                is_dcep_internal_control_message = true;
+                            }
                         }
                         Message::DataChannelClose(_) => {
                             is_dcep_internal_control_message = true;

@@ -32,6 +32,13 @@ pub struct DataChannelMessage {
     pub stream_id: u16,
     pub ppi: PayloadProtocolIdentifier,
     pub payload: BytesMut,
+
+    /// Marks a `DATA_CHANNEL_OPEN` that belongs to an out-of-band *negotiated*
+    /// channel (W3C WebRTC `RTCDataChannelInit.negotiated`). Such a message is
+    /// only used to open and configure the local SCTP stream and must not be
+    /// transmitted to the peer, which already created its own channel with the
+    /// pre-agreed stream id. Ignored for every other message.
+    pub negotiated: bool,
 }
 
 /// DataChannel represents a data channel
@@ -71,23 +78,29 @@ impl DataChannel {
     ) -> Result<Self> {
         let mut data_channel = DataChannel::new(config.clone(), association_handle, stream_id);
 
-        if !config.negotiated {
-            let msg = Message::DataChannelOpen(DataChannelOpen {
-                channel_type: config.channel_type,
-                priority: config.priority,
-                reliability_parameter: config.reliability_parameter,
-                label: config.label.bytes().collect(),
-                protocol: config.protocol.bytes().collect(),
-            })
-            .marshal()?;
+        // Both in-band and out-of-band (negotiated) channels emit a
+        // DATA_CHANNEL_OPEN so the underlying SCTP stream gets opened and its
+        // reliability parameters configured (the Channel Type / Reliability
+        // Parameter mapping in RFC 8832 section 5.1). For a negotiated channel
+        // the message is flagged so the transport opens the stream locally
+        // without sending the DCEP handshake to the peer; that suppression is
+        // required by the W3C WebRTC `negotiated` semantics, not by DCEP.
+        let msg = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: config.channel_type,
+            priority: config.priority,
+            reliability_parameter: config.reliability_parameter,
+            label: config.label.bytes().collect(),
+            protocol: config.protocol.bytes().collect(),
+        })
+        .marshal()?;
 
-            data_channel.write_outs.push_back(DataChannelMessage {
-                association_handle,
-                stream_id,
-                ppi: PayloadProtocolIdentifier::Dcep,
-                payload: msg,
-            });
-        }
+        data_channel.write_outs.push_back(DataChannelMessage {
+            association_handle,
+            stream_id,
+            ppi: PayloadProtocolIdentifier::Dcep,
+            payload: msg,
+            negotiated: config.negotiated,
+        });
 
         Ok(data_channel)
     }
@@ -189,6 +202,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: ack,
+            negotiated: false,
         });
         Ok(())
     }
@@ -200,6 +214,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: close,
+            negotiated: false,
         });
         Ok(())
     }
@@ -212,6 +227,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            negotiated: false,
         });
         Ok(())
     }
@@ -224,6 +240,7 @@ impl DataChannel {
             stream_id: self.stream_id,
             ppi: PayloadProtocolIdentifier::Dcep,
             payload: low_threshold,
+            negotiated: false,
         });
         Ok(())
     }
