@@ -149,16 +149,12 @@ where
     ///
     /// See [RTCRtpTransceiver.direction](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction).
     pub(crate) fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
-        let previous_direction: RTCRtpTransceiverDirection = self.direction;
-
+        // The negotiation-needed flag is intentionally not updated here: this internal setter is
+        // also invoked while applying a remote/local session description, where triggering
+        // renegotiation would be incorrect. The public `RTCRtpTransceiver::set_direction` (which
+        // maps to the spec's `direction` setter) performs that step.
+        // See https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
         self.direction = direction;
-
-        if direction != previous_direction {
-            trace!("Changing direction of transceiver from {previous_direction} to {direction}");
-
-            //TODO: https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
-            // Update the negotiation-needed flag for connection.
-        }
     }
 
     /// Returns the negotiated direction of the transceiver.

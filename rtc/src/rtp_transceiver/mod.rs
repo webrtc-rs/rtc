@@ -96,15 +96,13 @@
 //!
 //! See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 
-//TODO: #[cfg(test)]
-//mod rtp_transceiver_test;
-
 use crate::media_stream::MediaStreamId;
 use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
 use interceptor::{Interceptor, NoopInterceptor};
+use log::trace;
 use shared::error::Result;
 
 pub(crate) mod direction;
@@ -292,7 +290,22 @@ where
     pub fn set_direction(&mut self, direction: RTCRtpTransceiverDirection) {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
+        let previous_direction = self.peer_connection.rtp_transceivers[self.id].direction();
         self.peer_connection.rtp_transceivers[self.id].set_direction(direction);
+        // Compare the effective direction after the setter (rather than the requested value) so
+        // any future normalization inside `set_direction` cannot bypass this check.
+        let current_direction = self.peer_connection.rtp_transceivers[self.id].direction();
+
+        // https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction
+        // The direction setter is a no-op when the new direction equals the current one;
+        // otherwise its final step updates the negotiation-needed flag for the connection,
+        // which may fire a `negotiationneeded` event.
+        if current_direction != previous_direction {
+            trace!(
+                "Changing direction of transceiver from {previous_direction} to {current_direction}"
+            );
+            self.peer_connection.on_transceiver_direction_changed();
+        }
     }
 
     /// Returns the negotiated direction of the transceiver.
@@ -344,5 +357,121 @@ where
         // so, [self.id] here is safe.
         self.peer_connection.rtp_transceivers[self.id]
             .set_codec_preferences(codecs, &self.peer_connection.media_engine)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sansio::Protocol;
+
+    use crate::peer_connection::configuration::media_engine::MediaEngine;
+    use crate::peer_connection::event::RTCPeerConnectionEvent;
+    use crate::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
+    use crate::rtp_transceiver::RTCRtpTransceiverDirection;
+    use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
+
+    fn build_pc() -> RTCPeerConnection {
+        let mut media_engine = MediaEngine::default();
+        media_engine
+            .register_default_codecs()
+            .expect("register default codecs");
+        RTCPeerConnectionBuilder::new()
+            .with_media_engine(media_engine)
+            .build()
+            .expect("build peer connection")
+    }
+
+    /// Drain every queued event and count the `OnNegotiationNeededEvent`s, driving only the
+    /// public sans-I/O `Protocol` API (no private negotiation state is touched).
+    fn count_negotiation_needed(pc: &mut RTCPeerConnection) -> usize {
+        let mut count = 0;
+        while let Some(event) = pc.poll_event() {
+            if matches!(event, RTCPeerConnectionEvent::OnNegotiationNeededEvent) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Complete a full offer/answer exchange so `offerer` settles back into a stable, idle
+    /// negotiation state.
+    fn negotiate(offerer: &mut RTCPeerConnection, answerer: &mut RTCPeerConnection) {
+        let offer = offerer.create_offer(None).expect("create offer");
+        offerer
+            .set_local_description(offer.clone())
+            .expect("offerer set local");
+        answerer
+            .set_remote_description(offer)
+            .expect("answerer set remote");
+        let answer = answerer.create_answer(None).expect("create answer");
+        answerer
+            .set_local_description(answer.clone())
+            .expect("answerer set local");
+        offerer
+            .set_remote_description(answer)
+            .expect("offerer set remote");
+    }
+
+    #[test]
+    fn test_set_direction_triggers_negotiation_on_change() {
+        let mut offerer = build_pc();
+        let mut answerer = build_pc();
+
+        let tid = offerer
+            .add_transceiver_from_kind(RtpCodecKind::Video, None)
+            .expect("add offerer transceiver");
+        answerer
+            .add_transceiver_from_kind(RtpCodecKind::Video, None)
+            .expect("add answerer transceiver");
+
+        negotiate(&mut offerer, &mut answerer);
+        // Discard events produced by the initial negotiation.
+        let _ = count_negotiation_needed(&mut offerer);
+
+        let current = offerer.rtp_transceivers[tid].direction();
+        let new_direction = if current == RTCRtpTransceiverDirection::Inactive {
+            RTCRtpTransceiverDirection::Sendrecv
+        } else {
+            RTCRtpTransceiverDirection::Inactive
+        };
+        offerer
+            .rtp_transceiver(tid)
+            .expect("transceiver exists")
+            .set_direction(new_direction);
+
+        assert_eq!(
+            count_negotiation_needed(&mut offerer),
+            1,
+            "changing the transceiver direction must trigger negotiation-needed",
+        );
+    }
+
+    #[test]
+    fn test_set_direction_noop_when_unchanged() {
+        let mut offerer = build_pc();
+        let mut answerer = build_pc();
+
+        let tid = offerer
+            .add_transceiver_from_kind(RtpCodecKind::Video, None)
+            .expect("add offerer transceiver");
+        answerer
+            .add_transceiver_from_kind(RtpCodecKind::Video, None)
+            .expect("add answerer transceiver");
+
+        negotiate(&mut offerer, &mut answerer);
+        let _ = count_negotiation_needed(&mut offerer);
+
+        // Setting the current direction again must be a no-op.
+        let current = offerer.rtp_transceivers[tid].direction();
+        offerer
+            .rtp_transceiver(tid)
+            .expect("transceiver exists")
+            .set_direction(current);
+
+        assert_eq!(
+            count_negotiation_needed(&mut offerer),
+            0,
+            "setting the same direction must not trigger negotiation-needed",
+        );
     }
 }
