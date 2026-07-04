@@ -69,23 +69,21 @@ fn test_set_direction_updates_negotiation_needed_flag() -> Result<(), Box<dyn st
         "connection should be idle after a clean negotiation",
     );
 
-    // Pick a direction that actually differs from the current one.
-    let current_direction = offerer
-        .rtp_transceiver(transceiver_id)
-        .expect("transceiver should exist")
-        .direction();
-    let new_direction = if current_direction == RTCRtpTransceiverDirection::Inactive {
-        RTCRtpTransceiverDirection::Sendrecv
-    } else {
-        RTCRtpTransceiverDirection::Inactive
-    };
+    // A transceiver added with `add_transceiver_from_kind(.., None)` negotiates as recvonly.
+    assert_eq!(
+        offerer
+            .rtp_transceiver(transceiver_id)
+            .expect("transceiver should exist")
+            .direction(),
+        RTCRtpTransceiverDirection::Recvonly,
+    );
 
-    // Changing the direction must update the negotiation-needed flag (spec step 6),
-    // firing exactly one negotiation-needed event.
+    // Changing the direction (recvonly -> inactive) must update the negotiation-needed flag
+    // (spec step 6), firing exactly one negotiation-needed event.
     offerer
         .rtp_transceiver(transceiver_id)
         .expect("transceiver should exist")
-        .set_direction(new_direction);
+        .set_direction(RTCRtpTransceiverDirection::Inactive);
 
     assert_eq!(
         count_negotiation_needed(&mut offerer),
@@ -98,7 +96,7 @@ fn test_set_direction_updates_negotiation_needed_flag() -> Result<(), Box<dyn st
     offerer
         .rtp_transceiver(transceiver_id)
         .expect("transceiver should exist")
-        .set_direction(new_direction);
+        .set_direction(RTCRtpTransceiverDirection::Inactive);
 
     assert_eq!(
         count_negotiation_needed(&mut offerer),

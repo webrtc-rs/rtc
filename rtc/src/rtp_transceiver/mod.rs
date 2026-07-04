@@ -428,16 +428,15 @@ mod tests {
         // Discard events produced by the initial negotiation.
         let _ = count_negotiation_needed(&mut offerer);
 
-        let current = offerer.rtp_transceivers[tid].direction();
-        let new_direction = if current == RTCRtpTransceiverDirection::Inactive {
-            RTCRtpTransceiverDirection::Sendrecv
-        } else {
-            RTCRtpTransceiverDirection::Inactive
-        };
+        // A transceiver added with `add_transceiver_from_kind(.., None)` negotiates as recvonly.
+        assert_eq!(
+            offerer.rtp_transceivers[tid].direction(),
+            RTCRtpTransceiverDirection::Recvonly,
+        );
         offerer
             .rtp_transceiver(tid)
             .expect("transceiver exists")
-            .set_direction(new_direction);
+            .set_direction(RTCRtpTransceiverDirection::Inactive);
 
         assert_eq!(
             count_negotiation_needed(&mut offerer),
