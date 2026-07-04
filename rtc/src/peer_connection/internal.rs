@@ -851,6 +851,17 @@ where
         Err(Error::ErrMaxDataChannelID)
     }
 
+    /// Called by the public `RTCRtpTransceiver::set_direction` when a transceiver's preferred
+    /// direction actually changes, to update the connection's negotiation-needed flag.
+    ///
+    /// This is a narrow, purpose-specific entry point so the general-purpose
+    /// [`Self::trigger_negotiation_needed`] can stay `pub(super)`.
+    ///
+    /// See <https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-direction>.
+    pub(crate) fn on_transceiver_direction_changed(&mut self) {
+        self.trigger_negotiation_needed();
+    }
+
     /// Helper to trigger a negotiation needed.
     pub(super) fn trigger_negotiation_needed(&mut self) {
         if !self.do_negotiation_needed() {
