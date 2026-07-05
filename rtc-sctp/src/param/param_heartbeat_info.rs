@@ -32,7 +32,7 @@ impl Param for ParamHeartbeatInfo {
 
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
-        buf.extend(self.heartbeat_information.clone());
+        buf.extend_from_slice(&self.heartbeat_information);
         Ok(buf.len())
     }
 

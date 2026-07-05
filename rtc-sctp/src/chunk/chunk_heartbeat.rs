@@ -75,7 +75,7 @@ impl Chunk for ChunkHeartbeat {
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
         for p in &self.params {
-            buf.extend(p.marshal()?);
+            buf.extend_from_slice(&p.marshal()?);
         }
         Ok(buf.len())
     }

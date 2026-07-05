@@ -47,7 +47,7 @@ impl Chunk for ChunkCookieEcho {
 
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
-        buf.extend(self.cookie.clone());
+        buf.extend_from_slice(&self.cookie);
         Ok(buf.len())
     }
 

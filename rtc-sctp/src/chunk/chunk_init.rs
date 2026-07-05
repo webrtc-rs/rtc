@@ -191,7 +191,7 @@ impl Chunk for ChunkInit {
         for (idx, p) in self.params.iter().enumerate() {
             let pp = p.marshal()?;
             let pp_len = pp.len();
-            writer.extend(pp);
+            writer.extend_from_slice(&pp);
 
             // Chunks (including Type, Length, and Value fields) are padded out
             // by the sender with all zero bytes to be a multiple of 4 bytes
@@ -202,7 +202,7 @@ impl Chunk for ChunkInit {
             // MUST ignore the padding.
             if idx != self.params.len() - 1 {
                 let cnt = get_padding_size(pp_len);
-                writer.extend(vec![0u8; cnt]);
+                writer.put_bytes(0, cnt);
             }
         }
 

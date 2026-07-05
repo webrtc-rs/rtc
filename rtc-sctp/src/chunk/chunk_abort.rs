@@ -72,7 +72,7 @@ impl Chunk for ChunkAbort {
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
         for ec in &self.error_causes {
-            buf.extend(ec.marshal());
+            buf.extend_from_slice(&ec.marshal());
         }
         Ok(buf.len())
     }

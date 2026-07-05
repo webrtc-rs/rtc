@@ -52,7 +52,7 @@ impl Param for ParamUnknown {
 
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
-        buf.extend(self.value.clone());
+        buf.extend_from_slice(&self.value);
         Ok(buf.len())
     }
 
