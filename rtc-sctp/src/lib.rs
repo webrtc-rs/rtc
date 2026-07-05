@@ -51,7 +51,7 @@ pub use crate::queue::reassembly_queue::{Chunk, Chunks};
 
 pub(crate) mod util;
 
-#[cfg(fuzzing)]
+#[cfg(any(fuzzing, feature = "bench"))]
 pub mod fuzzing;
 
 /// Whether an endpoint was the initiator of an association
