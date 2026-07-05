@@ -4,28 +4,7 @@ use crate::util::*;
 use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};
-use std::cmp::Ordering;
 use std::time::Instant;
-
-fn sort_chunks_by_tsn(c: &mut [ChunkPayloadData]) {
-    c.sort_by(|a, b| {
-        if sna32lt(a.tsn, b.tsn) {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
-}
-
-fn sort_chunks_by_ssn(c: &mut [Chunks]) {
-    c.sort_by(|a, b| {
-        if sna16lt(a.ssn, b.ssn) {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
-}
 
 /// A chunk of data from the stream
 #[derive(Debug, PartialEq)]
@@ -118,16 +97,14 @@ impl Chunks {
     }
 
     pub(crate) fn push(&mut self, chunk: ChunkPayloadData) -> bool {
-        // check if dup
-        for c in &self.chunks {
-            if c.tsn == chunk.tsn {
-                return false;
-            }
+        // Binary-search the insertion point (fragments are kept in TSN order),
+        // which also detects duplicates -- instead of an O(n) dup scan plus a
+        // full re-sort of every fragment on each push.
+        let idx = self.chunks.partition_point(|c| sna32lt(c.tsn, chunk.tsn));
+        if idx < self.chunks.len() && self.chunks[idx].tsn == chunk.tsn {
+            return false;
         }
-
-        // append and sort
-        self.chunks.push(chunk);
-        sort_chunks_by_tsn(&mut self.chunks);
+        self.chunks.insert(idx, chunk);
 
         // Check if we now have a complete set
         self.is_complete()
@@ -216,8 +193,10 @@ impl ReassemblyQueue {
             // First, insert into unordered_chunks array
             //atomic.AddUint64(&r.n_bytes, uint64(len(chunk.userData)))
             self.n_bytes += chunk.user_data.len();
-            self.unordered_chunks.push(chunk);
-            sort_chunks_by_tsn(&mut self.unordered_chunks);
+            let idx = self
+                .unordered_chunks
+                .partition_point(|c| sna32lt(c.tsn, chunk.tsn));
+            self.unordered_chunks.insert(idx, chunk);
 
             // Scan unordered_chunks that are contiguous (in TSN)
             // If found, append the complete set to the unordered array
@@ -242,14 +221,13 @@ impl ReassemblyQueue {
                 }
             }
 
-            // If not found, create a new chunkSet
-            let mut cset = Chunks::new(chunk.stream_sequence_number, chunk.payload_type, vec![]);
-            let unordered = chunk.unordered;
+            // If not found, create a new chunkSet and insert it in SSN order
+            // (this branch is only reached for ordered chunks).
+            let ssn = chunk.stream_sequence_number;
+            let mut cset = Chunks::new(ssn, chunk.payload_type, vec![]);
             let ok = cset.push(chunk);
-            self.ordered.push(cset);
-            if !unordered {
-                sort_chunks_by_ssn(&mut self.ordered);
-            }
+            let idx = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
+            self.ordered.insert(idx, cset);
 
             ok
         }
