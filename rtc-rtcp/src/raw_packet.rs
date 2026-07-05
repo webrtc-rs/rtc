@@ -84,9 +84,11 @@ impl Unmarshal for RawPacket {
 
         let raw_hdr = h.marshal()?;
         let raw_body = raw_packet.copy_to_bytes(raw_packet.remaining());
-        let mut raw = BytesMut::new();
-        raw.extend(raw_hdr);
-        raw.extend(raw_body);
+        // Preallocate the exact size and bulk-copy: `BytesMut::extend` resolves to
+        // `Extend<u8>` here, copying a byte at a time and growing via reallocation.
+        let mut raw = BytesMut::with_capacity(raw_hdr.len() + raw_body.len());
+        raw.extend_from_slice(&raw_hdr);
+        raw.extend_from_slice(&raw_body);
 
         Ok(RawPacket(raw.freeze()))
     }

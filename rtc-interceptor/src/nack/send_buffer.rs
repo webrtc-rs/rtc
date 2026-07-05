@@ -13,6 +13,10 @@ pub(crate) struct SendBuffer {
     packets: Vec<Option<rtp::Packet>>,
     /// Size of the buffer (must be power of 2).
     size: u16,
+    /// `size - 1`, used to index the circular buffer with `& mask` instead of
+    /// `% size`. Since `size` is a runtime value the compiler can't prove is a
+    /// power of two, `% size` would emit a real integer division per lookup.
+    mask: u16,
     /// Highest sequence number added.
     highest_added: u16,
     /// Whether any packet has been added yet.
@@ -34,6 +38,7 @@ impl SendBuffer {
         Some(Self {
             packets: vec![None; size as usize],
             size,
+            mask: size - 1,
             highest_added: 0,
             started: false,
         })
@@ -44,7 +49,7 @@ impl SendBuffer {
         let seq = packet.header.sequence_number;
 
         if !self.started {
-            self.packets[(seq % self.size) as usize] = Some(packet);
+            self.packets[(seq & self.mask) as usize] = Some(packet);
             self.highest_added = seq;
             self.started = true;
             return;
@@ -59,7 +64,7 @@ impl SendBuffer {
             // Clear packets between highest_added and seq
             let mut i = self.highest_added.wrapping_add(1);
             while i != seq {
-                let idx = (i % self.size) as usize;
+                let idx = (i & self.mask) as usize;
                 self.packets[idx] = None;
                 i = i.wrapping_add(1);
             }
@@ -67,7 +72,7 @@ impl SendBuffer {
         }
         // For negative diff (out of order), we still store but don't update highest_added
 
-        let idx = (seq % self.size) as usize;
+        let idx = (seq & self.mask) as usize;
         self.packets[idx] = Some(packet);
     }
 
@@ -90,7 +95,7 @@ impl SendBuffer {
             return None;
         }
 
-        let idx = (seq % self.size) as usize;
+        let idx = (seq & self.mask) as usize;
         let packet = self.packets[idx].as_ref()?;
 
         // Verify the sequence number matches (handle wraparound collisions)
