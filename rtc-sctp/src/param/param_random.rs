@@ -30,7 +30,7 @@ impl Param for ParamRandom {
 
     fn marshal_to(&self, buf: &mut BytesMut) -> Result<usize> {
         self.header().marshal_to(buf)?;
-        buf.extend(self.random_data.clone());
+        buf.extend_from_slice(&self.random_data);
         Ok(buf.len())
     }
 

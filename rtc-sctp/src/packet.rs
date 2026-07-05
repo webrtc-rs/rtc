@@ -18,7 +18,6 @@ use crate::util::*;
 use shared::error::{Error, Result};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use crc::{CRC_32_ISCSI, Crc};
 use std::fmt;
 
 ///Packet represents an SCTP packet, defined in https://tools.ietf.org/html/rfc4960#section-3
@@ -266,36 +265,49 @@ impl Packet {
     }
 
     pub(crate) fn marshal_to(&self, writer: &mut BytesMut) -> Result<usize> {
+        let start = writer.len();
+
+        // Reserve the whole packet up front so appending chunks never reallocates.
+        let body_len: usize = self
+            .chunks
+            .iter()
+            .map(|c| {
+                let n = CHUNK_HEADER_SIZE + c.value_length();
+                n + get_padding_size(n)
+            })
+            .sum();
+        writer.reserve(PACKET_HEADER_SIZE + body_len);
+
         // Populate static headers
-        // 8-12 is Checksum which will be populated when packet is complete
         writer.put_u16(self.common_header.source_port);
         writer.put_u16(self.common_header.destination_port);
         writer.put_u32(self.common_header.verification_tag);
 
-        // Populate chunks
-        let mut raw = BytesMut::new();
-        for c in &self.chunks {
-            let chunk_raw = c.marshal()?;
-            raw.extend(chunk_raw);
+        // Checksum placeholder (bytes 8..12). Kept zero while marshalling so the
+        // CRC below is computed over exactly the bytes the receiver validates;
+        // patched in place once the packet is complete.
+        let checksum_offset = writer.len();
+        writer.put_u32(0);
 
-            let padding_needed = get_padding_size(raw.len());
+        // Marshal each chunk straight into the output buffer — no per-chunk
+        // intermediate allocation, no byte-by-byte `extend`, no final re-copy.
+        let chunks_start = writer.len();
+        for c in &self.chunks {
+            c.marshal_to(writer)?;
+
+            let padding_needed = get_padding_size(writer.len() - chunks_start);
             if padding_needed != 0 {
-                raw.extend(vec![0u8; padding_needed]);
+                writer.put_bytes(0, padding_needed);
             }
         }
-        let raw = raw.freeze();
 
-        let hasher = Crc::<u32>::new(&CRC_32_ISCSI);
-        let mut digest = hasher.digest();
-        digest.update(writer);
-        digest.update(&FOUR_ZEROES);
-        digest.update(&raw[..]);
+        // CRC-32C over the whole packet, checksum field still zero.
+        let mut digest = CRC_32C.digest();
+        digest.update(&writer[start..]);
         let checksum = digest.finalize();
 
-        // Checksum is already in BigEndian
-        // Using LittleEndian stops it from being flipped
-        writer.put_u32_le(checksum);
-        writer.extend(raw);
+        // Checksum is already in BigEndian; store little-endian so it isn't flipped.
+        writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
 
         Ok(writer.len())
     }

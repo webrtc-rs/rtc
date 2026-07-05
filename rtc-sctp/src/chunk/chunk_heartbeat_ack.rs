@@ -86,7 +86,7 @@ impl Chunk for ChunkHeartbeatAck {
         for (idx, p) in self.params.iter().enumerate() {
             let pp = p.marshal()?;
             let pp_len = pp.len();
-            buf.extend(pp);
+            buf.extend_from_slice(&pp);
 
             // Chunks (including Type, Length, and Value fields) are padded out
             // by the sender with all zero bytes to be a multiple of 4 bytes
@@ -97,7 +97,7 @@ impl Chunk for ChunkHeartbeatAck {
             // MUST ignore the PADDING.
             if idx != self.params.len() - 1 {
                 let cnt = get_padding_size(pp_len);
-                buf.extend(vec![0u8; cnt]);
+                buf.put_bytes(0, cnt);
             }
         }
         Ok(buf.len())

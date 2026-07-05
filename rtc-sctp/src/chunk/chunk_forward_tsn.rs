@@ -94,7 +94,7 @@ impl Chunk for ChunkForwardTsn {
         writer.put_u32(self.new_cumulative_tsn);
 
         for s in &self.streams {
-            writer.extend(s.marshal()?);
+            writer.extend_from_slice(&s.marshal()?);
         }
 
         Ok(writer.len())

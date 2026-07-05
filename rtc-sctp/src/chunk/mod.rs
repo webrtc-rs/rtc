@@ -163,7 +163,7 @@ impl ErrorCause {
         let len = self.raw.len() + ERROR_CAUSE_HEADER_LENGTH;
         writer.put_u16(self.code.0);
         writer.put_u16(len as u16);
-        writer.extend(self.raw.clone());
+        writer.extend_from_slice(&self.raw);
         writer.len()
     }
 

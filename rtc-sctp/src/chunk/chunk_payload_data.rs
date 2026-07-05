@@ -229,7 +229,9 @@ impl Chunk for ChunkPayloadData {
         writer.put_u16(self.stream_identifier);
         writer.put_u16(self.stream_sequence_number);
         writer.put_u32(self.payload_type as u32);
-        writer.extend(self.user_data.clone());
+        // NB: `extend(Bytes)` iterates the payload one byte at a time (Bytes is
+        // `IntoIterator<Item = u8>`); `extend_from_slice` does a single bulk copy.
+        writer.extend_from_slice(&self.user_data);
 
         Ok(writer.len())
     }

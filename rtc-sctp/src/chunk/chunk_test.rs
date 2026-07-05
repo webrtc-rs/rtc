@@ -768,3 +768,41 @@ fn test_select_ack_chunk_followed_by_a_payload_data_chunk() -> Result<()> {
     );
     Ok(())
 }
+
+///////////////////////////////////////////////////////////////////
+//chunk_heartbeat_test
+///////////////////////////////////////////////////////////////////
+use super::chunk_heartbeat::*;
+use super::chunk_heartbeat_ack::*;
+use crate::param::Param;
+use crate::param::param_heartbeat_info::ParamHeartbeatInfo;
+
+fn heartbeat_info_param() -> Box<dyn Param> {
+    Box::new(ParamHeartbeatInfo {
+        heartbeat_information: Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]),
+    })
+}
+
+#[test]
+fn test_chunk_heartbeat_roundtrip() -> Result<()> {
+    let hb = ChunkHeartbeat {
+        params: vec![heartbeat_info_param()],
+    };
+    let raw = hb.marshal()?;
+    let parsed = ChunkHeartbeat::unmarshal(&raw)?;
+    assert_eq!(parsed.params.len(), 1);
+    assert_eq!(raw, parsed.marshal()?);
+    Ok(())
+}
+
+#[test]
+fn test_chunk_heartbeat_ack_roundtrip() -> Result<()> {
+    let ack = ChunkHeartbeatAck {
+        params: vec![heartbeat_info_param()],
+    };
+    let raw = ack.marshal()?;
+    let parsed = ChunkHeartbeatAck::unmarshal(&raw)?;
+    assert_eq!(parsed.params.len(), 1);
+    assert_eq!(raw, parsed.marshal()?);
+    Ok(())
+}
