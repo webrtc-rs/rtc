@@ -12,6 +12,10 @@ pub(crate) struct ReceiveLog {
     packets: Vec<u64>,
     /// Size of the tracking window (must be power of 2, minimum 64).
     size: u16,
+    /// `size - 1`. `size` is a power of two, so packets are indexed with
+    /// `& size_mask` instead of `% size`, avoiding a hardware division per
+    /// received packet.
+    size_mask: u16,
     /// Highest sequence number received.
     end: u16,
     /// Whether any packet has been received yet.
@@ -35,6 +39,7 @@ impl ReceiveLog {
         Some(Self {
             packets: vec![0u64; (size / 64) as usize],
             size,
+            size_mask: size - 1,
             end: 0,
             started: false,
             last_consecutive: 0,
@@ -123,17 +128,17 @@ impl ReceiveLog {
     }
 
     fn set_received(&mut self, seq: u16) {
-        let pos = seq % self.size;
+        let pos = seq & self.size_mask;
         self.packets[(pos / 64) as usize] |= 1 << (pos % 64);
     }
 
     fn del_received(&mut self, seq: u16) {
-        let pos = seq % self.size;
+        let pos = seq & self.size_mask;
         self.packets[(pos / 64) as usize] &= !(1u64 << (pos % 64));
     }
 
     fn get_received(&self, seq: u16) -> bool {
-        let pos = seq % self.size;
+        let pos = seq & self.size_mask;
         (self.packets[(pos / 64) as usize] & (1 << (pos % 64))) != 0
     }
 

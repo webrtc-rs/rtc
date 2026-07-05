@@ -12,6 +12,10 @@ pub(crate) struct ReceiverStream {
     /// With size=128, total capacity is 128 * 64 = 8192 packets.
     packets: Vec<u64>,
     size: usize,
+    /// `size * PACKETS_PER_ENTRY - 1`. The bitmap capacity is a power of two, so
+    /// packets are indexed with `& index_mask` instead of `% (size * ...)`, which
+    /// the compiler would otherwise lower to a hardware division on every packet.
+    index_mask: usize,
     started: bool,
     seq_num_cycles: u16,
     last_seq_num: u16,
@@ -34,6 +38,7 @@ impl ReceiverStream {
 
             packets: vec![0u64; DEFAULT_SIZE],
             size: DEFAULT_SIZE,
+            index_mask: DEFAULT_SIZE * PACKETS_PER_ENTRY - 1,
             started: false,
             seq_num_cycles: 0,
             last_seq_num: 0,
@@ -48,17 +53,17 @@ impl ReceiverStream {
     }
 
     fn set_received(&mut self, seq: u16) {
-        let pos = (seq as usize) % (self.size * PACKETS_PER_ENTRY);
+        let pos = (seq as usize) & self.index_mask;
         self.packets[pos / PACKETS_PER_ENTRY] |= 1 << (pos % PACKETS_PER_ENTRY);
     }
 
     fn del_received(&mut self, seq: u16) {
-        let pos = (seq as usize) % (self.size * PACKETS_PER_ENTRY);
+        let pos = (seq as usize) & self.index_mask;
         self.packets[pos / PACKETS_PER_ENTRY] &= !(1u64 << (pos % PACKETS_PER_ENTRY));
     }
 
     fn get_received(&self, seq: u16) -> bool {
-        let pos = (seq as usize) % (self.size * PACKETS_PER_ENTRY);
+        let pos = (seq as usize) & self.index_mask;
         (self.packets[pos / PACKETS_PER_ENTRY] & (1 << (pos % PACKETS_PER_ENTRY))) != 0
     }
 
