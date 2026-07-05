@@ -1,7 +1,7 @@
 use crate::shared::AssociationId;
 
 use bytes::Bytes;
-use crc::{CRC_32_ISCSI, Crc};
+use crc::{CRC_32_ISCSI, Crc, Table};
 use std::time::Duration;
 
 /// This function is non-inline to prevent the optimizer from looking inside it.
@@ -82,10 +82,19 @@ pub(crate) fn get_padding_size(len: usize) -> usize {
 /// We need to use it for the checksum and don't want to allocate/clear each time.
 pub(crate) static FOUR_ZEROES: Bytes = Bytes::from_static(&[0, 0, 0, 0]);
 
+/// CRC-32C (Castagnoli / iSCSI) engine, built once at compile time.
+///
+/// `Crc::new` computes the lookup table; doing that per packet (as the old
+/// `Crc::<u32>::new(&CRC_32_ISCSI)` call sites did) dominated the marshal cost.
+/// `Crc::new` is a `const fn`, so we bake the table into `.rodata` and reuse it
+/// for every checksum. `Table<16>` selects the slice-by-16 implementation,
+/// which processes 16 bytes per iteration (identical result to the default
+/// byte-wise table) for a large speedup on the ~1 KB DataChannel payloads.
+pub(crate) static CRC_32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
+
 /// Fastest way to do a crc32 without allocating.
 pub(crate) fn generate_packet_checksum(raw: &Bytes) -> u32 {
-    let hasher = Crc::<u32>::new(&CRC_32_ISCSI);
-    let mut digest = hasher.digest();
+    let mut digest = CRC_32C.digest();
     digest.update(&raw[0..8]);
     digest.update(&FOUR_ZEROES[..]);
     digest.update(&raw[12..]);
