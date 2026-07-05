@@ -275,3 +275,18 @@ pub fn param_param_unknown_unmarshal(data: &[u8]) -> Result<()> {
     let _ = ParamUnknown::unmarshal(&raw)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sample_data_packet_roundtrips() {
+        // sample_data_packet builds a valid, check-summed packet; packet_marshal
+        // unmarshals then re-marshals it, so the bytes must round-trip exactly.
+        let pkt = sample_data_packet(1200, 2);
+        assert_eq!(packet_marshal(&pkt).unwrap(), pkt);
+        // exercise the perf-harness entry point as well.
+        assert!(bench_packet_marshal(&pkt, 3).is_ok());
+    }
+}
