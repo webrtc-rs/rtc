@@ -182,13 +182,11 @@ impl<W: Write + Seek> IVFWriter<W> {
 
     /// Append payload to current frame
     fn append_to_frame(&mut self, payload: Bytes) {
-        if let Some(current_frame) = &mut self.current_frame {
-            current_frame.extend(payload);
-        } else {
-            let mut current_frame = BytesMut::new();
-            current_frame.extend(payload);
-            self.current_frame = Some(current_frame);
-        }
+        // `extend_from_slice` bulk-copies; `BytesMut`'s `Extend` impl resolves to
+        // `Extend<u8>` for `Bytes`, which would copy one byte at a time.
+        self.current_frame
+            .get_or_insert_with(BytesMut::new)
+            .extend_from_slice(&payload);
     }
 
     /// Get current frame length
