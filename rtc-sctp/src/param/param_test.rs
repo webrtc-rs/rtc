@@ -268,3 +268,35 @@ fn test_build_param_failure() -> Result<()> {
 
     Ok(())
 }
+
+///////////////////////////////////////////////////////////////////
+//param_heartbeat_info_test
+///////////////////////////////////////////////////////////////////
+use super::param_heartbeat_info::*;
+
+#[test]
+fn test_param_heartbeat_info_roundtrip() -> Result<()> {
+    let param = ParamHeartbeatInfo {
+        heartbeat_information: Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]),
+    };
+    let raw = param.marshal()?;
+    let unmarshalled = ParamHeartbeatInfo::unmarshal(&raw)?;
+    assert_eq!(param, unmarshalled);
+    // exercise the marshal path a second time from the parsed value
+    assert_eq!(raw, unmarshalled.marshal()?);
+    Ok(())
+}
+
+///////////////////////////////////////////////////////////////////
+//param_unknown_test
+///////////////////////////////////////////////////////////////////
+use super::param_uknown::*;
+
+#[test]
+fn test_param_unknown_roundtrip() -> Result<()> {
+    // Unknown param: type 0x1234, 2-byte value; length = 4 (header) + 2.
+    let raw = Bytes::from_static(&[0x12, 0x34, 0x00, 0x06, 0xAA, 0xBB]);
+    let param = ParamUnknown::unmarshal(&raw)?;
+    assert_eq!(raw, param.marshal()?);
+    Ok(())
+}
