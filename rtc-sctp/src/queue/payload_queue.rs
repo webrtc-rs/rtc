@@ -18,14 +18,14 @@ impl PayloadQueue {
         PayloadQueue::default()
     }
 
-    pub(crate) fn update_sorted_keys(&mut self) {
-        self.sorted.sort_by(|a, b| {
-            if sna32lt(*a, *b) {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Greater
-            }
-        });
+    /// Insert `tsn` into `sorted`, keeping SCTP serial-number order. Binary-search
+    /// the insertion point instead of re-sorting the whole vector on every push:
+    /// re-sorting made a burst of N chunks O(N^2 log N). In-order arrivals — the
+    /// common case, since TSNs are assigned/received sequentially — land at the
+    /// end in O(1) amortized.
+    fn insert_sorted(&mut self, tsn: u32) {
+        let idx = self.sorted.partition_point(|&x| sna32lt(x, tsn));
+        self.sorted.insert(idx, tsn);
     }
 
     pub(crate) fn can_push(&self, p: &ChunkPayloadData, cumulative_tsn: u32) -> bool {
@@ -34,10 +34,9 @@ impl PayloadQueue {
 
     pub(crate) fn push_no_check(&mut self, p: ChunkPayloadData) {
         self.n_bytes += p.user_data.len();
-        self.sorted.push(p.tsn);
+        self.insert_sorted(p.tsn);
         self.chunk_map.insert(p.tsn, p);
         //self.length += 1;
-        self.update_sorted_keys();
     }
 
     /// push pushes a payload data. If the payload data is already in our queue or
@@ -52,10 +51,9 @@ impl PayloadQueue {
         }
 
         self.n_bytes += p.user_data.len();
-        self.sorted.push(p.tsn);
+        self.insert_sorted(p.tsn);
         self.chunk_map.insert(p.tsn, p);
         //self.length += 1;
-        self.update_sorted_keys();
 
         true
     }

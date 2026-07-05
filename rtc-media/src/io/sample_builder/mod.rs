@@ -322,27 +322,43 @@ impl<T: Depacketizer> SampleBuilder<T> {
         // the head set of packets is now fully consumed
         self.active.head = consume.tail;
 
-        // merge all the buffers into a sample
-        let mut data: Vec<u8> = Vec::new();
-        let mut i = consume.head;
-        while i != consume.tail {
-            let payload = self.buffer[i as usize]
+        // Assemble the sample payload from the consumed packets. For the common
+        // single-packet sample (all audio, and any frame that fits one RTP
+        // packet) hand back the depacketized `Bytes` directly — it is
+        // refcounted, so no copy is needed. Only multi-packet samples require
+        // concatenation, and even then `Bytes::from(data)` reuses the `Vec`'s
+        // buffer instead of copying it a second time.
+        let sample_data: Bytes = if consume.count() == 1 {
+            let payload = self.buffer[consume.head as usize]
                 .as_ref()
                 .map(|p| &p.payload)
                 .ok_or(BuildError::GapInSegment)?;
-
-            let p = self
-                .depacketizer
+            self.depacketizer
                 .depacketize(payload)
-                .map_err(|_| BuildError::DepacketizerFailed)?;
+                .map_err(|_| BuildError::DepacketizerFailed)?
+        } else {
+            let mut data: Vec<u8> = Vec::new();
+            let mut i = consume.head;
+            while i != consume.tail {
+                let payload = self.buffer[i as usize]
+                    .as_ref()
+                    .map(|p| &p.payload)
+                    .ok_or(BuildError::GapInSegment)?;
 
-            data.extend_from_slice(&p);
-            i = i.wrapping_add(1);
-        }
+                let p = self
+                    .depacketizer
+                    .depacketize(payload)
+                    .map_err(|_| BuildError::DepacketizerFailed)?;
+
+                data.extend_from_slice(&p);
+                i = i.wrapping_add(1);
+            }
+            Bytes::from(data)
+        };
         let samples = after_timestamp.wrapping_sub(sample_timestamp);
 
         let sample = Sample {
-            data: Bytes::copy_from_slice(&data),
+            data: sample_data,
             timestamp: SystemInstant::now(),
             duration: Duration::from_secs_f64((samples as f64) / (self.sample_rate as f64)),
             packet_timestamp: sample_timestamp,
