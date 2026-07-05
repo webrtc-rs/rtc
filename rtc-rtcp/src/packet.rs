@@ -42,7 +42,10 @@ impl Clone for Box<dyn Packet> {
 
 /// marshal takes an array of Packets and serializes them to a single buffer
 pub fn marshal(packets: &[Box<dyn Packet>]) -> Result<BytesMut> {
-    let mut out = BytesMut::new();
+    // Preallocate the whole compound packet up front so appending each
+    // sub-packet doesn't repeatedly grow and reallocate the buffer.
+    let total: usize = packets.iter().map(|p| p.marshal_size()).sum();
+    let mut out = BytesMut::with_capacity(total);
     for p in packets {
         let data = p.marshal()?;
         out.put(data);
