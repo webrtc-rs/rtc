@@ -10,6 +10,8 @@ use std::{
     time::Instant,
 };
 
+use rustc_hash::FxHashMap;
+
 use crate::Payload;
 use crate::association::Association;
 use crate::chunk::chunk_type::CT_INIT;
@@ -36,12 +38,13 @@ pub struct Endpoint {
     transport_protocol: TransportProtocol,
     /// Identifies associations based on the INIT Dst AID the peer utilized
     ///
-    /// Uses a standard `HashMap` to protect against hash collision attacks.
+    /// Uses a standard `HashMap` to protect against hash collision attacks:
+    /// keys are remote-chosen initiate-tags.
     association_ids_init: HashMap<AssociationId, AssociationHandle>,
     /// Identifies associations based on locally created CIDs
     ///
     /// Uses a cheaper hash function since keys are locally created
-    association_ids: HashMap<AssociationId, AssociationHandle>,
+    association_ids: FxHashMap<AssociationId, AssociationHandle>,
 
     associations: Slab<AssociationMeta>,
     local_cid_generator: Box<dyn AssociationIdGenerator>,
@@ -80,7 +83,7 @@ impl Endpoint {
             local_addr,
             transport_protocol,
             association_ids_init: HashMap::default(),
-            association_ids: HashMap::default(),
+            association_ids: FxHashMap::default(),
             associations: Slab::new(),
             local_cid_generator: (endpoint_config.aid_generator_factory.as_ref())(),
             reject_new_associations: false,

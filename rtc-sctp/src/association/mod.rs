@@ -36,6 +36,7 @@ use crate::association::stream::RecvSendState;
 use bytes::Bytes;
 use log::{debug, error, trace, warn};
 use rand::random;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -192,7 +193,9 @@ pub struct Association {
     // Chunks stored for retransmission
     stored_init: Option<ChunkInit>,
     stored_cookie_echo: Option<ChunkCookieEcho>,
-    pub(crate) streams: HashMap<StreamId, StreamState>,
+    /// Per-chunk lookups on the receive path; SIDs are bounded by the
+    /// negotiated stream count, so the faster non-SipHash hasher is safe.
+    pub(crate) streams: FxHashMap<StreamId, StreamState>,
 
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
@@ -281,7 +284,7 @@ impl Default for Association {
             // Chunks stored for retransmission
             stored_init: None,
             stored_cookie_echo: None,
-            streams: HashMap::default(),
+            streams: FxHashMap::default(),
 
             events: VecDeque::default(),
             endpoint_events: VecDeque::default(),
@@ -1576,8 +1579,8 @@ impl Association {
         &mut self,
         d: &ChunkSelectiveAck,
         now: Instant,
-    ) -> Result<(HashMap<u16, i64>, u32)> {
-        let mut bytes_acked_per_stream = HashMap::new();
+    ) -> Result<(FxHashMap<u16, i64>, u32)> {
+        let mut bytes_acked_per_stream = FxHashMap::default();
 
         // New ack point, so pop all ACKed packets from inflight_queue
         // We add 1 because the "currentAckPoint" has already been popped from the inflight queue
@@ -2501,7 +2504,7 @@ impl Association {
         now: Instant,
         use_forward_tsn: bool,
         side: Side,
-        streams: &HashMap<u16, StreamState>,
+        streams: &FxHashMap<u16, StreamState>,
     ) {
         if !use_forward_tsn {
             return;
