@@ -302,9 +302,7 @@ impl Packet {
         }
 
         // CRC-32C over the whole packet, checksum field still zero.
-        let mut digest = CRC_32C.digest();
-        digest.update(&writer[start..]);
-        let checksum = digest.finalize();
+        let checksum = crc32c::crc32c(&writer[start..]);
 
         // Checksum is already in BigEndian; store little-endian so it isn't flipped.
         writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
