@@ -6,7 +6,7 @@ use crate::checks::*;
 use crate::message::*;
 use shared::error::*;
 
-use crc::{CRC_32_ISO_HDLC, Crc};
+use crc::{CRC_32_ISO_HDLC, Crc, Table};
 
 // FingerprintAttr represents FINGERPRINT attribute.
 //
@@ -30,8 +30,15 @@ pub const FINGERPRINT_SIZE: usize = 4; // 32 bit
 // up to (but excluding) the FINGERPRINT attribute itself, XOR'ed with
 // the 32-bit value 0x5354554e (the XOR helps in cases where an
 // application packet is also using CRC-32 in it).
+/// CRC-32 (ISO-HDLC) engine, built once at compile time.
+///
+/// `Crc::new` computes the lookup table; doing that per call made the table
+/// build cost more than the checksum itself for typical ~100-byte STUN
+/// messages (one fingerprint per ICE connectivity check / consent probe).
+static CRC_32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
+
 pub fn fingerprint_value(b: &[u8]) -> u32 {
-    let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(b);
+    let checksum = CRC_32.checksum(b);
     checksum ^ FINGERPRINT_XOR_VALUE // XOR
 }
 
