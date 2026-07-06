@@ -494,8 +494,8 @@ pub(crate) fn verify_server_cert(
     Ok(chains)
 }
 
-pub(crate) fn generate_aead_additional_data(h: &RecordLayerHeader, payload_len: usize) -> Vec<u8> {
-    let mut additional_data = vec![0u8; 13];
+pub(crate) fn generate_aead_additional_data(h: &RecordLayerHeader, payload_len: usize) -> [u8; 13] {
+    let mut additional_data = [0u8; 13];
     // SequenceNumber MUST be set first
     // we only want uint48, clobbering an extra 2 (using uint64, rust doesn't have uint48)
     additional_data[..8].copy_from_slice(&h.sequence_number.to_be_bytes());

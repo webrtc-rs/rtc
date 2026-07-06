@@ -520,6 +520,46 @@ fn test_assoc_reliable_simple() -> Result<()> {
     Ok(())
 }
 
+/// Same as `test_assoc_reliable_simple`, but through `write_chunk`, which
+/// yields zero-copy refcounted slices of the caller's `Bytes`.
+#[test]
+fn test_assoc_reliable_write_chunk() -> Result<()> {
+    let si: u16 = 1;
+    let msg: Bytes = Bytes::from_static(b"WRITE_CHUNK");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    {
+        let mut s = pair.client_stream(client_ch, si)?;
+        s.set_default_payload_type(PayloadProtocolIdentifier::Binary)?;
+        let n = s.write_chunk(&msg)?;
+        assert_eq!(msg.len(), n, "unexpected length of written data");
+    }
+
+    pair.drive();
+
+    let chunks = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+    assert_eq!(
+        chunks.len(),
+        msg.len(),
+        "unexpected length of received data"
+    );
+    assert_eq!(
+        chunks.ppi,
+        PayloadProtocolIdentifier::Binary,
+        "unexpected ppi"
+    );
+    let mut buf = vec![0u8; msg.len()];
+    assert_eq!(chunks.read(&mut buf)?, msg.len());
+    assert_eq!(&buf[..], &msg[..], "data should match");
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
 #[test]
 fn test_assoc_reliable_ordered_reordered() -> Result<()> {
     // let _guard = subscribe();

@@ -5,7 +5,7 @@ use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
 use crate::{ErrorCauseCode, Event, Side};
 use shared::error::{Error, Result};
 
-use crate::util::{ByteSlice, BytesArray, BytesSource};
+use crate::util::{ByteSlice, BytesArray, BytesChunk, BytesSource};
 use bytes::Bytes;
 use log::{debug, error, trace};
 use std::fmt;
@@ -119,7 +119,7 @@ impl Stream<'_> {
 
     /// write_sctp writes len(p) bytes from p to the DTLS connection
     pub fn write_sctp(&mut self, p: &Bytes, ppi: PayloadProtocolIdentifier) -> Result<usize> {
-        self.write_source(&mut ByteSlice::from_slice(p), ppi)
+        self.write_source(&mut BytesChunk::new(p), ppi)
     }
 
     /// Send data on the given stream.
@@ -140,10 +140,7 @@ impl Stream<'_> {
 
     /// write writes len(p) bytes from p with the default Payload Protocol Identifier
     pub fn write_chunk(&mut self, p: &Bytes) -> Result<usize> {
-        self.write_source(
-            &mut ByteSlice::from_slice(p),
-            self.get_default_payload_type()?,
-        )
+        self.write_source(&mut BytesChunk::new(p), self.get_default_payload_type()?)
     }
 
     /// Send data on the given stream

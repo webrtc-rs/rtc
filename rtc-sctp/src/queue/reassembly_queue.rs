@@ -4,6 +4,7 @@ use crate::util::*;
 use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};
+use std::collections::VecDeque;
 use std::time::Instant;
 
 /// A chunk of data from the stream
@@ -161,8 +162,11 @@ pub(crate) struct ReassemblyQueue {
     pub(crate) si: StreamId,
     pub(crate) next_ssn: u16,
     /// expected SSN for next ordered chunk
-    pub(crate) ordered: Vec<Chunks>,
-    pub(crate) unordered: Vec<Chunks>,
+    ///
+    /// `ordered`/`unordered` are consumed strictly from the front by `read`;
+    /// `VecDeque` makes that O(1) instead of `Vec::remove(0)`'s full shift.
+    pub(crate) ordered: VecDeque<Chunks>,
+    pub(crate) unordered: VecDeque<Chunks>,
     pub(crate) unordered_chunks: Vec<ChunkPayloadData>,
     pub(crate) n_bytes: usize,
 }
@@ -177,8 +181,8 @@ impl ReassemblyQueue {
         ReassemblyQueue {
             si,
             next_ssn: 0, // From RFC 4960 Sec 6.5:
-            ordered: vec![],
-            unordered: vec![],
+            ordered: VecDeque::new(),
+            unordered: VecDeque::new(),
             unordered_chunks: vec![],
             n_bytes: 0,
         }
@@ -201,7 +205,7 @@ impl ReassemblyQueue {
             // Scan unordered_chunks that are contiguous (in TSN)
             // If found, append the complete set to the unordered array
             if let Some(cset) = self.find_complete_unordered_chunk_set() {
-                self.unordered.push(cset);
+                self.unordered.push_back(cset);
                 return true;
             }
 
@@ -214,19 +218,21 @@ impl ReassemblyQueue {
 
             self.n_bytes += chunk.user_data.len();
 
-            // Check if a chunkSet with the SSN already exists
-            for s in &mut self.ordered {
-                if s.ssn == chunk.stream_sequence_number {
-                    return s.push(chunk);
-                }
+            // `ordered` is kept sorted by SSN, so binary-search for the chunk
+            // set instead of scanning linearly (O(N) per arriving chunk when
+            // the application drains slower than data arrives).
+            let ssn = chunk.stream_sequence_number;
+            let idx = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
+            if let Some(s) = self.ordered.get_mut(idx)
+                && s.ssn == ssn
+            {
+                return s.push(chunk);
             }
 
             // If not found, create a new chunkSet and insert it in SSN order
             // (this branch is only reached for ordered chunks).
-            let ssn = chunk.stream_sequence_number;
             let mut cset = Chunks::new(ssn, chunk.payload_type, vec![]);
             let ok = cset.push(chunk);
-            let idx = self.ordered.partition_point(|s| sna16lt(s.ssn, ssn));
             self.ordered.insert(idx, cset);
 
             ok
@@ -302,11 +308,11 @@ impl ReassemblyQueue {
     }
 
     fn readable_unordered_chunks(&self) -> Option<&Chunks> {
-        self.unordered.first()
+        self.unordered.front()
     }
 
     fn readable_ordered_chunks(&self) -> Option<&Chunks> {
-        let ordered = self.ordered.first();
+        let ordered = self.ordered.front();
         if let Some(chunks) = ordered {
             if !chunks.is_complete() {
                 return None;
@@ -326,17 +332,17 @@ impl ReassemblyQueue {
             self.readable_ordered_chunks(),
         ) {
             if unordered_chunks.timestamp < ordered_chunks.timestamp {
-                self.unordered.remove(0)
+                self.unordered.pop_front().unwrap()
             } else {
                 if ordered_chunks.ssn == self.next_ssn {
                     self.next_ssn = self.next_ssn.wrapping_add(1);
                 }
-                self.ordered.remove(0)
+                self.ordered.pop_front().unwrap()
             }
         } else {
             // Check unordered first
             if !self.unordered.is_empty() {
-                self.unordered.remove(0)
+                self.unordered.pop_front().unwrap()
             } else if !self.ordered.is_empty() {
                 // Now, check ordered
                 let chunks = &self.ordered[0];
@@ -349,7 +355,7 @@ impl ReassemblyQueue {
                 if chunks.ssn == self.next_ssn {
                     self.next_ssn = self.next_ssn.wrapping_add(1);
                 }
-                self.ordered.remove(0)
+                self.ordered.pop_front().unwrap()
             } else {
                 return None;
             }

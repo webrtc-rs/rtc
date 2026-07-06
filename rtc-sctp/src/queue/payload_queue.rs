@@ -2,13 +2,21 @@ use crate::chunk::chunk_payload_data::ChunkPayloadData;
 use crate::chunk::chunk_selective_ack::GapAckBlock;
 use crate::util::*;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 #[derive(Default, Debug)]
 pub(crate) struct PayloadQueue {
     // length: usize,
-    chunk_map: HashMap<u32, ChunkPayloadData>,
-    pub(crate) sorted: Vec<u32>,
+    /// Keyed by TSN; per-chunk lookups on both the send (in-flight) and
+    /// receive paths. TSNs are window-bounded, so the faster non-SipHash
+    /// hasher is safe.
+    chunk_map: FxHashMap<u32, ChunkPayloadData>,
+    /// TSNs in serial-number order. A `VecDeque` so that `pop` — which almost
+    /// always removes the front, once per acked/received chunk — is O(1)
+    /// instead of shifting the whole in-flight window left (`Vec::remove(0)`
+    /// showed up as ~9% of the end-to-end transfer profile as memmove).
+    pub(crate) sorted: VecDeque<u32>,
     dup_tsn: Vec<u32>,
     n_bytes: usize,
 }
@@ -60,8 +68,8 @@ impl PayloadQueue {
 
     /// pop pops only if the oldest chunk's TSN matches the given TSN.
     pub(crate) fn pop(&mut self, tsn: u32) -> Option<ChunkPayloadData> {
-        if !self.sorted.is_empty() && tsn == self.sorted[0] {
-            self.sorted.remove(0);
+        if self.sorted.front() == Some(&tsn) {
+            self.sorted.pop_front();
             if let Some(c) = self.chunk_map.remove(&tsn) {
                 //self.length -= 1;
                 self.n_bytes -= c.user_data.len();
@@ -139,7 +147,7 @@ impl PayloadQueue {
     }
 
     pub(crate) fn get_last_tsn_received(&self) -> Option<&u32> {
-        self.sorted.last()
+        self.sorted.back()
     }
 
     pub(crate) fn mark_all_to_retrasmit(&mut self) {

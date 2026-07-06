@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use aead::consts::{U12, U16};
 use aes::cipher::{BlockEncrypt, BlockSizeUser, Unsigned};
+use aes_gcm::aead::AeadInPlace;
 use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{AesGcm, KeyInit, Nonce};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::BytesMut;
@@ -37,7 +37,7 @@ impl<AES, NS> Cipher for CipherAeadAesGcm<AES, NS>
 where
     NS: Unsigned + Send + Sync,
     AES: BlockEncrypt + KeyInit + BlockSizeUser<BlockSize = U16> + Send + Sync + 'static,
-    AesGcm<AES, NS>: Aead,
+    AesGcm<AES, NS>: AeadInPlace,
 {
     fn rtp_auth_tag_len(&self) -> usize {
         self.profile.rtp_auth_tag_len()
@@ -54,24 +54,24 @@ where
     }
 
     fn encrypt_rtp(&mut self, payload: &[u8], header: &rtp::Header, roc: u32) -> Result<BytesMut> {
-        // Grow the given buffer to fit the output.
+        // Copy the whole packet once, then encrypt the payload region in
+        // place with the header region as AAD. The detached-tag API avoids
+        // the allocating `Aead::encrypt`, which returned a fresh Vec per
+        // packet that was then copied into the writer again.
         let header_len = header.marshal_size();
         let mut writer = BytesMut::with_capacity(payload.len() + self.aead_auth_tag_len());
-
-        // Copy header unencrypted.
-        writer.extend_from_slice(&payload[..header_len]);
+        writer.extend_from_slice(payload);
 
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        let encrypted = self.srtp_cipher.encrypt(
+        let (aad, plaintext) = writer.split_at_mut(header_len);
+        let tag = self.srtp_cipher.encrypt_in_place_detached(
             Nonce::from_slice(&nonce),
-            Payload {
-                msg: &payload[header_len..],
-                aad: &writer,
-            },
+            aad,
+            plaintext,
         )?;
 
-        writer.extend_from_slice(&encrypted);
+        writer.extend_from_slice(&tag);
         Ok(writer)
     }
 
@@ -87,17 +87,25 @@ where
 
         let nonce = self.rtp_initialization_vector(header, roc);
         let payload_offset = header.marshal_size();
-        let decrypted_msg: Vec<u8> = self.srtp_cipher.decrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: &ciphertext[payload_offset..],
-                aad: &ciphertext[..payload_offset],
-            },
-        )?;
 
-        let mut writer = BytesMut::with_capacity(payload_offset + decrypted_msg.len());
-        writer.extend_from_slice(&ciphertext[..payload_offset]);
-        writer.extend_from_slice(&decrypted_msg);
+        // Copy header + ciphertext (sans tag) once and decrypt the payload
+        // region in place, instead of having `Aead::decrypt` allocate a Vec
+        // that is then copied into a second buffer.
+        let tag_start = ciphertext.len() - self.aead_auth_tag_len();
+        if tag_start < payload_offset {
+            // Too short to hold header + tag; the AEAD would reject it.
+            return Err(aes_gcm::Error.into());
+        }
+        let mut writer = BytesMut::with_capacity(tag_start);
+        writer.extend_from_slice(&ciphertext[..tag_start]);
+
+        let (aad, encrypted) = writer.split_at_mut(payload_offset);
+        self.srtp_cipher.decrypt_in_place_detached(
+            Nonce::from_slice(&nonce),
+            aad,
+            encrypted,
+            GenericArray::from_slice(&ciphertext[tag_start..]),
+        )?;
 
         Ok(writer)
     }
@@ -111,17 +119,17 @@ where
         let iv = self.rtcp_initialization_vector(srtcp_index, ssrc);
         let aad = self.rtcp_additional_authenticated_data(decrypted, srtcp_index);
 
-        let encrypted_data = self.srtcp_cipher.encrypt(
+        let mut writer =
+            BytesMut::with_capacity(decrypted.len() + self.aead_auth_tag_len() + SRTCP_INDEX_SIZE);
+        writer.extend_from_slice(decrypted);
+
+        let tag = self.srtcp_cipher.encrypt_in_place_detached(
             Nonce::from_slice(&iv),
-            Payload {
-                msg: &decrypted[8..],
-                aad: &aad,
-            },
+            &aad,
+            &mut writer[8..],
         )?;
 
-        let mut writer = BytesMut::with_capacity(encrypted_data.len() + aad.len());
-        writer.extend_from_slice(&decrypted[..8]);
-        writer.extend_from_slice(&encrypted_data);
+        writer.extend_from_slice(&tag);
         writer.extend_from_slice(&aad[8..]);
 
         Ok(writer)
@@ -140,17 +148,20 @@ where
         let nonce = self.rtcp_initialization_vector(srtcp_index, ssrc);
         let aad = self.rtcp_additional_authenticated_data(encrypted, srtcp_index);
 
-        let decrypted_data = self.srtcp_cipher.decrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: &encrypted[8..(encrypted.len() - SRTCP_INDEX_SIZE)],
-                aad: &aad,
-            },
-        )?;
+        let tag_start = encrypted.len() - SRTCP_INDEX_SIZE - self.aead_auth_tag_len();
+        if tag_start < 8 {
+            // Too short to hold the SRTCP header + tag; the AEAD would reject it.
+            return Err(aes_gcm::Error.into());
+        }
+        let mut writer = BytesMut::with_capacity(tag_start);
+        writer.extend_from_slice(&encrypted[..tag_start]);
 
-        let mut writer = BytesMut::with_capacity(8 + decrypted_data.len());
-        writer.extend_from_slice(&encrypted[..8]);
-        writer.extend_from_slice(&decrypted_data);
+        self.srtcp_cipher.decrypt_in_place_detached(
+            Nonce::from_slice(&nonce),
+            &aad,
+            &mut writer[8..],
+            GenericArray::from_slice(&encrypted[tag_start..tag_start + self.aead_auth_tag_len()]),
+        )?;
 
         Ok(writer)
     }
@@ -167,7 +178,7 @@ impl<AES, NS> CipherAeadAesGcm<AES, NS>
 where
     NS: Unsigned,
     AES: BlockEncrypt + KeyInit + BlockSizeUser<BlockSize = U16> + 'static,
-    AesGcm<AES, NS>: Aead,
+    AesGcm<AES, NS>: AeadInPlace,
 {
     /// Create a new AEAD instance.
     pub(crate) fn new(
@@ -242,8 +253,8 @@ where
     /// value is then XORed to the 12-octet salt to form the 12-octet IV.
     ///
     /// https://tools.ietf.org/html/rfc7714#section-8.1
-    pub(crate) fn rtp_initialization_vector(&self, header: &rtp::Header, roc: u32) -> Vec<u8> {
-        let mut iv = vec![0u8; 12];
+    pub(crate) fn rtp_initialization_vector(&self, header: &rtp::Header, roc: u32) -> [u8; 12] {
+        let mut iv = [0u8; 12];
         BigEndian::write_u32(&mut iv[2..], header.ssrc);
         BigEndian::write_u32(&mut iv[6..], roc);
         BigEndian::write_u16(&mut iv[10..], header.sequence_number);
@@ -262,8 +273,8 @@ where
     /// form the 12-octet IV.
     ///
     /// https://tools.ietf.org/html/rfc7714#section-9.1
-    pub(crate) fn rtcp_initialization_vector(&self, srtcp_index: usize, ssrc: u32) -> Vec<u8> {
-        let mut iv = vec![0u8; 12];
+    pub(crate) fn rtcp_initialization_vector(&self, srtcp_index: usize, ssrc: u32) -> [u8; 12] {
+        let mut iv = [0u8; 12];
 
         BigEndian::write_u32(&mut iv[2..], ssrc);
         BigEndian::write_u32(&mut iv[8..], srtcp_index as u32);
@@ -284,8 +295,8 @@ where
         &self,
         rtcp_packet: &[u8],
         srtcp_index: usize,
-    ) -> Vec<u8> {
-        let mut aad = vec![0u8; 12];
+    ) -> [u8; 12] {
+        let mut aad = [0u8; 12];
 
         aad[..8].copy_from_slice(&rtcp_packet[..8]);
 
@@ -321,6 +332,30 @@ mod tests {
 
         let decrypted = cipher.decrypt_rtp(&encrypted, &header, 0).unwrap();
         assert_eq!(&decrypted[..], &payload[..]);
+    }
+
+    /// Inputs long enough to pass the tag-length check but too short to hold
+    /// header + tag must fail cleanly instead of panicking on a slice split.
+    #[test]
+    fn test_aead_aes_gcm_short_input_errors() {
+        let profile = ProtectionProfile::AeadAes128Gcm;
+        let master_key = vec![0u8; profile.key_len()];
+        let master_salt = vec![0u8; 12];
+
+        let mut cipher =
+            CipherAeadAesGcm::<Aes128>::new(profile, &master_key, &master_salt).unwrap();
+
+        let header = rtp::Header {
+            ssrc: 0x12345678,
+            ..Default::default()
+        };
+
+        // 20 bytes: >= the 16-byte tag, but < 12-byte header + 16-byte tag.
+        assert!(cipher.decrypt_rtp(&[0u8; 20], &header, 0).is_err());
+
+        // 24 bytes: >= tag + 4-byte SRTCP index, but < 8-byte SRTCP header
+        // + tag + index.
+        assert!(cipher.decrypt_rtcp(&[0u8; 24], 0, 0x12345678).is_err());
     }
 
     #[test]
