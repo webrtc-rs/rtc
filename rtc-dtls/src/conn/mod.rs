@@ -26,7 +26,7 @@ use shared::{error::*, replay_detector::*};
 use crate::config::HandshakeConfig;
 use bytes::BytesMut;
 use log::*;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -318,11 +318,10 @@ impl DTLSConn {
         }
         p.record.record_layer_header.sequence_number = seq;
 
+        // Marshal straight into the Vec: `BufWriter` would heap-allocate an
+        // 8 KiB staging buffer for every outbound record.
         let mut raw_packet = vec![];
-        {
-            let mut writer = BufWriter::<&mut Vec<u8>>::new(raw_packet.as_mut());
-            p.record.marshal(&mut writer)?;
-        }
+        p.record.marshal(&mut raw_packet)?;
 
         if p.should_encrypt
             && let Some(cipher_suite) = &self.state.cipher_suite
@@ -529,7 +528,9 @@ impl DTLSConn {
         mut pkt: Vec<u8>,
         enqueue: bool,
     ) -> (bool, Option<Alert>, Option<Error>) {
-        let mut reader = BufReader::new(pkt.as_slice());
+        // Parse the 13-byte header from the slice directly: `BufReader` would
+        // heap-allocate an 8 KiB buffer for every inbound record.
+        let mut reader = pkt.as_slice();
         let h = match RecordLayerHeader::unmarshal(&mut reader) {
             Ok(h) => h,
             Err(err) => {
@@ -647,7 +648,7 @@ impl DTLSConn {
             self.replay_detector[h.epoch as usize].accept();
             while let Ok((out, epoch)) = self.fragment_buffer.pop() {
                 //log::debug!("Extension Debug: out.len()={}", out.len());
-                let mut reader = BufReader::new(out.as_slice());
+                let mut reader = out.as_slice();
                 let raw_handshake = match Handshake::unmarshal(&mut reader) {
                     Ok(rh) => {
                         debug!(
@@ -681,7 +682,7 @@ impl DTLSConn {
             return (true, None, None);
         }
 
-        let mut reader = BufReader::new(pkt.as_slice());
+        let mut reader = pkt.as_slice();
         let r = match RecordLayer::unmarshal(&mut reader) {
             Ok(r) => r,
             Err(err) => {

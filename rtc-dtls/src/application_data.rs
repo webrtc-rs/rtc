@@ -1,4 +1,4 @@
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use std::io::{Read, Write};
 
 use super::content::*;
@@ -34,12 +34,18 @@ impl ApplicationData {
     }
 
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
-        //TODO: use Bytes and implement trait Unmarshal
+        // Read straight into the BytesMut-backed Vec instead of staging in a
+        // temporary Vec and copying the whole payload a second time.
         let mut data: Vec<u8> = vec![];
         reader.read_to_end(&mut data)?;
 
+        // `Bytes::from(Vec)` is zero-copy and the buffer is uniquely owned
+        // here, so `try_into_mut` succeeds without the second full-payload
+        // copy the old `BytesMut::from(&data[..])` performed.
         Ok(ApplicationData {
-            data: BytesMut::from(&data[..]),
+            data: Bytes::from(data)
+                .try_into_mut()
+                .unwrap_or_else(|b| BytesMut::from(&b[..])),
         })
     }
 }
