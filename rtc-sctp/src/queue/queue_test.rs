@@ -605,6 +605,54 @@ fn test_reassembly_queue_ordered_and_unordered_fragments() -> Result<()> {
 }
 */
 
+/// When both an unordered and an ordered message are readable, `read`
+/// returns the one that completed first (timestamp order).
+#[test]
+fn test_reassembly_queue_read_prefers_earlier_completion() -> Result<()> {
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+    let make_chunk = |tsn: u32, ssn: u16, unordered: bool, data: &'static [u8]| ChunkPayloadData {
+        payload_type: org_ppi,
+        unordered,
+        beginning_fragment: true,
+        ending_fragment: true,
+        tsn,
+        stream_sequence_number: ssn,
+        user_data: Bytes::from_static(data),
+        ..Default::default()
+    };
+    let mut buf = vec![0u8; 16];
+
+    // Ordered completes first -> read it first, unordered second.
+    let mut rq = ReassemblyQueue::new(0);
+    assert!(rq.push(make_chunk(1, 0, false, b"ABC")));
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    assert!(rq.push(make_chunk(2, 1, true, b"DEF")));
+
+    let chunks = rq.read().expect("first read");
+    assert_eq!(3, chunks.read(&mut buf)?);
+    assert_eq!(&buf[..3], b"ABC", "older (ordered) message should win");
+    let chunks = rq.read().expect("second read");
+    assert_eq!(3, chunks.read(&mut buf)?);
+    assert_eq!(&buf[..3], b"DEF");
+    assert_eq!(0, rq.get_num_bytes(), "num bytes mismatch");
+
+    // Unordered completes first -> read it first, ordered second.
+    let mut rq = ReassemblyQueue::new(0);
+    assert!(rq.push(make_chunk(2, 1, true, b"DEF")));
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    assert!(rq.push(make_chunk(1, 0, false, b"ABC")));
+
+    let chunks = rq.read().expect("first read");
+    assert_eq!(3, chunks.read(&mut buf)?);
+    assert_eq!(&buf[..3], b"DEF", "older (unordered) message should win");
+    let chunks = rq.read().expect("second read");
+    assert_eq!(3, chunks.read(&mut buf)?);
+    assert_eq!(&buf[..3], b"ABC");
+    assert_eq!(0, rq.get_num_bytes(), "num bytes mismatch");
+
+    Ok(())
+}
+
 #[test]
 fn test_reassembly_queue_unordered_complete_skips_incomplete() -> Result<()> {
     let mut rq = ReassemblyQueue::new(0);
