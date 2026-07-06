@@ -159,6 +159,42 @@ impl BytesSource for BytesArray<'_> {
     }
 }
 
+/// A [`BytesSource`] implementation for a single [`Bytes`]
+///
+/// Chunks are yielded as zero-copy refcounted slices of the original buffer
+/// (via `split_to`) instead of freshly allocated copies, eliminating one
+/// allocation + full-payload memcpy per fragment on the send path.
+pub struct BytesChunk {
+    data: Bytes,
+}
+
+impl BytesChunk {
+    pub fn new(data: &Bytes) -> Self {
+        Self { data: data.clone() }
+    }
+}
+
+impl BytesSource for BytesChunk {
+    fn pop_chunk(&mut self, limit: usize) -> (Bytes, usize) {
+        let limit = limit.min(self.data.len());
+        if limit == 0 {
+            return (Bytes::new(), 0);
+        }
+
+        let chunk = self.data.split_to(limit);
+        let chunks_consumed = if self.data.is_empty() { 1 } else { 0 };
+        (chunk, chunks_consumed)
+    }
+
+    fn has_remaining(&self) -> bool {
+        !self.data.is_empty()
+    }
+
+    fn remaining(&self) -> usize {
+        self.data.len()
+    }
+}
+
 /// A [`BytesSource`] implementation for `&[u8]`
 ///
 /// The type allows to dequeue a single [`Bytes`] chunk, which will be lazily
@@ -278,6 +314,40 @@ mod test {
     use shared::error::Result;
 
     use super::*;
+
+    #[test]
+    fn test_bytes_chunk_pops_zero_copy_slices() {
+        let data = Bytes::from(vec![0x5au8; 100]);
+        let mut source = BytesChunk::new(&data);
+        assert!(source.has_remaining());
+        assert_eq!(100, source.remaining());
+
+        let (chunk, consumed) = source.pop_chunk(60);
+        assert_eq!(60, chunk.len());
+        assert_eq!(0, consumed, "chunk is not fully consumed yet");
+        // Zero-copy: the yielded chunk aliases the original allocation.
+        assert_eq!(data[..60].as_ptr(), chunk.as_ptr());
+
+        let (chunk, consumed) = source.pop_chunk(60);
+        assert_eq!(40, chunk.len(), "only the remainder is left");
+        assert_eq!(1, consumed, "chunk is fully consumed");
+        assert_eq!(data[60..].as_ptr(), chunk.as_ptr());
+
+        assert!(!source.has_remaining());
+        assert_eq!(0, source.remaining());
+    }
+
+    #[test]
+    fn test_bytes_chunk_pop_with_zero_limit() {
+        let data = Bytes::from_static(b"abc");
+        let mut source = BytesChunk::new(&data);
+
+        let (chunk, consumed) = source.pop_chunk(0);
+        assert!(chunk.is_empty());
+        assert_eq!(0, consumed);
+        assert!(source.has_remaining());
+        assert_eq!(3, source.remaining());
+    }
 
     const DIV: isize = 16;
 
