@@ -31,6 +31,20 @@ fn new_ctx() -> Context {
     .unwrap()
 }
 
+/// AES-GCM contexts (the default browser-negotiated profile) use a 12-byte salt.
+const GCM_MASTER_SALT: &[u8] = &[247, 26, 49, 94, 99, 29, 79, 94, 5, 111, 252, 216];
+
+fn new_gcm_ctx() -> Context {
+    Context::new(
+        MASTER_KEY,
+        GCM_MASTER_SALT,
+        ProtectionProfile::AeadAes128Gcm,
+        None,
+        None,
+    )
+    .unwrap()
+}
+
 /// Decrypt context with replay protection enabled, matching the production
 /// remote SRTP context (see peer_connection/handler/dtls.rs).
 fn new_ctx_replay() -> Context {
@@ -101,8 +115,25 @@ fn main() {
                 black_box(&out);
             }
         }
+        "gcm-encrypt" => {
+            let mut ctx = new_gcm_ctx();
+            for _ in 0..iters {
+                let out = ctx.encrypt_rtp(black_box(&plaintext)).unwrap();
+                black_box(&out);
+            }
+        }
+        "gcm-decrypt" => {
+            let encrypted = new_gcm_ctx().encrypt_rtp(&plaintext).unwrap();
+            let mut ctx = new_gcm_ctx();
+            for _ in 0..iters {
+                let out = ctx.decrypt_rtp(black_box(&encrypted)).unwrap();
+                black_box(&out);
+            }
+        }
         other => {
-            eprintln!("unknown mode: {other} (expected encrypt|decrypt)");
+            eprintln!(
+                "unknown mode: {other} (expected encrypt|encrypt-replay|decrypt|gcm-encrypt|gcm-decrypt)"
+            );
             std::process::exit(2);
         }
     }
