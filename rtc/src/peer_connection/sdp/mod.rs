@@ -1127,7 +1127,7 @@ where
 
         if params.is_ice_lite {
             // RFC 5245 S15.3
-            d = d.with_value_attribute(ATTR_KEY_ICELITE.to_owned(), ATTR_KEY_ICELITE.to_owned());
+            d = d.with_property_attribute(ATTR_KEY_ICELITE.to_owned());
         }
 
         if params.is_extmap_allow_mixed {
