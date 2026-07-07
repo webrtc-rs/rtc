@@ -551,7 +551,8 @@ where
                 self.signaling_state = next_state;
                 if self.signaling_state == RTCSignalingState::Stable {
                     self.is_negotiation_ongoing = false;
-                    self.trigger_negotiation_needed();
+                    //TODO: https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
+                    // self.trigger_negotiation_needed();
                 }
                 self.do_signaling_state_change(next_state);
                 Ok(())
