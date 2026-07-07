@@ -92,7 +92,13 @@ where
         return Err(Error::PacketTooShort);
     }
 
-    let mut in_packet = h.marshal()?.chain(raw_data.take(length));
+    // Re-serialize the just-parsed header into a stack buffer rather than a fresh
+    // heap `BytesMut` (`h.marshal()`), then chain it with the body so the
+    // sub-packet unmarshaller re-reads the same bytes -- one fewer heap
+    // allocation per RTCP sub-packet on the receive path.
+    let mut header_buf = [0u8; HEADER_LENGTH];
+    h.marshal_to(&mut header_buf[..])?;
+    let mut in_packet = header_buf.as_slice().chain(raw_data.take(length));
 
     let p: Box<dyn Packet> = match h.packet_type {
         PacketType::SenderReport => Box::new(SenderReport::unmarshal(&mut in_packet)?),
