@@ -284,28 +284,42 @@ impl Packet {
         // caller that passed an undersized buffer gets its single growth here;
         // `marshal` pre-sizes, so it skips this path entirely.
         writer.reserve(self.marshaled_len());
-        self.write_into(writer)
+        Self::write_framed(
+            &self.common_header,
+            self.chunks.iter().map(|c| &**c as &dyn Chunk),
+            writer,
+        )
     }
 
     pub(crate) fn marshal(&self) -> Result<Bytes> {
         // Allocate the exact packet length once, up front. `with_capacity` is a
         // cheaper direct allocation than growing an empty `BytesMut` via
-        // `reserve`, and `write_into` needs no further sizing.
+        // `reserve`, and `write_framed` needs no further sizing.
         let mut buf = BytesMut::with_capacity(self.marshaled_len());
-        self.write_into(&mut buf)?;
+        Self::write_framed(
+            &self.common_header,
+            self.chunks.iter().map(|c| &**c as &dyn Chunk),
+            &mut buf,
+        )?;
         Ok(buf.freeze())
     }
 
     /// Serialize the common header, every chunk (with trailing padding) and the
-    /// CRC-32C into `writer`. The caller is responsible for sizing the buffer
-    /// (both `marshal` and `marshal_to` above do so in a single allocation).
-    fn write_into(&self, writer: &mut BytesMut) -> Result<usize> {
+    /// CRC-32C into `writer`, appended at its current end. This is the single
+    /// home of the SCTP on-wire packet framing: `marshal`/`marshal_to` feed it
+    /// boxed chunks, and the DATA send path feeds it borrowed `ChunkPayloadData`
+    /// directly (no `Box`). The caller sizes the buffer.
+    pub(crate) fn write_framed<'a>(
+        common_header: &CommonHeader,
+        chunks: impl Iterator<Item = &'a dyn Chunk>,
+        writer: &mut BytesMut,
+    ) -> Result<usize> {
         let start = writer.len();
 
         // Populate static headers
-        writer.put_u16(self.common_header.source_port);
-        writer.put_u16(self.common_header.destination_port);
-        writer.put_u32(self.common_header.verification_tag);
+        writer.put_u16(common_header.source_port);
+        writer.put_u16(common_header.destination_port);
+        writer.put_u32(common_header.verification_tag);
 
         // Checksum placeholder (bytes 8..12). Kept zero while marshalling so the
         // CRC below is computed over exactly the bytes the receiver validates;
@@ -316,7 +330,7 @@ impl Packet {
         // Marshal each chunk straight into the output buffer — no per-chunk
         // intermediate allocation, no byte-by-byte `extend`, no final re-copy.
         let chunks_start = writer.len();
-        for c in &self.chunks {
+        for c in chunks {
             c.marshal_to(writer)?;
 
             let padding_needed = get_padding_size(writer.len() - chunks_start);
@@ -332,6 +346,29 @@ impl Packet {
         writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
 
         Ok(writer.len())
+    }
+
+    /// Marshal a bundle of DATA chunks as a single SCTP packet, borrowing the
+    /// chunks directly instead of moving them into `Box<dyn Chunk>` inside a
+    /// `Packet`. Used on the hot outbound DATA path where the chunks are already
+    /// retained in the in-flight queue for retransmission, so the send copy is
+    /// throwaway and never needs the owned `Packet`. Produces byte-for-byte the
+    /// same packet as building a `Packet` from these chunks and calling
+    /// `marshal`, via the shared `write_framed`.
+    pub(crate) fn marshal_data_chunks(
+        common_header: &CommonHeader,
+        chunks: &[ChunkPayloadData],
+    ) -> Result<Bytes> {
+        let body_len: usize = chunks
+            .iter()
+            .map(|c| {
+                let n = CHUNK_HEADER_SIZE + c.value_length();
+                n + get_padding_size(n)
+            })
+            .sum();
+        let mut buf = BytesMut::with_capacity(PACKET_HEADER_SIZE + body_len);
+        Self::write_framed(common_header, chunks.iter().map(|c| c as &dyn Chunk), &mut buf)?;
+        Ok(buf.freeze())
     }
 }
 
@@ -441,6 +478,64 @@ mod test {
             "Unmarshal/Marshaled header only packet did not match \nheaderOnly: {:?} \nheader_only_marshaled {:?}",
             header_only, header_only_marshaled
         );
+
+        Ok(())
+    }
+
+    // The boxing-free DATA send path (`marshal_data_chunks`) must produce exactly
+    // the same bytes as building a `Packet` of boxed chunks and calling `marshal`
+    // -- both go through `write_framed`. Also exercises `marshal_to`.
+    #[test]
+    fn test_marshal_data_chunks_matches_packet_marshal() -> Result<()> {
+        use crate::chunk::chunk_payload_data::PayloadProtocolIdentifier;
+
+        let mk_common = || CommonHeader {
+            source_port: 5000,
+            destination_port: 5000,
+            verification_tag: 0xdeadbeef,
+        };
+        let mk_chunk = |tsn: u32, ssn: u16, data: &'static [u8]| ChunkPayloadData {
+            stream_identifier: 1,
+            payload_type: PayloadProtocolIdentifier::Binary,
+            user_data: Bytes::from_static(data),
+            beginning_fragment: true,
+            ending_fragment: true,
+            tsn,
+            stream_sequence_number: ssn,
+            ..Default::default()
+        };
+
+        // A single chunk, and a two-chunk bundle whose first payload length (5)
+        // forces inter-chunk padding -- so the padding path is covered too.
+        let cases = [
+            vec![mk_chunk(1, 0, b"hello")],
+            vec![mk_chunk(1, 0, b"hello"), mk_chunk(2, 1, b"world!!")],
+        ];
+        for chunks in cases {
+            let direct = Packet::marshal_data_chunks(&mk_common(), &chunks)?;
+
+            let pkt = Packet {
+                common_header: mk_common(),
+                chunks: chunks
+                    .iter()
+                    .cloned()
+                    .map(|c| Box::new(c) as Box<dyn Chunk>)
+                    .collect(),
+            };
+            assert_eq!(
+                direct,
+                pkt.marshal()?,
+                "marshal_data_chunks must equal Packet::marshal"
+            );
+
+            let mut buf = BytesMut::new();
+            pkt.marshal_to(&mut buf)?;
+            assert_eq!(
+                direct,
+                buf.freeze(),
+                "marshal_to must equal marshal_data_chunks"
+            );
+        }
 
         Ok(())
     }
