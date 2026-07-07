@@ -216,16 +216,30 @@ impl Unmarshal for Header {
     }
 }
 
+impl Header {
+    /// Marshaled header size given an already-computed extension payload length
+    /// (see [`Header::get_extension_payload_len`]). Lets `marshal_to` size the
+    /// buffer and write the extension length field from a single scan of the
+    /// extensions instead of walking them via `marshal_size` and again directly.
+    fn marshal_size_for(&self, extension_payload_len: usize) -> usize {
+        let mut head_size = 12 + (self.csrc.len() * CSRC_LENGTH);
+        if self.extension {
+            let padded = extension_payload_len + self.extensions_padding;
+            head_size += 4 + padded.div_ceil(4) * 4;
+        }
+        head_size
+    }
+}
+
 impl MarshalSize for Header {
     /// MarshalSize returns the size of the packet once marshaled.
     fn marshal_size(&self) -> usize {
-        let mut head_size = 12 + (self.csrc.len() * CSRC_LENGTH);
-        if self.extension {
-            let extension_payload_len = self.get_extension_payload_len() + self.extensions_padding;
-            let extension_payload_size = extension_payload_len.div_ceil(4);
-            head_size += 4 + extension_payload_size * 4;
-        }
-        head_size
+        let extension_payload_len = if self.extension {
+            self.get_extension_payload_len()
+        } else {
+            0
+        };
+        self.marshal_size_for(extension_payload_len)
     }
 }
 
@@ -247,7 +261,15 @@ impl Marshal for Header {
          * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
          */
         let remaining_before = buf.remaining_mut();
-        if remaining_before < self.marshal_size() {
+        // Scan the extensions once here; reused for the bounds check, the
+        // extension length field, and the trailing padding below (previously
+        // walked three times: marshal_size() here plus twice in the body).
+        let extension_payload_len = if self.extension {
+            self.get_extension_payload_len()
+        } else {
+            0
+        };
+        if remaining_before < self.marshal_size_for(extension_payload_len) {
             return Err(Error::ErrBufferTooSmall);
         }
 
@@ -280,8 +302,7 @@ impl Marshal for Header {
         if self.extension {
             buf.put_u16(self.extension_profile);
 
-            // calculate extensions size and round to 4 bytes boundaries
-            let extension_payload_len = self.get_extension_payload_len();
+            // extension_payload_len computed once at the top of this function.
             if self.extension_profile != EXTENSION_PROFILE_ONE_BYTE
                 && self.extension_profile != EXTENSION_PROFILE_TWO_BYTE
                 && !extension_payload_len.is_multiple_of(4)
