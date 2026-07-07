@@ -367,7 +367,11 @@ impl Packet {
             })
             .sum();
         let mut buf = BytesMut::with_capacity(PACKET_HEADER_SIZE + body_len);
-        Self::write_framed(common_header, chunks.iter().map(|c| c as &dyn Chunk), &mut buf)?;
+        Self::write_framed(
+            common_header,
+            chunks.iter().map(|c| c as &dyn Chunk),
+            &mut buf,
+        )?;
         Ok(buf.freeze())
     }
 }

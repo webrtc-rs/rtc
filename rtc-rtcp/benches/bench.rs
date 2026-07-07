@@ -338,7 +338,10 @@ fn benchmark_compound(c: &mut Criterion) {
     let packets: Vec<Box<dyn Packet>> = vec![Box::new(sr), Box::new(pli)];
 
     let raw = rtc_rtcp::packet::marshal(&packets).unwrap().freeze();
-    assert_eq!(rtc_rtcp::packet::unmarshal(&mut raw.clone()).unwrap().len(), 2);
+    assert_eq!(
+        rtc_rtcp::packet::unmarshal(&mut raw.clone()).unwrap().len(),
+        2
+    );
 
     c.bench_function("Compound Unmarshal", |b| {
         b.iter(|| {
