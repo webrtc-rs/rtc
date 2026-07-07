@@ -13,7 +13,7 @@ use shared::{
 };
 
 use crate::extended_report::ExtendedReport;
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BytesMut};
 use std::any::Any;
 use std::fmt;
 
@@ -42,13 +42,15 @@ impl Clone for Box<dyn Packet> {
 
 /// marshal takes an array of Packets and serializes them to a single buffer
 pub fn marshal(packets: &[Box<dyn Packet>]) -> Result<BytesMut> {
-    // Preallocate the whole compound packet up front so appending each
-    // sub-packet doesn't repeatedly grow and reallocate the buffer.
+    // Size the compound packet up front and marshal each sub-packet straight
+    // into it, instead of allocating a fresh BytesMut per sub-packet
+    // (p.marshal()) and copying it in.
     let total: usize = packets.iter().map(|p| p.marshal_size()).sum();
-    let mut out = BytesMut::with_capacity(total);
+    let mut out = BytesMut::new();
+    out.resize(total, 0);
+    let mut offset = 0;
     for p in packets {
-        let data = p.marshal()?;
-        out.put(data);
+        offset += p.marshal_to(&mut out[offset..])?;
     }
     Ok(out)
 }
@@ -275,6 +277,41 @@ mod test {
         for mut test in tests {
             unmarshal(&mut test)?;
         }
+
+        Ok(())
+    }
+
+    // Round-trips a compound through packet::marshal -> packet::unmarshal ->
+    // packet::marshal and asserts byte-stability, covering the in-place compound
+    // marshal and the sub-packet unmarshaller.
+    #[test]
+    fn test_marshal_compound_roundtrip() -> Result<()> {
+        use crate::reception_report::ReceptionReport;
+
+        let rr = ReceiverReport {
+            ssrc: 0x902f9e2e,
+            reports: vec![ReceptionReport {
+                ssrc: 0xbc5e9a40,
+                fraction_lost: 0,
+                total_lost: 0,
+                last_sequence_number: 0x46e1,
+                jitter: 273,
+                last_sender_report: 0x9f36432,
+                delay: 150137,
+            }],
+            ..Default::default()
+        };
+        let pli = PictureLossIndication {
+            sender_ssrc: 0x902f9e2e,
+            media_ssrc: 0x902f9e2e,
+        };
+        let packets: Vec<Box<dyn Packet>> = vec![Box::new(rr), Box::new(pli)];
+
+        let raw1 = marshal(&packets)?;
+        let out = unmarshal(&mut raw1.clone().freeze())?;
+        assert_eq!(out.len(), 2, "expected two sub-packets");
+        let raw2 = marshal(&out)?;
+        assert_eq!(raw1, raw2, "compound marshal/unmarshal round-trip mismatch");
 
         Ok(())
     }
