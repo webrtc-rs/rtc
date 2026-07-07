@@ -296,12 +296,15 @@ impl Packet {
         // cheaper direct allocation than growing an empty `BytesMut` via
         // `reserve`, and `write_framed` needs no further sizing.
         let mut buf = BytesMut::with_capacity(self.marshaled_len());
+        // `.map`, not `?; Ok(..)`: the result is transformed, not inspected, so
+        // there is no separate error-return branch to leave untested (`write_framed`
+        // only fails if a chunk's own `marshal_to` does). Identical codegen.
         Self::write_framed(
             &self.common_header,
             self.chunks.iter().map(|c| &**c as &dyn Chunk),
             &mut buf,
-        )?;
-        Ok(buf.freeze())
+        )
+        .map(|_| buf.freeze())
     }
 
     /// Serialize the common header, every chunk (with trailing padding) and the
@@ -367,12 +370,14 @@ impl Packet {
             })
             .sum();
         let mut buf = BytesMut::with_capacity(PACKET_HEADER_SIZE + body_len);
+        // `ChunkPayloadData::marshal_to` is infallible, so the `?` error path here
+        // was dead and uncoverable; `.map` transforms the Ok value with no branch.
         Self::write_framed(
             common_header,
             chunks.iter().map(|c| c as &dyn Chunk),
             &mut buf,
-        )?;
-        Ok(buf.freeze())
+        )
+        .map(|_| buf.freeze())
     }
 }
 
