@@ -264,10 +264,10 @@ impl Packet {
         })
     }
 
-    pub(crate) fn marshal_to(&self, writer: &mut BytesMut) -> Result<usize> {
-        let start = writer.len();
-
-        // Reserve the whole packet up front so appending chunks never reallocates.
+    /// Exact number of bytes `marshal_to` will append: common header plus every
+    /// chunk with its trailing padding. Lets callers size the output buffer in a
+    /// single allocation instead of allocating small and reallocating.
+    pub(crate) fn marshaled_len(&self) -> usize {
         let body_len: usize = self
             .chunks
             .iter()
@@ -276,7 +276,31 @@ impl Packet {
                 n + get_padding_size(n)
             })
             .sum();
-        writer.reserve(PACKET_HEADER_SIZE + body_len);
+        PACKET_HEADER_SIZE + body_len
+    }
+
+    pub(crate) fn marshal_to(&self, writer: &mut BytesMut) -> Result<usize> {
+        // Grow the buffer once so appending chunks never reallocates. A direct
+        // caller that passed an undersized buffer gets its single growth here;
+        // `marshal` pre-sizes, so it skips this path entirely.
+        writer.reserve(self.marshaled_len());
+        self.write_into(writer)
+    }
+
+    pub(crate) fn marshal(&self) -> Result<Bytes> {
+        // Allocate the exact packet length once, up front. `with_capacity` is a
+        // cheaper direct allocation than growing an empty `BytesMut` via
+        // `reserve`, and `write_into` needs no further sizing.
+        let mut buf = BytesMut::with_capacity(self.marshaled_len());
+        self.write_into(&mut buf)?;
+        Ok(buf.freeze())
+    }
+
+    /// Serialize the common header, every chunk (with trailing padding) and the
+    /// CRC-32C into `writer`. The caller is responsible for sizing the buffer
+    /// (both `marshal` and `marshal_to` above do so in a single allocation).
+    fn write_into(&self, writer: &mut BytesMut) -> Result<usize> {
+        let start = writer.len();
 
         // Populate static headers
         writer.put_u16(self.common_header.source_port);
@@ -308,12 +332,6 @@ impl Packet {
         writer[checksum_offset..checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
 
         Ok(writer.len())
-    }
-
-    pub(crate) fn marshal(&self) -> Result<Bytes> {
-        let mut buf = BytesMut::with_capacity(PACKET_HEADER_SIZE);
-        self.marshal_to(&mut buf)?;
-        Ok(buf.freeze())
     }
 }
 
