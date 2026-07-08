@@ -33,7 +33,7 @@ use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
 use timer::{ACK_INTERVAL, RtoManager, Timer, TimerTable};
 
 use crate::association::stream::RecvSendState;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use log::{debug, error, trace, warn};
 use rand::random;
 use rustc_hash::FxHashMap;
@@ -2487,38 +2487,61 @@ impl Association {
         // chunks: no intermediate `Vec<Packet>`, no `Box<dyn Chunk>` per chunk.
         // The chunks are already retained in the in-flight queue, so this send
         // copy is throwaway.
+        if chunks.is_empty() {
+            return;
+        }
         let common_header = CommonHeader {
             verification_tag: self.peer_verification_tag,
             source_port: self.source_port,
             destination_port: self.destination_port,
         };
 
+        // First pass: split the chunks into MTU-bounded datagrams and total up
+        // their marshalled (4-byte-padded) length. The whole burst is then
+        // written into ONE buffer and `split_to` hands out each datagram as a
+        // zero-copy `Bytes` view sharing that single allocation — one malloc per
+        // burst instead of one per packet on the hot send path.
+        let hdr = COMMON_HEADER_SIZE as usize;
+        let mut bundles: Vec<(usize, usize)> = Vec::new();
+        let mut total_len = 0usize;
         let mut bundle_start = 0;
         let mut bytes_in_packet = COMMON_HEADER_SIZE;
-        for i in 0..chunks.len() {
-            let data_len = chunks[i].user_data.len() as u32;
+        let mut bundle_len = hdr;
+        for (i, chunk) in chunks.iter().enumerate() {
+            let data_len = chunk.user_data.len() as u32;
             // Close the current bundle before a chunk that would exceed the MTU.
             if bytes_in_packet + data_len > self.mtu && i > bundle_start {
-                self.push_data_packet(&common_header, &chunks[bundle_start..i], raw_packets);
+                bundles.push((bundle_start, i));
+                total_len += bundle_len;
                 bundle_start = i;
                 bytes_in_packet = COMMON_HEADER_SIZE;
+                bundle_len = hdr;
             }
             bytes_in_packet += DATA_CHUNK_HEADER_SIZE + data_len;
+            // Marshalled chunk size, padded up to the SCTP 4-byte boundary.
+            let wire = (DATA_CHUNK_HEADER_SIZE + data_len) as usize;
+            bundle_len += (wire + 3) & !3;
         }
-        if bundle_start < chunks.len() {
-            self.push_data_packet(&common_header, &chunks[bundle_start..], raw_packets);
-        }
-    }
+        bundles.push((bundle_start, chunks.len()));
+        total_len += bundle_len;
 
-    fn push_data_packet(
-        &self,
-        common_header: &CommonHeader,
-        chunks: &[ChunkPayloadData],
-        raw_packets: &mut Vec<Bytes>,
-    ) {
-        match Packet::marshal_data_chunks(common_header, chunks) {
-            Ok(raw) => raw_packets.push(raw),
-            Err(_) => warn!("[{}] failed to serialize a DATA packet", self.side),
+        // Second pass: marshal each datagram into the shared buffer.
+        let mut buf = BytesMut::with_capacity(total_len);
+        for (start, end) in bundles {
+            match Packet::write_framed(
+                &common_header,
+                chunks[start..end].iter().map(|c| c as &dyn Chunk),
+                &mut buf,
+            ) {
+                Ok(_) => {
+                    let plen = buf.len();
+                    raw_packets.push(buf.split_to(plen).freeze());
+                }
+                Err(_) => {
+                    warn!("[{}] failed to serialize a DATA packet", self.side);
+                    buf.clear();
+                }
+            }
         }
     }
 
