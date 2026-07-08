@@ -308,6 +308,55 @@ fn benchmark_source_description(c: &mut Criterion) {
     });
 }
 
+// Exercises the compound receive/send hot path (rtc/.../handler/srtp.rs):
+// `packet::unmarshal` runs the per-sub-packet `unmarshaller`, and
+// `packet::marshal` serializes an array of sub-packets into one datagram.
+fn benchmark_compound(c: &mut Criterion) {
+    use rtc_rtcp::Packet;
+
+    let sr = SenderReport {
+        ssrc: 0x902f9e2e,
+        ntp_time: 0xda8bd1fcdddda05a,
+        rtp_time: 0xaaf4edd5,
+        packet_count: 1000,
+        octet_count: 50000,
+        reports: vec![ReceptionReport {
+            ssrc: 0xbc5e9a40,
+            fraction_lost: 10,
+            total_lost: 100,
+            last_sequence_number: 0x46e1,
+            jitter: 273,
+            last_sender_report: 0x9f36432,
+            delay: 150137,
+        }],
+        profile_extensions: Bytes::new(),
+    };
+    let pli = PictureLossIndication {
+        sender_ssrc: 0x902f9e2e,
+        media_ssrc: 0x902f9e2e,
+    };
+    let packets: Vec<Box<dyn Packet>> = vec![Box::new(sr), Box::new(pli)];
+
+    let raw = rtc_rtcp::packet::marshal(&packets).unwrap().freeze();
+    assert_eq!(
+        rtc_rtcp::packet::unmarshal(&mut raw.clone()).unwrap().len(),
+        2
+    );
+
+    c.bench_function("Compound Unmarshal", |b| {
+        b.iter(|| {
+            let mut buf = raw.clone();
+            let _ = rtc_rtcp::packet::unmarshal(&mut buf).unwrap();
+        })
+    });
+
+    c.bench_function("Compound Marshal", |b| {
+        b.iter(|| {
+            let _ = rtc_rtcp::packet::marshal(&packets).unwrap();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_sender_report,
@@ -315,6 +364,7 @@ criterion_group!(
     benchmark_picture_loss_indication,
     benchmark_transport_layer_nack,
     benchmark_goodbye,
-    benchmark_source_description
+    benchmark_source_description,
+    benchmark_compound
 );
 criterion_main!(benches);

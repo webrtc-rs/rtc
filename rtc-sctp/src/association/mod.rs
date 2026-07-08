@@ -2055,17 +2055,7 @@ impl Association {
         mut raw_packets: Vec<Bytes>,
         now: Instant,
     ) -> Vec<Bytes> {
-        for p in &self.get_data_packets_to_retransmit(now) {
-            if let Ok(raw) = p.marshal() {
-                raw_packets.push(raw);
-            } else {
-                warn!(
-                    "[{}] failed to serialize a DATA packet to be retransmitted",
-                    self.side
-                );
-            }
-        }
-
+        self.get_data_packets_to_retransmit(now, &mut raw_packets);
         raw_packets
     }
 
@@ -2083,13 +2073,7 @@ impl Association {
             self.timers
                 .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
 
-            for p in &self.bundle_data_chunks_into_packets(chunks) {
-                if let Ok(raw) = p.marshal() {
-                    raw_packets.push(raw);
-                } else {
-                    warn!("[{}] failed to serialize a DATA packet", self.side);
-                }
-            }
+            self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
 
         if !sis_to_reset.is_empty() || self.will_retransmit_reconfig {
@@ -2325,7 +2309,7 @@ impl Association {
 
     /// get_data_packets_to_retransmit is called when T3-rtx is timed out and retransmit outstanding data chunks
     /// that are not acked or abandoned yet.
-    fn get_data_packets_to_retransmit(&mut self, now: Instant) -> Vec<Packet> {
+    fn get_data_packets_to_retransmit(&mut self, now: Instant, raw_packets: &mut Vec<Bytes>) {
         let awnd = std::cmp::min(self.cwnd, self.rwnd);
         let mut chunks = vec![];
         let mut bytes_to_send = 0;
@@ -2375,7 +2359,7 @@ impl Association {
             i += 1;
         }
 
-        self.bundle_data_chunks_into_packets(chunks)
+        self.bundle_data_chunks_into_packets(chunks, raw_packets);
     }
 
     /// pop_pending_data_chunks_to_send pops chunks from the pending queues as many as
@@ -2457,32 +2441,54 @@ impl Association {
     /// bundle_data_chunks_into_packets packs DATA chunks into packets. It tries to bundle
     /// DATA chunks into a packet so long as the resulting packet size does not exceed
     /// the path MTU.
-    fn bundle_data_chunks_into_packets(&self, chunks: Vec<ChunkPayloadData>) -> Vec<Packet> {
-        let mut packets = vec![];
-        let mut chunks_to_send = vec![];
-        let mut bytes_in_packet = COMMON_HEADER_SIZE;
+    fn bundle_data_chunks_into_packets(
+        &self,
+        chunks: Vec<ChunkPayloadData>,
+        raw_packets: &mut Vec<Bytes>,
+    ) {
+        // RFC 4960 sec 6.1.  Transmission of DATA Chunks
+        //   Multiple DATA chunks committed for transmission MAY be bundled in a
+        //   single packet.  Furthermore, DATA chunks being retransmitted MAY be
+        //   bundled with new DATA chunks, as long as the resulting packet size
+        //   does not exceed the path MTU.
+        //
+        // Marshal each bundle straight into `raw_packets` from the borrowed
+        // chunks: no intermediate `Vec<Packet>`, no `Box<dyn Chunk>` per chunk.
+        // The chunks are already retained in the in-flight queue, so this send
+        // copy is throwaway.
+        let common_header = CommonHeader {
+            verification_tag: self.peer_verification_tag,
+            source_port: self.source_port,
+            destination_port: self.destination_port,
+        };
 
-        for c in chunks {
-            // RFC 4960 sec 6.1.  Transmission of DATA Chunks
-            //   Multiple DATA chunks committed for transmission MAY be bundled in a
-            //   single packet.  Furthermore, DATA chunks being retransmitted MAY be
-            //   bundled with new DATA chunks, as long as the resulting packet size
-            //   does not exceed the path MTU.
-            if bytes_in_packet + c.user_data.len() as u32 > self.mtu {
-                packets.push(self.create_packet(chunks_to_send));
-                chunks_to_send = vec![];
+        let mut bundle_start = 0;
+        let mut bytes_in_packet = COMMON_HEADER_SIZE;
+        for i in 0..chunks.len() {
+            let data_len = chunks[i].user_data.len() as u32;
+            // Close the current bundle before a chunk that would exceed the MTU.
+            if bytes_in_packet + data_len > self.mtu && i > bundle_start {
+                self.push_data_packet(&common_header, &chunks[bundle_start..i], raw_packets);
+                bundle_start = i;
                 bytes_in_packet = COMMON_HEADER_SIZE;
             }
-
-            bytes_in_packet += DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32;
-            chunks_to_send.push(Box::new(c));
+            bytes_in_packet += DATA_CHUNK_HEADER_SIZE + data_len;
         }
-
-        if !chunks_to_send.is_empty() {
-            packets.push(self.create_packet(chunks_to_send));
+        if bundle_start < chunks.len() {
+            self.push_data_packet(&common_header, &chunks[bundle_start..], raw_packets);
         }
+    }
 
-        packets
+    fn push_data_packet(
+        &self,
+        common_header: &CommonHeader,
+        chunks: &[ChunkPayloadData],
+        raw_packets: &mut Vec<Bytes>,
+    ) {
+        match Packet::marshal_data_chunks(common_header, chunks) {
+            Ok(raw) => raw_packets.push(raw),
+            Err(_) => warn!("[{}] failed to serialize a DATA packet", self.side),
+        }
     }
 
     /// generate_next_tsn returns the my_next_tsn and increases it. The caller should hold the lock.
