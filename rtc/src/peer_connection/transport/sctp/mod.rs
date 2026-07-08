@@ -98,16 +98,16 @@ impl RTCSctpTransport {
 
         if dtls_role == RTCDtlsRole::Client {
             self.sctp_endpoint = Some(sctp::Endpoint::new(
-                TransportContext::default().local_addr, // local_addr doesn't matter
-                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // placeholder; rewritten per-transmit by the ICE handler
+                TransportProtocol::UDP, // placeholder; rewritten per-transmit by the ICE handler
                 sctp_endpoint_config.into(),
                 None,
             ));
             self.sctp_transport_config = Some(sctp_transport_config);
         } else {
             self.sctp_endpoint = Some(::sctp::Endpoint::new(
-                TransportContext::default().local_addr, // local_addr doesn't matter
-                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // placeholder; rewritten per-transmit by the ICE handler
+                TransportProtocol::UDP, // placeholder; rewritten per-transmit by the ICE handler
                 sctp_endpoint_config.into(),
                 Some(::sctp::ServerConfig::new(sctp_transport_config).into()),
             ));

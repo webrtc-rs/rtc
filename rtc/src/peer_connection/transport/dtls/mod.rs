@@ -187,15 +187,15 @@ impl RTCDtlsTransport {
 
         if self.dtls_role == RTCDtlsRole::Client {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
-                TransportContext::default().local_addr, // local_addr doesn't matter
-                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // placeholder; rewritten per-transmit by the ICE handler
+                TransportProtocol::UDP, // placeholder; rewritten per-transmit by the ICE handler
                 None,
             ));
             self.dtls_handshake_config = Some(dtls_handshake_config);
         } else {
             self.dtls_endpoint = Some(::dtls::endpoint::Endpoint::new(
-                TransportContext::default().local_addr, // local_addr doesn't matter
-                TransportProtocol::UDP,                 // TransportProtocol doesn't matter
+                TransportContext::default().local_addr, // placeholder; rewritten per-transmit by the ICE handler
+                TransportProtocol::UDP, // placeholder; rewritten per-transmit by the ICE handler
                 Some(dtls_handshake_config),
             ));
         }
