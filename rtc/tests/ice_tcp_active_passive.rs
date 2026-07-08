@@ -182,6 +182,17 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
     while start_time.elapsed() < test_timeout {
         // Process offer peer writes - send via TCP with framing
         while let Some(msg) = runner.offer_pc.poll_write() {
+            // Everything in this test rides the TCP candidate pair, so every
+            // transmit must be stamped TCP: consumers running UDP sockets and
+            // TCP streams side by side route poll_write() output by this
+            // field (regression test for DTLS/SCTP transmits leaving the
+            // engine stamped UDP on a TCP pair).
+            assert_eq!(
+                msg.transport.transport_protocol,
+                TransportProtocol::TCP,
+                "[Offer] transmit to {} must be stamped TCP",
+                msg.transport.peer_addr
+            );
             if let Some(ref mut stream) = offer_stream {
                 let framed = frame_packet(&msg.message);
                 stream.write_all(&framed).await?;
@@ -190,6 +201,12 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
 
         // Process answer peer writes - send via TCP with framing
         while let Some(msg) = runner.answer_pc.poll_write() {
+            assert_eq!(
+                msg.transport.transport_protocol,
+                TransportProtocol::TCP,
+                "[Answer] transmit to {} must be stamped TCP",
+                msg.transport.peer_addr
+            );
             if let Some(ref mut stream) = answer_stream {
                 let framed = frame_packet(&msg.message);
                 stream.write_all(&framed).await?;
