@@ -729,7 +729,7 @@ impl MediaStreamTrack {
     /// true: insert new entry if not found
     ///
     /// false: update entry when found
-    pub fn set_codec_by_ssrc(&mut self, codec: RTCRtpCodec, ssrc: SSRC) -> bool {
+    pub(crate) fn set_codec_by_ssrc(&mut self, codec: RTCRtpCodec, ssrc: SSRC) -> bool {
         if let Some(coding) = self.codings.iter_mut().find(|coding| {
             coding
                 .rtp_coding_parameters
