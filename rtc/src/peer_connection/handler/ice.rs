@@ -19,6 +19,13 @@ pub(crate) struct IceHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
+
+    /// Cached stats key of the currently selected ICE candidate pair
+    /// (`RTCIceCandidatePair_<local>_<remote>`), refreshed only when the selected
+    /// pair changes. The per-packet read/write path looks the pair's stats
+    /// accumulator up with this key instead of re-`format!`ing it on every packet
+    /// — that formatting was a heap allocation on the hot path in both directions.
+    pub(crate) selected_pair_key: Option<String>,
 }
 
 impl IceHandlerContext {
@@ -29,6 +36,8 @@ impl IceHandlerContext {
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+
+            selected_pair_key: None,
         }
     }
 }
@@ -65,18 +74,25 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 transport: msg.transport,
                 message,
             })?;
-        } else if let Some((local, remote)) =
-            self.ctx.ice_transport.agent.get_selected_candidate_pair()
+        } else if self
+            .ctx
+            .ice_transport
+            .agent
+            .get_selected_candidate_pair()
+            .is_some()
         {
             // only ICE connection is ready and bypass it
             debug!("bypass ice read {:?}", msg.transport.peer_addr);
 
-            // Track packets/bytes received on the selected candidate pair
+            // Track packets/bytes received on the selected candidate pair. Look
+            // the accumulator up via the cached key (set on the last
+            // SelectedCandidatePairChange) to avoid allocating the key per packet.
             let bytes = msg.message.len();
-            let pair = self
-                .stats
-                .get_or_create_candidate_pair(local.id(), remote.id());
-            pair.on_packet_received(bytes, msg.now);
+            if let Some(key) = &self.ctx.selected_pair_key
+                && let Some(pair) = self.stats.ice_candidate_pairs.get_mut(key)
+            {
+                pair.on_packet_received(bytes, msg.now);
+            }
 
             // When ICE restarts and the selected candidate pair changes,
             // WebRTC treats this as a path migration, and DTLS continues unchanged, bound to the ICE transport, not to a fixed 5-tuple.
@@ -110,13 +126,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             msg.transport.transport_protocol = local.network_type().to_protocol();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
 
-            // Track packets/bytes sent on the selected candidate pair
-
+            // Track packets/bytes sent on the selected candidate pair. Look the
+            // accumulator up via the cached key to avoid allocating it per packet.
             let bytes = msg.message.len();
-            let pair = self
-                .stats
-                .get_or_create_candidate_pair(local.id(), remote.id());
-            pair.on_packet_sent(bytes, msg.now);
+            if let Some(key) = &self.ctx.selected_pair_key
+                && let Some(pair) = self.stats.ice_candidate_pairs.get_mut(key)
+            {
+                pair.on_packet_sent(bytes, msg.now);
+            }
 
             self.ctx.write_outs.push_back(msg);
         } else {
@@ -178,14 +195,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         .get_or_create_candidate_pair(local.id(), remote.id());
                     pair.nominated = true;
                     pair.state = RTCStatsIceCandidatePairState::Succeeded;
+
+                    // Cache the pair's stats key so the per-packet path can look
+                    // the accumulator up by borrow instead of re-formatting (and
+                    // allocating) the key on every read/write.
+                    let key = format!("RTCIceCandidatePair_{}_{}", local.id(), remote.id());
+                    self.ctx.selected_pair_key = Some(key.clone());
                     // Update transport stats for selected candidate pair change
-                    self.stats
-                        .transport
-                        .on_selected_candidate_pair_changed(format!(
-                            "RTCIceCandidatePair_{}_{}",
-                            local.id(),
-                            remote.id()
-                        ));
+                    self.stats.transport.on_selected_candidate_pair_changed(key);
 
                     self.ctx
                         .event_outs
