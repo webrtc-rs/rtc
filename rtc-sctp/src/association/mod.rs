@@ -937,6 +937,16 @@ impl Association {
             i.initial_tsn - 1
         };
 
+        // Adopt the peer's advertised receive window and seed ssthresh from it,
+        // mirroring handle_init_ack (and Pion's shared init path). RFC 4960
+        // §7.2.1 (Slow-Start) permits initialising ssthresh to the advertised
+        // receiver window; without this the answerer keeps ssthresh at its
+        // initial 0, so cwnd never starts below it, slow-start never runs, and
+        // cwnd only grows linearly under congestion avoidance (§7.2.2).
+        self.rwnd = i.advertised_receiver_window_credit;
+        debug!("[{}] initial rwnd={}", self.side, self.rwnd);
+        self.ssthresh = self.rwnd;
+
         for param in &i.params {
             if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
                 for t in &v.chunk_types {
