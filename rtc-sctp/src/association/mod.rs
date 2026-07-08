@@ -2500,7 +2500,9 @@ impl Association {
         // their marshalled (4-byte-padded) length. The whole burst is then
         // written into ONE buffer and `split_to` hands out each datagram as a
         // zero-copy `Bytes` view sharing that single allocation — one malloc per
-        // burst instead of one per packet on the hot send path.
+        // burst instead of one per packet on the hot send path. The bundle
+        // boundaries are computed once here and reused below, so the MTU-split
+        // rule lives in exactly one place.
         let hdr = COMMON_HEADER_SIZE as usize;
         let mut bundles: Vec<(usize, usize)> = Vec::new();
         let mut total_len = 0usize;
@@ -2650,20 +2652,21 @@ impl Association {
 
         let mut fwd_tsn = ChunkForwardTsn {
             new_cumulative_tsn: self.advanced_peer_tsn_ack_point,
-            streams: vec![],
+            streams: Vec::with_capacity(stream_map.len()),
         };
-
-        let mut stream_str = String::new();
         for (si, ssn) in &stream_map {
-            stream_str += format!("(si={} ssn={})", si, ssn).as_str();
             fwd_tsn.streams.push(ChunkForwardTsnStream {
                 identifier: *si,
                 sequence: *ssn,
             });
         }
+        // `trace!` evaluates its arguments lazily, so the stream list is only
+        // formatted when trace logging is enabled -- no per-FORWARD-TSN string
+        // allocation on the hot send path (this fires often for PR-SCTP data
+        // channels, which is exactly where it was showing up in profiles).
         trace!(
-            "[{}] building fwd_tsn: newCumulativeTSN={} cumTSN={} - {}",
-            self.side, fwd_tsn.new_cumulative_tsn, self.cumulative_tsn_ack_point, stream_str
+            "[{}] building fwd_tsn: newCumulativeTSN={} cumTSN={} streams={:?}",
+            self.side, fwd_tsn.new_cumulative_tsn, self.cumulative_tsn_ack_point, fwd_tsn.streams
         );
 
         fwd_tsn
