@@ -99,9 +99,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
     fn handle_write(&mut self, mut msg: TaggedRTCMessageInternal) -> Result<()> {
         if let Some((local, remote)) = self.ctx.ice_transport.agent.get_selected_candidate_pair() {
-            // use ICE selected candidate pair to replace local/peer addr
+            // use ICE selected candidate pair to replace local/peer addr and
+            // transport protocol: DTLS/SCTP endpoints run on placeholder
+            // transport contexts, so without the protocol rewrite their
+            // transmits stay stamped UDP even when the selected pair is TCP,
+            // and consumers routing poll_write() output by transport_protocol
+            // send every non-STUN packet down the wrong transport.
             msg.transport.local_addr = local.addr();
             msg.transport.peer_addr = remote.addr();
+            msg.transport.transport_protocol = local.network_type().to_protocol();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
 
             // Track packets/bytes sent on the selected candidate pair
