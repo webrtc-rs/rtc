@@ -667,6 +667,7 @@ where
     ice_restart_requested: Option<RTCOfferOptions>,
     negotiation_needed_state: NegotiationNeededState,
     is_negotiation_ongoing: bool,
+    data_channels_negotiated: usize,
 }
 
 impl<I> RTCPeerConnection<I>

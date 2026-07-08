@@ -135,6 +135,7 @@ where
             ice_restart_requested: None,
             negotiation_needed_state: NegotiationNeededState::Empty,
             is_negotiation_ongoing: false,
+            data_channels_negotiated: 0,
         })
     }
 
@@ -443,6 +444,7 @@ where
 
                                     self.current_local_description = Some(sd.clone());
                                     self.current_remote_description = pending_remote_description;
+                                    self.data_channels_negotiated = self.data_channels.len();
                                 }
                                 next_state
                             }
@@ -512,6 +514,7 @@ where
 
                                 self.current_remote_description = Some(sd.clone());
                                 self.current_local_description = pending_local_description;
+                                self.data_channels_negotiated = self.data_channels.len();
                             }
                             next_state
                         }
@@ -946,6 +949,10 @@ where
             let len_data_channel = self.data_channels.len();
 
             if len_data_channel != 0 && have_data_channel(local_desc).is_none() {
+                return true;
+            }
+
+            if len_data_channel > self.data_channels_negotiated {
                 return true;
             }
 
