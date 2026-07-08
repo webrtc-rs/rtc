@@ -350,35 +350,6 @@ impl Packet {
 
         Ok(writer.len())
     }
-
-    /// Marshal a bundle of DATA chunks as a single SCTP packet, borrowing the
-    /// chunks directly instead of moving them into `Box<dyn Chunk>` inside a
-    /// `Packet`. Used on the hot outbound DATA path where the chunks are already
-    /// retained in the in-flight queue for retransmission, so the send copy is
-    /// throwaway and never needs the owned `Packet`. Produces byte-for-byte the
-    /// same packet as building a `Packet` from these chunks and calling
-    /// `marshal`, via the shared `write_framed`.
-    pub(crate) fn marshal_data_chunks(
-        common_header: &CommonHeader,
-        chunks: &[ChunkPayloadData],
-    ) -> Result<Bytes> {
-        let body_len: usize = chunks
-            .iter()
-            .map(|c| {
-                let n = CHUNK_HEADER_SIZE + c.value_length();
-                n + get_padding_size(n)
-            })
-            .sum();
-        let mut buf = BytesMut::with_capacity(PACKET_HEADER_SIZE + body_len);
-        // `ChunkPayloadData::marshal_to` is infallible, so the `?` error path here
-        // was dead and uncoverable; `.map` transforms the Ok value with no branch.
-        Self::write_framed(
-            common_header,
-            chunks.iter().map(|c| c as &dyn Chunk),
-            &mut buf,
-        )
-        .map(|_| buf.freeze())
-    }
 }
 
 impl Packet {
@@ -491,9 +462,10 @@ mod test {
         Ok(())
     }
 
-    // The boxing-free DATA send path (`marshal_data_chunks`) must produce exactly
-    // the same bytes as building a `Packet` of boxed chunks and calling `marshal`
-    // -- both go through `write_framed`. Also exercises `marshal_to`.
+    // The boxing-free DATA send path marshals borrowed `ChunkPayloadData` straight
+    // into a shared buffer via `write_framed`; it must produce exactly the same
+    // bytes as building a `Packet` of boxed chunks and calling `marshal` -- both go
+    // through `write_framed`. Also exercises `marshal_to`.
     #[test]
     fn test_marshal_data_chunks_matches_packet_marshal() -> Result<()> {
         use crate::chunk::chunk_payload_data::PayloadProtocolIdentifier;
@@ -521,7 +493,15 @@ mod test {
             vec![mk_chunk(1, 0, b"hello"), mk_chunk(2, 1, b"world!!")],
         ];
         for chunks in cases {
-            let direct = Packet::marshal_data_chunks(&mk_common(), &chunks)?;
+            let direct = {
+                let mut buf = BytesMut::new();
+                Packet::write_framed(
+                    &mk_common(),
+                    chunks.iter().map(|c| c as &dyn Chunk),
+                    &mut buf,
+                )?;
+                buf.freeze()
+            };
 
             let pkt = Packet {
                 common_header: mk_common(),
@@ -534,7 +514,7 @@ mod test {
             assert_eq!(
                 direct,
                 pkt.marshal()?,
-                "marshal_data_chunks must equal Packet::marshal"
+                "write_framed DATA path must equal Packet::marshal"
             );
 
             let mut buf = BytesMut::new();
@@ -542,7 +522,7 @@ mod test {
             assert_eq!(
                 direct,
                 buf.freeze(),
-                "marshal_to must equal marshal_data_chunks"
+                "marshal_to must equal the write_framed DATA path"
             );
         }
 

@@ -33,7 +33,7 @@ use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
 use timer::{ACK_INTERVAL, RtoManager, Timer, TimerTable};
 
 use crate::association::stream::RecvSendState;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use log::{debug, error, trace, warn};
 use rand::random;
 use rustc_hash::FxHashMap;
@@ -142,6 +142,12 @@ pub struct Association {
     will_send_forward_tsn: bool,
     will_retransmit_fast: bool,
     will_retransmit_reconfig: bool,
+    /// True only while the in-flight queue may still hold chunks flagged for
+    /// T3-rtx retransmission (set when the timer marks them, cleared once the
+    /// scan has re-sent them all). Lets `gather_outbound` skip the O(in-flight)
+    /// retransmit scan entirely in the steady state, where nothing is ever
+    /// marked — that scan was the single hottest function in the send profile.
+    t3_retransmit_pending: bool,
 
     will_send_shutdown_ack: bool,
     will_send_shutdown_complete: bool,
@@ -233,6 +239,7 @@ impl Default for Association {
             will_send_forward_tsn: false,
             will_retransmit_fast: false,
             will_retransmit_reconfig: false,
+            t3_retransmit_pending: false,
 
             will_send_shutdown_ack: false,
             will_send_shutdown_complete: false,
@@ -936,6 +943,16 @@ impl Association {
         } else {
             i.initial_tsn - 1
         };
+
+        // Adopt the peer's advertised receive window and seed ssthresh from it,
+        // mirroring handle_init_ack (and Pion's shared init path). RFC 4960
+        // §7.2.1 (Slow-Start) permits initialising ssthresh to the advertised
+        // receiver window; without this the answerer keeps ssthresh at its
+        // initial 0, so cwnd never starts below it, slow-start never runs, and
+        // cwnd only grows linearly under congestion avoidance (§7.2.2).
+        self.rwnd = i.advertised_receiver_window_credit;
+        debug!("[{}] initial rwnd={}", self.side, self.rwnd);
+        self.ssthresh = self.rwnd;
 
         for param in &i.params {
             if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
@@ -2055,7 +2072,11 @@ impl Association {
         mut raw_packets: Vec<Bytes>,
         now: Instant,
     ) -> Vec<Bytes> {
-        self.get_data_packets_to_retransmit(now, &mut raw_packets);
+        // Nothing is ever flagged for T3-rtx in the steady state, so skip the
+        // full in-flight scan unless the T3-rtx timer has actually marked chunks.
+        if self.t3_retransmit_pending {
+            self.get_data_packets_to_retransmit(now, &mut raw_packets);
+        }
         raw_packets
     }
 
@@ -2315,6 +2336,10 @@ impl Association {
         let mut bytes_to_send = 0;
         let mut done = false;
         let mut i = 0;
+        // Assume we will re-send every flagged chunk; flip back on if we stop
+        // early (a marked chunk that doesn't fit awnd, or a zero-window probe)
+        // so the next gather_outbound still scans.
+        let mut chunks_remaining = false;
         while !done {
             let tsn = self.cumulative_tsn_ack_point + i + 1;
             if let Some(c) = self.inflight_queue.get_mut(tsn) {
@@ -2326,7 +2351,9 @@ impl Association {
                 if i == 0 && self.rwnd < c.user_data.len() as u32 {
                     // Send it as a zero window probe
                     done = true;
+                    chunks_remaining = true;
                 } else if bytes_to_send + c.user_data.len() > awnd as usize {
+                    chunks_remaining = true;
                     break;
                 }
 
@@ -2358,6 +2385,10 @@ impl Association {
             }
             i += 1;
         }
+
+        // Cleared once the whole in-flight window has been rescanned with nothing
+        // left flagged; kept set while awnd/zero-window left chunks behind.
+        self.t3_retransmit_pending = chunks_remaining;
 
         self.bundle_data_chunks_into_packets(chunks, raw_packets);
     }
@@ -2456,38 +2487,63 @@ impl Association {
         // chunks: no intermediate `Vec<Packet>`, no `Box<dyn Chunk>` per chunk.
         // The chunks are already retained in the in-flight queue, so this send
         // copy is throwaway.
+        if chunks.is_empty() {
+            return;
+        }
         let common_header = CommonHeader {
             verification_tag: self.peer_verification_tag,
             source_port: self.source_port,
             destination_port: self.destination_port,
         };
 
+        // First pass: split the chunks into MTU-bounded datagrams and total up
+        // their marshalled (4-byte-padded) length. The whole burst is then
+        // written into ONE buffer and `split_to` hands out each datagram as a
+        // zero-copy `Bytes` view sharing that single allocation — one malloc per
+        // burst instead of one per packet on the hot send path. The bundle
+        // boundaries are computed once here and reused below, so the MTU-split
+        // rule lives in exactly one place.
+        let hdr = COMMON_HEADER_SIZE as usize;
+        let mut bundles: Vec<(usize, usize)> = Vec::new();
+        let mut total_len = 0usize;
         let mut bundle_start = 0;
         let mut bytes_in_packet = COMMON_HEADER_SIZE;
-        for i in 0..chunks.len() {
-            let data_len = chunks[i].user_data.len() as u32;
+        let mut bundle_len = hdr;
+        for (i, chunk) in chunks.iter().enumerate() {
+            let data_len = chunk.user_data.len() as u32;
             // Close the current bundle before a chunk that would exceed the MTU.
             if bytes_in_packet + data_len > self.mtu && i > bundle_start {
-                self.push_data_packet(&common_header, &chunks[bundle_start..i], raw_packets);
+                bundles.push((bundle_start, i));
+                total_len += bundle_len;
                 bundle_start = i;
                 bytes_in_packet = COMMON_HEADER_SIZE;
+                bundle_len = hdr;
             }
             bytes_in_packet += DATA_CHUNK_HEADER_SIZE + data_len;
+            // Marshalled chunk size, padded up to the SCTP 4-byte boundary.
+            let wire = (DATA_CHUNK_HEADER_SIZE + data_len) as usize;
+            bundle_len += (wire + 3) & !3;
         }
-        if bundle_start < chunks.len() {
-            self.push_data_packet(&common_header, &chunks[bundle_start..], raw_packets);
-        }
-    }
+        bundles.push((bundle_start, chunks.len()));
+        total_len += bundle_len;
 
-    fn push_data_packet(
-        &self,
-        common_header: &CommonHeader,
-        chunks: &[ChunkPayloadData],
-        raw_packets: &mut Vec<Bytes>,
-    ) {
-        match Packet::marshal_data_chunks(common_header, chunks) {
-            Ok(raw) => raw_packets.push(raw),
-            Err(_) => warn!("[{}] failed to serialize a DATA packet", self.side),
+        // Second pass: marshal each datagram into the shared buffer.
+        let mut buf = BytesMut::with_capacity(total_len);
+        for (start, end) in bundles {
+            match Packet::write_framed(
+                &common_header,
+                chunks[start..end].iter().map(|c| c as &dyn Chunk),
+                &mut buf,
+            ) {
+                Ok(_) => {
+                    let plen = buf.len();
+                    raw_packets.push(buf.split_to(plen).freeze());
+                }
+                Err(_) => {
+                    warn!("[{}] failed to serialize a DATA packet", self.side);
+                    buf.clear();
+                }
+            }
         }
     }
 
@@ -2570,7 +2626,12 @@ impl Association {
     /// This method will be be called if use_forward_tsn is set to false.
     fn create_forward_tsn(&self) -> ChunkForwardTsn {
         // RFC 3758 Sec 3.5 C4
-        let mut stream_map: HashMap<u16, u16> = HashMap::new(); // to report only once per SI
+        // Keyed by stream identifier and probed once per in-flight chunk in the
+        // forward-TSN window. With PR-SCTP (unordered / limited-retransmit data
+        // channels) this runs on the hot send path, so use the non-SipHash hasher
+        // like every other window-bounded map here -- the default `HashMap`'s
+        // SipHash showed up as ~6-7% of send CPU in profiles.
+        let mut stream_map: FxHashMap<u16, u16> = FxHashMap::default(); // report once per SI
         let mut i = self.cumulative_tsn_ack_point + 1;
         while sna32lte(i, self.advanced_peer_tsn_ack_point) {
             if let Some(c) = self.inflight_queue.get(i) {
@@ -2591,20 +2652,21 @@ impl Association {
 
         let mut fwd_tsn = ChunkForwardTsn {
             new_cumulative_tsn: self.advanced_peer_tsn_ack_point,
-            streams: vec![],
+            streams: Vec::with_capacity(stream_map.len()),
         };
-
-        let mut stream_str = String::new();
         for (si, ssn) in &stream_map {
-            stream_str += format!("(si={} ssn={})", si, ssn).as_str();
             fwd_tsn.streams.push(ChunkForwardTsnStream {
                 identifier: *si,
                 sequence: *ssn,
             });
         }
+        // `trace!` evaluates its arguments lazily, so the stream list is only
+        // formatted when trace logging is enabled -- no per-FORWARD-TSN string
+        // allocation on the hot send path (this fires often for PR-SCTP data
+        // channels, which is exactly where it was showing up in profiles).
         trace!(
-            "[{}] building fwd_tsn: newCumulativeTSN={} cumTSN={} - {}",
-            self.side, fwd_tsn.new_cumulative_tsn, self.cumulative_tsn_ack_point, stream_str
+            "[{}] building fwd_tsn: newCumulativeTSN={} cumTSN={} streams={:?}",
+            self.side, fwd_tsn.new_cumulative_tsn, self.cumulative_tsn_ack_point, fwd_tsn.streams
         );
 
         fwd_tsn
@@ -2822,6 +2884,7 @@ impl Association {
                 );
 
                 self.inflight_queue.mark_all_to_retrasmit();
+                self.t3_retransmit_pending = true;
                 self.awake_write_loop();
             }
 
