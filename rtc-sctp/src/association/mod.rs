@@ -142,6 +142,12 @@ pub struct Association {
     will_send_forward_tsn: bool,
     will_retransmit_fast: bool,
     will_retransmit_reconfig: bool,
+    /// True only while the in-flight queue may still hold chunks flagged for
+    /// T3-rtx retransmission (set when the timer marks them, cleared once the
+    /// scan has re-sent them all). Lets `gather_outbound` skip the O(in-flight)
+    /// retransmit scan entirely in the steady state, where nothing is ever
+    /// marked — that scan was the single hottest function in the send profile.
+    t3_retransmit_pending: bool,
 
     will_send_shutdown_ack: bool,
     will_send_shutdown_complete: bool,
@@ -233,6 +239,7 @@ impl Default for Association {
             will_send_forward_tsn: false,
             will_retransmit_fast: false,
             will_retransmit_reconfig: false,
+            t3_retransmit_pending: false,
 
             will_send_shutdown_ack: false,
             will_send_shutdown_complete: false,
@@ -2065,7 +2072,11 @@ impl Association {
         mut raw_packets: Vec<Bytes>,
         now: Instant,
     ) -> Vec<Bytes> {
-        self.get_data_packets_to_retransmit(now, &mut raw_packets);
+        // Nothing is ever flagged for T3-rtx in the steady state, so skip the
+        // full in-flight scan unless the T3-rtx timer has actually marked chunks.
+        if self.t3_retransmit_pending {
+            self.get_data_packets_to_retransmit(now, &mut raw_packets);
+        }
         raw_packets
     }
 
@@ -2325,6 +2336,10 @@ impl Association {
         let mut bytes_to_send = 0;
         let mut done = false;
         let mut i = 0;
+        // Assume we will re-send every flagged chunk; flip back on if we stop
+        // early (a marked chunk that doesn't fit awnd, or a zero-window probe)
+        // so the next gather_outbound still scans.
+        let mut chunks_remaining = false;
         while !done {
             let tsn = self.cumulative_tsn_ack_point + i + 1;
             if let Some(c) = self.inflight_queue.get_mut(tsn) {
@@ -2336,7 +2351,9 @@ impl Association {
                 if i == 0 && self.rwnd < c.user_data.len() as u32 {
                     // Send it as a zero window probe
                     done = true;
+                    chunks_remaining = true;
                 } else if bytes_to_send + c.user_data.len() > awnd as usize {
+                    chunks_remaining = true;
                     break;
                 }
 
@@ -2368,6 +2385,10 @@ impl Association {
             }
             i += 1;
         }
+
+        // Cleared once the whole in-flight window has been rescanned with nothing
+        // left flagged; kept set while awnd/zero-window left chunks behind.
+        self.t3_retransmit_pending = chunks_remaining;
 
         self.bundle_data_chunks_into_packets(chunks, raw_packets);
     }
@@ -2832,6 +2853,7 @@ impl Association {
                 );
 
                 self.inflight_queue.mark_all_to_retrasmit();
+                self.t3_retransmit_pending = true;
                 self.awake_write_loop();
             }
 
