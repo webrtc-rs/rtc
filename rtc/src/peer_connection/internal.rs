@@ -1353,7 +1353,7 @@ where
     pub(super) fn codec_preferences_from_encodings(
         &self,
         kind: RtpCodecKind,
-        encodings: &[crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters],
+        encodings: &[RTCRtpEncodingParameters],
     ) -> Result<Vec<RTCRtpCodecParameters>> {
         let media_engine_codecs = self.media_engine.get_codecs_by_kind(kind);
         let mut codec_preferences = vec![];
@@ -1385,10 +1385,10 @@ where
     pub(super) fn normalize_sender_track(
         &self,
         track: MediaStreamTrack,
-        mut send_encodings: Vec<crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters>,
+        mut send_encodings: Vec<RTCRtpEncodingParameters>,
     ) -> Result<(
         MediaStreamTrack,
-        Vec<crate::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters>,
+        Vec<RTCRtpEncodingParameters>,
         Vec<RTCRtpCodecParameters>,
     )> {
         for encoding in &mut send_encodings {

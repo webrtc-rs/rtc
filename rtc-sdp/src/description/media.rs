@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::description::common::*;
 use crate::extmap::*;
+use crate::util::{Codec, merge_codecs, parse_fmtp, parse_rtcp_fb, parse_rtpmap};
 
 /// Constants for extmap key
 pub const EXT_MAP_VALUE_TRANSPORT_CC_KEY: u16 = 3;
@@ -78,6 +79,29 @@ impl MediaDescription {
             }
         }
         None
+    }
+
+    pub fn codecs(&self) -> HashMap<u8, Codec> {
+        let mut codecs: HashMap<u8, Codec> = HashMap::new();
+
+        for a in &self.attributes {
+            let attr = a.to_string();
+            if attr.starts_with("rtpmap:") {
+                if let Ok(codec) = parse_rtpmap(&attr) {
+                    merge_codecs(codec, &mut codecs);
+                }
+            } else if attr.starts_with("fmtp:") {
+                if let Ok(codec) = parse_fmtp(&attr) {
+                    merge_codecs(codec, &mut codecs);
+                }
+            } else if attr.starts_with("rtcp-fb:")
+                && let Ok(codec) = parse_rtcp_fb(&attr)
+            {
+                merge_codecs(codec, &mut codecs);
+            }
+        }
+
+        codecs
     }
 
     /// new_jsep_media_description creates a new MediaName with

@@ -367,22 +367,7 @@ impl SessionDescription {
         let mut codecs: HashMap<u8, Codec> = HashMap::new();
 
         for m in &self.media_descriptions {
-            for a in &m.attributes {
-                let attr = a.to_string();
-                if attr.starts_with("rtpmap:") {
-                    if let Ok(codec) = parse_rtpmap(&attr) {
-                        merge_codecs(codec, &mut codecs);
-                    }
-                } else if attr.starts_with("fmtp:") {
-                    if let Ok(codec) = parse_fmtp(&attr) {
-                        merge_codecs(codec, &mut codecs);
-                    }
-                } else if attr.starts_with("rtcp-fb:")
-                    && let Ok(codec) = parse_rtcp_fb(&attr)
-                {
-                    merge_codecs(codec, &mut codecs);
-                }
-            }
+            codecs.extend(m.codecs());
         }
 
         codecs
