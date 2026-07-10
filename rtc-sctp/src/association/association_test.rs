@@ -15,23 +15,20 @@ fn create_association(config: TransportConfig) -> Association {
     )
 }
 
+// `create_forward_tsn` no longer rescans the in-flight window; it emits the
+// `fwd_tsn_stream_map` that the RFC 3758 C2 loops fill via
+// `note_abandoned_for_forward_tsn` as each chunk is abandoned. These unit tests
+// drive that same entry point directly (ascending TSN, as C2 would); the full
+// window/SACK-driven path is exercised end-to-end by the `endpoint_test`
+// `test_assoc_unreliable_rexmit_*` suite.
 #[test]
 fn test_create_forward_tsn_forward_one_abandoned() -> Result<()> {
     let mut a = Association::default();
 
     a.cumulative_tsn_ack_point = 9;
     a.advanced_peer_tsn_ack_point = 10;
-    a.inflight_queue.push_no_check(ChunkPayloadData {
-        beginning_fragment: true,
-        ending_fragment: true,
-        tsn: 10,
-        stream_identifier: 1,
-        stream_sequence_number: 2,
-        user_data: Bytes::from_static(b"ABC"),
-        nsent: 1,
-        abandoned: true,
-        ..Default::default()
-    });
+    // tsn=10, ordered, si=1, ssn=2
+    a.note_abandoned_for_forward_tsn(false, 1, 2);
 
     let fwdtsn = a.create_forward_tsn();
 
@@ -49,39 +46,9 @@ fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()
 
     a.cumulative_tsn_ack_point = 9;
     a.advanced_peer_tsn_ack_point = 12;
-    a.inflight_queue.push_no_check(ChunkPayloadData {
-        beginning_fragment: true,
-        ending_fragment: true,
-        tsn: 10,
-        stream_identifier: 1,
-        stream_sequence_number: 2,
-        user_data: Bytes::from_static(b"ABC"),
-        nsent: 1,
-        abandoned: true,
-        ..Default::default()
-    });
-    a.inflight_queue.push_no_check(ChunkPayloadData {
-        beginning_fragment: true,
-        ending_fragment: true,
-        tsn: 11,
-        stream_identifier: 1,
-        stream_sequence_number: 3,
-        user_data: Bytes::from_static(b"DEF"),
-        nsent: 1,
-        abandoned: true,
-        ..Default::default()
-    });
-    a.inflight_queue.push_no_check(ChunkPayloadData {
-        beginning_fragment: true,
-        ending_fragment: true,
-        tsn: 12,
-        stream_identifier: 2,
-        stream_sequence_number: 1,
-        user_data: Bytes::from_static(b"123"),
-        nsent: 1,
-        abandoned: true,
-        ..Default::default()
-    });
+    a.note_abandoned_for_forward_tsn(false, 1, 2); // tsn=10
+    a.note_abandoned_for_forward_tsn(false, 1, 3); // tsn=11 -> greatest SSN for si=1
+    a.note_abandoned_for_forward_tsn(false, 2, 1); // tsn=12
 
     let fwdtsn = a.create_forward_tsn();
 
@@ -105,6 +72,33 @@ fn test_create_forward_tsn_forward_two_abandoned_with_the_same_si() -> Result<()
     }
     assert!(si1ok, "si=1 should be present");
     assert!(si2ok, "si=2 should be present");
+
+    Ok(())
+}
+
+#[test]
+fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
+    // Unordered chunks carry no meaningful stream-sequence-number: the receiver
+    // advances unordered streams purely by `new_cumulative_tsn` and ignores the
+    // per-stream list (see handle_forward_tsn), so create_forward_tsn must not
+    // report them — only ordered streams contribute.
+    let mut a = Association::default();
+
+    a.cumulative_tsn_ack_point = 9;
+    a.advanced_peer_tsn_ack_point = 11;
+    a.note_abandoned_for_forward_tsn(true, 1, 5); // unordered -> omitted
+    a.note_abandoned_for_forward_tsn(false, 2, 7); // ordered   -> reported
+
+    let fwdtsn = a.create_forward_tsn();
+
+    assert_eq!(11, fwdtsn.new_cumulative_tsn);
+    assert_eq!(
+        1,
+        fwdtsn.streams.len(),
+        "only the ordered stream is reported"
+    );
+    assert_eq!(2, fwdtsn.streams[0].identifier, "si should be 2");
+    assert_eq!(7, fwdtsn.streams[0].sequence, "ssn should be 7");
 
     Ok(())
 }

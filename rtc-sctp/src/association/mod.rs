@@ -180,6 +180,16 @@ pub struct Association {
     cumulative_tsn_ack_point: u32,
     advanced_peer_tsn_ack_point: u32,
     use_forward_tsn: bool,
+    /// Max stream-sequence-number per *ordered* stream among abandoned chunks
+    /// currently in the forward-TSN window `(cumulative_tsn_ack_point,
+    /// advanced_peer_tsn_ack_point]`. Maintained incrementally as chunks are
+    /// abandoned (the two RFC 3758 C2 loops) so that `create_forward_tsn` is
+    /// O(streams) instead of rescanning the whole in-flight window — which, for
+    /// PR-SCTP data channels, ran ~1000 hashmap probes per FORWARD-TSN and was
+    /// ~9% of send CPU in profiles. Unordered chunks are omitted: the receiver
+    /// ignores the per-stream list for them (it advances by `new_cumulative_tsn`
+    /// alone), so reporting them was pure waste.
+    fwd_tsn_stream_map: FxHashMap<u16, u16>,
 
     pub(crate) rto_mgr: RtoManager,
     timers: TimerTable,
@@ -272,6 +282,7 @@ impl Default for Association {
             cumulative_tsn_ack_point: 0,
             advanced_peer_tsn_ack_point: 0,
             use_forward_tsn: false,
+            fwd_tsn_stream_map: FxHashMap::default(),
 
             rto_mgr: RtoManager::default(),
             timers: TimerTable::default(),
@@ -1331,16 +1342,29 @@ impl Association {
                 self.advanced_peer_tsn_ack_point,
                 self.cumulative_tsn_ack_point,
             ) {
-                self.advanced_peer_tsn_ack_point = self.cumulative_tsn_ack_point
+                self.advanced_peer_tsn_ack_point = self.cumulative_tsn_ack_point;
+                // Window reset: everything previously tracked is now at/below
+                // the cumulative ack point, so start the stream map fresh.
+                self.fwd_tsn_stream_map.clear();
             }
 
-            // RFC 3758 Sec 3.5 C2
+            // RFC 3758 Sec 3.5 C2 — advance over newly-abandoned chunks,
+            // folding each ordered one into the forward-TSN stream map so
+            // create_forward_tsn needn't rescan the window.
             let mut i = self.advanced_peer_tsn_ack_point + 1;
-            while let Some(c) = self.inflight_queue.get(i) {
-                if !c.abandoned() {
+            while let Some((abandoned, unordered, si, ssn)) = self.inflight_queue.get(i).map(|c| {
+                (
+                    c.abandoned(),
+                    c.unordered,
+                    c.stream_identifier,
+                    c.stream_sequence_number,
+                )
+            }) {
+                if !abandoned {
                     break;
                 }
                 self.advanced_peer_tsn_ack_point = i;
+                self.note_abandoned_for_forward_tsn(unordered, si, ssn);
                 i += 1;
             }
 
@@ -1357,6 +1381,10 @@ impl Association {
                     self.advanced_peer_tsn_ack_point,
                     self.cumulative_tsn_ack_point
                 );
+            } else {
+                // No forward-TSN window open (receiver has caught up): drop any
+                // stale per-stream SSNs so they aren't reported later.
+                self.fwd_tsn_stream_map.clear();
             }
             self.awake_write_loop();
         }
@@ -2622,39 +2650,56 @@ impl Association {
         }
     }
 
+    /// Record an abandoned chunk into the forward-TSN stream map (RFC 3758 C4),
+    /// called from the two C2 loops as `advanced_peer_tsn_ack_point` advances
+    /// over each newly-abandoned in-flight chunk. Only *ordered* streams are
+    /// tracked: the receiver ignores the per-stream SSN list for unordered
+    /// chunks (it advances purely by `new_cumulative_tsn`). Keeps the greatest
+    /// SSN seen per stream, which is the value RFC 3758 C4 requires to report.
+    ///
+    /// A stream's entry may briefly outlive the chunk that set it (until the
+    /// window closes and the map is cleared), so a stale SSN can be re-reported;
+    /// that is safe because the receiver only advances a stream forward and the
+    /// SSN always corresponds to a really-abandoned chunk. The `u16` SSN compare
+    /// (`sna16lt`) is sound because the window span is bounded by rwnd — a
+    /// stream cannot lap the full 65536-sequence space before the window closes.
+    fn note_abandoned_for_forward_tsn(&mut self, unordered: bool, si: u16, ssn: u16) {
+        if unordered {
+            return;
+        }
+        self.fwd_tsn_stream_map
+            .entry(si)
+            .and_modify(|cur| {
+                if sna16lt(*cur, ssn) {
+                    *cur = ssn;
+                }
+            })
+            .or_insert(ssn);
+    }
+
+    /// Test-only observer for the incremental forward-TSN stream map, so the
+    /// endpoint tests can assert it is cleared once the forward-TSN window
+    /// closes (the C1/C3 clear paths, which the unit tests can't reach).
+    #[cfg(test)]
+    pub(crate) fn fwd_tsn_stream_map_is_empty(&self) -> bool {
+        self.fwd_tsn_stream_map.is_empty()
+    }
+
     /// create_forward_tsn generates ForwardTSN chunk.
     /// This method will be be called if use_forward_tsn is set to false.
     fn create_forward_tsn(&self) -> ChunkForwardTsn {
-        // RFC 3758 Sec 3.5 C4
-        // Keyed by stream identifier and probed once per in-flight chunk in the
-        // forward-TSN window. With PR-SCTP (unordered / limited-retransmit data
-        // channels) this runs on the hot send path, so use the non-SipHash hasher
-        // like every other window-bounded map here -- the default `HashMap`'s
-        // SipHash showed up as ~6-7% of send CPU in profiles.
-        let mut stream_map: FxHashMap<u16, u16> = FxHashMap::default(); // report once per SI
-        let mut i = self.cumulative_tsn_ack_point + 1;
-        while sna32lte(i, self.advanced_peer_tsn_ack_point) {
-            if let Some(c) = self.inflight_queue.get(i) {
-                if let Some(ssn) = stream_map.get(&c.stream_identifier) {
-                    if sna16lt(*ssn, c.stream_sequence_number) {
-                        // to report only once with greatest SSN
-                        stream_map.insert(c.stream_identifier, c.stream_sequence_number);
-                    }
-                } else {
-                    stream_map.insert(c.stream_identifier, c.stream_sequence_number);
-                }
-            } else {
-                break;
-            }
-
-            i += 1;
-        }
-
+        // RFC 3758 Sec 3.5 C4: report, once per ordered stream, the greatest
+        // stream-sequence-number among abandoned chunks in the forward-TSN
+        // window. This is maintained incrementally in `fwd_tsn_stream_map` (see
+        // its declaration and the two C2 loops that feed it), so we no longer
+        // rescan `(cumulative_tsn_ack_point, advanced_peer_tsn_ack_point]` with
+        // a per-TSN hashmap probe on every FORWARD-TSN — that scan was O(rwnd)
+        // (~1000 probes/call for a 1 MB window) and dominated the send profile.
         let mut fwd_tsn = ChunkForwardTsn {
             new_cumulative_tsn: self.advanced_peer_tsn_ack_point,
-            streams: Vec::with_capacity(stream_map.len()),
+            streams: Vec::with_capacity(self.fwd_tsn_stream_map.len()),
         };
-        for (si, ssn) in &stream_map {
+        for (si, ssn) in &self.fwd_tsn_stream_map {
             fwd_tsn.streams.push(ChunkForwardTsnStream {
                 identifier: *si,
                 sequence: *ssn,
@@ -2854,11 +2899,21 @@ impl Association {
                 if self.use_forward_tsn {
                     // RFC 3758 Sec 3.5 C2
                     let mut i = self.advanced_peer_tsn_ack_point + 1;
-                    while let Some(c) = self.inflight_queue.get(i) {
-                        if !c.abandoned() {
+                    while let Some((abandoned, unordered, si, ssn)) =
+                        self.inflight_queue.get(i).map(|c| {
+                            (
+                                c.abandoned(),
+                                c.unordered,
+                                c.stream_identifier,
+                                c.stream_sequence_number,
+                            )
+                        })
+                    {
+                        if !abandoned {
                             break;
                         }
                         self.advanced_peer_tsn_ack_point = i;
+                        self.note_abandoned_for_forward_tsn(unordered, si, ssn);
                         i += 1;
                     }
 
