@@ -1214,17 +1214,16 @@ fn unmarshal_media_description<'a, R: io::BufRead + io::Seek>(
     };
 
     // <proto>
-    // Set according to currently registered with IANA
-    // https://tools.ietf.org/html/rfc4566#section-5.14
+    // RFC 8866 section 5.14: <proto> is the media transport protocol and is
+    // extensible -- "New transport protocols MAY be defined, and MUST be
+    // registered with IANA." Accept any "/"-separated proto token instead of
+    // validating against a fixed list, so IANA-registered transports beyond the
+    // RTP/SAVPF set interoperate, e.g. UDP/BFCP (RFC 8856), TCP/DTLS/SCTP
+    // (RFC 8841) or TCP/MRCPv2. A genuinely malformed proto (an empty
+    // "/"-separated token) is still rejected as SdpInvalidValue.
     let mut protos = vec![];
     for proto in fields[2].split('/').collect::<Vec<&str>>() {
-        let i = index_of(
-            proto,
-            &[
-                "UDP", "RTP", "AVP", "SAVP", "SAVPF", "TLS", "DTLS", "SCTP", "AVPF", "udptl",
-            ],
-        );
-        if i == -1 {
+        if proto.is_empty() {
             return Err(Error::SdpInvalidValue(fields[2].to_owned()));
         }
         protos.push(proto.to_owned());
