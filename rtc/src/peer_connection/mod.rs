@@ -1832,6 +1832,20 @@ where
 
         self.data_channels.insert(id, data_channel);
 
+        if let Some(association_handle) = self
+            .pipeline_context
+            .datachannel_handler_context
+            .association_handle
+        {
+            let open_result = self
+                .get_datachannel_handler()
+                .open_data_channel(id, association_handle);
+            if let Err(error) = open_result {
+                self.data_channels.remove(&id);
+                return Err(error);
+            }
+        }
+
         self.trigger_negotiation_needed();
 
         Ok(RTCDataChannel {
@@ -2246,5 +2260,51 @@ where
         self.pipeline_context
             .stats
             .snapshot_with_selector(now, selector)
+    }
+}
+
+#[cfg(test)]
+mod data_channel_regression_tests {
+    use super::*;
+    use crate::data_channel::RTCDataChannelState;
+    use crate::peer_connection::event::RTCEventInternal;
+    use sansio::Protocol;
+
+    #[test]
+    fn data_channel_created_after_sctp_handshake_is_opened_immediately() -> Result<()> {
+        let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+
+        peer_connection
+            .get_datachannel_handler()
+            .handle_event(RTCEventInternal::SCTPHandshakeComplete(42))?;
+
+        let data_channel_id = {
+            let data_channel = peer_connection.create_data_channel("late-channel", None)?;
+            assert_eq!(data_channel.ready_state(), RTCDataChannelState::Open);
+            data_channel.id()
+        };
+
+        let data_channel = peer_connection
+            .data_channels
+            .get(&data_channel_id)
+            .expect("late-created DataChannel must remain registered");
+        assert!(data_channel.data_channel.is_some());
+        assert_eq!(
+            peer_connection
+                .pipeline_context
+                .datachannel_handler_context
+                .association_handle,
+            Some(42)
+        );
+        assert!(
+            !peer_connection
+                .pipeline_context
+                .datachannel_handler_context
+                .write_outs
+                .is_empty(),
+            "opening the channel must enqueue its DCEP message"
+        );
+
+        Ok(())
     }
 }

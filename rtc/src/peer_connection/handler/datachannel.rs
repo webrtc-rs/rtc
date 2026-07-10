@@ -9,6 +9,7 @@ use crate::peer_connection::message::internal::{
 };
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use log::{debug, warn};
+use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
 use shared::TransportContext;
 use shared::error::{Error, Result};
@@ -17,6 +18,13 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct DataChannelHandlerContext {
+    /// The SCTP association currently available for opening DataChannels.
+    ///
+    /// A DataChannel may be created after the SCTP handshake has completed. In
+    /// that case no second `SCTPHandshakeComplete` event will arrive, so the
+    /// handler must retain the association handle and dial the new channel
+    /// immediately.
+    pub(crate) association_handle: Option<usize>,
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
@@ -45,9 +53,60 @@ impl<'a> DataChannelHandler<'a> {
     pub(crate) fn name(&self) -> &'static str {
         "DataChannelHandler"
     }
+
+    pub(crate) fn open_data_channel(
+        &mut self,
+        data_channel_id: RTCDataChannelId,
+        association_handle: usize,
+    ) -> Result<()> {
+        let data_channel_internal = self
+            .data_channels
+            .get_mut(&data_channel_id)
+            .ok_or(Error::ErrDataChannelNotExisted)?;
+
+        if data_channel_internal.ready_state != RTCDataChannelState::Connecting {
+            return Ok(());
+        }
+
+        data_channel_internal.dial(association_handle)?;
+
+        let data_channel = data_channel_internal
+            .data_channel
+            .as_mut()
+            .ok_or(Error::ErrDataChannelNotExisted)?;
+
+        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
+                data_channel_id: data_channel_internal.id,
+                data_channel_event: DataChannelEvent::Open,
+            })),
+        });
+
+        self.stats.peer_connection.on_data_channel_opened();
+        self.stats
+            .get_or_create_data_channel(
+                data_channel_internal.id,
+                &data_channel_internal.label,
+                &data_channel_internal.protocol,
+            )
+            .on_state_changed(RTCDataChannelState::Open);
+
+        while let Some(data_channel_message) = data_channel.poll_write() {
+            debug!("send data channel message from open_data_channel");
+            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                now: Instant::now(),
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
+            });
+        }
+
+        Ok(())
+    }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a> Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
     for DataChannelHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
@@ -248,47 +307,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         match evt {
             RTCEventInternal::SCTPHandshakeComplete(association_handle) => {
-                for data_channel_internal in self.data_channels.values_mut() {
-                    if data_channel_internal.ready_state == RTCDataChannelState::Connecting {
-                        data_channel_internal.dial(association_handle)?;
+                self.ctx.association_handle = Some(association_handle);
+                let connecting_ids: Vec<_> = self
+                    .data_channels
+                    .iter()
+                    .filter_map(|(id, data_channel)| {
+                        (data_channel.ready_state == RTCDataChannelState::Connecting).then_some(*id)
+                    })
+                    .collect();
 
-                        let data_channel = data_channel_internal
-                            .data_channel
-                            .as_mut()
-                            .ok_or(Error::ErrDataChannelNotExisted)?;
-
-                        self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                            now: Instant::now(),
-                            transport: TransportContext::default(),
-                            message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(
-                                ApplicationMessage {
-                                    data_channel_id: data_channel_internal.id,
-                                    data_channel_event: DataChannelEvent::Open,
-                                },
-                            )),
-                        });
-
-                        // Track data channel opened (initiator side)
-                        self.stats.peer_connection.on_data_channel_opened();
-                        self.stats
-                            .get_or_create_data_channel(
-                                data_channel_internal.id,
-                                &data_channel_internal.label,
-                                &data_channel_internal.protocol,
-                            )
-                            .on_state_changed(RTCDataChannelState::Open);
-
-                        while let Some(data_channel_message) = data_channel.poll_write() {
-                            debug!("send data channel message from handle_event");
-                            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                                now: Instant::now(),
-                                transport: TransportContext::default(),
-                                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(
-                                    data_channel_message,
-                                )),
-                            });
-                        }
-                    }
+                for data_channel_id in connecting_ids {
+                    self.open_data_channel(data_channel_id, association_handle)?;
                 }
             }
 

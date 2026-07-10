@@ -1252,6 +1252,12 @@ pub enum Error {
     #[error("data channel not existed")]
     ErrDataChannelNotExisted,
 
+    /// The DCEP reliability parameter is a 32-bit wire value, while the
+    /// WebRTC API exposes a 16-bit maximum. Values outside that range cannot
+    /// be represented faithfully.
+    #[error("data channel reliability parameter {0} exceeds 65535")]
+    ErrDataChannelReliabilityParameterTooLarge(u32),
+
     /// ErrCertificateExpired indicates that an x509 certificate has expired.
     #[error("x509Cert expired")]
     ErrCertificateExpired,
