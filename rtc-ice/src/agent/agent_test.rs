@@ -2835,3 +2835,47 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
     a.close()?;
     Ok(())
 }
+
+// Safari (and Chrome) expose ICE host candidates behind an mDNS "<uuid>.local"
+// hostname by default. A QueryOnly agent (the default) must RESOLVE such a
+// candidate -- i.e. issue an mDNS query, which surfaces as an outbound packet to
+// MDNS_PORT -- whereas a Disabled agent silently drops it. This guards the
+// behavioral consequence of defaulting the SettingEngine mDNS mode to QueryOnly.
+#[test]
+fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
+    // A .local host candidate in Safari's exact format.
+    let cand_line =
+        "1114572465 1 udp 2113939711 61b445d2-6503-41ac-96ce-ee3edac00e9f.local 61163 typ host";
+
+    // QueryOnly: adding the candidate issues an mDNS query (not a drop).
+    let mut agent = Agent::new(Arc::new(AgentConfig {
+        multicast_dns_mode: crate::mdns::MulticastDnsMode::QueryOnly,
+        ..Default::default()
+    }))?;
+    let added = agent.add_remote_candidate(unmarshal_candidate(cand_line)?)?;
+    assert!(
+        !added,
+        "an mDNS candidate is not immediately usable; resolution is async"
+    );
+    let pkt = agent
+        .poll_write()
+        .expect("QueryOnly must emit an mDNS query for a .local remote candidate");
+    assert_eq!(
+        pkt.transport.peer_addr.port(),
+        mdns::MDNS_PORT,
+        "the emitted packet must be an mDNS query"
+    );
+
+    // Disabled: the same candidate is silently dropped -- no mDNS query.
+    let mut agent = Agent::new(Arc::new(AgentConfig {
+        multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
+        ..Default::default()
+    }))?;
+    agent.add_remote_candidate(unmarshal_candidate(cand_line)?)?;
+    assert!(
+        agent.poll_write().is_none(),
+        "Disabled must not emit an mDNS query for a .local remote candidate"
+    );
+
+    Ok(())
+}
