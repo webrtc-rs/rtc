@@ -80,9 +80,12 @@ impl ExtMap {
 
         let valdir: Vec<&str> = fields[0].split('/').collect();
         let value = valdir[0].parse::<u16>()?;
-        if !(1..=246).contains(&value) {
+        // RFC 8285 section 4.3: the two-byte-header extension ID is "in the
+        // range 1-255 inclusive" (0 is reserved for padding). One-byte-header
+        // IDs (1-14) are a subset of the same range.
+        if !(1..=255).contains(&value) {
             return Err(Error::ParseExtMap(format!(
-                "{} -- extmap key must be in the range 1-256",
+                "{} -- extmap key must be in the range 1-255",
                 valdir[0]
             )));
         }
