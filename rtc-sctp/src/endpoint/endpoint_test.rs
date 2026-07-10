@@ -1050,6 +1050,75 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
 }
 
 #[test]
+fn test_forward_tsn_stream_map_populated_then_cleared() -> Result<()> {
+    // Regression guard for the incremental forward-TSN stream map. Exercises
+    // both halves of the new logic that the association-level unit tests can't
+    // reach on their own:
+    //   1. Population: an *ordered* message following a skipped (abandoned) one
+    //      is only delivered if the FORWARD-TSN carried the skipped stream
+    //      sequence number, i.e. the map was populated by the C2 loop.
+    //   2. Clear: once the FORWARD-TSN is acknowledged and the window closes,
+    //      the map must be emptied (the C1 / C3-else clear paths), otherwise a
+    //      stale stream sequence would be re-reported on later FORWARD-TSNs.
+    let si: u16 = 1;
+    let sbuf = vec![0u8; 1000];
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    // Ordered stream; reliability 0 abandons a chunk after its first (here,
+    // lost) transmission.
+    pair.client_stream(client_ch, si)?
+        .set_reliability_params(false, ReliabilityType::Rexmit, 0)?;
+    pair.server_stream(server_ch, si)?
+        .set_reliability_params(false, ReliabilityType::Rexmit, 0)?;
+
+    // Send ordered ssn=0 and lose it in flight -> it becomes abandoned.
+    let mut m0 = sbuf.clone();
+    m0[0..4].copy_from_slice(&0u32.to_be_bytes());
+    pair.client_stream(client_ch, si)?
+        .write_sctp(&Bytes::from(m0), PayloadProtocolIdentifier::Binary)?;
+    pair.drive_client();
+    pair.server.inbound.clear(); // drop ssn=0
+
+    // Send ordered ssn=1. The FORWARD-TSN generated for the abandoned ssn=0
+    // must report the stream sequence so the receiver releases ssn=1.
+    let mut m1 = sbuf.clone();
+    m1[0..4].copy_from_slice(&1u32.to_be_bytes());
+    pair.client_stream(client_ch, si)?
+        .write_sctp(&Bytes::from(m1), PayloadProtocolIdentifier::Binary)?;
+    pair.drive();
+
+    // (1) Population check: the receiver skipped ssn=0 and delivered ssn=1.
+    // For an ordered stream this delivery is impossible unless the FORWARD-TSN
+    // carried the stream/SSN pair, so this proves the map was populated.
+    let mut buf = vec![0u8; 2000];
+    let chunks = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+    let (n, ppi) = (chunks.len(), chunks.ppi);
+    chunks.read(&mut buf)?;
+    assert_eq!(n, sbuf.len(), "unexpected length of received data");
+    assert_eq!(ppi, PayloadProtocolIdentifier::Binary, "unexpected ppi");
+    assert_eq!(
+        u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]),
+        1,
+        "receiver must skip abandoned ssn=0 and deliver ordered ssn=1"
+    );
+
+    // (2) Clear check: the FORWARD-TSN has been acknowledged and the window has
+    // closed, so the sender's stream map must be empty.
+    pair.drive();
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .fwd_tsn_stream_map_is_empty(),
+        "forward-TSN stream map must be cleared once the window closes"
+    );
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
+#[test]
 fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
     //let _guard = subscribe();
 
