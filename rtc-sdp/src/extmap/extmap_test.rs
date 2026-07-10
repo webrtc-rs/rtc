@@ -49,6 +49,35 @@ fn test_extmap() -> Result<()> {
     Ok(())
 }
 
+// RFC 8285 section 4.3: two-byte-header extension IDs are valid in the range
+// 1-255 inclusive. The parser previously capped IDs at 246 (and its error
+// message said 1-256), wrongly rejecting valid IDs 247-255.
+#[test]
+fn test_extmap_id_range_rfc8285() -> Result<()> {
+    // 1..=255 are valid; 247 and 255 were wrongly rejected before the fix.
+    for value in [1u16, 14, 15, 246, 247, 255] {
+        let line =
+            format!("{ATTRIBUTE_KEY}extmap:{value} urn:ietf:params:rtp-hdrext:sdes:mid{END_LINE}");
+        let mut reader = BufReader::new(line.as_bytes());
+        let actual = ExtMap::unmarshal(&mut reader)
+            .unwrap_or_else(|e| panic!("extmap id {value} should parse: {e:?}"));
+        assert_eq!(actual.value, value);
+    }
+
+    // 0 (padding) and anything above 255 must be rejected.
+    for value in [0u16, 256, 257, 4096] {
+        let line =
+            format!("{ATTRIBUTE_KEY}extmap:{value} urn:ietf:params:rtp-hdrext:sdes:mid{END_LINE}");
+        let mut reader = BufReader::new(line.as_bytes());
+        assert!(
+            ExtMap::unmarshal(&mut reader).is_err(),
+            "extmap id {value} must be rejected"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn test_transport_cc_extmap() -> Result<()> {
     // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
