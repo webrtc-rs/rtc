@@ -184,7 +184,13 @@ impl Default for MulticastDNS {
     fn default() -> Self {
         Self {
             timeout: Some(Duration::from_secs(10)),
-            mode: MulticastDnsMode::Disabled, //TODO: Re-enable it to QueryOnly
+            // Safari and Chrome emit only mDNS ("<uuid>.local") host candidates
+            // by default (to avoid leaking private IPs). With Disabled those are
+            // silently dropped, leaving no usable remote candidates from such an
+            // offer; QueryOnly resolves them via mDNS without publishing our own
+            // host IPs as mDNS names. This matches the MulticastDnsMode enum's
+            // own #[default].
+            mode: MulticastDnsMode::QueryOnly,
             local_name: "".to_string(),
             local_ip: None,
         }
@@ -1134,5 +1140,23 @@ impl SettingEngine {
         write_ssrc_attributes_for_simulcast: bool,
     ) {
         self.write_ssrc_attributes_for_simulcast = write_ssrc_attributes_for_simulcast;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression guard for the Safari mDNS interop fix. Safari (and Chrome)
+    // emit only mDNS "<uuid>.local" host candidates by default; a default
+    // SettingEngine must accept and resolve them (QueryOnly), not silently
+    // discard them (Disabled).
+    #[test]
+    fn test_default_multicast_dns_mode_is_query_only() {
+        assert_eq!(MulticastDNS::default().mode, MulticastDnsMode::QueryOnly);
+        assert_eq!(
+            SettingEngine::default().multicast_dns.mode,
+            MulticastDnsMode::QueryOnly
+        );
     }
 }

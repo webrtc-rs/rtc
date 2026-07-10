@@ -601,3 +601,36 @@ fn test_poll_timeout_scheduling() {
     // but since query is cancelled, it shouldn't affect anything
     assert_eq!(conn.pending_query_count(), 0);
 }
+
+#[test]
+fn test_resolves_safari_style_mdns_candidate() {
+    // Safari and Chrome publish ICE host candidates behind an mDNS name of the
+    // form "<uuid-v4>.local" (draft-ietf-mmusic-mdns-ice-candidates) to avoid
+    // leaking private IPs. A receiving agent must resolve that name to an IP.
+    // This uses a real name captured from Safari 26.5.2, in its exact format.
+    let server_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 42));
+    let server_addr = SocketAddr::new(server_ip, 5353);
+    let safari_name = "61b445d2-6503-41ac-96ce-ee3edac00e9f.local";
+    let config_server = MdnsConfig::default()
+        .with_local_names(vec![safari_name.to_string()])
+        .with_local_ip(server_ip);
+    let mut server = Mdns::new(config_server);
+
+    let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 99)), 5353);
+    let mut client = Mdns::new(MdnsConfig::default());
+
+    let now = Instant::now();
+    let query_id = client.query(safari_name);
+
+    exchange_packets(&mut client, &mut server, client_addr, server_addr, now);
+    exchange_packets(&mut server, &mut client, server_addr, client_addr, now);
+
+    let event = client
+        .poll_event()
+        .expect("Safari-style <uuid>.local candidate must resolve");
+    assert!(
+        matches!(&event, MdnsEvent::QueryAnswered(id, addr) if *id == query_id && *addr == server_ip),
+        "expected QueryAnswered({query_id}, {server_ip}), got {event:?}"
+    );
+    assert!(!client.is_query_pending(query_id));
+}
