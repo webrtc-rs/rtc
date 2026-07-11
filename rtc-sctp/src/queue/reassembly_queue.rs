@@ -39,6 +39,27 @@ impl Chunks {
         l
     }
 
+    /// Reassemble all fragments into a single freshly-allocated, exactly-sized
+    /// buffer with one copy.
+    ///
+    /// Unlike [`read`](Self::read), this does not round-trip through a
+    /// caller-provided scratch buffer, eliminating one full-payload copy on the
+    /// receive path (the reassembled message would otherwise be copied into the
+    /// scratch buffer and then again into the delivered `BytesMut`). Returns
+    /// [`Error::ErrShortBuffer`] when the message exceeds `max_len`, mirroring
+    /// `read`'s bound so oversized inbound messages are still rejected.
+    pub fn to_payload(&self, max_len: usize) -> Result<BytesMut> {
+        let total = self.len();
+        if total > max_len {
+            return Err(Error::ErrShortBuffer);
+        }
+        let mut buf = BytesMut::with_capacity(total);
+        for c in &self.chunks {
+            buf.extend_from_slice(&c.user_data);
+        }
+        Ok(buf)
+    }
+
     // Concat all fragments into the buffer
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let mut n_written = 0;

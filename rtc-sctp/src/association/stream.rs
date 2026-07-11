@@ -143,6 +143,23 @@ impl Stream<'_> {
         self.write_source(&mut BytesChunk::new(p), self.get_default_payload_type()?)
     }
 
+    /// Send an owned [`Bytes`] on the stream with a specific payload protocol.
+    ///
+    /// Unlike [`write_with_ppi`](Self::write_with_ppi), which takes a `&[u8]` and
+    /// must copy it into a freshly allocated buffer, this enqueues the payload
+    /// zero-copy: each fragment is a refcounted slice of `data` (see
+    /// [`BytesChunk`]). Prefer this on the hot send path when the caller already
+    /// owns the payload as `Bytes`.
+    ///
+    /// Returns the number of bytes successfully written.
+    pub fn write_chunk_with_ppi(
+        &mut self,
+        data: &Bytes,
+        ppi: PayloadProtocolIdentifier,
+    ) -> Result<usize> {
+        self.write_source(&mut BytesChunk::new(data), ppi)
+    }
+
     /// Send data on the given stream
     ///
     /// Returns the number of bytes and chunks successfully written.
