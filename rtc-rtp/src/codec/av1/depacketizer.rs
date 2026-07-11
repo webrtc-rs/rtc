@@ -157,8 +157,20 @@ impl Depacketizer for Av1Depacketizer {
                 // OBU already has size field, validate it
                 let payload_slice = obu_buffer.slice(header_size..);
                 let (obu_size, leb_size) = read_leb128(&payload_slice);
+                if leb_size == 0 {
+                    return Err(Error::ErrShortPacket);
+                }
                 let expected_size = header_size + leb_size + obu_size as usize;
-                if length_field != expected_size {
+                // When this OBU was reassembled from multiple RTP packets,
+                // `length_field` is the length of the current packet's fragment,
+                // not the complete OBU. Use the reassembled buffer length for
+                // validation in that case.
+                let actual_size = if is_first && obu_z {
+                    obu_buffer.len()
+                } else {
+                    length_field
+                };
+                if actual_size != expected_size {
                     return Err(Error::ErrShortPacket);
                 }
                 result.extend_from_slice(&obu_buffer);
@@ -322,5 +334,32 @@ mod tests {
         let result = depacketizer.depacketize(&payload).unwrap();
         // Should be empty since temporal delimiter is skipped
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_fragmented_obu_with_size_field() {
+        let mut depacketizer = Av1Depacketizer::new();
+
+        // Build a Frame OBU that already carries a low-overhead size field.
+        let mut obu = BytesMut::new();
+        obu.put_u8(0x32); // Frame OBU, no extension, has size field
+        let payload = vec![0xAB; 500];
+        write_leb128(&mut obu, payload.len() as u32);
+        obu.extend_from_slice(&payload);
+        let obu = obu.freeze();
+
+        let first_fragment_size = 400;
+        let p1 = Bytes::from_iter(
+            std::iter::once(0x50) // Z=0, Y=1, W=1
+                .chain(obu[..first_fragment_size].iter().copied()),
+        );
+        let p2 = Bytes::from_iter(
+            std::iter::once(0x90) // Z=1, Y=0, W=1
+                .chain(obu[first_fragment_size..].iter().copied()),
+        );
+
+        assert!(depacketizer.depacketize(&p1).unwrap().is_empty());
+        let result = depacketizer.depacketize(&p2).unwrap();
+        assert_eq!(result, obu);
     }
 }
