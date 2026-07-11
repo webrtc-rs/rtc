@@ -186,8 +186,8 @@ use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::RTCMessage;
 use crate::rtp_transceiver::RTCRtpSenderId;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::{CodecMatch, codec_parameters_fuzzy_search};
 use interceptor::{Interceptor, NoopInterceptor};
+use log::trace;
 use sansio::Protocol;
 use shared::error::{Error, Result};
 
@@ -352,7 +352,7 @@ where
     ///
     /// Returns an error if no matching encoding is found, or the codec is unsupported,
     /// or internal handle_write returns error
-    pub fn write_rtp(&mut self, mut packet: rtp::Packet) -> Result<()> {
+    pub fn write_rtp(&mut self, packet: rtp::Packet) -> Result<()> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
@@ -373,40 +373,43 @@ where
             return Err(Error::ErrSenderWithNoSSRCs);
         }
 
-        let payload_type = {
-            let parameters = sender.get_parameters(media_engine);
-            let (codecs, encodings) = (&parameters.rtp_parameters.codecs, &parameters.encodings);
+        let parameters = sender.get_parameters(media_engine);
 
-            //From SSRC, find the encoding
-            let encoding = encodings
-                .iter()
-                .find(|encoding| {
-                    encoding
-                        .rtp_coding_parameters
-                        .ssrc
-                        .is_some_and(|s| s == packet.header.ssrc)
-                })
-                .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
+        //From SSRC, find the encoding
+        parameters
+            .encodings
+            .iter()
+            .find(|encoding| {
+                encoding
+                    .rtp_coding_parameters
+                    .ssrc
+                    .is_some_and(|s| s == packet.header.ssrc)
+            })
+            .ok_or(Error::ErrRTPSenderNoBaseEncoding)?;
 
-            // Prefer the packet's negotiated payload type when it identifies a codec.
-            // This lets reflected/forwarded RTP keep its actual codec even when the sender
-            // was created from a multi-codec track normalized down to a single base encoding.
-            if let Some(codec) = codecs
-                .iter()
-                .find(|codec| codec.payload_type == packet.header.payload_type)
-            {
-                codec.payload_type
-            } else {
-                let (codec, match_type) = codec_parameters_fuzzy_search(&encoding.codec, codecs);
-                if match_type == CodecMatch::None {
-                    return Err(Error::ErrRTPTransceiverCodecUnsupported);
-                }
-                codec.payload_type
-            }
-        };
+        if !parameters
+            .rtp_parameters
+            .codecs
+            .iter()
+            .any(|codec| codec.payload_type == packet.header.payload_type)
+        {
+            trace!(
+                "rtp_sender {:?} rejecting RTP ssrc {} pt {}: payload type is not negotiated on this sender leg; sender codecs [{}]",
+                self.id,
+                packet.header.ssrc,
+                packet.header.payload_type,
+                parameters
+                    .rtp_parameters
+                    .codecs
+                    .iter()
+                    .map(|codec| format!("{}:{}", codec.rtp_codec.mime_type, codec.payload_type))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            return Err(Error::ErrRTPTransceiverCodecUnsupported);
+        }
 
         let track_id = sender.track().track_id().to_string();
-        packet.header.payload_type = payload_type;
         self.peer_connection
             .handle_write(RTCMessage::RtpPacket(track_id, packet))
     }
