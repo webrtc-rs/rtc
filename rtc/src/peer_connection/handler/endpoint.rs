@@ -499,8 +499,7 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    // RTX is de-encapsulated in handle_rtp_message, so payload_type is the primary codec's; FEC is still TODO (#12).
-                    .find(|codec| codec.payload_type == rtp_header.payload_type)
+                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
                     .cloned()
             {
                 if !rrid.is_empty() {
@@ -590,8 +589,7 @@ where
                 && let Some(codec) = receiver
                     .get_codec_preferences()
                     .iter()
-                    // RTX is de-encapsulated in handle_rtp_message, so payload_type is the primary codec's; FEC is still TODO (#12).
-                    .find(|codec| codec.payload_type == rtp_header.payload_type)
+                    .find(|codec| codec.payload_type == rtp_header.payload_type) //TODO: what about RTX/FEC stream?
                     .cloned()
             {
                 let receive_codings = vec![RTCRtpCodingParameters {
