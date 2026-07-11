@@ -18,6 +18,7 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
+use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
@@ -30,7 +31,10 @@ use rtc::peer_connection::transport::{
 };
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp_transceiver::RTCRtpTransceiverInit;
-use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind};
+use rtc::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
+    RtpCodecKind,
+};
 use rtc::shared::error::Error;
 
 use webrtc::api::APIBuilder;
@@ -725,6 +729,220 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
     Err(anyhow::anyhow!(
         "Test timeout - RTP: {}, RTCP: {}",
         rtp_packets_received,
+        rtcp_packets_received
+    ))
+}
+
+// ============================================================================
+// Test 3: sansio RTC sender receives RTCP feedback about its OWN sent stream
+// ============================================================================
+
+/// Regression test for the sender-side RTCP surfacing fix.
+///
+/// The sansio RTC peer (offerer) *sends* a video track; the webrtc peer receives it and its
+/// interceptors send RTCP feedback (Receiver Reports / transport-cc / keyframe requests)
+/// back — feedback whose media SSRC is the RTC peer's *sender* SSRC. Before the fix,
+/// `find_track_id_by_ssrc` searched only receivers, so this inbound RTCP could not be tagged
+/// with a track and was dropped in the endpoint handler; the application never saw it. The
+/// fix adds a sender fallback so such feedback surfaces via `poll_read`, tagged with the
+/// sender's track id — exactly what an SFU needs to relay PLI/FIR upstream to a publisher.
+///
+/// Asserts the RTC peer receives RTCP about its sent stream, tagged with the sender's track id.
+#[tokio::test]
+async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init()
+        .ok();
+
+    const SENDER_SSRC: u32 = 0x00DE_CAFE;
+    const SENDER_TRACK_ID: &str = "rtcp-sender-test-track";
+
+    log::info!("Starting RTCP processing test: sansio RTC (sender) <- webrtc feedback");
+
+    // sansio RTC peer (offerer) that SENDS video, with the RTCP forwarder installed.
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let local_addr = socket.local_addr()?;
+    log::info!("RTC peer bound to {}", local_addr);
+
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false)?;
+
+    let candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: local_addr.ip().to_string(),
+            port: local_addr.port(),
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    rtc_pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
+
+    // Add a sendonly video track with a known SSRC.
+    let output_track = MediaStreamTrack::new(
+        "rtcp-sender-test-stream".to_owned(),
+        SENDER_TRACK_ID.to_owned(),
+        "rtcp-sender-test-label".to_owned(),
+        RtpCodecKind::Video,
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(SENDER_SSRC),
+                ..Default::default()
+            },
+            codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "".to_owned(),
+                rtcp_feedback: vec![],
+            },
+            ..Default::default()
+        }],
+    );
+    let sender_id = rtc_pc.add_track(output_track)?;
+
+    // Offer/answer with the webrtc peer (answerer, which receives the video).
+    let offer = rtc_pc.create_offer(None)?;
+    rtc_pc.set_local_description(offer.clone())?;
+
+    let webrtc_pc = create_webrtc_peer().await?;
+    let webrtc_offer = WebrtcRTCSessionDescription::offer(offer.sdp.clone())?;
+    webrtc_pc.set_remote_description(webrtc_offer).await?;
+    let answer = webrtc_pc.create_answer(None).await?;
+    webrtc_pc.set_local_description(answer.clone()).await?;
+    let mut gathering_done = webrtc_pc.gathering_complete_promise().await;
+    let _ = timeout(Duration::from_secs(5), gathering_done.recv()).await;
+    let answer_with_candidates = webrtc_pc
+        .local_description()
+        .await
+        .expect("local description should be set");
+    let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
+        answer_with_candidates.sdp.clone(),
+    )?;
+    rtc_pc.set_remote_description(rtc_answer)?;
+
+    // Event loop: stream RTP once connected, watch for inbound RTCP about our sent stream.
+    let mut buf = vec![0u8; 2000];
+    let mut connected = false;
+    let mut rtcp_packets_received = 0u32;
+    let mut rtp_packets_sent = 0u32;
+
+    let start_time = Instant::now();
+    let test_timeout = Duration::from_secs(30);
+
+    while start_time.elapsed() < test_timeout {
+        // Keep the webrtc receiver active (so it keeps reporting) by streaming RTP.
+        if connected && rtp_packets_sent < 300 {
+            if let Some(mut sender) = rtc_pc.rtp_sender(sender_id) {
+                let packet = rtc::rtp::packet::Packet {
+                    header: rtc::rtp::header::Header {
+                        version: 2,
+                        payload_type: 96,
+                        sequence_number: rtp_packets_sent as u16,
+                        timestamp: rtp_packets_sent.wrapping_mul(3000),
+                        ssrc: SENDER_SSRC,
+                        ..Default::default()
+                    },
+                    payload: bytes::Bytes::from(vec![0xAAu8; 100]),
+                };
+                let _ = sender.write_rtp(packet);
+                rtp_packets_sent += 1;
+            }
+        }
+
+        while let Some(msg) = rtc_pc.poll_write() {
+            let _ = socket.send_to(&msg.message, msg.transport.peer_addr).await;
+        }
+
+        while let Some(event) = rtc_pc.poll_event() {
+            match event {
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
+                    if state == RTCIceConnectionState::Failed {
+                        return Err(anyhow::anyhow!("RTC ICE connection failed"));
+                    }
+                }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
+                    log::info!("RTC connection state: {}", state);
+                    if state == RTCPeerConnectionState::Connected {
+                        connected = true;
+                        log::info!("RTC peer connected!");
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        while let Some(message) = rtc_pc.poll_read() {
+            if let RTCMessage::RtcpPacket(track_id, rtcp_packets) = message {
+                // The fix: feedback about our SENT stream surfaces, tagged with the
+                // sender's track id (the RTC peer has no receiver, so all inbound RTCP
+                // here is sender-side and would have been dropped before the fix).
+                assert_eq!(
+                    track_id, SENDER_TRACK_ID,
+                    "sender-side RTCP should be tagged with the sender's track id"
+                );
+                rtcp_packets_received += 1;
+                log::info!(
+                    "RTC sender received RTCP #{} about its stream (track {}, {} sub-packets)",
+                    rtcp_packets_received,
+                    track_id,
+                    rtcp_packets.len()
+                );
+            }
+        }
+
+        // Success: the sender saw RTCP feedback about its own stream — impossible before
+        // the fix, when it was dropped for lack of a receiver owning the ssrc.
+        if rtcp_packets_received >= 2 {
+            log::info!(
+                "Test passed! RTP sent: {}, RTCP received about sent stream: {}",
+                rtp_packets_sent,
+                rtcp_packets_received
+            );
+            rtc_pc.close()?;
+            webrtc_pc.close().await?;
+            return Ok(());
+        }
+
+        let eto = rtc_pc
+            .poll_timeout()
+            .unwrap_or(Instant::now() + DEFAULT_TIMEOUT_DURATION);
+        let delay_from_now = eto
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::from_secs(0));
+        if delay_from_now.is_zero() {
+            rtc_pc.handle_timeout(Instant::now())?;
+            continue;
+        }
+        let timer = tokio::time::sleep(delay_from_now.min(Duration::from_millis(10)));
+        tokio::pin!(timer);
+        tokio::select! {
+            _ = timer.as_mut() => {
+                rtc_pc.handle_timeout(Instant::now())?;
+            }
+            res = socket.recv_from(&mut buf) => {
+                if let Ok((n, peer_addr)) = res {
+                    rtc_pc.handle_read(TaggedBytesMut {
+                        now: Instant::now(),
+                        transport: TransportContext {
+                            local_addr,
+                            peer_addr,
+                            ecn: None,
+                            transport_protocol: TransportProtocol::UDP,
+                        },
+                        message: BytesMut::from(&buf[..n]),
+                    })?;
+                }
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Test timeout - RTP sent: {}, RTCP received about sent stream: {}",
+        rtp_packets_sent,
         rtcp_packets_received
     ))
 }
