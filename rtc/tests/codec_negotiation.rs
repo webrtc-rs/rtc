@@ -605,3 +605,79 @@ fn test_add_track_rejects_invalid_rid_mix() {
 
     assert!(matches!(result, Err(Error::ErrRTPSenderRidNil)));
 }
+
+fn default_media_engine() -> MediaEngine {
+    let mut media_engine = MediaEngine::default();
+    media_engine
+        .register_default_codecs()
+        .expect("register default codecs");
+    media_engine
+}
+
+/// RFC 4588 / issue #119: with the default codecs registered, an RTX codec
+/// (`video/rtx`, `apt=<primary>`) must be offered and must survive answer
+/// negotiation instead of being dropped. Before registering default RTX codecs,
+/// the answerer's media engine had no RTX codec to associate with, so RTX was
+/// silently dropped from the answer.
+#[test]
+fn test_default_codecs_negotiate_rtx() {
+    let config = RTCConfigurationBuilder::new().build();
+    let mut offerer = RTCPeerConnectionBuilder::new()
+        .with_configuration(config.clone())
+        .with_media_engine(default_media_engine())
+        .build()
+        .expect("build offerer");
+
+    // A recvonly transceiver with no codec preferences offers the full default
+    // codec set, i.e. every primary video codec and its associated RTX codec.
+    offerer
+        .add_transceiver_from_kind(
+            RtpCodecKind::Video,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            }),
+        )
+        .expect("add transceiver from kind");
+
+    let offer = offerer.create_offer(None).expect("create offer");
+    offerer
+        .set_local_description(offer.clone())
+        .expect("set local offer");
+
+    // The offer advertises an RTX codec associated with VP8 (apt=96).
+    assert!(
+        offer.sdp.contains("rtx/90000"),
+        "offer missing rtx rtpmap:\n{}",
+        offer.sdp
+    );
+    assert!(
+        offer.sdp.contains("apt=96"),
+        "offer missing apt=96 fmtp:\n{}",
+        offer.sdp
+    );
+
+    let mut answerer = RTCPeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_media_engine(default_media_engine())
+        .build()
+        .expect("build answerer");
+
+    answerer
+        .set_remote_description(offer)
+        .expect("set remote offer");
+    let answer = answerer.create_answer(None).expect("create answer");
+
+    // RTX is retained through negotiation rather than dropped from the answer.
+    assert!(
+        answer.sdp.contains("rtx/90000"),
+        "answer missing rtx rtpmap:\n{}",
+        answer.sdp
+    );
+    assert!(
+        answer.sdp.contains("apt=96"),
+        "answer missing apt=96 fmtp:\n{}",
+        answer.sdp
+    );
+}
