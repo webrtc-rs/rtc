@@ -446,6 +446,25 @@ where
             }
         }
 
+        // No receiver owns this ssrc. For inbound RTCP (no rtp_header) it may be feedback
+        // (PLI/FIR/RR) about one of our *senders* — e.g. a subscriber's keyframe request for
+        // a forwarded stream. Surface it tagged with the sender's track id so the
+        // application (an SFU) can relay the feedback upstream to the publisher. RTP media
+        // is never inbound on a sender, so this branch is RTCP-only.
+        if rtp_header.is_none()
+            && let Some(track_id) = self.rtp_transceivers.iter().find_map(|transceiver| {
+                transceiver.sender().as_ref().and_then(|sender| {
+                    let track = sender.track();
+                    track
+                        .ssrcs()
+                        .any(|track_ssrc| track_ssrc == ssrc)
+                        .then(|| track.track_id().clone())
+                })
+            })
+        {
+            return Some(track_id);
+        }
+
         trace!(
             "no track id for {:?} for {}",
             ssrc,
