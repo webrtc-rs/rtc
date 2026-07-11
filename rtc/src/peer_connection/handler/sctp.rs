@@ -28,6 +28,16 @@ pub(crate) struct SctpHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
+
+    // Batch-drain state: handle_read/handle_write/handle_timeout only INGEST (set
+    // `flush_dirty`); the single transmit flush runs in poll_write, once per driver
+    // event-loop iteration. Paired with the driver's burst-read, N received DATA
+    // chunks are processed before one flush, so the ack machine coalesces them into
+    // ONE SACK (1st arms Delay, 2nd+ stay Immediate until flushed) instead of one
+    // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
+    // cost. `last_now` carries the newest timestamp seen into that flush.
+    flush_dirty: bool,
+    last_now: Option<Instant>,
 }
 
 impl SctpHandlerContext {
@@ -37,6 +47,8 @@ impl SctpHandlerContext {
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            flush_dirty: false,
+            last_now: None,
         }
     }
 }
@@ -53,6 +65,30 @@ impl<'a> SctpHandler<'a> {
 
     pub(crate) fn name(&self) -> &'static str {
         "SctpHandler"
+    }
+
+    /// Batch-drain flush: gather every association's pending outbound in one pass
+    /// into `write_outs`. Called once per event-loop iteration from poll_write when
+    /// `flush_dirty` is set, after a burst of inbound packets has been ingested, so
+    /// their SACKs coalesce into a single datagram.
+    fn flush_transmits(&mut self, now: Instant) {
+        for (_ch, conn) in self.ctx.sctp_transport.sctp_associations.iter_mut() {
+            while let Some(x) = conn.poll_transmit(now) {
+                for transmit in split_transmit(x) {
+                    if let Payload::RawEncode(raw_data) = transmit.message {
+                        for raw in raw_data {
+                            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                                now: transmit.now,
+                                transport: transmit.transport,
+                                message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
+                                    BytesMut::from(&raw[..]),
+                                )),
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -71,6 +107,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
         if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
 
@@ -198,10 +235,21 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     while let Some(event) = conn.poll_endpoint_event() {
                         endpoint_events.push((*ch, event));
                     }
+                    // Transmit flush is deferred to poll_write (batch-drain) so a
+                    // burst of inbound DATA coalesces into one SACK.
+                }
 
-                    while let Some(x) = conn.poll_transmit(msg.now) {
-                        for transmit in split_transmit(x) {
-                            messages.push(SctpMessage::Outbound(transmit));
+                // Teardown safety: if any association is about to be removed
+                // (drain/shutdown), flush all pending outbound now — the deferred
+                // poll_write flush runs after removal and would drop the
+                // association's final packets. Only fires when there IS a removal,
+                // so steady-state SACK coalescing is unaffected.
+                if !endpoint_events.is_empty() {
+                    for (_ch, conn) in sctp_associations.iter_mut() {
+                        while let Some(x) = conn.poll_transmit(now) {
+                            for transmit in split_transmit(x) {
+                                messages.push(SctpMessage::Outbound(transmit));
+                            }
                         }
                     }
                 }
@@ -240,6 +288,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     }
                 }
             }
+
+            // Ingest done — mark dirty so poll_write runs the single flush.
+            self.ctx.flush_dirty = true;
+            self.ctx.last_now = Some(now);
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -253,13 +305,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
         if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(mut message)) = msg.message {
             debug!(
                 "send sctp data channel message to {:?}",
                 msg.transport.peer_addr
             );
 
-            let mut transmits = vec![];
             if message.payload.len() > self.ctx.sctp_transport.internal_buffer.len() {
                 return Err(Error::ErrOutboundPacketTooLarge);
             }
@@ -347,26 +399,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     stream.write_chunk_with_ppi(&payload, message.ppi)?;
                 }
 
-                while let Some(x) = conn.poll_transmit(msg.now) {
-                    transmits.extend(split_transmit(x));
-                }
+                // Transmit flush is deferred to poll_write (batch-drain).
             } else {
                 return Err(Error::ErrAssociationNotExisted);
             }
 
-            for transmit in transmits {
-                if let Payload::RawEncode(raw_data) = transmit.message {
-                    for raw in raw_data {
-                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                            now: transmit.now,
-                            transport: transmit.transport,
-                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(
-                                &raw[..],
-                            ))),
-                        });
-                    }
-                }
-            }
+            // Ingest done — mark dirty so poll_write runs the single flush.
+            self.ctx.flush_dirty = true;
+            self.ctx.last_now = Some(now);
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -376,12 +416,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        // Batch-drain: run the single deferred transmit flush for this event-loop
+        // iteration before serving queued outbound.
+        if self.ctx.flush_dirty {
+            self.ctx.flush_dirty = false;
+            let now = self.ctx.last_now.unwrap_or_else(Instant::now);
+            self.flush_transmits(now);
+        }
         self.ctx.write_outs.pop_front()
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
-        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
+        let dtls_complete = matches!(&evt, RTCEventInternal::DTLSHandshakeComplete(_, _));
+        if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
             if let Some(sctp_transport_config) =
@@ -405,6 +453,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     .map_err(|e| Error::Other(e.to_string()))?;
 
                 sctp_associations.insert(ch, conn);
+
+                // `connect` queued the client INIT. Mark dirty so poll_write emits
+                // it at the next flush instead of waiting for a later handle_* (the
+                // deferred flush is now the only transmit path).
+                self.ctx.flush_dirty = true;
             }
         }
 
@@ -440,9 +493,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             while let Some(event) = conn.poll_endpoint_event() {
                 endpoint_events.push((*ch, event));
             }
+            // Transmit flush is deferred to poll_write (batch-drain).
+        }
 
-            while let Some(x) = conn.poll_transmit(now) {
-                transmits.extend(split_transmit(x));
+        // Teardown safety (see handle_read): flush before removal so a drained
+        // association's final packets aren't dropped by the deferred flush.
+        if !endpoint_events.is_empty() {
+            for (_ch, conn) in sctp_associations.iter_mut() {
+                while let Some(x) = conn.poll_transmit(now) {
+                    transmits.extend(split_transmit(x));
+                }
             }
         }
 
@@ -464,6 +524,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 }
             }
         }
+
+        // Timer processed — mark dirty so poll_write runs the single flush.
+        self.ctx.flush_dirty = true;
+        self.ctx.last_now = Some(now);
 
         Ok(())
     }
