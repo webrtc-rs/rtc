@@ -466,6 +466,17 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
     }
 
     if let Some(attr) = simulcast_attr {
+        // Order the rids by first appearance in the `a=simulcast` attribute. Per
+        // RFC 8853 §5.2 that list "suggests a proposed order of preference, in
+        // decreasing order"; the order of the `a=rid` lines is not significant.
+        // Mirroring it back in the answer is best-effort (§5.3.2 mandates
+        // reversing send<->recv but does not require preserving order). Without
+        // this, the order followed the incidental `a=rid` line order — fine for
+        // Firefox/Chrome (which agree) but not for a peer that lists them
+        // differently. Note: comma-separated rid-id alternatives within one
+        // stream are flattened here, not modeled as a single stream (no shipping
+        // browser emits alternatives).
+        let mut simulcast_order: Vec<String> = vec![];
         let mut split = attr.split(' ');
         loop {
             let _dir = split.next();
@@ -482,11 +493,22 @@ pub(crate) fn get_rids(media: &MediaDescription) -> Vec<SimulcastRid> {
                     if let Some(rid) = rids.iter_mut().find(|f| f.id == sc_id) {
                         rid.paused = paused;
                     }
+                    simulcast_order.push(sc_id.to_owned());
                 }
             } else {
                 break;
             }
         }
+
+        // Reorder to match the `a=simulcast` preference order. `sort_by_key` is
+        // stable, so any rid not referenced by the attribute (should not happen
+        // in a valid offer) keeps its `a=rid` declaration order at the end.
+        rids.sort_by_key(|rid| {
+            simulcast_order
+                .iter()
+                .position(|id| id == &rid.id)
+                .unwrap_or(usize::MAX)
+        });
     }
 
     rids
