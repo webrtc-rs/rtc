@@ -398,6 +398,25 @@ impl MediaEngine {
                 parameter: "pli".to_owned(),
             },
         ];
+
+        // RFC 4588 retransmission (RTX) codec. The `apt` (associated payload
+        // type) fmtp parameter points at the primary codec this RTX stream
+        // repairs. Browsers offer an RTX codec for every video codec by default
+        // and drop RTX negotiation for any primary we do not pair one with, so
+        // register one RTX codec per primary video codec (mirroring pion's
+        // RegisterDefaultCodecs). ulpfec is a FEC codec, not a media codec, and
+        // does not get an RTX pairing.
+        let rtx_codec = |payload_type: PayloadType, apt: PayloadType| RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_RTX.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: format!("apt={apt}"),
+                rtcp_feedback: vec![],
+            },
+            payload_type,
+        };
+
         for codec in vec![
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
@@ -409,6 +428,7 @@ impl MediaEngine {
                 },
                 payload_type: 96,
             },
+            rtx_codec(97, 96),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_VP9.to_owned(),
@@ -419,6 +439,7 @@ impl MediaEngine {
                 },
                 payload_type: 98,
             },
+            rtx_codec(99, 98),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_VP9.to_owned(),
@@ -429,6 +450,7 @@ impl MediaEngine {
                 },
                 payload_type: 100,
             },
+            rtx_codec(101, 100),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
@@ -441,6 +463,7 @@ impl MediaEngine {
                 },
                 payload_type: 102,
             },
+            rtx_codec(103, 102),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
@@ -453,6 +476,7 @@ impl MediaEngine {
                 },
                 payload_type: 127,
             },
+            rtx_codec(104, 127),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
@@ -465,6 +489,7 @@ impl MediaEngine {
                 },
                 payload_type: 125,
             },
+            rtx_codec(105, 125),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
@@ -477,6 +502,7 @@ impl MediaEngine {
                 },
                 payload_type: 108,
             },
+            rtx_codec(109, 108),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_H264.to_owned(),
@@ -501,6 +527,7 @@ impl MediaEngine {
                 },
                 payload_type: 123,
             },
+            rtx_codec(124, 123),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_AV1.to_owned(),
@@ -511,6 +538,7 @@ impl MediaEngine {
                 },
                 payload_type: 41,
             },
+            rtx_codec(106, 41),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: MIME_TYPE_HEVC.to_owned(),
@@ -521,6 +549,7 @@ impl MediaEngine {
                 },
                 payload_type: 126,
             },
+            rtx_codec(107, 126),
             RTCRtpCodecParameters {
                 rtp_codec: RTCRtpCodec {
                     mime_type: "video/ulpfec".to_owned(),
@@ -1134,5 +1163,65 @@ impl MediaEngine {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod default_rtx_codec_tests {
+    use super::*;
+    use crate::rtp_transceiver::rtp_sender::rtp_codec::{find_rtx_payload_type, parse_rtx_apt};
+
+    // RFC 4588 / issue #119: register_default_codecs must register a video/rtx
+    // codec (apt=<primary>) for every primary video codec, otherwise browser
+    // RTX offers get dropped during negotiation.
+    #[test]
+    fn default_codecs_register_rtx_for_every_primary() {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+
+        let mut primary_payload_types = vec![];
+        let mut rtx_apts = vec![];
+        for codec in &me.video_codecs {
+            if UniCase::new(codec.rtp_codec.mime_type.as_str()) == UniCase::new(MIME_TYPE_RTX) {
+                let apt = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
+                    .expect("rtx codec must carry an apt= parameter");
+                rtx_apts.push(apt);
+            } else if UniCase::new(codec.rtp_codec.mime_type.as_str())
+                != UniCase::new("video/ulpfec")
+            {
+                // ulpfec is a FEC codec and has no RTX pairing.
+                primary_payload_types.push(codec.payload_type);
+            }
+        }
+
+        assert!(!rtx_apts.is_empty(), "no RTX codecs were registered");
+
+        for pt in &primary_payload_types {
+            assert!(
+                rtx_apts.contains(pt),
+                "primary payload type {pt} has no associated RTX codec (apt={pt})"
+            );
+            // find_rtx_payload_type must locate our RTX pt by its apt.
+            assert!(
+                find_rtx_payload_type(*pt, &me.video_codecs).is_some(),
+                "find_rtx_payload_type failed for primary payload type {pt}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_video_codec_payload_types_are_unique() {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for codec in &me.video_codecs {
+            assert!(
+                seen.insert(codec.payload_type),
+                "duplicate video payload type {} ({})",
+                codec.payload_type,
+                codec.rtp_codec.mime_type
+            );
+        }
     }
 }

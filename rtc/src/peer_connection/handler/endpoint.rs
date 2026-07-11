@@ -8,11 +8,16 @@ use crate::peer_connection::message::internal::{
 };
 
 use crate::media_stream::track::MediaStreamTrackId;
-use crate::peer_connection::configuration::media_engine::MediaEngine;
+use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability};
-use crate::rtp_transceiver::{RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal};
+use crate::rtp_transceiver::rtp_sender::rtp_codec::parse_rtx_apt;
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability,
+};
+use crate::rtp_transceiver::{
+    PayloadType, RTCRtpReceiverId, SSRC, internal::RTCRtpTransceiverInternal,
+};
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use interceptor::{Interceptor, Packet};
 use log::{debug, trace, warn};
@@ -162,9 +167,32 @@ where
         &mut self,
         now: Instant,
         transport_context: TransportContext,
-        rtp_packet: rtp::Packet,
+        mut rtp_packet: rtp::Packet,
     ) -> Result<()> {
         debug!("handle_rtp_message {}", transport_context.peer_addr);
+
+        // RFC 4588: if this packet belongs to a retransmission (RTX) stream,
+        // de-encapsulate it back into its primary stream before dispatching.
+        // The RTX payload is `[OSN (2 bytes)][original RTP payload]`; the
+        // recovered packet carries the primary SSRC, the original payload type
+        // (resolved via the RTX codec's `apt=`) and the original sequence number
+        // (OSN), while keeping the timestamp/marker/extensions "as is". RTX
+        // receive statistics are tracked upstream in the interceptor handler
+        // (using the RTX SSRC), so they are not touched here.
+        if let Some((primary_ssrc, primary_payload_type)) =
+            self.rtx_primary_for(rtp_packet.header.ssrc, rtp_packet.header.payload_type)
+        {
+            let recovered = deencapsulate_rtx(&mut rtp_packet, primary_ssrc, primary_payload_type);
+            if !recovered {
+                // RTX packet with no OSN header (e.g. a padding-only bandwidth-probe
+                // packet, RFC 4588 §4): nothing to recover.
+                trace!(
+                    "drop rtx packet ssrc = {} without OSN payload",
+                    rtp_packet.header.ssrc
+                );
+                return Ok(());
+            }
+        }
 
         let ssrc = rtp_packet.header.ssrc;
 
@@ -280,6 +308,31 @@ where
         Ok(())
     }
 
+    /// RFC 4588: resolves a retransmission (RTX) SSRC to the primary stream it repairs.
+    ///
+    /// Returns `(primary_ssrc, primary_payload_type)` when `rtx_ssrc` matches the
+    /// RTX SSRC of one of this endpoint's receive codings (declared via
+    /// `a=ssrc-group:FID <primary> <rtx>` in the remote SDP, RFC 5576). The
+    /// original payload type is resolved from the negotiated RTX codec's `apt=`
+    /// parameter, looked up by the packet's RTX `payload_type`. Returns `None`
+    /// (leaving the packet to be handled as a regular RTP packet) when the SSRC
+    /// is not a known RTX SSRC or the `apt` mapping cannot be resolved.
+    fn rtx_primary_for(
+        &self,
+        rtx_ssrc: SSRC,
+        rtx_payload_type: PayloadType,
+    ) -> Option<(SSRC, PayloadType)> {
+        self.rtp_transceivers.iter().find_map(|transceiver| {
+            let receiver = transceiver.receiver().as_ref()?;
+            resolve_rtx_primary(
+                receiver.get_coding_parameters(),
+                receiver.get_codec_preferences(),
+                rtx_ssrc,
+                rtx_payload_type,
+            )
+        })
+    }
+
     // crosscheck with RTCPeerConnection::start_rtp, since remote tracks(RTCRtpCodingParameters) are added in it
     fn find_track_id(
         &mut self,
@@ -340,7 +393,9 @@ where
                         .get_codec_preferences()
                         .iter()
                         .find(|codec| codec.payload_type == rtp_header.payload_type)
-                //TODO: what about RTX/FEC stream?
+                // RTX packets are de-encapsulated into their primary stream in
+                // handle_rtp_message before reaching here, so payload_type is the
+                // primary codec's. FEC de-encapsulation is still TODO (see #12).
                 {
                     Some(codec.rtp_codec.clone())
                 } else {
@@ -647,5 +702,402 @@ where
         };
 
         Some((mid, rid, rrid))
+    }
+}
+
+/// RFC 4588: resolve a single receiver's coding/codec state to the primary
+/// stream that an RTX packet (`rtx_ssrc`, `rtx_payload_type`) repairs.
+///
+/// Returns `(primary_ssrc, primary_payload_type)` when `rtx_ssrc` is the RTX
+/// SSRC of one of `coding_parameters` (declared via `a=ssrc-group:FID <primary>
+/// <rtx>`, RFC 5576) and the original payload type can be resolved from the
+/// matching RTX codec's `apt=` parameter (looked up by `rtx_payload_type`).
+/// Returns `None` when the SSRC is not a known RTX SSRC or the `apt` mapping
+/// cannot be resolved.
+fn resolve_rtx_primary(
+    coding_parameters: &[RTCRtpCodingParameters],
+    codec_preferences: &[RTCRtpCodecParameters],
+    rtx_ssrc: SSRC,
+    rtx_payload_type: PayloadType,
+) -> Option<(SSRC, PayloadType)> {
+    // Associate the RTX SSRC with its primary stream via the FID group recorded
+    // in the coding parameters.
+    let primary_ssrc =
+        coding_parameters
+            .iter()
+            .find_map(|coding| match (&coding.rtx, coding.ssrc) {
+                (Some(rtx), Some(primary_ssrc)) if rtx.ssrc == rtx_ssrc => Some(primary_ssrc),
+                _ => None,
+            })?;
+
+    // Resolve the original payload type from the negotiated RTX codec's `apt=`
+    // parameter.
+    let primary_payload_type = codec_preferences.iter().find_map(|codec| {
+        if codec.payload_type == rtx_payload_type
+            && codec
+                .rtp_codec
+                .mime_type
+                .eq_ignore_ascii_case(MIME_TYPE_RTX)
+        {
+            parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
+        } else {
+            None
+        }
+    })?;
+
+    Some((primary_ssrc, primary_payload_type))
+}
+
+/// RFC 4588 §4: recover the original RTP packet carried inside an RTX packet.
+///
+/// The retransmission payload is `[OSN: u16 big-endian][original RTP payload]`,
+/// where OSN "MUST be set to the sequence number of the associated original RTP
+/// packet" (RFC 4588 §4). On success the packet is rewritten in place to look
+/// like the original: the SSRC becomes `primary_ssrc`, the payload type becomes
+/// `primary_payload_type` (the `apt`), the sequence number becomes the OSN, and
+/// the 2-byte OSN header is stripped from the payload. The timestamp, marker and
+/// CSRC list are already carried "as is" by the RTX packet per RFC 4588 §4 and
+/// are left untouched; any original RTP padding was removed by the sender before
+/// retransmission, so the padding flag is cleared.
+///
+/// Returns `false` without modifying the packet when the payload is shorter than
+/// the 2-byte OSN header (e.g. a padding-only bandwidth-probe packet).
+fn deencapsulate_rtx(
+    packet: &mut rtp::Packet,
+    primary_ssrc: SSRC,
+    primary_payload_type: PayloadType,
+) -> bool {
+    if packet.payload.len() < 2 {
+        return false;
+    }
+
+    let original_sequence_number = u16::from_be_bytes([packet.payload[0], packet.payload[1]]);
+    packet.header.ssrc = primary_ssrc;
+    packet.header.payload_type = primary_payload_type;
+    packet.header.sequence_number = original_sequence_number;
+    packet.header.padding = false;
+    packet.payload = packet.payload.slice(2..);
+
+    true
+}
+
+#[cfg(test)]
+mod rtx_tests {
+    use super::{
+        EndpointHandler, EndpointHandlerContext, Instant, Packet, RTCMessageInternal,
+        RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpTransceiverInternal, RTPMessage,
+        TrackPacket, TransportContext, deencapsulate_rtx, resolve_rtx_primary,
+    };
+    use crate::media_stream::track::MediaStreamTrack;
+    use crate::peer_connection::configuration::media_engine::MediaEngine;
+    use crate::rtp_transceiver::rtp_sender::{
+        RTCRtpCodec, RTCRtpEncodingParameters, RTCRtpRtxParameters, RtpCodecKind,
+    };
+    use crate::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
+    use crate::statistics::accumulator::RTCStatsAccumulator;
+    use bytes::Bytes;
+    use interceptor::NoopInterceptor;
+    use shared::TransportProtocol;
+
+    fn coding(primary_ssrc: u32, rtx_ssrc: Option<u32>) -> RTCRtpCodingParameters {
+        RTCRtpCodingParameters {
+            rid: String::new(),
+            ssrc: Some(primary_ssrc),
+            rtx: rtx_ssrc.map(|ssrc| RTCRtpRtxParameters { ssrc }),
+            fec: None,
+        }
+    }
+
+    fn codec(payload_type: u8, mime_type: &str, fmtp: &str) -> RTCRtpCodecParameters {
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: mime_type.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: fmtp.to_owned(),
+                rtcp_feedback: vec![],
+            },
+            payload_type,
+        }
+    }
+
+    #[test]
+    fn resolves_rtx_ssrc_to_primary_and_apt() {
+        let codings = [coding(1000, Some(2000))];
+        let prefs = [codec(96, "video/VP8", ""), codec(97, "video/rtx", "apt=96")];
+        assert_eq!(
+            resolve_rtx_primary(&codings, &prefs, 2000, 97),
+            Some((1000, 96))
+        );
+    }
+
+    #[test]
+    fn selects_the_correct_primary_among_several_codings() {
+        let codings = [coding(1000, Some(2000)), coding(1001, Some(2001))];
+        let prefs = [
+            codec(97, "video/rtx", "apt=96"),
+            codec(99, "video/rtx", "apt=98"),
+        ];
+        assert_eq!(
+            resolve_rtx_primary(&codings, &prefs, 2001, 99),
+            Some((1001, 98))
+        );
+    }
+
+    #[test]
+    fn unknown_rtx_ssrc_is_not_resolved() {
+        let codings = [coding(1000, Some(2000))];
+        let prefs = [codec(97, "video/rtx", "apt=96")];
+        // 2000 is the only RTX SSRC: an unknown SSRC (9999) and the primary's own
+        // SSRC (1000) must not be mistaken for RTX.
+        assert_eq!(resolve_rtx_primary(&codings, &prefs, 9999, 97), None);
+        assert_eq!(resolve_rtx_primary(&codings, &prefs, 1000, 97), None);
+    }
+
+    #[test]
+    fn coding_without_rtx_pairing_is_not_resolved() {
+        // rid-based / undeclared codings carry no rtx SSRC (rtx: None).
+        let codings = [coding(1000, None)];
+        let prefs = [codec(97, "video/rtx", "apt=96")];
+        assert_eq!(resolve_rtx_primary(&codings, &prefs, 2000, 97), None);
+    }
+
+    #[test]
+    fn missing_or_mismatched_rtx_codec_pref_is_not_resolved() {
+        let codings = [coding(1000, Some(2000))];
+        // No codec preference at the RTX payload type.
+        assert_eq!(resolve_rtx_primary(&codings, &[], 2000, 97), None);
+        // Payload type present but it is not an RTX codec.
+        let non_rtx = [codec(97, "video/VP8", "")];
+        assert_eq!(resolve_rtx_primary(&codings, &non_rtx, 2000, 97), None);
+        // RTX codec present but without a parseable apt.
+        let no_apt = [codec(97, "video/rtx", "")];
+        assert_eq!(resolve_rtx_primary(&codings, &no_apt, 2000, 97), None);
+    }
+
+    // RFC 4588 §4: the RTX payload is [OSN (2 bytes, big-endian)][original payload].
+    #[test]
+    fn deencapsulates_rtx_packet_into_primary() {
+        let mut packet = rtp::Packet {
+            header: rtp::Header {
+                marker: true,
+                payload_type: 97,    // negotiated RTX payload type
+                sequence_number: 42, // RTX stream sequence number (independent)
+                timestamp: 9000,     // already the original timestamp (RFC 4588 §4)
+                ssrc: 0xDEAD_BEEF,   // RTX SSRC
+                padding: true,
+                ..Default::default()
+            },
+            // OSN = 0x1234, followed by the original media payload.
+            payload: Bytes::from(vec![0x12, 0x34, 0xAA, 0xBB, 0xCC]),
+        };
+
+        assert!(deencapsulate_rtx(&mut packet, 0x1111_2222, 96));
+
+        // Rewritten to look like the original primary packet.
+        assert_eq!(packet.header.ssrc, 0x1111_2222);
+        assert_eq!(packet.header.payload_type, 96);
+        assert_eq!(packet.header.sequence_number, 0x1234); // OSN
+        // Kept "as is".
+        assert_eq!(packet.header.timestamp, 9000);
+        assert!(packet.header.marker);
+        // Original padding was removed by the sender before retransmission.
+        assert!(!packet.header.padding);
+        // OSN header stripped, original payload preserved.
+        assert_eq!(&packet.payload[..], &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn padding_only_probe_packet_is_left_unchanged() {
+        // A bandwidth-probe RTX packet may carry fewer than 2 payload bytes and
+        // therefore has no OSN to recover.
+        let mut packet = rtp::Packet {
+            header: rtp::Header {
+                payload_type: 97,
+                ssrc: 0xDEAD_BEEF,
+                ..Default::default()
+            },
+            payload: Bytes::from(vec![0x00]),
+        };
+        let before = packet.clone();
+
+        assert!(!deencapsulate_rtx(&mut packet, 0x1111_2222, 96));
+        assert_eq!(packet, before);
+    }
+
+    #[test]
+    fn empty_payload_is_left_unchanged() {
+        let mut packet = rtp::Packet {
+            header: rtp::Header {
+                payload_type: 97,
+                ssrc: 7,
+                ..Default::default()
+            },
+            payload: Bytes::new(),
+        };
+
+        assert!(!deencapsulate_rtx(&mut packet, 1, 96));
+    }
+
+    // Builds a video receive transceiver whose primary stream is paired with an
+    // RTX stream via the FID group, matching what start_rtp sets up for an
+    // `a=ssrc-group:FID` offer. The primary SSRC already has a (non-empty) codec
+    // so find_track_id resolves it directly.
+    fn rtx_receiver_transceiver(
+        primary_ssrc: u32,
+        rtx_ssrc: u32,
+        primary_pt: u8,
+        rtx_pt: u8,
+    ) -> RTCRtpTransceiverInternal<NoopInterceptor> {
+        let mut transceiver = RTCRtpTransceiverInternal::<NoopInterceptor>::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            },
+        );
+
+        let receiver = transceiver.receiver_mut().as_mut().unwrap();
+        receiver.set_coding_parameters(vec![coding(primary_ssrc, Some(rtx_ssrc))]);
+        receiver.set_codec_preferences(vec![
+            codec(primary_pt, "video/VP8", ""),
+            codec(rtx_pt, "video/rtx", &format!("apt={primary_pt}")),
+        ]);
+        receiver.set_track(MediaStreamTrack::new(
+            "stream".to_string(),
+            "track".to_string(),
+            "label".to_string(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: coding(primary_ssrc, Some(rtx_ssrc)),
+                active: true,
+                codec: RTCRtpCodec {
+                    mime_type: "video/VP8".to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: String::new(),
+                    rtcp_feedback: vec![],
+                },
+                max_bitrate: 0,
+                max_framerate: None,
+                scale_resolution_down_by: None,
+            }],
+        ));
+        transceiver
+    }
+
+    fn test_transport() -> TransportContext {
+        TransportContext {
+            local_addr: "127.0.0.1:5000".parse().unwrap(),
+            peer_addr: "127.0.0.1:5001".parse().unwrap(),
+            transport_protocol: TransportProtocol::UDP,
+            ecn: None,
+        }
+    }
+
+    #[test]
+    fn handle_rtp_message_deencapsulates_and_dispatches_rtx() {
+        let (primary_ssrc, rtx_ssrc, primary_pt, rtx_pt) = (1000u32, 2000u32, 96u8, 97u8);
+        let mut transceivers = vec![rtx_receiver_transceiver(
+            primary_ssrc,
+            rtx_ssrc,
+            primary_pt,
+            rtx_pt,
+        )];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+        let mut ctx = EndpointHandlerContext::default();
+
+        // RTX packet on the RTX SSRC: payload = [OSN=42][media 0xDE 0xAD].
+        let rtx_packet = rtp::Packet {
+            header: rtp::Header {
+                marker: true,
+                payload_type: rtx_pt,
+                sequence_number: 9, // RTX stream sequence number (independent)
+                timestamp: 12_345,
+                ssrc: rtx_ssrc,
+                ..Default::default()
+            },
+            payload: Bytes::from(vec![0x00, 0x2A, 0xDE, 0xAD]),
+        };
+
+        {
+            let mut handler = EndpointHandler::new(
+                &mut ctx,
+                &mut transceivers,
+                &media_engine,
+                &mut interceptor,
+                &mut stats,
+            );
+            handler
+                .handle_rtp_message(Instant::now(), test_transport(), rtx_packet)
+                .expect("handle_rtp_message");
+        }
+
+        // The recovered packet is dispatched on the primary stream, de-encapsulated.
+        let dispatched = ctx
+            .read_outs
+            .pop_front()
+            .expect("a track packet should be dispatched");
+        match dispatched.message {
+            RTCMessageInternal::Rtp(RTPMessage::TrackPacket(TrackPacket {
+                packet: Packet::Rtp(packet),
+                ..
+            })) => {
+                assert_eq!(packet.header.ssrc, primary_ssrc);
+                assert_eq!(packet.header.payload_type, primary_pt);
+                assert_eq!(packet.header.sequence_number, 42); // OSN
+                assert_eq!(packet.header.timestamp, 12_345); // preserved
+                assert!(packet.header.marker); // preserved
+                assert_eq!(&packet.payload[..], &[0xDE, 0xAD]); // OSN stripped
+            }
+            _ => panic!("expected a de-encapsulated RTP TrackPacket on the primary stream"),
+        }
+    }
+
+    #[test]
+    fn handle_rtp_message_drops_rtx_probe_packet() {
+        let (primary_ssrc, rtx_ssrc, primary_pt, rtx_pt) = (1000u32, 2000u32, 96u8, 97u8);
+        let mut transceivers = vec![rtx_receiver_transceiver(
+            primary_ssrc,
+            rtx_ssrc,
+            primary_pt,
+            rtx_pt,
+        )];
+        let media_engine = MediaEngine::default();
+        let mut interceptor = NoopInterceptor::new();
+        let mut stats = RTCStatsAccumulator::new();
+        let mut ctx = EndpointHandlerContext::default();
+
+        // A padding-only probe on the RTX SSRC: payload shorter than the OSN.
+        let probe = rtp::Packet {
+            header: rtp::Header {
+                payload_type: rtx_pt,
+                ssrc: rtx_ssrc,
+                ..Default::default()
+            },
+            payload: Bytes::from(vec![0x00]),
+        };
+
+        {
+            let mut handler = EndpointHandler::new(
+                &mut ctx,
+                &mut transceivers,
+                &media_engine,
+                &mut interceptor,
+                &mut stats,
+            );
+            handler
+                .handle_rtp_message(Instant::now(), test_transport(), probe)
+                .expect("handle_rtp_message");
+        }
+
+        assert!(
+            ctx.read_outs.is_empty(),
+            "an RTX probe packet with no OSN should be dropped, not dispatched"
+        );
     }
 }
