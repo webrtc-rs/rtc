@@ -92,3 +92,49 @@ fn firefox_simulcast_offer_answer() -> Result<()> {
 
     Ok(())
 }
+
+/// RFC 8853 §5.2: the `a=simulcast` send list "suggests a proposed order of
+/// preference, in decreasing order"; the order of the `a=rid` lines is not
+/// significant. §5.3.2 only mandates reversing send<->recv (SHALL) and forbids
+/// adding streams — it does not itself require preserving order — but mirroring
+/// the offered preference order back is the correct, interoperable behavior.
+///
+/// This offer lists the `a=rid` lines in the opposite order (`l`, `m`, `h`) to
+/// the `a=simulcast:send h;m;l` preference list. rtc should still answer with
+/// `a=simulcast:recv h;m;l`, following the attribute rather than the rid lines.
+#[test]
+fn simulcast_recv_order_follows_simulcast_attribute_not_rid_lines() -> Result<()> {
+    // Work on LF-normalized text so the substitution is agnostic to however the
+    // fixture's line endings are stored/checked out; `crlf()` restores CRLF below.
+    let lf = FIREFOX_OFFER.replace("\r\n", "\n");
+    // Reverse just the three consecutive `a=rid:* send` lines.
+    let reordered = lf.replace(
+        "a=rid:h send\na=rid:m send\na=rid:l send",
+        "a=rid:l send\na=rid:m send\na=rid:h send",
+    );
+    // Guard: the substitution actually happened.
+    assert!(
+        reordered.contains("a=rid:l send\na=rid:m send\na=rid:h send"),
+        "fixture rid lines not reordered as expected"
+    );
+    assert!(reordered.contains("a=simulcast:send h;m;l"));
+
+    let mut pc = build_answerer()?;
+    pc.set_remote_description(RTCSessionDescription::offer(crlf(&reordered))?)?;
+    let answer = pc.create_answer(None)?;
+    let ans = &answer.sdp;
+
+    assert!(
+        ans.contains("a=simulcast:recv h;m;l"),
+        "answer should follow the offer's a=simulcast preference order (h;m;l), \
+         not the a=rid line order (RFC 8853 §5.2). Got:\n{ans}"
+    );
+    // The a=rid recv lines follow the same order.
+    let ans_lf = ans.replace("\r\n", "\n");
+    assert!(
+        ans_lf.contains("a=rid:h recv\na=rid:m recv\na=rid:l recv"),
+        "a=rid recv lines should follow the a=simulcast order. Got:\n{ans}"
+    );
+
+    Ok(())
+}
