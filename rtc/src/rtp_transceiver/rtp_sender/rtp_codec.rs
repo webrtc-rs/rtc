@@ -211,14 +211,37 @@ pub(crate) fn find_rtx_payload_type(
     needle: PayloadType,
     haystack: &[RTCRtpCodecParameters],
 ) -> Option<PayloadType> {
-    let apt_str = format!("apt={}", needle);
     for c in haystack {
-        if apt_str == c.rtp_codec.sdp_fmtp_line {
+        // Match on the parsed `apt` value rather than the whole fmtp line, so an
+        // RTX codec carrying extra parameters (e.g. `apt=96;rtx-time=3000`, RFC
+        // 4588 §8.1) is still associated with its primary.
+        if parse_rtx_apt(&c.rtp_codec.sdp_fmtp_line) == Some(needle) {
             return Some(c.payload_type);
         }
     }
 
     None
+}
+
+/// Parses the associated payload type (`apt`) from an RTX codec's fmtp line.
+///
+/// RFC 4588 §8.1 defines the `apt` parameter, which maps a retransmission
+/// payload type to the payload type of the stream it repairs. The fmtp line may
+/// carry additional parameters (e.g. `apt=96;rtx-time=3000`), so the value is
+/// extracted from the `apt=` token rather than compared against the whole line.
+///
+/// # Parameters
+///
+/// * `sdp_fmtp_line` - The RTX codec's fmtp line, e.g. `"apt=96"`
+///
+/// # Returns
+///
+/// The associated (primary) payload type if an `apt=` token is present, else None.
+pub(crate) fn parse_rtx_apt(sdp_fmtp_line: &str) -> Option<PayloadType> {
+    sdp_fmtp_line
+        .split(';')
+        .filter_map(|param| param.trim().strip_prefix("apt="))
+        .find_map(|value| value.trim().parse::<PayloadType>().ok())
 }
 
 // For now, only FlexFEC is supported.
@@ -264,4 +287,57 @@ pub(crate) fn rtcp_feedback_intersection(
     }
 
     out
+}
+
+#[cfg(test)]
+mod rtx_apt_tests {
+    use super::{RTCRtpCodec, RTCRtpCodecParameters, find_rtx_payload_type, parse_rtx_apt};
+
+    fn rtx(payload_type: u8, fmtp: &str) -> RTCRtpCodecParameters {
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: "video/rtx".to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: fmtp.to_owned(),
+                rtcp_feedback: vec![],
+            },
+            payload_type,
+        }
+    }
+
+    #[test]
+    fn find_rtx_payload_type_tolerates_extra_apt_params() {
+        // A remote may append rtx-time to the apt fmtp (RFC 4588 §8.1); the
+        // association must still succeed rather than dropping RTX from the answer.
+        let haystack = vec![rtx(97, "apt=96;rtx-time=3000"), rtx(99, "apt=98")];
+        assert_eq!(find_rtx_payload_type(96, &haystack), Some(97));
+        assert_eq!(find_rtx_payload_type(98, &haystack), Some(99));
+        assert_eq!(find_rtx_payload_type(100, &haystack), None);
+    }
+
+    #[test]
+    fn parses_plain_apt() {
+        assert_eq!(parse_rtx_apt("apt=96"), Some(96));
+        assert_eq!(parse_rtx_apt("apt=127"), Some(127));
+        assert_eq!(parse_rtx_apt("apt=0"), Some(0));
+    }
+
+    #[test]
+    fn parses_apt_with_extra_params() {
+        // RFC 4588 §8.1 allows an optional rtx-time parameter alongside apt.
+        assert_eq!(parse_rtx_apt("apt=96;rtx-time=3000"), Some(96));
+        assert_eq!(parse_rtx_apt("rtx-time=3000;apt=102"), Some(102));
+        assert_eq!(parse_rtx_apt("apt=98 ; rtx-time=1000"), Some(98));
+    }
+
+    #[test]
+    fn returns_none_without_apt() {
+        assert_eq!(parse_rtx_apt(""), None);
+        assert_eq!(parse_rtx_apt("profile-id=0"), None);
+        assert_eq!(parse_rtx_apt("apt="), None);
+        assert_eq!(parse_rtx_apt("apt=notanumber"), None);
+        // Out of the u8 payload-type range.
+        assert_eq!(parse_rtx_apt("apt=300"), None);
+    }
 }
