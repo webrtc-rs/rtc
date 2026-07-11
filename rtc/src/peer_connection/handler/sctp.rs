@@ -150,15 +150,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             Event::Stream(StreamEvent::Readable { id }) => {
                                 let mut stream = conn.stream(id)?;
                                 while let Some(chunks) = stream.read_sctp()? {
-                                    let n = chunks
-                                        .read(&mut self.ctx.sctp_transport.internal_buffer)?;
+                                    // Reassemble straight into the delivered buffer:
+                                    // one copy instead of the scratch-buffer round-trip
+                                    // (`internal_buffer.len()` preserves the max-message
+                                    // -size bound `read()` enforced via `ErrShortBuffer`).
+                                    let max_len = self.ctx.sctp_transport.internal_buffer.len();
+                                    let payload = chunks.to_payload(max_len)?;
                                     messages.push(SctpMessage::Inbound(DataChannelMessage {
                                         association_handle: ch.0,
                                         stream_id: id,
                                         ppi: chunks.ppi,
-                                        payload: BytesMut::from(
-                                            &self.ctx.sctp_transport.internal_buffer[0..n],
-                                        ),
+                                        payload,
                                         negotiated: false,
                                     }));
                                 }
@@ -251,7 +253,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
-        if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)) = msg.message {
+        if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(mut message)) = msg.message {
             debug!(
                 "send sctp data channel message to {:?}",
                 msg.transport.peer_addr
@@ -337,7 +339,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
                 let mut stream = conn.stream(message.stream_id)?;
                 if !is_dcep_internal_control_message && stream.is_writable() {
-                    stream.write_with_ppi(&message.payload, message.ppi)?;
+                    // The payload is owned end-to-end (the DataChannel `send` API
+                    // takes the buffer by value), so hand it to SCTP zero-copy:
+                    // `freeze()` is O(1) and the enqueued chunks are refcounted
+                    // slices, eliminating a per-message alloc + full-payload memcpy.
+                    let payload = std::mem::take(&mut message.payload).freeze();
+                    stream.write_chunk_with_ppi(&payload, message.ppi)?;
                 }
 
                 while let Some(x) = conn.poll_transmit(msg.now) {

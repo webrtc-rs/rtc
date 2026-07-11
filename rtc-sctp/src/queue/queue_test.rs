@@ -478,6 +478,56 @@ fn test_reassembly_queue_ordered_fragments() -> Result<()> {
 }
 
 #[test]
+fn test_reassembly_queue_to_payload() -> Result<()> {
+    // A multi-fragment ordered message: "ABC" + "DEFG" == "ABCDEFG" (7 bytes).
+    let mut rq = ReassemblyQueue::new(0);
+    let org_ppi = PayloadProtocolIdentifier::Binary;
+
+    rq.push(ChunkPayloadData {
+        payload_type: org_ppi,
+        beginning_fragment: true,
+        tsn: 1,
+        stream_sequence_number: 0,
+        user_data: Bytes::from_static(b"ABC"),
+        ..Default::default()
+    });
+    let complete = rq.push(ChunkPayloadData {
+        payload_type: org_ppi,
+        ending_fragment: true,
+        tsn: 2,
+        stream_sequence_number: 0,
+        user_data: Bytes::from_static(b"DEFG"),
+        ..Default::default()
+    });
+    assert!(complete, "chunk set should be complete");
+
+    let chunks = rq.read().expect("a complete message");
+
+    // Ample buffer: all fragments concatenated in order with a single copy.
+    let payload = chunks.to_payload(16)?;
+    assert_eq!(
+        &payload[..],
+        b"ABCDEFG",
+        "to_payload must concatenate fragments in order"
+    );
+
+    // Exact boundary (max_len == total) still succeeds.
+    assert_eq!(
+        &chunks.to_payload(7)?[..],
+        b"ABCDEFG",
+        "max_len == total must succeed"
+    );
+
+    // Too small (max_len < total) is rejected with ErrShortBuffer, matching read().
+    assert!(
+        matches!(chunks.to_payload(6), Err(Error::ErrShortBuffer)),
+        "to_payload must reject oversized messages like read()"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_reassembly_queue_unordered_fragments() -> Result<()> {
     let mut rq = ReassemblyQueue::new(0);
 
