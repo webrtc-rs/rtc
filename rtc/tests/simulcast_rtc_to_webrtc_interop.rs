@@ -394,12 +394,21 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
                     log::warn!("RID extension ID not found in negotiated parameters!");
                 }
 
+                // write_rtp requires the packet's PT to match a negotiated codec; derive it
+                // from the sender's parameters instead of hardcoding (single video codec).
+                let payload_type = params
+                    .rtp_parameters
+                    .codecs
+                    .first()
+                    .map(|codec| codec.payload_type)
+                    .unwrap_or(96);
+
                 // Create RTP packet header
                 let mut header = rtp::header::Header {
                     version: 2,
                     padding: false,
                     marker: false,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc: *ssrc,

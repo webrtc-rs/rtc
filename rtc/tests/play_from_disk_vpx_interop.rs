@@ -427,6 +427,16 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
                 .ssrcs()
                 .last()
                 .ok_or(Error::ErrSenderWithNoSSRCs)?;
+            // The disk file was packetized with a fixed local payload type, but write_rtp
+            // now requires the packet's PT to match one of the sender's negotiated codecs.
+            // Each sender carries a single media codec, so stamp its negotiated PT here.
+            packet.header.payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
             log::trace!("sending rtp packet with ssrc={}", packet.header.ssrc);
             rtp_sender.write_rtp(packet)?;
         }

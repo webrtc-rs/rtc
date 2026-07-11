@@ -294,13 +294,23 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
                 .last()
                 .ok_or(Error::ErrSenderWithNoSSRCs)?;
 
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
+
             let packet = rtc::rtp::packet::Packet {
                 header: rtc::rtp::header::Header {
                     version: 2,
                     padding: false,
                     extension: false,
                     marker: packets_sent == 0,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number: packets_sent as u16,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc,
@@ -565,13 +575,23 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
                 .last()
                 .ok_or(Error::ErrSenderWithNoSSRCs)?;
 
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
+
             let packet = rtc::rtp::packet::Packet {
                 header: rtc::rtp::header::Header {
                     version: 2,
                     padding: false,
                     extension: false,
                     marker: packets_sent == 0,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number: packets_sent as u16,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc,
@@ -842,13 +862,23 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
                 .last()
                 .ok_or(Error::ErrSenderWithNoSSRCs)?;
 
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
+
             let packet = rtc::rtp::packet::Packet {
                 header: rtc::rtp::header::Header {
                     version: 2,
                     padding: false,
                     extension: false,
                     marker: packets_sent == 0,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number: packets_sent as u16,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc,

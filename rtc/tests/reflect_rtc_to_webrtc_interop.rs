@@ -368,6 +368,15 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                 }
             }
 
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = params
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
+
             let ssrc = rtp_sender
                 .track()
                 .ssrcs()
@@ -381,7 +390,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                     padding: false,
                     extension: false,
                     marker: packets_sent == 0,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number: packets_sent as u16,
                     timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                     ssrc,

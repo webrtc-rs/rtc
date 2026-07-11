@@ -677,6 +677,17 @@ async fn run(
                             .ssrcs()
                             .last()
                             .ok_or(Error::ErrSenderWithNoSSRCs)?;
+                        // The disk file was packetized with a fixed local payload type, but
+                        // as the answerer we inherit the remote offer's payload types, and
+                        // write_rtp now requires the packet's PT to match a negotiated codec.
+                        // Each sender carries a single media codec, so stamp its negotiated PT.
+                        packet.header.payload_type = rtp_sender
+                            .get_parameters()
+                            .rtp_parameters
+                            .codecs
+                            .first()
+                            .map(|codec| codec.payload_type)
+                            .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
                         rtp_sender.write_rtp(packet)?;
                     }

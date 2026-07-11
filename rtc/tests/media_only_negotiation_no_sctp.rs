@@ -248,10 +248,19 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
                 .rtp_sender(sender_id)
                 .ok_or_else(|| anyhow::anyhow!("rtp sender not found"))?;
             rtp_packets_sent += 1;
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
             rtp_sender.write_rtp(rtp::packet::Packet {
                 header: rtp::header::Header {
                     version: 2,
-                    payload_type: 96,
+                    payload_type,
                     sequence_number: rtp_packets_sent,
                     timestamp: rtp_packets_sent as u32 * 3000,
                     ssrc,

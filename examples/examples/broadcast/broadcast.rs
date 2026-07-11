@@ -581,7 +581,7 @@ async fn run_viewer(
                 ssrc: Some(ssrc),
                 ..Default::default()
             },
-            codec: rtp_codec,
+            codec: rtp_codec.clone(),
             ..Default::default()
         }],
     );
@@ -684,6 +684,31 @@ async fn run_viewer(
                         let sender_ids: Vec<RTCRtpSenderId> = peer_connection.get_senders().collect();
                         for sender_id in sender_ids {
                             if let Some(mut sender) = peer_connection.rtp_sender(sender_id) {
+                                packet.header.payload_type = {
+                                    let parameters = sender.get_parameters();
+                                    parameters
+                                        .rtp_parameters
+                                        .codecs
+                                        .iter()
+                                        .find(|candidate| {
+                                            candidate
+                                                .rtp_codec
+                                                .mime_type
+                                                .eq_ignore_ascii_case(&rtp_codec.mime_type)
+                                                && candidate.rtp_codec.sdp_fmtp_line
+                                                    == rtp_codec.sdp_fmtp_line
+                                        })
+                                        .or_else(|| {
+                                            parameters.rtp_parameters.codecs.iter().find(|candidate| {
+                                                candidate
+                                                    .rtp_codec
+                                                    .mime_type
+                                                    .eq_ignore_ascii_case(&rtp_codec.mime_type)
+                                            })
+                                        })
+                                        .map(|candidate| candidate.payload_type)
+                                        .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?
+                                };
                                 packet.header.ssrc = sender
                                     .track()
                                     .ssrcs()

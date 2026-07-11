@@ -342,14 +342,24 @@ async fn run(
                     let receiver_id = *track_id2_receiver_id
                         .get(&track_id)
                         .ok_or(Error::ErrRTPReceiverNotExisted)?;
+                    let inbound_payload_type = rtp_packet.header.payload_type;
 
-                    let media_ssrc = {
-                        let rtp_receiver = peer_connection
+                    let (media_ssrc, incoming_codec) = {
+                        let mut rtp_receiver = peer_connection
                             .rtp_receiver(receiver_id)
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
+                        let incoming_codec = rtp_receiver
+                            .get_parameters()
+                            .rtp_parameters
+                            .codecs
+                            .iter()
+                            .find(|codec| codec.payload_type == inbound_payload_type)
+                            .map(|codec| codec.rtp_codec.clone())
+                            .ok_or(Error::ErrCodecNotFound)?;
                         let track = rtp_receiver.track();
-                        track.ssrcs().next().unwrap_or(0)
+                        let media_ssrc = track.ssrcs().next().unwrap_or(0);
+                        (media_ssrc, incoming_codec)
                     };
 
                     receiver_id2ssrcs.insert(receiver_id, media_ssrc);
@@ -405,6 +415,31 @@ async fn run(
                             .ok_or(Error::ErrRTPSenderNotExisted)?;
 
                         debug!("forwarding rtp packet from receiver_id {:?}", receiver_id);
+                        rtp_packet.header.payload_type = {
+                            let parameters = output_sender.get_parameters();
+                            parameters
+                                .rtp_parameters
+                                .codecs
+                                .iter()
+                                .find(|candidate| {
+                                    candidate
+                                        .rtp_codec
+                                        .mime_type
+                                        .eq_ignore_ascii_case(&incoming_codec.mime_type)
+                                        && candidate.rtp_codec.sdp_fmtp_line
+                                            == incoming_codec.sdp_fmtp_line
+                                })
+                                .or_else(|| {
+                                    parameters.rtp_parameters.codecs.iter().find(|candidate| {
+                                        candidate
+                                            .rtp_codec
+                                            .mime_type
+                                            .eq_ignore_ascii_case(&incoming_codec.mime_type)
+                                    })
+                                })
+                                .map(|candidate| candidate.payload_type)
+                                .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?
+                        };
                         output_sender.write_rtp(rtp_packet)?;
                     }
                 }

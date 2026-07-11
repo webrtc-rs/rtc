@@ -319,6 +319,23 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
                                     .ssrcs()
                                     .last()
                                     .ok_or(Error::ErrSenderWithNoSSRCs)?;
+                                // The external source packetizes with its own payload type,
+                                // but write_rtp requires the packet's PT to match a negotiated
+                                // codec. The default registry negotiates several video codecs
+                                // on this m-line, so match by mime type (this track is VP8).
+                                rtp_packet.header.payload_type = sender
+                                    .get_parameters()
+                                    .rtp_parameters
+                                    .codecs
+                                    .iter()
+                                    .find(|codec| {
+                                        codec
+                                            .rtp_codec
+                                            .mime_type
+                                            .eq_ignore_ascii_case(MIME_TYPE_VP8)
+                                    })
+                                    .map(|codec| codec.payload_type)
+                                    .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                                 if let Err(err) = sender.write_rtp(rtp_packet) {
                                     error!("Failed to write RTP packet: {}", err);
                                 }

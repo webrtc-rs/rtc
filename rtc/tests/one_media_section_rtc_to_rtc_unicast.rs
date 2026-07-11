@@ -359,12 +359,22 @@ async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
 
             packets_sent += 1;
 
+            // write_rtp requires the packet's PT to match a negotiated codec; derive it
+            // from the sender's parameters instead of hardcoding (single video codec).
+            let payload_type = rtp_sender
+                .get_parameters()
+                .rtp_parameters
+                .codecs
+                .first()
+                .map(|codec| codec.payload_type)
+                .unwrap_or(96);
+
             // Create RTP packet header
             let header = rtp::header::Header {
                 version: 2,
                 padding: false,
                 marker: false,
-                payload_type: 96,
+                payload_type,
                 sequence_number: packets_sent,
                 timestamp: (Instant::now().duration_since(start_time).as_millis() * 90) as u32,
                 ssrc,
