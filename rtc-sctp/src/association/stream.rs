@@ -54,6 +54,17 @@ pub enum StreamEvent {
         /// Which stream is now readable
         id: StreamId,
     },
+    /// Outgoing buffered data was released (acknowledged OR abandoned), carrying
+    /// the exact number of user payload bytes freed for this stream. Unlike the
+    /// edge-triggered [`StreamEvent::BufferedAmountLow`], this fires on every
+    /// release with the byte delta, so upper layers can keep their own
+    /// send-buffer accounting (e.g. a synchronous back-pressure counter) exact.
+    BufferedAmountReleased {
+        /// Which stream released buffered bytes
+        id: StreamId,
+        /// User payload bytes released
+        n_bytes: usize,
+    },
 }
 
 /// Reliability type for stream

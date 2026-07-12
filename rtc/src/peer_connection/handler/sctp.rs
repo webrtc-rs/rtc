@@ -228,6 +228,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                     ),
                                 );
                             }
+                            Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
+                                // Forward the exact released byte count so the data
+                                // channel handler can decrement its synchronous
+                                // send back-pressure counter (see DataChannelHandler).
+                                self.ctx.event_outs.push_back(
+                                    RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
+                                );
+                            }
                             _ => {}
                         }
                     }

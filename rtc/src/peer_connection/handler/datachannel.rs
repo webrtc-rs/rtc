@@ -309,6 +309,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         ));
                 }
             }
+            RTCEventInternal::SCTPBufferReleased(_association_handle, stream_id, n_bytes) => {
+                // Pure accounting: SCTP released (acked or abandoned) `n_bytes` of
+                // this channel's outgoing buffer. Decrement the synchronous send
+                // back-pressure counter; do NOT forward the event further.
+                if let Some(dc) = self.data_channels.get_mut(&stream_id) {
+                    dc.outstanding_bytes = dc.outstanding_bytes.saturating_sub(n_bytes);
+                }
+            }
             _ => {
                 self.ctx.event_outs.push_back(evt);
             }
