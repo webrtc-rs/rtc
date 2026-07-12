@@ -27,8 +27,9 @@ sha1 = "0.10.6"
 ctr = "0.9.2"
 aes = "0.8.4"
 subtle = "2.5.0"
-aead = { version = "0.5.2", features = ["std"] }
-aes-gcm = { version = "0.10.3", features = ["std"] }
+# AES-GCM (AEAD_AES_128/256_GCM profiles) runs on ring's hardware-accelerated,
+# single-pass AES-GCM; the AES-CM-HMAC-SHA1 profiles below stay on RustCrypto.
+ring.workspace = true
 openssl = { version = "0.10.72", optional = true }
 
 [dev-dependencies]

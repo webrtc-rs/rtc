@@ -1,7 +1,7 @@
 use aes::Aes256;
 use aes::cipher::BlockEncrypt;
+use aes::cipher::KeyInit;
 use aes::{Aes128, cipher::generic_array::GenericArray};
-use aes_gcm::KeyInit;
 
 use shared::error::{Error, Result};
 
