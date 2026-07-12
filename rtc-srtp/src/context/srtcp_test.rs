@@ -255,3 +255,44 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
 
     Ok(())
 }
+
+/// Short SRTCP packets — anything below the minimum size (RTCP header through
+/// the SSRC + trailing SRTCP index + auth tag) — must error, not panic. Before
+/// the length guard, `get_rtcp_index` and the `encrypted[4..8]` SSRC read
+/// indexed unconditionally, so a short packet from the network triggered an
+/// index-out-of-bounds panic (a remotely triggerable DoS on the media path).
+#[test]
+fn test_rtcp_short_packet_errors() -> Result<()> {
+    // Cover both cipher families end-to-end through `Context::decrypt_rtcp`.
+    // AEAD-128-GCM takes a 12-byte salt vs 14 for AES-CM.
+    let cases: [(ProtectionProfile, &[u8]); 2] = [
+        (
+            ProtectionProfile::Aes128CmHmacSha1_80,
+            &RTCP_TEST_MASTER_SALT[..],
+        ),
+        (
+            ProtectionProfile::AeadAes128Gcm,
+            &RTCP_TEST_MASTER_SALT[..12],
+        ),
+    ];
+
+    for (profile, salt) in cases {
+        let mut ctx = Context::new(&RTCP_TEST_MASTER_KEY, salt, profile, None, None)?;
+
+        // Slices of a real packet (its first 4 bytes are a valid RTCP header, so
+        // the header parse succeeds and pre-fix execution reached the
+        // out-of-bounds indexing). Every length below the minimum valid SRTCP
+        // size for the profile must be rejected, not panic.
+        let min_len =
+            8 + SRTCP_INDEX_SIZE + profile.rtcp_auth_tag_len() + profile.aead_auth_tag_len();
+        for len in 0..min_len {
+            let short = RTCP_TEST_CASES[0].encrypted.slice(0..len);
+            assert!(
+                ctx.decrypt_rtcp(&short).is_err(),
+                "decrypt_rtcp must reject a {len}-byte packet (profile min {min_len}), not panic"
+            );
+        }
+    }
+
+    Ok(())
+}
