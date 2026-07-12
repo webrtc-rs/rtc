@@ -566,3 +566,272 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
 
     transmits
 }
+
+#[cfg(test)]
+mod tests {
+    //! Coverage for the batch-drain teardown-safety flush.
+    //!
+    //! `handle_read` / `handle_timeout` normally only INGEST and defer the transmit
+    //! flush to `poll_write`. But when an association drains (graceful shutdown) it is
+    //! removed in that same call — so its final packet (SHUTDOWN / SHUTDOWN_COMPLETE)
+    //! would be dropped by a flush that runs *after* removal, and the peer would hang
+    //! waiting for it. The teardown-safety block flushes pending outbound *before*
+    //! removal. These tests drive a real client<->server SCTP handshake through the
+    //! public `sctp` API (no DTLS/ICE), then verify the draining association's final
+    //! packet reaches `write_outs` instead of being lost.
+
+    use super::*;
+    use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+    use bytes::Bytes;
+    use sansio::Protocol;
+    use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
+    use shared::TransportProtocol;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn client_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4444)
+    }
+
+    fn server_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5555)
+    }
+
+    /// An established client<->server SCTP association pair, driven purely through the
+    /// public `sctp` API so a handler test can operate on a real, connected
+    /// association without standing up the full peer-connection stack.
+    struct Established {
+        client_ep: Endpoint,
+        client_ch: AssociationHandle,
+        client_conn: Association,
+        server_ep: Endpoint,
+        server_ch: AssociationHandle,
+        server_conn: Association,
+    }
+
+    /// Drain every datagram an association currently wants to transmit.
+    fn drain_transmits(conn: &mut Association, now: Instant) -> Vec<Bytes> {
+        let mut out = vec![];
+        while let Some(t) = conn.poll_transmit(now) {
+            if let Payload::RawEncode(contents) = t.message {
+                out.extend(contents);
+            }
+        }
+        out
+    }
+
+    /// Run the SCTP handshake to completion and return the established pair. The
+    /// shuttle plays the role the ICE handler plays in production: it rewrites each
+    /// datagram's source address for the receiving endpoint.
+    fn establish() -> Established {
+        let now = Instant::now();
+
+        let mut client_ep = Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        );
+        let mut server_ep = Endpoint::new(
+            server_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+
+        let (client_ch, mut client_conn) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_addr())
+            .expect("client connect");
+
+        let mut server_conns: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut connected = false;
+
+        for _ in 0..50 {
+            // client -> server
+            let c_out = drain_transmits(&mut client_conn, now);
+            let mut moved = !c_out.is_empty();
+            for dgram in c_out {
+                if let Some((ch, event)) = server_ep.handle(now, client_addr(), None, dgram) {
+                    match event {
+                        DatagramEvent::NewAssociation(conn) => {
+                            server_conns.insert(ch, conn);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(sc) = server_conns.get_mut(&ch) {
+                                sc.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // server -> client
+            let mut s_out = vec![];
+            for sc in server_conns.values_mut() {
+                while sc.poll().is_some() {}
+                s_out.extend(drain_transmits(sc, now));
+            }
+            moved |= !s_out.is_empty();
+            for dgram in s_out {
+                if let Some((_ch, DatagramEvent::AssociationEvent(e))) =
+                    client_ep.handle(now, server_addr(), None, dgram)
+                {
+                    client_conn.handle_event(e);
+                }
+            }
+
+            while let Some(event) = client_conn.poll() {
+                if let Event::Connected = event {
+                    connected = true;
+                }
+            }
+
+            if connected && !moved {
+                break;
+            }
+        }
+
+        assert!(connected, "SCTP handshake did not complete");
+        assert_eq!(server_conns.len(), 1, "exactly one server association");
+        let (server_ch, server_conn) = server_conns.into_iter().next().unwrap();
+
+        Established {
+            client_ep,
+            client_ch,
+            client_conn,
+            server_ep,
+            server_ch,
+            server_conn,
+        }
+    }
+
+    /// Wrap an established client endpoint + association in a handler context.
+    fn client_ctx(
+        client_ep: Endpoint,
+        ch: AssociationHandle,
+        conn: Association,
+    ) -> SctpHandlerContext {
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(client_ep);
+        transport.sctp_associations.insert(ch, conn);
+        SctpHandlerContext::new(transport)
+    }
+
+    // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
+    // `CT_*` constants crate-private, so we decode the wire format directly.
+    const CT_SHUTDOWN: u8 = 7;
+    const CT_SHUTDOWN_COMPLETE: u8 = 14;
+
+    /// First SCTP chunk type of every datagram flushed into `write_outs`. The SCTP
+    /// common header is a fixed 12 bytes (RFC 4960 §3.1), so the first chunk's type
+    /// field is byte 12.
+    fn flushed_chunk_types(ctx: &SctpHandlerContext) -> Vec<u8> {
+        ctx.write_outs
+            .iter()
+            .filter_map(|m| match &m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::Raw(raw)) if raw.len() > 12 => Some(raw[12]),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // handle_timeout teardown-safety block: a graceful shutdown queues both the
+    // `Drained` endpoint event AND the final SHUTDOWN datagram. handle_timeout
+    // collects the drain (removing the association) and must flush the SHUTDOWN
+    // *before* removal, or the peer would never learn the association closed.
+    #[test]
+    fn handle_timeout_flushes_final_packet_before_drain() {
+        let e = establish();
+        let mut client_conn = e.client_conn;
+        client_conn
+            .shutdown()
+            .expect("shutdown from Established queues Drained + SHUTDOWN");
+
+        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_timeout(Instant::now())
+                .expect("handle_timeout");
+        }
+
+        assert!(
+            ctx.sctp_transport.sctp_associations.is_empty(),
+            "draining association must be removed"
+        );
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN),
+            "the final SHUTDOWN must be flushed before removal, not dropped \
+             (flushed chunk types: {flushed:?})"
+        );
+    }
+
+    // handle_read teardown-safety block (+ the SctpMessage::Outbound arm): when the
+    // client, mid graceful-shutdown, receives the peer's SHUTDOWN_ACK it must emit a
+    // SHUTDOWN_COMPLETE. That inbound arrives via handle_read, which collects the
+    // Drained and removes the association — so the SHUTDOWN_COMPLETE has to be flushed
+    // in the same call.
+    #[test]
+    fn handle_read_flushes_final_packet_before_drain() {
+        let e = establish();
+        let mut client_conn = e.client_conn;
+        let mut server_ep = e.server_ep;
+        let mut server_conn = e.server_conn;
+        let server_ch = e.server_ch;
+        let now = Instant::now();
+
+        // Client initiates graceful shutdown -> emits SHUTDOWN.
+        client_conn.shutdown().expect("shutdown");
+        let shutdown_dgrams = drain_transmits(&mut client_conn, now);
+        assert!(!shutdown_dgrams.is_empty(), "shutdown emits SHUTDOWN");
+
+        // Server processes SHUTDOWN -> replies SHUTDOWN_ACK.
+        for d in shutdown_dgrams {
+            if let Some((ch, DatagramEvent::AssociationEvent(ev))) =
+                server_ep.handle(now, client_addr(), None, d)
+            {
+                assert_eq!(ch, server_ch);
+                server_conn.handle_event(ev);
+            }
+        }
+        while server_conn.poll().is_some() {}
+        let ack_dgrams = drain_transmits(&mut server_conn, now);
+        assert!(!ack_dgrams.is_empty(), "server replies SHUTDOWN_ACK");
+
+        // Feed SHUTDOWN_ACK to the client HANDLER via handle_read.
+        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            for d in ack_dgrams {
+                let msg = TaggedRTCMessageInternal {
+                    now,
+                    transport: TransportContext {
+                        local_addr: client_addr(),
+                        peer_addr: server_addr(),
+                        transport_protocol: TransportProtocol::UDP,
+                        ecn: None,
+                    },
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&d[..]))),
+                };
+                handler.handle_read(msg).expect("handle_read");
+            }
+        }
+
+        assert!(
+            ctx.sctp_transport.sctp_associations.is_empty(),
+            "draining association must be removed"
+        );
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN_COMPLETE),
+            "the final SHUTDOWN_COMPLETE must be flushed before removal, not dropped \
+             (flushed chunk types: {flushed:?})"
+        );
+    }
+}
