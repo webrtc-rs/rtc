@@ -3,29 +3,30 @@
 // Mandatory as of TLS 1.2 (2008) and used by default by most clients.
 // RFC 5288 year 2008 https://tools.ietf.org/html/rfc5288
 
-// https://github.com/RustCrypto/AEADs
-// https://docs.rs/aes-gcm/0.8.0/aes_gcm/
-
 use std::io::Cursor;
 
-use aes_gcm::aead::AeadInPlace;
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::{Aes128Gcm, KeyInit};
 use rand::RngExt;
+use ring::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 
 use super::*;
 use crate::content::*;
 use crate::record_layer::record_layer_header::*;
-use shared::error::*; // what about Aes256Gcm?
+use shared::error::*;
 
 const CRYPTO_GCM_TAG_LENGTH: usize = 16;
 const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
 
-// State needed to handle encrypted input/output
+// State needed to handle encrypted input/output.
+//
+// The AES-128-GCM AEAD runs on ring's hardware-accelerated single-pass assembly
+// (AES-NI + CLMUL on x86_64, ARMv8 AES + PMULL on aarch64) instead of the
+// pure-Rust RustCrypto `aes-gcm`. ring is already a dependency of this crate
+// (handshake signatures / key generation). `LessSafeKey` is `Clone`, so
+// `CryptoGcm` stays cloneable for the cipher-suite state that embeds it.
 #[derive(Clone)]
 pub struct CryptoGcm {
-    local_gcm: Aes128Gcm,
-    remote_gcm: Aes128Gcm,
+    local_gcm: LessSafeKey,
+    remote_gcm: LessSafeKey,
     local_write_iv: Vec<u8>,
     remote_write_iv: Vec<u8>,
 }
@@ -37,11 +38,14 @@ impl CryptoGcm {
         remote_key: &[u8],
         remote_write_iv: &[u8],
     ) -> Self {
-        let key = GenericArray::from_slice(local_key);
-        let local_gcm = Aes128Gcm::new(key);
-
-        let key = GenericArray::from_slice(remote_key);
-        let remote_gcm = Aes128Gcm::new(key);
+        // Keys are exactly AES_128_GCM.key_len() (16) bytes as derived by the
+        // handshake; a wrong length here is a programming error.
+        let local_gcm = LessSafeKey::new(
+            UnboundKey::new(&AES_128_GCM, local_key).expect("valid AES-128-GCM local key"),
+        );
+        let remote_gcm = LessSafeKey::new(
+            UnboundKey::new(&AES_128_GCM, remote_key).expect("valid AES-128-GCM remote key"),
+        );
 
         CryptoGcm {
             local_gcm,
@@ -73,13 +77,13 @@ impl CryptoGcm {
 
         let tag = self
             .local_gcm
-            .encrypt_in_place_detached(
-                GenericArray::from_slice(&nonce),
-                &additional_data,
+            .seal_in_place_separate_tag(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(&additional_data),
                 &mut r[RECORD_LAYER_HEADER_SIZE + 8..],
             )
-            .map_err(|e| Error::Other(e.to_string()))?;
-        r.extend_from_slice(&tag);
+            .map_err(|e| Error::Other(format!("DTLS AES-GCM seal failed: {e}")))?;
+        r.extend_from_slice(tag.as_ref());
 
         // Update recordLayer size to include explicit nonce
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
@@ -108,27 +112,32 @@ impl CryptoGcm {
         let out = &r[RECORD_LAYER_HEADER_SIZE + 8..];
         if out.len() < CRYPTO_GCM_TAG_LENGTH {
             // Too short to hold the auth tag; the AEAD would reject it.
-            return Err(Error::Other(aes_gcm::Error.to_string()));
+            return Err(Error::Other(
+                "DTLS AES-GCM record too short for tag".to_string(),
+            ));
         }
         let tag_start = out.len() - CRYPTO_GCM_TAG_LENGTH;
 
         let additional_data = generate_aead_additional_data(&h, tag_start);
 
-        // Copy header + ciphertext (sans tag) once and decrypt in place,
-        // instead of staging the ciphertext in a temporary Vec and copying
-        // the plaintext out again.
-        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + tag_start);
+        // Copy header + ciphertext||tag once and decrypt the ciphertext+tag
+        // region in place. ring's `open_in_place` wants ciphertext and tag
+        // contiguous (they already are on the wire) and returns the plaintext
+        // slice; drop the trailing tag afterwards.
+        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + out.len());
         d.extend_from_slice(&r[..RECORD_LAYER_HEADER_SIZE]);
-        d.extend_from_slice(&out[..tag_start]);
+        d.extend_from_slice(out);
 
-        self.remote_gcm
-            .decrypt_in_place_detached(
-                GenericArray::from_slice(&nonce),
-                &additional_data,
+        let plaintext_len = self
+            .remote_gcm
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(&additional_data),
                 &mut d[RECORD_LAYER_HEADER_SIZE..],
-                GenericArray::from_slice(&out[tag_start..]),
             )
-            .map_err(|e| Error::Other(e.to_string()))?;
+            .map_err(|e| Error::Other(format!("DTLS AES-GCM open failed: {e}")))?
+            .len();
+        d.truncate(RECORD_LAYER_HEADER_SIZE + plaintext_len);
 
         Ok(d)
     }
