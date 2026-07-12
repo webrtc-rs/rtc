@@ -28,6 +28,16 @@ pub(crate) struct SctpHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<RTCEventInternal>,
+
+    // Batch-drain state: handle_read/handle_write/handle_timeout only INGEST (set
+    // `flush_dirty`); the single transmit flush runs in poll_write, once per driver
+    // event-loop iteration. Paired with the driver's burst-read, N received DATA
+    // chunks are processed before one flush, so the ack machine coalesces them into
+    // ONE SACK (1st arms Delay, 2nd+ stay Immediate until flushed) instead of one
+    // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
+    // cost. `last_now` carries the newest timestamp seen into that flush.
+    flush_dirty: bool,
+    last_now: Option<Instant>,
 }
 
 impl SctpHandlerContext {
@@ -37,6 +47,8 @@ impl SctpHandlerContext {
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
+            flush_dirty: false,
+            last_now: None,
         }
     }
 }
@@ -53,6 +65,30 @@ impl<'a> SctpHandler<'a> {
 
     pub(crate) fn name(&self) -> &'static str {
         "SctpHandler"
+    }
+
+    /// Batch-drain flush: gather every association's pending outbound in one pass
+    /// into `write_outs`. Called once per event-loop iteration from poll_write when
+    /// `flush_dirty` is set, after a burst of inbound packets has been ingested, so
+    /// their SACKs coalesce into a single datagram.
+    fn flush_transmits(&mut self, now: Instant) {
+        for (_ch, conn) in self.ctx.sctp_transport.sctp_associations.iter_mut() {
+            while let Some(x) = conn.poll_transmit(now) {
+                for transmit in split_transmit(x) {
+                    if let Payload::RawEncode(raw_data) = transmit.message {
+                        for raw in raw_data {
+                            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                                now: transmit.now,
+                                transport: transmit.transport,
+                                message: RTCMessageInternal::Dtls(DTLSMessage::Raw(
+                                    BytesMut::from(&raw[..]),
+                                )),
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -71,6 +107,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
         if let RTCMessageInternal::Dtls(DTLSMessage::Raw(dtls_message)) = msg.message {
             debug!("recv sctp RAW {:?}", msg.transport.peer_addr);
 
@@ -198,10 +235,22 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     while let Some(event) = conn.poll_endpoint_event() {
                         endpoint_events.push((*ch, event));
                     }
+                    // Transmit flush is deferred to poll_write (batch-drain) so a
+                    // burst of inbound DATA coalesces into one SACK.
+                }
 
-                    while let Some(x) = conn.poll_transmit(msg.now) {
-                        for transmit in split_transmit(x) {
-                            messages.push(SctpMessage::Outbound(transmit));
+                // Teardown safety: each association that emitted an endpoint event
+                // is about to be removed below (drain/shutdown). Flush ITS pending
+                // outbound now — the deferred poll_write flush runs after removal and
+                // would drop its final packets. Only the draining associations are
+                // touched, so non-draining ones keep coalescing and still flush
+                // normally in poll_write.
+                for (drained_ch, _event) in &endpoint_events {
+                    if let Some(conn) = sctp_associations.get_mut(drained_ch) {
+                        while let Some(x) = conn.poll_transmit(now) {
+                            for transmit in split_transmit(x) {
+                                messages.push(SctpMessage::Outbound(transmit));
+                            }
                         }
                     }
                 }
@@ -240,6 +289,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     }
                 }
             }
+
+            // Ingest done — mark dirty so poll_write runs the single flush.
+            self.ctx.flush_dirty = true;
+            self.ctx.last_now = Some(now);
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -253,13 +306,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
         if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(mut message)) = msg.message {
             debug!(
                 "send sctp data channel message to {:?}",
                 msg.transport.peer_addr
             );
 
-            let mut transmits = vec![];
             if message.payload.len() > self.ctx.sctp_transport.internal_buffer.len() {
                 return Err(Error::ErrOutboundPacketTooLarge);
             }
@@ -347,26 +400,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     stream.write_chunk_with_ppi(&payload, message.ppi)?;
                 }
 
-                while let Some(x) = conn.poll_transmit(msg.now) {
-                    transmits.extend(split_transmit(x));
-                }
+                // Transmit flush is deferred to poll_write (batch-drain).
             } else {
                 return Err(Error::ErrAssociationNotExisted);
             }
 
-            for transmit in transmits {
-                if let Payload::RawEncode(raw_data) = transmit.message {
-                    for raw in raw_data {
-                        self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                            now: transmit.now,
-                            transport: transmit.transport,
-                            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(
-                                &raw[..],
-                            ))),
-                        });
-                    }
-                }
-            }
+            // Ingest done — mark dirty so poll_write runs the single flush.
+            self.ctx.flush_dirty = true;
+            self.ctx.last_now = Some(now);
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -376,12 +417,20 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn poll_write(&mut self) -> Option<Self::Wout> {
+        // Batch-drain: run the single deferred transmit flush for this event-loop
+        // iteration before serving queued outbound.
+        if self.ctx.flush_dirty {
+            self.ctx.flush_dirty = false;
+            let now = self.ctx.last_now.unwrap_or_else(Instant::now);
+            self.flush_transmits(now);
+        }
         self.ctx.write_outs.pop_front()
     }
 
     fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
-        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
+        let dtls_complete = matches!(&evt, RTCEventInternal::DTLSHandshakeComplete(_, _));
+        if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
             if let Some(sctp_transport_config) =
@@ -405,6 +454,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     .map_err(|e| Error::Other(e.to_string()))?;
 
                 sctp_associations.insert(ch, conn);
+
+                // `connect` queued the client INIT. Mark dirty so poll_write emits
+                // it at the next flush instead of waiting for a later handle_* (the
+                // deferred flush is now the only transmit path).
+                self.ctx.flush_dirty = true;
             }
         }
 
@@ -440,9 +494,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             while let Some(event) = conn.poll_endpoint_event() {
                 endpoint_events.push((*ch, event));
             }
+            // Transmit flush is deferred to poll_write (batch-drain).
+        }
 
-            while let Some(x) = conn.poll_transmit(now) {
-                transmits.extend(split_transmit(x));
+        // Teardown safety (see handle_read): flush each draining association's final
+        // packets before it is removed below, so the deferred flush doesn't drop
+        // them. Non-draining associations flush normally in poll_write.
+        for (drained_ch, _event) in &endpoint_events {
+            if let Some(conn) = sctp_associations.get_mut(drained_ch) {
+                while let Some(x) = conn.poll_transmit(now) {
+                    transmits.extend(split_transmit(x));
+                }
             }
         }
 
@@ -464,6 +526,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 }
             }
         }
+
+        // Timer processed — mark dirty so poll_write runs the single flush.
+        self.ctx.flush_dirty = true;
+        self.ctx.last_now = Some(now);
 
         Ok(())
     }
@@ -501,4 +567,471 @@ fn split_transmit(transmit: TransportMessage<Payload>) -> Vec<TransportMessage<P
     }
 
     transmits
+}
+
+#[cfg(test)]
+mod tests {
+    //! Coverage for the batch-drain teardown-safety flush.
+    //!
+    //! `handle_read` / `handle_timeout` normally only INGEST and defer the transmit
+    //! flush to `poll_write`. But when an association drains (graceful shutdown) it is
+    //! removed in that same call — so its final packet (SHUTDOWN / SHUTDOWN_COMPLETE)
+    //! would be dropped by a flush that runs *after* removal, and the peer would hang
+    //! waiting for it. The teardown-safety block flushes pending outbound *before*
+    //! removal. These tests drive a real client<->server SCTP handshake through the
+    //! public `sctp` API (no DTLS/ICE), then verify the draining association's final
+    //! packet reaches `write_outs` instead of being lost.
+
+    use super::*;
+    use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+    use bytes::Bytes;
+    use sansio::Protocol;
+    use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
+    use shared::TransportProtocol;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn client_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4444)
+    }
+
+    fn server_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5555)
+    }
+
+    /// An established client<->server SCTP association pair, driven purely through the
+    /// public `sctp` API so a handler test can operate on a real, connected
+    /// association without standing up the full peer-connection stack.
+    struct Established {
+        client_ep: Endpoint,
+        client_ch: AssociationHandle,
+        client_conn: Association,
+        server_ep: Endpoint,
+        server_ch: AssociationHandle,
+        server_conn: Association,
+    }
+
+    /// Drain every datagram an association currently wants to transmit.
+    fn drain_transmits(conn: &mut Association, now: Instant) -> Vec<Bytes> {
+        let mut out = vec![];
+        while let Some(t) = conn.poll_transmit(now) {
+            if let Payload::RawEncode(contents) = t.message {
+                out.extend(contents);
+            }
+        }
+        out
+    }
+
+    /// Run the SCTP handshake to completion and return the established pair. The
+    /// shuttle plays the role the ICE handler plays in production: it rewrites each
+    /// datagram's source address for the receiving endpoint.
+    fn establish() -> Established {
+        let now = Instant::now();
+
+        let mut client_ep = Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        );
+        let mut server_ep = Endpoint::new(
+            server_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+
+        let (client_ch, mut client_conn) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_addr())
+            .expect("client connect");
+
+        let mut server_conns: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut connected = false;
+
+        for _ in 0..50 {
+            // client -> server
+            let c_out = drain_transmits(&mut client_conn, now);
+            let mut moved = !c_out.is_empty();
+            for dgram in c_out {
+                if let Some((ch, event)) = server_ep.handle(now, client_addr(), None, dgram) {
+                    match event {
+                        DatagramEvent::NewAssociation(conn) => {
+                            server_conns.insert(ch, conn);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(sc) = server_conns.get_mut(&ch) {
+                                sc.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // server -> client
+            let mut s_out = vec![];
+            for sc in server_conns.values_mut() {
+                while sc.poll().is_some() {}
+                s_out.extend(drain_transmits(sc, now));
+            }
+            moved |= !s_out.is_empty();
+            for dgram in s_out {
+                if let Some((_ch, DatagramEvent::AssociationEvent(e))) =
+                    client_ep.handle(now, server_addr(), None, dgram)
+                {
+                    client_conn.handle_event(e);
+                }
+            }
+
+            while let Some(event) = client_conn.poll() {
+                if let Event::Connected = event {
+                    connected = true;
+                }
+            }
+
+            if connected && !moved {
+                break;
+            }
+        }
+
+        assert!(connected, "SCTP handshake did not complete");
+        assert_eq!(server_conns.len(), 1, "exactly one server association");
+        let (server_ch, server_conn) = server_conns.into_iter().next().unwrap();
+
+        Established {
+            client_ep,
+            client_ch,
+            client_conn,
+            server_ep,
+            server_ch,
+            server_conn,
+        }
+    }
+
+    /// Establish TWO independent associations on a single client endpoint (each to
+    /// its own server), so a handler test can drain one while the other stays live.
+    fn establish_two() -> (
+        Endpoint,
+        AssociationHandle,
+        Association,
+        AssociationHandle,
+        Association,
+    ) {
+        let now = Instant::now();
+        let server_a_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5555);
+        let server_b_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 6666);
+
+        let mut client_ep = Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        );
+        let mut server_a = Endpoint::new(
+            server_a_addr,
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+        let mut server_b = Endpoint::new(
+            server_b_addr,
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+
+        let (ch_a, mut conn_a) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_a_addr)
+            .expect("connect A");
+        let (ch_b, mut conn_b) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_b_addr)
+            .expect("connect B");
+
+        let mut sa: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut sb: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut a_up = false;
+        let mut b_up = false;
+
+        for _ in 0..100 {
+            let mut moved = false;
+
+            // client A -> server A, client B -> server B
+            for d in drain_transmits(&mut conn_a, now) {
+                moved = true;
+                if let Some((ch, ev)) = server_a.handle(now, client_addr(), None, d) {
+                    match ev {
+                        DatagramEvent::NewAssociation(c) => {
+                            sa.insert(ch, c);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(c) = sa.get_mut(&ch) {
+                                c.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+            for d in drain_transmits(&mut conn_b, now) {
+                moved = true;
+                if let Some((ch, ev)) = server_b.handle(now, client_addr(), None, d) {
+                    match ev {
+                        DatagramEvent::NewAssociation(c) => {
+                            sb.insert(ch, c);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(c) = sb.get_mut(&ch) {
+                                c.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // servers -> client (client_ep routes back by verification tag)
+            let mut back = vec![];
+            for c in sa.values_mut() {
+                while c.poll().is_some() {}
+                for d in drain_transmits(c, now) {
+                    back.push((server_a_addr, d));
+                }
+            }
+            for c in sb.values_mut() {
+                while c.poll().is_some() {}
+                for d in drain_transmits(c, now) {
+                    back.push((server_b_addr, d));
+                }
+            }
+            for (from, d) in back {
+                moved = true;
+                if let Some((ch, DatagramEvent::AssociationEvent(e))) =
+                    client_ep.handle(now, from, None, d)
+                {
+                    if ch == ch_a {
+                        conn_a.handle_event(e);
+                    } else if ch == ch_b {
+                        conn_b.handle_event(e);
+                    }
+                }
+            }
+
+            while let Some(ev) = conn_a.poll() {
+                if let Event::Connected = ev {
+                    a_up = true;
+                }
+            }
+            while let Some(ev) = conn_b.poll() {
+                if let Event::Connected = ev {
+                    b_up = true;
+                }
+            }
+
+            if a_up && b_up && !moved {
+                break;
+            }
+        }
+
+        assert!(a_up && b_up, "both associations must connect");
+        (client_ep, ch_a, conn_a, ch_b, conn_b)
+    }
+
+    /// Wrap an established client endpoint + association in a handler context.
+    fn client_ctx(
+        client_ep: Endpoint,
+        ch: AssociationHandle,
+        conn: Association,
+    ) -> SctpHandlerContext {
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(client_ep);
+        transport.sctp_associations.insert(ch, conn);
+        SctpHandlerContext::new(transport)
+    }
+
+    // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
+    // `CT_*` constants crate-private, so we decode the wire format directly.
+    const CT_PAYLOAD_DATA: u8 = 0;
+    const CT_SHUTDOWN: u8 = 7;
+    const CT_SHUTDOWN_COMPLETE: u8 = 14;
+
+    /// First SCTP chunk type of every datagram flushed into `write_outs`. The SCTP
+    /// common header is a fixed 12 bytes (RFC 4960 §3.1), so the first chunk's type
+    /// field is byte 12.
+    fn flushed_chunk_types(ctx: &SctpHandlerContext) -> Vec<u8> {
+        ctx.write_outs
+            .iter()
+            .filter_map(|m| match &m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::Raw(raw)) if raw.len() > 12 => Some(raw[12]),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // handle_timeout teardown-safety block: a graceful shutdown queues both the
+    // `Drained` endpoint event AND the final SHUTDOWN datagram. handle_timeout
+    // collects the drain (removing the association) and must flush the SHUTDOWN
+    // *before* removal, or the peer would never learn the association closed.
+    #[test]
+    fn handle_timeout_flushes_final_packet_before_drain() {
+        let e = establish();
+        let mut client_conn = e.client_conn;
+        client_conn
+            .shutdown()
+            .expect("shutdown from Established queues Drained + SHUTDOWN");
+
+        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_timeout(Instant::now())
+                .expect("handle_timeout");
+        }
+
+        assert!(
+            ctx.sctp_transport.sctp_associations.is_empty(),
+            "draining association must be removed"
+        );
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN),
+            "the final SHUTDOWN must be flushed before removal, not dropped \
+             (flushed chunk types: {flushed:?})"
+        );
+    }
+
+    // handle_read teardown-safety block (+ the SctpMessage::Outbound arm): when the
+    // client, mid graceful-shutdown, receives the peer's SHUTDOWN_ACK it must emit a
+    // SHUTDOWN_COMPLETE. That inbound arrives via handle_read, which collects the
+    // Drained and removes the association — so the SHUTDOWN_COMPLETE has to be flushed
+    // in the same call.
+    #[test]
+    fn handle_read_flushes_final_packet_before_drain() {
+        let e = establish();
+        let mut client_conn = e.client_conn;
+        let mut server_ep = e.server_ep;
+        let mut server_conn = e.server_conn;
+        let server_ch = e.server_ch;
+        let now = Instant::now();
+
+        // Client initiates graceful shutdown -> emits SHUTDOWN.
+        client_conn.shutdown().expect("shutdown");
+        let shutdown_dgrams = drain_transmits(&mut client_conn, now);
+        assert!(!shutdown_dgrams.is_empty(), "shutdown emits SHUTDOWN");
+
+        // Server processes SHUTDOWN -> replies SHUTDOWN_ACK.
+        for d in shutdown_dgrams {
+            if let Some((ch, DatagramEvent::AssociationEvent(ev))) =
+                server_ep.handle(now, client_addr(), None, d)
+            {
+                assert_eq!(ch, server_ch);
+                server_conn.handle_event(ev);
+            }
+        }
+        while server_conn.poll().is_some() {}
+        let ack_dgrams = drain_transmits(&mut server_conn, now);
+        assert!(!ack_dgrams.is_empty(), "server replies SHUTDOWN_ACK");
+
+        // Feed SHUTDOWN_ACK to the client HANDLER via handle_read.
+        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            for d in ack_dgrams {
+                let msg = TaggedRTCMessageInternal {
+                    now,
+                    transport: TransportContext {
+                        local_addr: client_addr(),
+                        peer_addr: server_addr(),
+                        transport_protocol: TransportProtocol::UDP,
+                        ecn: None,
+                    },
+                    message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&d[..]))),
+                };
+                handler.handle_read(msg).expect("handle_read");
+            }
+        }
+
+        assert!(
+            ctx.sctp_transport.sctp_associations.is_empty(),
+            "draining association must be removed"
+        );
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN_COMPLETE),
+            "the final SHUTDOWN_COMPLETE must be flushed before removal, not dropped \
+             (flushed chunk types: {flushed:?})"
+        );
+    }
+
+    // The teardown-safety flush must touch ONLY the draining association. With two
+    // live associations, draining A must flush A's final SHUTDOWN and remove A while
+    // leaving B — and B's queued DATA — untouched (B keeps coalescing and is flushed
+    // later in poll_write). The over-broad "flush every association" form would drain
+    // B's DATA here too; this test rejects that.
+    #[test]
+    fn teardown_flush_targets_only_the_draining_association() {
+        let (client_ep, ch_a, mut conn_a, ch_b, mut conn_b) = establish_two();
+
+        // A: graceful shutdown -> Drained + a pending SHUTDOWN.
+        conn_a.shutdown().expect("shutdown A");
+        // B: queue DATA that is NOT yet flushed (stays pending in the association).
+        conn_b
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .and_then(|mut s| {
+                s.write_chunk_with_ppi(
+                    &Bytes::from_static(b"pending payload on B"),
+                    PayloadProtocolIdentifier::Binary,
+                )
+            })
+            .expect("queue DATA on B");
+
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(client_ep);
+        transport.sctp_associations.insert(ch_a, conn_a);
+        transport.sctp_associations.insert(ch_b, conn_b);
+        let mut ctx = SctpHandlerContext::new(transport);
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_timeout(Instant::now())
+                .expect("handle_timeout");
+        }
+
+        // A (draining) removed; B (live) retained.
+        assert!(
+            !ctx.sctp_transport.sctp_associations.contains_key(&ch_a),
+            "draining association A must be removed"
+        );
+        assert!(
+            ctx.sctp_transport.sctp_associations.contains_key(&ch_b),
+            "live association B must be retained"
+        );
+
+        // Only A's SHUTDOWN was flushed; B's DATA was NOT.
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN),
+            "A's final SHUTDOWN must be flushed (flushed chunk types: {flushed:?})"
+        );
+        assert!(
+            !flushed.contains(&CT_PAYLOAD_DATA),
+            "B's DATA must NOT be flushed by A's teardown (flushed chunk types: {flushed:?})"
+        );
+
+        // ...and B's DATA is still pending in the association, ready for poll_write.
+        let b = ctx
+            .sctp_transport
+            .sctp_associations
+            .get_mut(&ch_b)
+            .expect("B present");
+        assert!(
+            b.poll_transmit(Instant::now()).is_some(),
+            "B's queued DATA must remain pending, not consumed by A's teardown"
+        );
+    }
 }
