@@ -1,0 +1,25 @@
+# Enable RustCrypto's hardware-accelerated AES + GHASH backends on aarch64.
+#
+# The `aes` and `polyval` (GHASH) crates gate their ARMv8 AES / PMULL intrinsics
+# behind these `--cfg` flags. Both autodetect the CPU features at runtime on
+# macOS and Linux and fall back to the software backend on cores without the
+# extensions, so enabling them unconditionally on aarch64 is safe (no illegal
+# instruction on older CPUs). Without these flags a default build uses the
+# pure-software constant-time backends, which measured ~13x slower for AES-GCM /
+# AES-CM on Apple silicon locally.
+#
+# The AES-GCM AEAD itself now runs on `ring` (see rtc-srtp/.../cipher_aead_aes_gcm.rs
+# and rtc-dtls/src/crypto/crypto_gcm.rs) and is unaffected by these flags; they
+# accelerate the paths that stay on RustCrypto: SRTP AES-CM-HMAC-SHA1, DTLS
+# AES-CCM / AES-CBC, and the SRTP key-derivation AES.
+#
+# x86_64 needs no flag: `aes` and `polyval` autodetect AES-NI / CLMUL at runtime
+# by default. Flag names verified against aes-0.8.4 (src/lib.rs, `aes_armv8`) and
+# polyval-0.6.2 (src/lib.rs, `polyval_armv8`).
+#
+# Caveat: an exported RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS env var replaces (does
+# not merge with) these config rustflags, so a build that sets RUSTFLAGS drops
+# them and silently falls back to the software backends — a performance-only
+# regression, never a correctness one.
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["--cfg", "aes_armv8", "--cfg", "polyval_armv8"]
