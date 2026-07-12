@@ -239,13 +239,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     // burst of inbound DATA coalesces into one SACK.
                 }
 
-                // Teardown safety: if any association is about to be removed
-                // (drain/shutdown), flush all pending outbound now — the deferred
-                // poll_write flush runs after removal and would drop the
-                // association's final packets. Only fires when there IS a removal,
-                // so steady-state SACK coalescing is unaffected.
-                if !endpoint_events.is_empty() {
-                    for (_ch, conn) in sctp_associations.iter_mut() {
+                // Teardown safety: each association that emitted an endpoint event
+                // is about to be removed below (drain/shutdown). Flush ITS pending
+                // outbound now — the deferred poll_write flush runs after removal and
+                // would drop its final packets. Only the draining associations are
+                // touched, so non-draining ones keep coalescing and still flush
+                // normally in poll_write.
+                for (drained_ch, _event) in &endpoint_events {
+                    if let Some(conn) = sctp_associations.get_mut(drained_ch) {
                         while let Some(x) = conn.poll_transmit(now) {
                             for transmit in split_transmit(x) {
                                 messages.push(SctpMessage::Outbound(transmit));
@@ -496,10 +497,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             // Transmit flush is deferred to poll_write (batch-drain).
         }
 
-        // Teardown safety (see handle_read): flush before removal so a drained
-        // association's final packets aren't dropped by the deferred flush.
-        if !endpoint_events.is_empty() {
-            for (_ch, conn) in sctp_associations.iter_mut() {
+        // Teardown safety (see handle_read): flush each draining association's final
+        // packets before it is removed below, so the deferred flush doesn't drop
+        // them. Non-draining associations flush normally in poll_write.
+        for (drained_ch, _event) in &endpoint_events {
+            if let Some(conn) = sctp_associations.get_mut(drained_ch) {
                 while let Some(x) = conn.poll_transmit(now) {
                     transmits.extend(split_transmit(x));
                 }
@@ -704,6 +706,132 @@ mod tests {
         }
     }
 
+    /// Establish TWO independent associations on a single client endpoint (each to
+    /// its own server), so a handler test can drain one while the other stays live.
+    fn establish_two() -> (
+        Endpoint,
+        AssociationHandle,
+        Association,
+        AssociationHandle,
+        Association,
+    ) {
+        let now = Instant::now();
+        let server_a_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5555);
+        let server_b_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 6666);
+
+        let mut client_ep = Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        );
+        let mut server_a = Endpoint::new(
+            server_a_addr,
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+        let mut server_b = Endpoint::new(
+            server_b_addr,
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+
+        let (ch_a, mut conn_a) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_a_addr)
+            .expect("connect A");
+        let (ch_b, mut conn_b) = client_ep
+            .connect(ClientConfig::new(TransportConfig::default()), server_b_addr)
+            .expect("connect B");
+
+        let mut sa: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut sb: HashMap<AssociationHandle, Association> = HashMap::new();
+        let mut a_up = false;
+        let mut b_up = false;
+
+        for _ in 0..100 {
+            let mut moved = false;
+
+            // client A -> server A, client B -> server B
+            for d in drain_transmits(&mut conn_a, now) {
+                moved = true;
+                if let Some((ch, ev)) = server_a.handle(now, client_addr(), None, d) {
+                    match ev {
+                        DatagramEvent::NewAssociation(c) => {
+                            sa.insert(ch, c);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(c) = sa.get_mut(&ch) {
+                                c.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+            for d in drain_transmits(&mut conn_b, now) {
+                moved = true;
+                if let Some((ch, ev)) = server_b.handle(now, client_addr(), None, d) {
+                    match ev {
+                        DatagramEvent::NewAssociation(c) => {
+                            sb.insert(ch, c);
+                        }
+                        DatagramEvent::AssociationEvent(e) => {
+                            if let Some(c) = sb.get_mut(&ch) {
+                                c.handle_event(e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // servers -> client (client_ep routes back by verification tag)
+            let mut back = vec![];
+            for c in sa.values_mut() {
+                while c.poll().is_some() {}
+                for d in drain_transmits(c, now) {
+                    back.push((server_a_addr, d));
+                }
+            }
+            for c in sb.values_mut() {
+                while c.poll().is_some() {}
+                for d in drain_transmits(c, now) {
+                    back.push((server_b_addr, d));
+                }
+            }
+            for (from, d) in back {
+                moved = true;
+                if let Some((ch, DatagramEvent::AssociationEvent(e))) =
+                    client_ep.handle(now, from, None, d)
+                {
+                    if ch == ch_a {
+                        conn_a.handle_event(e);
+                    } else if ch == ch_b {
+                        conn_b.handle_event(e);
+                    }
+                }
+            }
+
+            while let Some(ev) = conn_a.poll() {
+                if let Event::Connected = ev {
+                    a_up = true;
+                }
+            }
+            while let Some(ev) = conn_b.poll() {
+                if let Event::Connected = ev {
+                    b_up = true;
+                }
+            }
+
+            if a_up && b_up && !moved {
+                break;
+            }
+        }
+
+        assert!(a_up && b_up, "both associations must connect");
+        (client_ep, ch_a, conn_a, ch_b, conn_b)
+    }
+
     /// Wrap an established client endpoint + association in a handler context.
     fn client_ctx(
         client_ep: Endpoint,
@@ -721,6 +849,7 @@ mod tests {
 
     // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
     // `CT_*` constants crate-private, so we decode the wire format directly.
+    const CT_PAYLOAD_DATA: u8 = 0;
     const CT_SHUTDOWN: u8 = 7;
     const CT_SHUTDOWN_COMPLETE: u8 = 14;
 
@@ -832,6 +961,77 @@ mod tests {
             flushed.contains(&CT_SHUTDOWN_COMPLETE),
             "the final SHUTDOWN_COMPLETE must be flushed before removal, not dropped \
              (flushed chunk types: {flushed:?})"
+        );
+    }
+
+    // The teardown-safety flush must touch ONLY the draining association. With two
+    // live associations, draining A must flush A's final SHUTDOWN and remove A while
+    // leaving B — and B's queued DATA — untouched (B keeps coalescing and is flushed
+    // later in poll_write). The over-broad "flush every association" form would drain
+    // B's DATA here too; this test rejects that.
+    #[test]
+    fn teardown_flush_targets_only_the_draining_association() {
+        let (client_ep, ch_a, mut conn_a, ch_b, mut conn_b) = establish_two();
+
+        // A: graceful shutdown -> Drained + a pending SHUTDOWN.
+        conn_a.shutdown().expect("shutdown A");
+        // B: queue DATA that is NOT yet flushed (stays pending in the association).
+        conn_b
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .and_then(|mut s| {
+                s.write_chunk_with_ppi(
+                    &Bytes::from_static(b"pending payload on B"),
+                    PayloadProtocolIdentifier::Binary,
+                )
+            })
+            .expect("queue DATA on B");
+
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(client_ep);
+        transport.sctp_associations.insert(ch_a, conn_a);
+        transport.sctp_associations.insert(ch_b, conn_b);
+        let mut ctx = SctpHandlerContext::new(transport);
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_timeout(Instant::now())
+                .expect("handle_timeout");
+        }
+
+        // A (draining) removed; B (live) retained.
+        assert!(
+            !ctx.sctp_transport.sctp_associations.contains_key(&ch_a),
+            "draining association A must be removed"
+        );
+        assert!(
+            ctx.sctp_transport.sctp_associations.contains_key(&ch_b),
+            "live association B must be retained"
+        );
+
+        // Only A's SHUTDOWN was flushed; B's DATA was NOT.
+        let flushed = flushed_chunk_types(&ctx);
+        assert!(
+            flushed.contains(&CT_SHUTDOWN),
+            "A's final SHUTDOWN must be flushed (flushed chunk types: {flushed:?})"
+        );
+        assert!(
+            !flushed.contains(&CT_PAYLOAD_DATA),
+            "B's DATA must NOT be flushed by A's teardown (flushed chunk types: {flushed:?})"
+        );
+
+        // ...and B's DATA is still pending in the association, ready for poll_write.
+        let b = ctx
+            .sctp_transport
+            .sctp_associations
+            .get_mut(&ch_b)
+            .expect("B present");
+        assert!(
+            b.poll_transmit(Instant::now()).is_some(),
+            "B's queued DATA must remain pending, not consumed by A's teardown"
         );
     }
 }
