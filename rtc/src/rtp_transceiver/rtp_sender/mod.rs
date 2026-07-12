@@ -350,13 +350,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if no matching encoding is found, or the codec is unsupported,
-    /// or internal handle_write returns error
+    /// Returns an error if no matching encoding is found, the codec is unsupported, the packet
+    /// carries a header extension whose id is not negotiated on this sender leg, or internal
+    /// handle_write returns error
     pub fn write_rtp(&mut self, packet: rtp::Packet) -> Result<()> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
-        //TODO: handle rtp header extension, etc.
         let (sender, media_engine) = (
             self.peer_connection.rtp_transceivers[self.id.0]
                 .sender_mut()
@@ -409,6 +409,29 @@ where
             return Err(Error::ErrRTPTransceiverCodecUnsupported);
         }
 
+        if let Some(ext) = packet.header.extensions.iter().find(|ext| {
+            !parameters
+                .rtp_parameters
+                .header_extensions
+                .iter()
+                .any(|negotiated| negotiated.id as u8 == ext.id)
+        }) {
+            trace!(
+                "rtp_sender {:?} rejecting RTP ssrc {} header extension id {}: extension id is not negotiated on this sender leg; sender header extensions [{}]",
+                self.id,
+                packet.header.ssrc,
+                ext.id,
+                parameters
+                    .rtp_parameters
+                    .header_extensions
+                    .iter()
+                    .map(|he| format!("{}:{}", he.uri, he.id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            return Err(Error::ErrHeaderExtensionNotFound);
+        }
+
         let track_id = sender.track().track_id().to_string();
         self.peer_connection
             .handle_write(RTCMessage::RtpPacket(track_id, packet))
@@ -430,7 +453,6 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
-        //TODO: handle rtcp sender ssrc, header extension, etc.
         let sender = self.peer_connection.rtp_transceivers[self.id.0]
             .sender_mut()
             .as_mut()

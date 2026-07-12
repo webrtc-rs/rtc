@@ -331,7 +331,6 @@ where
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
-        //TODO: handle rtcp media ssrc, header extension, etc.
         let receiver = self.peer_connection.rtp_transceivers[self.id.0]
             .receiver_mut()
             .as_mut()
