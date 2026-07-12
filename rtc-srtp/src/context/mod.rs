@@ -7,8 +7,6 @@ mod srtp_test;
 
 use std::collections::HashMap;
 
-use aes::Aes128;
-use aes::Aes256;
 use shared::replay_detector::*;
 
 use crate::cipher::cipher_aead_aes_gcm::*;
@@ -128,17 +126,11 @@ impl Context {
                 Box::new(CipherAesCmHmacSha1::new(profile, master_key, master_salt)?)
             }
 
-            ProtectionProfile::AeadAes128Gcm => Box::new(CipherAeadAesGcm::<Aes128>::new(
-                profile,
-                master_key,
-                master_salt,
-            )?),
-
-            ProtectionProfile::AeadAes256Gcm => Box::new(CipherAeadAesGcm::<Aes256>::new(
-                profile,
-                master_key,
-                master_salt,
-            )?),
+            ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => {
+                // `CipherAeadAesGcm::new` selects AES-128 vs AES-256 from the
+                // profile itself, so both GCM profiles share one arm.
+                Box::new(CipherAeadAesGcm::new(profile, master_key, master_salt)?)
+            }
         };
 
         let srtp_ctx_opt = if let Some(ctx_opt) = srtp_ctx_opt {
