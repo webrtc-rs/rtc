@@ -83,6 +83,7 @@ pub enum AssociationError {
 
 /// Events of interest to the application
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// Handshake was failed
     HandshakeFailed {
