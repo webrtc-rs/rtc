@@ -17,7 +17,7 @@ sansio.workspace = true
 
 bytes.workspace = true
 log.workspace = true
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 
 [dev-dependencies]
 env_logger.workspace = true
