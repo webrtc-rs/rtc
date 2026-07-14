@@ -311,9 +311,7 @@ pub(crate) fn generate_key_signature(
 
             signature
         }
-        CryptoPrivateKeyKind::Custom(signer) => {
-            signer.sign(&msg).map_err(Error::Other)?
-        }
+        CryptoPrivateKeyKind::Custom(signer) => signer.sign(&msg).map_err(Error::Other)?,
     };
 
     Ok(signature)
