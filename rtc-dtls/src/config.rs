@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod config_test;
+
 use crate::cipher_suite::*;
 use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use crate::crypto::*;
