@@ -18,6 +18,13 @@ pub(crate) struct RTCDataChannelInternal {
     pub(crate) ready_state: RTCDataChannelState,
     pub(crate) buffered_amount_high_threshold: u32,
     pub(crate) buffered_amount_low_threshold: u32,
+    /// User payload bytes handed to `send()`/`send_text()` that SCTP has not yet
+    /// released (acknowledged or abandoned). Incremented synchronously at the app
+    /// send boundary and decremented on SCTP buffer-release events, so it accounts
+    /// for bytes still in the app→core→SCTP send pipeline — not just the SCTP
+    /// stream's own `buffered_amount`, which counts only post-packetization. Used
+    /// for synchronous send back-pressure.
+    pub(crate) outstanding_bytes: usize,
 
     pub(crate) data_channel: Option<::datachannel::data_channel::DataChannel>,
 }
@@ -35,6 +42,7 @@ impl Default for RTCDataChannelInternal {
             ready_state: RTCDataChannelState::default(),
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
+            outstanding_bytes: 0,
             data_channel: None,
         }
     }
@@ -54,6 +62,7 @@ impl RTCDataChannelInternal {
             ready_state: RTCDataChannelState::Connecting,
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
+            outstanding_bytes: 0,
             data_channel: None,
         }
     }

@@ -83,6 +83,7 @@ pub enum AssociationError {
 
 /// Events of interest to the application
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// Handshake was failed
     HandshakeFailed {
@@ -1310,6 +1311,18 @@ impl Association {
         }
 
         for (si, n_bytes_acked) in &bytes_acked_per_stream {
+            if *n_bytes_acked > 0 {
+                // Report the exact bytes released for this stream (acknowledged OR
+                // abandoned — both funnel through bytes_acked_per_stream) so upper
+                // layers can decrement their own send-buffer accounting. Unlike the
+                // edge-triggered BufferedAmountLow advisory below, this fires on
+                // every release with the byte delta.
+                self.events
+                    .push_back(Event::Stream(StreamEvent::BufferedAmountReleased {
+                        id: *si,
+                        n_bytes: *n_bytes_acked as usize,
+                    }));
+            }
             if let Some(s) = self.streams.get_mut(si)
                 && s.on_buffer_released(*n_bytes_acked)
             {

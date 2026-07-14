@@ -551,4 +551,17 @@ pub(crate) enum RTCEventInternal {
     /// - Association handle
     /// - Stream ID
     SCTPStreamClosed(usize /*AssociationHandle*/, u16 /*StreamID*/),
+
+    /// SCTP released outgoing buffered bytes (acknowledged or abandoned) for a
+    /// stream, used to decrement the per-channel send back-pressure counter.
+    ///
+    /// Parameters:
+    /// - Association handle
+    /// - Stream ID
+    /// - Bytes released
+    SCTPBufferReleased(
+        usize, /*AssociationHandle*/
+        u16,   /*StreamID*/
+        usize, /*n_bytes*/
+    ),
 }

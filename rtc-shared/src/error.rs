@@ -1252,6 +1252,12 @@ pub enum Error {
     #[error("data channel not existed")]
     ErrDataChannelNotExisted,
 
+    /// ErrSendBufferFull indicates that a data-channel send was rejected because
+    /// the channel's outstanding send buffer exceeded the configured hard ceiling
+    /// (back-pressure). Retry after the buffer drains (e.g. on OnBufferedAmountLow).
+    #[error("data channel send buffer full")]
+    ErrSendBufferFull,
+
     /// ErrCertificateExpired indicates that an x509 certificate has expired.
     #[error("x509Cert expired")]
     ErrCertificateExpired,

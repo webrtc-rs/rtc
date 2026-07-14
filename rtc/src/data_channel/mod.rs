@@ -243,34 +243,59 @@ where
 
     /// send sends the binary message to the DataChannel peer
     pub fn send(&mut self, data: BytesMut) -> Result<()> {
-        if self.peer_connection.data_channels.contains_key(&self.id) {
-            self.peer_connection
-                .handle_write(RTCMessage::DataChannelMessage(
-                    self.id,
-                    RTCDataChannelMessage {
-                        is_string: false,
-                        data,
-                    },
-                ))
-        } else {
-            Err(Error::ErrDataChannelClosed)
+        if !self.peer_connection.data_channels.contains_key(&self.id) {
+            return Err(Error::ErrDataChannelClosed);
         }
+        let data_len = data.len();
+        self.peer_connection
+            .handle_write(RTCMessage::DataChannelMessage(
+                self.id,
+                RTCDataChannelMessage {
+                    is_string: false,
+                    data,
+                },
+            ))?;
+        // Count only after a successful enqueue, so a failed send never leaks the
+        // counter upward (those bytes never entered the SCTP send pipeline). This
+        // is the synchronous send-boundary accounting used for back-pressure.
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+            dc.outstanding_bytes += data_len;
+        }
+        Ok(())
     }
 
     /// send_text sends the text message to the DataChannel peer
     pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
-        if self.peer_connection.data_channels.contains_key(&self.id) {
-            self.peer_connection
-                .handle_write(RTCMessage::DataChannelMessage(
-                    self.id,
-                    RTCDataChannelMessage {
-                        is_string: true,
-                        data: BytesMut::from(s.into().as_str()),
-                    },
-                ))
-        } else {
-            Err(Error::ErrDataChannelClosed)
+        if !self.peer_connection.data_channels.contains_key(&self.id) {
+            return Err(Error::ErrDataChannelClosed);
         }
+        let data = BytesMut::from(s.into().as_str());
+        let data_len = data.len();
+        self.peer_connection
+            .handle_write(RTCMessage::DataChannelMessage(
+                self.id,
+                RTCDataChannelMessage {
+                    is_string: true,
+                    data,
+                },
+            ))?;
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+            dc.outstanding_bytes += data_len;
+        }
+        Ok(())
+    }
+
+    /// Bytes handed to [`send`](Self::send)/[`send_text`](Self::send_text) that
+    /// SCTP has not yet released (acknowledged or abandoned) — the true amount of
+    /// outstanding send-side memory for this channel, including bytes still queued
+    /// in the app→core→SCTP pipeline (the SCTP stream's own `buffered_amount`
+    /// counts only post-packetization). Used for synchronous send back-pressure.
+    pub fn outstanding_bytes(&self) -> usize {
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .map(|dc| dc.outstanding_bytes)
+            .unwrap_or(0)
     }
 
     /// Closes the data channel.
