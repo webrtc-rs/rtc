@@ -220,7 +220,6 @@ fn test_certificate_verify() -> Result<()> {
     Ok(())
 }
 
-
 #[derive(Debug)]
 struct MockSigner {
     call_count: std::sync::Arc<std::sync::Mutex<usize>>,
