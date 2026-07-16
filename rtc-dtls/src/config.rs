@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod config_test;
+
 use crate::cipher_suite::*;
 use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use crate::crypto::*;
@@ -272,6 +275,7 @@ impl ConfigBuilder {
             match cert.private_key.kind {
                 CryptoPrivateKeyKind::Ed25519(_) => {}
                 CryptoPrivateKeyKind::Ecdsa256(_) => {}
+                CryptoPrivateKeyKind::Custom(_) => {}
                 _ => return Err(Error::ErrInvalidPrivateKey),
             }
         }

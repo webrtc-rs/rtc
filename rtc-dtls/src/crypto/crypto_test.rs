@@ -219,3 +219,70 @@ fn test_certificate_verify() -> Result<()> {
 
     Ok(())
 }
+
+#[derive(Debug)]
+struct MockSigner {
+    call_count: std::sync::Arc<std::sync::Mutex<usize>>,
+    last_message: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    signature: Vec<u8>,
+}
+
+impl CustomSigner for MockSigner {
+    fn sign(&self, message: &[u8]) -> std::result::Result<Vec<u8>, String> {
+        *self.call_count.lock().unwrap() += 1;
+        *self.last_message.lock().unwrap() = message.to_vec();
+        Ok(self.signature.clone())
+    }
+
+    fn clone_box(&self) -> Box<dyn CustomSigner> {
+        Box::new(MockSigner {
+            call_count: std::sync::Arc::clone(&self.call_count),
+            last_message: std::sync::Arc::clone(&self.last_message),
+            signature: self.signature.clone(),
+        })
+    }
+}
+
+#[test]
+fn test_custom_signer_is_invoked_for_signing() -> Result<()> {
+    let expected_signature = vec![0xca, 0xfe, 0xba, 0xbe];
+    let call_count = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+    let last_message = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let private_key = CryptoPrivateKey {
+        kind: CryptoPrivateKeyKind::Custom(Box::new(MockSigner {
+            call_count: std::sync::Arc::clone(&call_count),
+            last_message: std::sync::Arc::clone(&last_message),
+            signature: expected_signature.clone(),
+        })),
+        serialized_der: vec![],
+    };
+
+    let client_random = [0x01u8, 0x02, 0x03, 0x04];
+    let server_random = [0x05u8, 0x06, 0x07, 0x08];
+    let public_key = [0x09u8, 0x0a, 0x0b];
+    let named_curve = NamedCurve::X25519;
+    let expected_key_message =
+        value_key_message(&client_random, &server_random, &public_key, named_curve);
+
+    let key_signature = generate_key_signature(
+        &client_random,
+        &server_random,
+        &public_key,
+        named_curve,
+        &private_key,
+    )?;
+
+    assert_eq!(*call_count.lock().unwrap(), 1);
+    assert_eq!(&*last_message.lock().unwrap(), &expected_key_message);
+    assert_eq!(key_signature, expected_signature);
+
+    let handshake_bodies = b"certificate-verify-handshake-bodies";
+    let cert_verify = generate_certificate_verify(handshake_bodies, &private_key)?;
+
+    assert_eq!(*call_count.lock().unwrap(), 2);
+    assert_eq!(&*last_message.lock().unwrap(), handshake_bodies);
+    assert_eq!(cert_verify, expected_signature);
+
+    Ok(())
+}
