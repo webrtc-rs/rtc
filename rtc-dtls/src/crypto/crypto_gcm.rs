@@ -4,6 +4,8 @@
 // RFC 5288 year 2008 https://tools.ietf.org/html/rfc5288
 
 use std::io::Cursor;
+#[cfg(feature = "aws-lc-rs")]
+use std::sync::Arc;
 
 use rand::RngExt;
 use ring::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
@@ -25,8 +27,16 @@ const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
 // `CryptoGcm` stays cloneable for the cipher-suite state that embeds it.
 #[derive(Clone)]
 pub struct CryptoGcm {
+    #[cfg(feature = "ring")]
     local_gcm: LessSafeKey,
+    #[cfg(feature = "ring")]
     remote_gcm: LessSafeKey,
+    // Arc is needed until `Clone` is implemented
+    // https://github.com/aws/aws-lc-rs/issues/1165
+    #[cfg(feature = "aws-lc-rs")]
+    local_gcm: Arc<LessSafeKey>,
+    #[cfg(feature = "aws-lc-rs")]
+    remote_gcm: Arc<LessSafeKey>,
     local_write_iv: Vec<u8>,
     remote_write_iv: Vec<u8>,
 }
@@ -46,6 +56,11 @@ impl CryptoGcm {
         let remote_gcm = LessSafeKey::new(
             UnboundKey::new(&AES_128_GCM, remote_key).expect("valid AES-128-GCM remote key"),
         );
+
+        #[cfg(feature = "aws-lc-rs")]
+        let local_gcm = Arc::new(local_gcm);
+        #[cfg(feature = "aws-lc-rs")]
+        let remote_gcm = Arc::new(remote_gcm);
 
         CryptoGcm {
             local_gcm,
