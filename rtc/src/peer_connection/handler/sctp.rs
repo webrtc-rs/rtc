@@ -846,7 +846,7 @@ mod tests {
         ch: AssociationHandle,
         conn: Association,
     ) -> SctpHandlerContext {
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
         transport
             .internal_buffer
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
@@ -994,7 +994,7 @@ mod tests {
             })
             .expect("queue DATA on B");
 
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default());
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
         transport
             .internal_buffer
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);

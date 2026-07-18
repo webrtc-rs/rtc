@@ -529,6 +529,18 @@ where
         self
     }
 
+    /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes,
+    /// on this builder's [`SettingEngine`].
+    ///
+    /// Convenience for [`SettingEngine::set_sctp_max_receive_buffer_size`]; see it for the
+    /// throughput/memory tradeoff. Applies to whichever `SettingEngine` is currently set,
+    /// so call it after [`with_setting_engine`](Self::with_setting_engine) if you also
+    /// supply a custom engine. Leaving it unset keeps the 1 MiB default.
+    pub fn with_sctp_receive_buffer_size(mut self, size: u32) -> Self {
+        self.setting_engine.set_sctp_max_receive_buffer_size(size);
+        self
+    }
+
     /// Configures the peer connection with an interceptor registry.
     ///
     /// Interceptors process RTP/RTCP packets as they flow through the pipeline,

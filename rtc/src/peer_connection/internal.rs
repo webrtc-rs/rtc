@@ -96,7 +96,10 @@ where
         )?;
 
         // Create the SCTP transport
-        let sctp_transport = RTCSctpTransport::new(setting_engine.sctp_max_message_size);
+        let sctp_transport = RTCSctpTransport::new(
+            setting_engine.sctp_max_message_size,
+            setting_engine.sctp_max_receive_buffer_size,
+        );
 
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);

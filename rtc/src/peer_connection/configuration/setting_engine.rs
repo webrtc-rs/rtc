@@ -350,6 +350,9 @@ pub struct SettingEngine {
     pub(crate) mid_generator: Option<Arc<dyn Fn(isize) -> String + Send + Sync>>,
     /// Determines the max size of any message that may be sent through an SCTP transport.
     pub(crate) sctp_max_message_size: SctpMaxMessageSize,
+    /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes.
+    /// `None` uses the rtc-sctp default (`INITIAL_RECV_BUF_SIZE`, 1 MiB).
+    pub(crate) sctp_max_receive_buffer_size: Option<u32>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1116,6 +1119,40 @@ impl SettingEngine {
     /// - [RFC 8841 §6.1 - max-message-size](https://datatracker.ietf.org/doc/html/rfc8841#section-6.1)
     pub fn set_sctp_max_message_size(&mut self, max_message_size: SctpMaxMessageSize) {
         self.sctp_max_message_size = max_message_size;
+    }
+
+    /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes.
+    ///
+    /// This bounds how much unacknowledged data a peer may have in flight toward this
+    /// endpoint — a bandwidth-delay-product ceiling. Lowering it reduces per-connection
+    /// memory (the buffer fills only under load), which matters for servers holding many
+    /// connections; but a smaller window can throttle throughput on high-latency,
+    /// high-bandwidth paths, where more data must be in flight to keep the pipe full.
+    ///
+    /// **Bounds.** RFC 4960 §6 requires an advertised initial a_rwnd of at least **1500
+    /// bytes**; smaller values (including `0`) are raised to that floor here, because a
+    /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
+    /// association never establishes. The window should also be **≥ the largest SCTP
+    /// message this endpoint will receive** ([`set_sctp_max_message_size`], default
+    /// 64 KiB): a buffer smaller than one message cannot hold it for reassembly, so a
+    /// full-size inbound message would stall that receive direction. `0` here is *not*
+    /// "unbounded" (unlike some other knobs) — to keep the default window, leave this
+    /// unset (the default is `INITIAL_RECV_BUF_SIZE`, 1 MiB).
+    pub fn set_sctp_max_receive_buffer_size(&mut self, size: u32) {
+        // RFC 4960 §6 (User Data Transfer) forbids advertising an initial a_rwnd below
+        // 1500 bytes ("An SCTP receiver MUST be able to receive a minimum of 1500 bytes in
+        // one SCTP packet. This means that an SCTP endpoint MUST NOT indicate less than
+        // 1500 bytes in its initial a_rwnd sent in the INIT or INIT ACK."). This crate
+        // enforces it in `ChunkInit::check()` (ErrInitAdvertisedReceiver1500), so a
+        // sub-1500 (or 0) value would silently break the handshake. Clamp up to that floor.
+        const MIN_SCTP_RECEIVE_BUFFER_SIZE: u32 = 1500;
+        if size < MIN_SCTP_RECEIVE_BUFFER_SIZE {
+            log::warn!(
+                "sctp receive buffer size {size} is below the RFC 4960 minimum; raising to \
+                 {MIN_SCTP_RECEIVE_BUFFER_SIZE} bytes"
+            );
+        }
+        self.sctp_max_receive_buffer_size = Some(size.max(MIN_SCTP_RECEIVE_BUFFER_SIZE));
     }
 
     /// Controls whether to ignore RID pause signals for receiving transceivers.
