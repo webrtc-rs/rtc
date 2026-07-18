@@ -103,6 +103,49 @@ fn test_create_forward_tsn_omits_unordered_streams() -> Result<()> {
     Ok(())
 }
 
+// The allocation-avoiding marshal_control_chunk() must produce byte-identical wire
+// output to create_packet(vec![Box::new(chunk)]).marshal(). A 2-stream FORWARD-TSN
+// also exercises ChunkForwardTsn::marshal_to's per-stream marshal_to loop, and a
+// SACK covers the other call site.
+#[test]
+fn test_marshal_control_chunk_byte_identical_to_create_packet() -> Result<()> {
+    let mut a = Association::default();
+    a.peer_verification_tag = 0x1234_5678;
+    a.source_port = 5000;
+    a.destination_port = 5001;
+
+    let fwd_tsn = ChunkForwardTsn {
+        new_cumulative_tsn: 42,
+        streams: vec![
+            ChunkForwardTsnStream {
+                identifier: 1,
+                sequence: 7,
+            },
+            ChunkForwardTsnStream {
+                identifier: 3,
+                sequence: 9,
+            },
+        ],
+    };
+    // Borrow for the helper, then move into create_packet (chunks are not Clone).
+    let via_helper = a.marshal_control_chunk(&fwd_tsn)?;
+    let via_packet = a.create_packet(vec![Box::new(fwd_tsn)]).marshal()?;
+    assert_eq!(
+        via_helper, via_packet,
+        "FORWARD-TSN: marshal_control_chunk must match create_packet(..).marshal()"
+    );
+
+    let sack = a.create_selective_ack_chunk();
+    let sack_via_helper = a.marshal_control_chunk(&sack)?;
+    let sack_via_packet = a.create_packet(vec![Box::new(sack)]).marshal()?;
+    assert_eq!(
+        sack_via_helper, sack_via_packet,
+        "SACK: marshal_control_chunk must match create_packet(..).marshal()"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn test_handle_forward_tsn_forward_3unreceived_chunks() -> Result<()> {
     let mut a = Association::default();
