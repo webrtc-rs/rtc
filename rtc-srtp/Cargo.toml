@@ -12,6 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
+default = ["ring"]
+ring = ["dep:ring"]
+aws-lc-rs = ["dep:aws-lc-rs"]
 openssl = ["dep:openssl"]
 vendored-openssl = ["openssl/vendored"]
 
@@ -29,7 +32,8 @@ aes = "0.8.4"
 subtle = "2.5.0"
 # AES-GCM (AEAD_AES_128/256_GCM profiles) runs on ring's hardware-accelerated,
 # single-pass AES-GCM; the AES-CM-HMAC-SHA1 profiles below stay on RustCrypto.
-ring.workspace = true
+ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 openssl = { version = "0.10.72", optional = true }
 
 [dev-dependencies]

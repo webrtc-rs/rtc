@@ -119,6 +119,13 @@ impl RTCDtlsTransport {
             return Err(Error::ErrInvalidDTLSStart);
         }
 
+        // The `webrtc` interop tests uses `ring` for its crypto provider,
+        // so we need to avoid conflicts with `aws-lc-rs`.
+        // We need a feature gate because
+        // `#[cfg(test)]` is not propagated to this crate in integration tests.
+        #[cfg(all(any(feature = "__testing", test), feature = "aws-lc-rs"))]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
         self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
 
         let remote_fingerprints = remote_dtls_parameters.fingerprints;

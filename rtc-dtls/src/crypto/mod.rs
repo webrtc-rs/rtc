@@ -211,6 +211,7 @@ impl Clone for CryptoPrivateKey {
                     EcdsaKeyPair::from_pkcs8(
                         &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
                         &self.serialized_der,
+                        #[cfg(feature = "ring")]
                         &SystemRandom::new(),
                     )
                     .unwrap(),
@@ -256,6 +257,7 @@ impl CryptoPrivateKey {
                     EcdsaKeyPair::from_pkcs8(
                         &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
                         &serialized_der,
+                        #[cfg(feature = "ring")]
                         &SystemRandom::new(),
                     )
                     .map_err(|e| Error::Other(e.to_string()))?,
@@ -300,7 +302,10 @@ pub(crate) fn generate_key_signature(
         }
         CryptoPrivateKeyKind::Rsa256(kp) => {
             let system_random = SystemRandom::new();
+            #[cfg(feature = "ring")]
             let mut signature = vec![0; kp.public().modulus_len()];
+            #[cfg(feature = "aws-lc-rs")]
+            let mut signature = vec![0; kp.public_modulus_len()];
             kp.sign(
                 &ring::signature::RSA_PKCS1_SHA256,
                 &system_random,
@@ -423,7 +428,10 @@ pub(crate) fn generate_certificate_verify(
         }
         CryptoPrivateKeyKind::Rsa256(kp) => {
             let system_random = SystemRandom::new();
+            #[cfg(feature = "ring")]
             let mut signature = vec![0; kp.public().modulus_len()];
+            #[cfg(feature = "aws-lc-rs")]
+            let mut signature = vec![0; kp.public_modulus_len()];
             kp.sign(
                 &ring::signature::RSA_PKCS1_SHA256,
                 &system_random,

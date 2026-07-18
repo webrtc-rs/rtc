@@ -15,16 +15,24 @@ env:
 
 jobs:
   grcov:
-    name: Coverage
+    name: Coverage (${{ matrix.crypto.name }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
         toolchain:
           - nightly
-        cargo_flags:
-          - "--all-features"
+        crypto:
+          - name: ring
+            features: rtc/ring
+            packages: --workspace
+            test_args: ""
+          - name: aws-lc-rs
+            features: aws-lc-rs
+            packages: --package rtc
+            test_args: --lib
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -41,7 +49,7 @@ jobs:
           tool: grcov
 
       - name: Test
-        run: cargo test --all --no-fail-fast ${{ matrix.cargo_flags }}
+        run: cargo test ${{ matrix.crypto.packages }} --no-fail-fast --no-default-features --features ${{ matrix.crypto.features }} ${{ matrix.crypto.test_args }}
         env:
           CARGO_INCREMENTAL: "0"
           RUSTFLAGS: "-Cinstrument-coverage"
@@ -67,7 +75,7 @@ jobs:
       - name: Upload coverage as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lcov.info
+          name: lcov-${{ matrix.crypto.name }}.info
           # path: ${{ steps.grcov.outputs.report }}
           path: lcov.info
 
@@ -75,4 +83,5 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
+          flags: ${{ matrix.crypto.name }}
           fail_ci_if_error: true
