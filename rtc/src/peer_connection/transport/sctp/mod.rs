@@ -31,6 +31,10 @@ pub(crate) struct RTCSctpTransport {
     // return the value of the [[MaxMessageSize]] slot.
     pub(crate) max_message_size: SctpMaxMessageSize,
 
+    // Optional override for the SCTP receive-buffer size (a_rwnd flow-control window),
+    // in bytes. None uses the sctp crate default (INITIAL_RECV_BUF_SIZE, 1 MiB).
+    pub(crate) max_receive_buffer_size: Option<u32>,
+
     // max_channels represents the maximum amount of DataChannel's that can
     // be used simultaneously.
     pub(crate) max_channels: u16,
@@ -39,7 +43,10 @@ pub(crate) struct RTCSctpTransport {
 }
 
 impl RTCSctpTransport {
-    pub(crate) fn new(max_message_size: SctpMaxMessageSize) -> Self {
+    pub(crate) fn new(
+        max_message_size: SctpMaxMessageSize,
+        max_receive_buffer_size: Option<u32>,
+    ) -> Self {
         Self {
             sctp_endpoint: None,
             sctp_transport_config: None,
@@ -48,6 +55,7 @@ impl RTCSctpTransport {
             state: RTCSctpTransportState::Connecting,
             is_started: false,
             max_message_size,
+            max_receive_buffer_size,
             max_channels: SCTP_MAX_CHANNELS,
             internal_buffer: vec![],
         }
@@ -91,9 +99,12 @@ impl RTCSctpTransport {
         self.internal_buffer.resize(max_message_size as usize, 0u8);
 
         let sctp_endpoint_config = ::sctp::EndpointConfig::default();
-        let sctp_transport_config = ::sctp::TransportConfig::default()
+        let mut sctp_transport_config = ::sctp::TransportConfig::default()
             .with_max_message_size(max_message_size)
             .with_sctp_port(local_port);
+        if let Some(recv_buf) = self.max_receive_buffer_size {
+            sctp_transport_config = sctp_transport_config.with_max_receive_buffer_size(recv_buf);
+        }
         //TODO: add remote_port support
 
         if dtls_role == RTCDtlsRole::Client {
@@ -114,5 +125,57 @@ impl RTCSctpTransport {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Starting a Client transport stores the built TransportConfig on the struct, so we
+    // can assert the configured (or default) receive-buffer size flowed through `start()`.
+    #[test]
+    fn start_applies_configured_receive_buffer_size() {
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), Some(200_000));
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        assert_eq!(
+            transport
+                .sctp_transport_config
+                .expect("client transport config")
+                .max_receive_buffer_size(),
+            200_000
+        );
+    }
+
+    #[test]
+    fn start_without_override_uses_default_receive_buffer_size() {
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        // `None` keeps the sctp crate default (INITIAL_RECV_BUF_SIZE = 1 MiB).
+        assert_eq!(
+            transport
+                .sctp_transport_config
+                .expect("client transport config")
+                .max_receive_buffer_size(),
+            1024 * 1024
+        );
     }
 }

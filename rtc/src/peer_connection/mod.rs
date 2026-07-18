@@ -529,6 +529,18 @@ where
         self
     }
 
+    /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes,
+    /// on this builder's [`SettingEngine`].
+    ///
+    /// Convenience for [`SettingEngine::set_sctp_max_receive_buffer_size`]; see it for the
+    /// throughput/memory tradeoff. Applies to whichever `SettingEngine` is currently set,
+    /// so call it after [`with_setting_engine`](Self::with_setting_engine) if you also
+    /// supply a custom engine. Leaving it unset keeps the 1 MiB default.
+    pub fn with_sctp_receive_buffer_size(mut self, size: u32) -> Self {
+        self.setting_engine.set_sctp_max_receive_buffer_size(size);
+        self
+    }
+
     /// Configures the peer connection with an interceptor registry.
     ///
     /// Interceptors process RTP/RTCP packets as they flow through the pipeline,
@@ -2246,5 +2258,30 @@ where
         self.pipeline_context
             .stats
             .snapshot_with_selector(now, selector)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_sctp_receive_buffer_size_sets_and_clamps() {
+        let builder = RTCPeerConnectionBuilder::new().with_sctp_receive_buffer_size(200_000);
+        assert_eq!(
+            builder.setting_engine.sctp_max_receive_buffer_size,
+            Some(200_000)
+        );
+
+        // Values below the RFC 4960 §6 floor (1500 bytes), including 0, are clamped up so
+        // they cannot break the SCTP handshake.
+        for input in [0u32, 500, 1499] {
+            let builder = RTCPeerConnectionBuilder::new().with_sctp_receive_buffer_size(input);
+            assert_eq!(
+                builder.setting_engine.sctp_max_receive_buffer_size,
+                Some(1500),
+                "input {input} should clamp up to the 1500-byte floor"
+            );
+        }
     }
 }
