@@ -2,6 +2,7 @@ use crate::association::{
     state::{AckMode, AckState, AssociationState},
     stats::AssociationStats,
 };
+use crate::chunk::chunk_header::CHUNK_HEADER_SIZE;
 use crate::chunk::{
     Chunk, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT, chunk_abort::ChunkAbort,
     chunk_cookie_ack::ChunkCookieAck, chunk_cookie_echo::ChunkCookieEcho, chunk_error::ChunkError,
@@ -2013,6 +2014,26 @@ impl Association {
         }
     }
 
+    /// Marshal a single control chunk into one SCTP packet, bypassing the
+    /// `Vec<Box<dyn Chunk>>` + `Packet` allocations of `create_packet(..).marshal()`.
+    /// Feeds the borrowed chunk straight to the shared framing path
+    /// ([`Packet::write_framed`]). Used on the hot SACK / FORWARD-TSN send path
+    /// (a SACK is emitted roughly every 1-2 inbound DATA chunks). The caller holds
+    /// the lock.
+    fn marshal_control_chunk(&self, chunk: &dyn Chunk) -> Result<Bytes> {
+        let common_header = CommonHeader {
+            verification_tag: self.peer_verification_tag,
+            source_port: self.source_port,
+            destination_port: self.destination_port,
+        };
+        // common header + chunk header + value + up to 3 bytes of trailing padding.
+        let mut buf = BytesMut::with_capacity(
+            COMMON_HEADER_SIZE as usize + CHUNK_HEADER_SIZE + chunk.value_length() + 3,
+        );
+        Packet::write_framed(&common_header, std::iter::once(chunk), &mut buf)?;
+        Ok(buf.freeze())
+    }
+
     /// create_stream creates a stream. The caller should hold the lock and check no stream exists for this id.
     fn create_stream(
         &mut self,
@@ -2280,7 +2301,7 @@ impl Association {
             self.ack_state = AckState::Idle;
             let sack = self.create_selective_ack_chunk();
             debug!("[{}] sending SACK: {}", self.side, sack);
-            if let Ok(raw) = self.create_packet(vec![Box::new(sack)]).marshal() {
+            if let Ok(raw) = self.marshal_control_chunk(&sack) {
                 raw_packets.push(raw);
             } else {
                 warn!("[{}] failed to serialize a SACK packet", self.side);
@@ -2303,7 +2324,7 @@ impl Association {
                 self.cumulative_tsn_ack_point,
             ) {
                 let fwd_tsn = self.create_forward_tsn();
-                if let Ok(raw) = self.create_packet(vec![Box::new(fwd_tsn)]).marshal() {
+                if let Ok(raw) = self.marshal_control_chunk(&fwd_tsn) {
                     raw_packets.push(raw);
                 } else {
                     warn!("[{}] failed to serialize a Forward TSN packet", self.side);
