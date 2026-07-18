@@ -94,7 +94,11 @@ impl Chunk for ChunkForwardTsn {
         writer.put_u32(self.new_cumulative_tsn);
 
         for s in &self.streams {
-            writer.extend_from_slice(&s.marshal()?);
+            // Marshal each 4-byte stream entry straight into `writer` instead of
+            // `extend_from_slice(&s.marshal()?)`, which heap-allocates a throwaway
+            // `Bytes` per stream just to copy it back out. FORWARD-TSN is on the hot
+            // send path for unreliable (PR-SCTP) data channels.
+            s.marshal_to(writer)?;
         }
 
         Ok(writer.len())
