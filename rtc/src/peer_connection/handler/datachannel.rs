@@ -131,6 +131,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     .get_or_create_data_channel(stream_id, &label, &protocol)
                     .on_message_received(payload_len);
 
+                // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
+                // When receiving an SCTP user message with one of these [Empty]
+                // PPIDs, the receiver MUST ignore the SCTP user message and
+                // process it as an empty message.
+                let message_data = if matches!(
+                    data_channel_message.ppi,
+                    PayloadProtocolIdentifier::StringEmpty | PayloadProtocolIdentifier::BinaryEmpty
+                ) {
+                    Default::default()
+                } else {
+                    data_channel_message.payload
+                };
+
                 self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now: msg.now,
                     transport: msg.transport,
@@ -138,11 +151,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         ApplicationMessage {
                             data_channel_id: stream_id,
                             data_channel_event: DataChannelEvent::Message(RTCDataChannelMessage {
-                                is_string: data_channel_message.ppi
-                                    == PayloadProtocolIdentifier::String
-                                    || data_channel_message.ppi
-                                        == PayloadProtocolIdentifier::StringEmpty,
-                                data: data_channel_message.payload,
+                                is_string: matches!(
+                                    data_channel_message.ppi,
+                                    PayloadProtocolIdentifier::String
+                                        | PayloadProtocolIdentifier::StringEmpty
+                                ),
+                                data: message_data,
                             }),
                         },
                     )),
