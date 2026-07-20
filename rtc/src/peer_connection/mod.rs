@@ -248,6 +248,7 @@ pub mod transport;
 
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataChannelInternal};
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
@@ -1840,7 +1841,21 @@ where
             }
         }
 
-        let data_channel = RTCDataChannelInternal::new(id, params);
+        let mut data_channel = RTCDataChannelInternal::new(id, params);
+
+        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #23)
+        // Open the channel's data transport immediately when an SCTP association already exists.
+        if let Some(handle) = self
+            .sctp_transport()
+            .sctp_associations
+            .keys()
+            .next()
+            .copied()
+            && data_channel.ready_state == RTCDataChannelState::Connecting
+            && data_channel.data_channel.is_none()
+        {
+            data_channel.dial(handle.0)?;
+        }
 
         self.data_channels.insert(id, data_channel);
 
@@ -2264,6 +2279,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_channel::state::RTCDataChannelState;
+    use sctp::AssociationHandle;
 
     #[test]
     fn with_sctp_receive_buffer_size_sets_and_clamps() {
@@ -2283,5 +2300,26 @@ mod tests {
                 "input {input} should clamp up to the 1500-byte floor"
             );
         }
+    }
+
+    #[test]
+    fn create_data_channel_dials_immediately_when_sctp_association_present() {
+        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+
+        // Simulate an SCTP association so create_data_channel sees a transport
+        // that is ready to open streams.
+        pc.sctp_transport_mut()
+            .sctp_associations
+            .insert(AssociationHandle(0), sctp::Association::default());
+
+        let _dc = pc.create_data_channel("test", None).unwrap();
+
+        let internal = pc
+            .data_channels
+            .values()
+            .next()
+            .expect("data channel must be stored internally");
+        assert!(internal.data_channel.is_some());
+        assert_eq!(internal.ready_state, RTCDataChannelState::Open);
     }
 }
