@@ -16,7 +16,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
-use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverId};
+use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverDirection, RTCRtpTransceiverId};
 use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
@@ -459,6 +459,9 @@ where
                             );
                             if next_state.is_ok() {
                                 self.pending_local_description = None;
+                                // Undo the transceiver associations/creations made by the
+                                // now-abandoned offer (RFC 8829, Section 5.7).
+                                self.rollback_transceivers()?;
                             }
                             next_state
                         }
@@ -527,6 +530,9 @@ where
                             );
                             if next_state.is_ok() {
                                 self.pending_remote_description = None;
+                                // Undo the transceiver associations/creations made by the
+                                // now-abandoned offer (RFC 8829, Section 5.7).
+                                self.rollback_transceivers()?;
                             }
                             next_state
                         }
@@ -554,8 +560,13 @@ where
                 self.signaling_state = next_state;
                 if self.signaling_state == RTCSignalingState::Stable {
                     self.is_negotiation_ongoing = false;
-                    //TODO: https://www.w3.org/TR/webrtc/#dfn-update-the-negotiation-needed-flag
-                    // self.trigger_negotiation_needed();
+                    // Negotiation has committed: any transceiver that was created while applying
+                    // a remote offer is now part of the stable state, so clear the
+                    // created-by-remote flag. This keeps the flag meaning exactly "created by the
+                    // current pending (uncommitted) offer", which is what rollback relies on.
+                    for t in &mut self.rtp_transceivers {
+                        t.set_created_by_remote_description(false);
+                    }
                 }
                 self.do_signaling_state_change(next_state);
                 Ok(())
@@ -605,6 +616,82 @@ where
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
         self.rtp_transceivers.len() - 1
+    }
+
+    /// Undoes the transceiver changes made by an offer/answer transaction that is being rolled
+    /// back, as required by RFC 8829, Section 5.7.
+    ///
+    /// - Transceivers that were implicitly created by applying the remote offer now being rolled
+    ///   back are stopped and removed, unless a track has since been attached to them via
+    ///   `add_track` (i.e. they have a sender). The latter are kept but disassociated so a
+    ///   subsequent `create_offer` can re-add an "m=" section for the attached track.
+    /// - Any remaining transceiver that was associated with an "m=" section solely by the
+    ///   rolled-back description — i.e. its mid is not present in the current (last stable)
+    ///   local or remote description — is disassociated: its mid is cleared and the "m=" section
+    ///   index mapping is discarded. Transceivers associated by a prior, already-negotiated
+    ///   exchange keep their mid.
+    ///
+    /// The effect is identical regardless of whether the rollback was applied via
+    /// `set_local_description` or `set_remote_description`, as the spec requires.
+    pub(super) fn rollback_transceivers(&mut self) -> Result<()> {
+        // Mids that were associated by the last stable offer/answer exchange. A transceiver
+        // whose mid appears here was not associated by the rolled-back description and must be
+        // left untouched.
+        let negotiated_mids = self.current_description_mids();
+
+        // Stop and remove transceivers created by the rolled-back remote offer that have no
+        // attached track. `created_by_remote_description` is cleared once negotiation reaches
+        // stable, so a set flag denotes a transceiver created by the pending, not-yet-committed
+        // offer. Iterate in reverse so index-based removal is stable.
+        for i in (0..self.rtp_transceivers.len()).rev() {
+            let t = &self.rtp_transceivers[i];
+            if t.created_by_remote_description() && t.sender().is_none() {
+                self.rtp_transceivers[i].stop(&self.media_engine, &mut self.interceptor)?;
+                self.rtp_transceivers.remove(i);
+            }
+        }
+
+        // Disassociate any remaining transceiver that was associated with an "m=" section solely
+        // by the rolled-back description.
+        for t in &mut self.rtp_transceivers {
+            let associated_by_rolled_back_desc = t
+                .mid()
+                .as_ref()
+                .is_some_and(|mid| !negotiated_mids.contains(mid));
+            if associated_by_rolled_back_desc {
+                t.disassociate();
+            }
+        }
+
+        // The created-by-remote flag on any survivors is cleared by the caller once the state
+        // machine settles back to `stable` (see `set_description`).
+
+        Ok(())
+    }
+
+    /// Collects the set of mids associated by the current (last stable) local and remote
+    /// descriptions. Used by rollback to distinguish transceivers associated by a prior,
+    /// already-negotiated exchange from those associated only by the description being rolled back.
+    fn current_description_mids(&self) -> HashSet<String> {
+        let mut mids = HashSet::new();
+        for desc in [
+            self.current_local_description.as_ref(),
+            self.current_remote_description.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(parsed) = desc.parsed.as_ref() {
+                for media in &parsed.media_descriptions {
+                    if let Some(mid) = get_mid_value(media)
+                        && !mid.is_empty()
+                    {
+                        mids.insert(mid.clone());
+                    }
+                }
+            }
+        }
+        mids
     }
 
     fn start_rtp_senders(&mut self) -> Result<()> {

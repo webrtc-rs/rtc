@@ -1421,6 +1421,11 @@ where
                                 transceiver.set_mid(mid_value.to_string())?;
                             }
 
+                            // Mark as implicitly created by a remote offer so that, if this offer
+                            // is later rolled back, the transceiver is stopped and removed
+                            // (RFC 8829, Section 5.7) — unless a track is attached via add_track.
+                            transceiver.set_created_by_remote_description(true);
+
                             self.add_rtp_transceiver(transceiver);
                         }
                     }
@@ -2321,5 +2326,342 @@ mod tests {
             .expect("data channel must be stored internally");
         assert!(internal.data_channel.is_some());
         assert_eq!(internal.ready_state, RTCDataChannelState::Open);
+    }
+
+    // ---- Rollback (RFC 8829, Section 5.7) ----
+
+    use crate::peer_connection::configuration::media_engine::MediaEngine;
+    use crate::rtp_transceiver::RTCRtpTransceiverInit;
+
+    fn media_pc() -> RTCPeerConnection {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+        RTCPeerConnectionBuilder::new()
+            .with_media_engine(me)
+            .build()
+            .unwrap()
+    }
+
+    /// Builds an audio+video offer from a freshly-created peer connection.
+    fn audio_video_offer() -> RTCSessionDescription {
+        let mut offerer = media_pc();
+        offerer
+            .add_transceiver_from_kind(
+                RtpCodecKind::Audio,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Recvonly,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        offerer
+            .add_transceiver_from_kind(
+                RtpCodecKind::Video,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Recvonly,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        offerer.create_offer(None).unwrap()
+    }
+
+    fn rollback() -> RTCSessionDescription {
+        RTCSessionDescription {
+            sdp_type: RTCSdpType::Rollback,
+            sdp: String::new(),
+            parsed: None,
+        }
+    }
+
+    #[test]
+    fn set_remote_rollback_removes_transceivers_created_by_remote_offer() {
+        let offer = audio_video_offer();
+
+        let mut pc = media_pc();
+        pc.set_remote_description(offer).unwrap();
+
+        // Applying the remote offer implicitly creates two transceivers, each associated
+        // with an "m=" section.
+        assert_eq!(pc.rtp_transceivers.len(), 2);
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
+        assert!(pc.rtp_transceivers.iter().all(|t| t.mid().is_some()));
+
+        // Rolling back the offer must stop and remove those transceivers and return to stable.
+        pc.set_remote_description(rollback()).unwrap();
+
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        assert!(
+            pc.rtp_transceivers.is_empty(),
+            "transceivers created by a rolled-back remote offer must be removed"
+        );
+    }
+
+    #[test]
+    fn set_local_rollback_disassociates_but_keeps_app_created_transceivers() {
+        // A locally-initiated offer: the transceivers are created by the application, so
+        // rolling back the local offer via set_local_description must disassociate them
+        // (clear their mids) but must NOT remove them. This exercises the same rollback
+        // cleanup path as set_remote_description, per RFC 8829 Section 5.7.
+        let mut pc = media_pc();
+        pc.add_transceiver_from_kind(
+            RtpCodecKind::Audio,
+            Some(RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            }),
+        )
+        .unwrap();
+
+        let offer = pc.create_offer(None).unwrap();
+        pc.set_local_description(offer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveLocalOffer);
+        assert_eq!(pc.rtp_transceivers.len(), 1);
+        assert!(pc.rtp_transceivers[0].mid().is_some());
+
+        pc.set_local_description(rollback()).unwrap();
+
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        assert_eq!(
+            pc.rtp_transceivers.len(),
+            1,
+            "application-created transceivers must not be removed by rollback"
+        );
+        assert!(
+            pc.rtp_transceivers[0].mid().is_none(),
+            "rolled-back transceiver must be disassociated from its m= section"
+        );
+    }
+
+    #[test]
+    fn rollback_keeps_transceiver_with_track_attached_via_add_track() {
+        let offer = audio_video_offer();
+
+        let mut pc = media_pc();
+        pc.set_remote_description(offer).unwrap();
+        assert_eq!(pc.rtp_transceivers.len(), 2);
+
+        // Attach a local track. add_track reuses the sender-less audio transceiver that was
+        // created by the remote offer, giving it a sender.
+        let track = MediaStreamTrack::new(
+            "stream".to_owned(),
+            "track".to_owned(),
+            "label".to_owned(),
+            RtpCodecKind::Audio,
+            vec![],
+        );
+        pc.add_track(track).unwrap();
+
+        pc.set_remote_description(rollback()).unwrap();
+
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        // The video transceiver (no track) is removed; the audio transceiver with the attached
+        // track is kept but disassociated (mid cleared) so a future offer can re-add it.
+        assert_eq!(
+            pc.rtp_transceivers.len(),
+            1,
+            "transceiver with a track attached via add_track must not be removed"
+        );
+        let kept = &pc.rtp_transceivers[0];
+        assert_eq!(kept.kind(), RtpCodecKind::Audio);
+        assert!(kept.sender().is_some());
+        assert!(
+            kept.mid().is_none(),
+            "kept transceiver must be disassociated from its m= section on rollback"
+        );
+    }
+
+    #[test]
+    fn rollback_keeps_transceiver_negotiated_by_a_previous_exchange() {
+        // First, complete a full offer/answer so an incoming transceiver becomes part of the
+        // stable state (its mid is recorded in the current remote description).
+        let offer = audio_video_offer();
+        let mut pc = media_pc();
+        pc.set_remote_description(offer).unwrap();
+        assert_eq!(pc.rtp_transceivers.len(), 2);
+        let answer = pc.create_answer(None).unwrap();
+        pc.set_local_description(answer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        let negotiated_mids: Vec<_> = pc
+            .rtp_transceivers
+            .iter()
+            .map(|t| t.mid().clone())
+            .collect();
+        assert!(negotiated_mids.iter().all(|m| m.is_some()));
+
+        // Now a renegotiation arrives and is rolled back. The transceivers negotiated by the
+        // FIRST exchange must survive with their mids intact — rollback only undoes the pending
+        // (second) transaction, not committed state.
+        let reoffer = audio_video_offer();
+        pc.set_remote_description(reoffer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
+
+        pc.set_remote_description(rollback()).unwrap();
+
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        assert_eq!(
+            pc.rtp_transceivers.len(),
+            2,
+            "previously-negotiated transceivers must not be removed by a renegotiation rollback"
+        );
+        let mids_after: Vec<_> = pc
+            .rtp_transceivers
+            .iter()
+            .map(|t| t.mid().clone())
+            .collect();
+        assert_eq!(
+            mids_after, negotiated_mids,
+            "previously-negotiated transceivers must keep their mid across rollback"
+        );
+    }
+
+    #[test]
+    fn add_track_then_rollback_remote_offer_then_create_offer_includes_track() {
+        // RFC 8829, Section 5.7: "an application may call addTrack, then call
+        // setRemoteDescription with an offer, then roll back that offer, then call createOffer
+        // and have an "m=" section for the added track appear in the generated offer."
+        let mut pc = media_pc();
+
+        // 1. addTrack — creates a local sendrecv audio transceiver with a sender.
+        let track = MediaStreamTrack::new(
+            "stream".to_owned(),
+            "track".to_owned(),
+            "label".to_owned(),
+            RtpCodecKind::Audio,
+            vec![],
+        );
+        pc.add_track(track).unwrap();
+        assert_eq!(pc.rtp_transceivers.len(), 1);
+
+        // 2. setRemoteDescription with a remote (video-only) offer. This reuses no existing
+        //    transceiver (different kind), so it creates a second, remote-originated one.
+        let mut video_offerer = media_pc();
+        video_offerer
+            .add_transceiver_from_kind(
+                RtpCodecKind::Video,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Recvonly,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        let remote_offer = video_offerer.create_offer(None).unwrap();
+        pc.set_remote_description(remote_offer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
+        // The audio transceiver (with our track) got associated with the offer's m= section.
+        assert!(
+            pc.rtp_transceivers
+                .iter()
+                .any(|t| t.kind() == RtpCodecKind::Audio && t.sender().is_some())
+        );
+
+        // 3. Roll back that offer.
+        pc.set_remote_description(rollback()).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+
+        // The audio transceiver with the attached track must survive (disassociated), while the
+        // remote-created video transceiver must be gone.
+        assert_eq!(
+            pc.rtp_transceivers.len(),
+            1,
+            "the add_track transceiver must survive rollback; the remote one must be removed"
+        );
+        let kept = &pc.rtp_transceivers[0];
+        assert_eq!(kept.kind(), RtpCodecKind::Audio);
+        assert!(kept.sender().is_some());
+        assert!(kept.mid().is_none(), "must be disassociated after rollback");
+
+        // 4. createOffer — an m= section for the added (audio) track must appear.
+        let offer = pc.create_offer(None).unwrap();
+        assert_eq!(
+            offer.sdp.matches("m=audio").count(),
+            1,
+            "createOffer after rollback must emit an m=audio section for the added track"
+        );
+        // The transceiver has been re-associated (given a mid) for the new offer.
+        assert!(pc.rtp_transceivers[0].mid().is_some());
+    }
+
+    #[test]
+    fn add_track_then_rollback_local_offer_then_answer_remote_still_renegotiates_track() {
+        // Polite-peer glare scenario (RFC 8829, Section 5.7): the application calls addTrack and
+        // sends its own offer, then a remote offer arrives (collision). The polite peer rolls
+        // back its local offer, applies the remote offer, and answers it. The locally-added
+        // track was never negotiated, so it must still be pending and appear in a subsequent
+        // offer — mirroring the RFC's addTrack/rollback/createOffer guarantee for the local case.
+        let mut pc = media_pc();
+
+        // 1. addTrack (audio) — local sendrecv audio transceiver with a sender.
+        let track = MediaStreamTrack::new(
+            "stream".to_owned(),
+            "track".to_owned(),
+            "label".to_owned(),
+            RtpCodecKind::Audio,
+            vec![],
+        );
+        pc.add_track(track).unwrap();
+
+        // 2. set_local_description(our offer) — enters have-local-offer, audio gets a mid.
+        let local_offer = pc.create_offer(None).unwrap();
+        pc.set_local_description(local_offer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveLocalOffer);
+        assert!(pc.rtp_transceivers[0].mid().is_some());
+
+        // 3. A remote (video) offer arrives — glare.
+        let mut video_offerer = media_pc();
+        video_offerer
+            .add_transceiver_from_kind(
+                RtpCodecKind::Video,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Recvonly,
+                    streams: vec![],
+                    send_encodings: vec![],
+                }),
+            )
+            .unwrap();
+        let remote_offer = video_offerer.create_offer(None).unwrap();
+
+        // 4. Roll back our local offer (via set_local_description, the polite-peer path).
+        pc.set_local_description(rollback()).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+        // Our audio transceiver survives (has a track/sender) but is disassociated.
+        assert_eq!(pc.rtp_transceivers.len(), 1);
+        assert_eq!(pc.rtp_transceivers[0].kind(), RtpCodecKind::Audio);
+        assert!(pc.rtp_transceivers[0].sender().is_some());
+        assert!(pc.rtp_transceivers[0].mid().is_none());
+
+        // 5. Apply the remote offer, then answer it.
+        pc.set_remote_description(remote_offer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
+        let answer = pc.create_answer(None).unwrap();
+        // The answer only covers the remote's video m= section; our audio track is not yet
+        // negotiated, so it must NOT appear in the answer.
+        assert_eq!(answer.sdp.matches("m=video").count(), 1);
+        assert_eq!(answer.sdp.matches("m=audio").count(), 0);
+        pc.set_local_description(answer).unwrap();
+        assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
+
+        // 6. The locally-added track was never negotiated, so a follow-up offer must include an
+        //    m=audio section for it (alongside the now-negotiated video section).
+        let followup_offer = pc.create_offer(None).unwrap();
+        assert_eq!(
+            followup_offer.sdp.matches("m=audio").count(),
+            1,
+            "the added track must appear in the offer generated after rollback + answer"
+        );
+        assert_eq!(followup_offer.sdp.matches("m=video").count(), 1);
+        assert!(
+            pc.rtp_transceivers
+                .iter()
+                .find(|t| t.kind() == RtpCodecKind::Audio)
+                .unwrap()
+                .mid()
+                .is_some(),
+            "audio transceiver must be re-associated for the follow-up offer"
+        );
     }
 }

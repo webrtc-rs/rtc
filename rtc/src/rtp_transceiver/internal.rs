@@ -37,6 +37,12 @@ where
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
     stopped: bool,
+    /// Whether this transceiver was implicitly created while applying a remote offer
+    /// (as opposed to being created by the application via `add_track`/`add_transceiver_*`).
+    /// Used by rollback (RFC 8829, Section 5.7): transceivers created by a remote offer that
+    /// is subsequently rolled back must be stopped and removed, unless a track was later
+    /// attached to them via `add_track`.
+    created_by_remote_description: bool,
 }
 
 impl<I> fmt::Debug for RTCRtpTransceiverInternal<I>
@@ -88,6 +94,7 @@ where
             current_direction: RTCRtpTransceiverDirection::Unspecified,
             preferred_codecs: vec![],
             stopped: false,
+            created_by_remote_description: false,
         }
     }
 
@@ -257,6 +264,25 @@ where
 
     pub(crate) fn stopped(&self) -> bool {
         self.stopped
+    }
+
+    /// Returns whether this transceiver was implicitly created while applying a remote offer.
+    /// See [`RTCRtpTransceiverInternal::created_by_remote_description`].
+    pub(crate) fn created_by_remote_description(&self) -> bool {
+        self.created_by_remote_description
+    }
+
+    /// Marks this transceiver as having been implicitly created while applying a remote offer.
+    pub(crate) fn set_created_by_remote_description(&mut self, created: bool) {
+        self.created_by_remote_description = created;
+    }
+
+    /// Disassociates this transceiver from its "m=" section, as required by rollback
+    /// (RFC 8829, Section 5.7). The mid is cleared and the negotiated (current) direction is
+    /// reset so the transceiver can be re-associated by a subsequent offer/answer exchange.
+    pub(crate) fn disassociate(&mut self) {
+        self.mid = None;
+        self.current_direction = RTCRtpTransceiverDirection::Unspecified;
     }
 
     pub(crate) fn set_current_direction(&mut self, d: RTCRtpTransceiverDirection) {
