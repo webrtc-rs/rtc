@@ -558,7 +558,8 @@ where
         match next_state {
             Ok(next_state) => {
                 self.signaling_state = next_state;
-                if self.signaling_state == RTCSignalingState::Stable {
+                let reached_stable = self.signaling_state == RTCSignalingState::Stable;
+                if reached_stable {
                     self.is_negotiation_ongoing = false;
                     // Negotiation has committed: any transceiver that was created while applying
                     // a remote offer is now part of the stable state, so clear the
@@ -569,6 +570,14 @@ where
                     }
                 }
                 self.do_signaling_state_change(next_state);
+                if reached_stable {
+                    // W3C "update the negotiation-needed flag" is re-run each time the connection
+                    // returns to a stable signaling state. A transceiver added while the
+                    // connection was mid-negotiation (`negotiation_needed_op` step 2.3 bails out
+                    // when not stable) had its negotiation-needed check deferred; re-running it now
+                    // fires `OnNegotiationNeededEvent` if anything is still un-negotiated.
+                    self.trigger_negotiation_needed();
+                }
                 Ok(())
             }
             Err(err) => Err(err),
