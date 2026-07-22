@@ -55,7 +55,7 @@ struct Cli {
     debug: bool,
 }
 
-static INDEX: &str = "examples/examples/perfect-negotiation/index.html";
+static INDEX: &str = "examples/perfect-negotiation/index.html";
 
 /// Signaling message types exchanged between peers
 #[derive(Debug, Clone, Serialize, Deserialize)]

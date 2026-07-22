@@ -53,7 +53,7 @@ struct Cli {
     debug: bool,
 }
 
-static INDEX: &str = "examples/examples/ice-tcp/index.html";
+static INDEX: &str = "examples/ice-tcp/index.html";
 
 // Message types for communication between HTTP handler and main loop
 enum SignalingMessage {

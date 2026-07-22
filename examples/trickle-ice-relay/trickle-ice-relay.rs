@@ -62,7 +62,7 @@ struct Cli {
     turn_realm: String,
 }
 
-static INDEX: &str = "examples/examples/trickle-ice-relay/index.html";
+static INDEX: &str = "examples/trickle-ice-relay/index.html";
 
 // Messages from WebSocket handler
 #[derive(Debug)]

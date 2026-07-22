@@ -71,8 +71,8 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
     log::info!("Starting play-from-disk-vpx interop test: rtc (disk) -> webrtc");
 
     // Determine test data paths
-    let video_file = "../examples/examples/test-data/output_vp8.ivf";
-    let audio_file = "../examples/examples/test-data/output.ogg";
+    let video_file = "../examples/test-data/output_vp8.ivf";
+    let audio_file = "../examples/test-data/output.ogg";
 
     // Check if test files exist
     if !Path::new(video_file).exists() {

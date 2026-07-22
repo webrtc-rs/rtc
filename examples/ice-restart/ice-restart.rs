@@ -40,7 +40,7 @@ struct Cli {
     debug: bool,
 }
 
-static INDEX: &str = "examples/examples/ice-restart/index.html";
+static INDEX: &str = "examples/ice-restart/index.html";
 static NOTFOUND: &[u8] = b"Not Found";
 
 // Commands from HTTP server to event loop

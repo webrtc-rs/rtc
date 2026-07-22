@@ -55,7 +55,7 @@ struct Cli {
     output_log_file: String,
 }
 
-static INDEX: &str = "examples/examples/trickle-ice-srflx/index.html";
+static INDEX: &str = "examples/trickle-ice-srflx/index.html";
 
 // Messages from WebSocket handler
 #[derive(Debug)]

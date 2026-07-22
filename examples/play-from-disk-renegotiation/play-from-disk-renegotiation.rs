@@ -70,7 +70,7 @@ struct AppState {
         Arc<Mutex<std::collections::HashMap<RTCRtpSenderId, tokio::sync::oneshot::Sender<()>>>>,
 }
 
-static INDEX: &str = "examples/examples/play-from-disk-renegotiation/index.html";
+static INDEX: &str = "examples/play-from-disk-renegotiation/index.html";
 static NOTFOUND: &[u8] = b"Not Found";
 
 /// HTTP status code 404

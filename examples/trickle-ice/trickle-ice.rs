@@ -86,7 +86,7 @@ struct Cli {
     enable_relay: bool,
 }
 
-static INDEX: &str = "examples/examples/trickle-ice/index.html";
+static INDEX: &str = "examples/trickle-ice/index.html";
 
 // Messages from WebSocket handler
 #[derive(Debug)]
