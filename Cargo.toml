@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "examples",
-    "rtc",
     "rtc-datachannel",
     "rtc-dtls",
     "rtc-ice",
@@ -34,11 +32,9 @@ keywords = ["sansio", "networking", "protocols"]
 categories = ["network-programming"]
 
 [workspace.dependencies]
-rtc = { version = "0.20.0-rc.3", path = "rtc" }
-signal = { version = "0.20.0-rc.3", path = "examples/examples/signal", package = "rtc-signal" }
 datachannel = { version = "0.20.0-rc.3", path = "rtc-datachannel", package = "rtc-datachannel" }
 dtls = { version = "0.20.0-rc.3", path = "rtc-dtls", package = "rtc-dtls", default-features = false }
-ice = { version = "0.20.0-rc.3", path = "rtc-ice", package = "rtc-ice" }
+ice = { version = "0.20.0-rc.3", path = "rtc-ice", package = "rtc-ice", default-features = false }
 interceptor = { version = "0.20.0-rc.3", path = "rtc-interceptor", package = "rtc-interceptor" }
 interceptor-derive = { version = "0.20.0-rc.3", path = "rtc-interceptor-derive", package = "rtc-interceptor-derive" }
 mdns = { version = "0.20.0-rc.3", path = "rtc-mdns", package = "rtc-mdns" }
@@ -50,14 +46,14 @@ sdp = { version = "0.20.0-rc.3", path = "rtc-sdp", package = "rtc-sdp" }
 shared = { version = "0.20.0-rc.3", path = "rtc-shared", package = "rtc-shared", default-features = false }
 srtp = { version = "0.20.0-rc.3", path = "rtc-srtp", package = "rtc-srtp", default-features = false }
 stun = { version = "0.20.0-rc.3", path = "rtc-stun", package = "rtc-stun", default-features = false }
-turn = { version = "0.20.0-rc.3", path = "rtc-turn", package = "rtc-turn" }
+turn = { version = "0.20.0-rc.3", path = "rtc-turn", package = "rtc-turn", default-features = false }
 
 # common dependencies
 sansio = "1"
 bytes = "1.12.0"
 byteorder = "1.5.0"
 log = "0.4.33"
-rcgen = { version = "0.14.8", features = ["pem", "x509-parser"], default-features = false }
+rcgen = { version = "0.14.8", features = ["pem"], default-features = false }
 ring = "0.17.14"
 aws-lc-rs = { version = "1.17.3", features = ["aws-lc-sys"], default-features = false }
 rand = "0.10.1"
@@ -71,3 +67,251 @@ clap = { version = "4.6.1", features = ["derive"] }
 ctrlc = "3.5.2"
 criterion = "0.8.2"
 tokio = { version = "1.52.3", features = ["full"] }
+
+[package]
+name = "rtc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Sans-I/O WebRTC implementation in Rust"
+license.workspace = true
+documentation = "https://docs.rs/rtc"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[features]
+default = ["ring"]
+pem = ["dep:pem", "dtls/pem"]
+openssl = ["srtp/openssl"]
+vendored-openssl = ["srtp/vendored-openssl"]
+ring = ["dep:ring", "dtls/ring", "rustls/ring", "rcgen/ring", "ice/ring", "stun/ring", "srtp/ring", "turn/ring"]
+aws-lc-rs = ["dep:aws-lc-rs", "dtls/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs", "ice/aws-lc-rs", "stun/aws-lc-rs", "srtp/aws-lc-rs", "turn/aws-lc-rs"]
+__testing = []
+
+[dependencies]
+shared = { workspace = true, default-features = false, features = ["crypto", "marshal", "replay"] }
+sansio.workspace = true
+datachannel.workspace = true
+dtls.workspace = true
+ice.workspace = true
+interceptor.workspace = true
+mdns.workspace = true
+media.workspace = true
+rtcp.workspace = true
+rtp.workspace = true
+sctp.workspace = true
+sdp.workspace = true
+srtp.workspace = true
+stun.workspace = true
+turn.workspace = true
+
+bytes.workspace = true
+log.workspace = true
+serde = "1"
+serde_json = { version = "1", features = [] }
+rcgen.workspace = true
+ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
+sha2 = "0.10"
+rustls = { version = "0.23.35", default-features = false, features = ["std"] }
+url = { version = "2", features = [] }
+hex = { version = "0.4", features = [] }
+pem = { version = "3", optional = true }
+unicase = "2.8"
+rand.workspace = true
+
+[dev-dependencies]
+sansio.workspace = true
+shared.workspace = true
+ice.workspace = true
+webrtc = "0.14.0"
+signal = { version = "0.20.0-rc.3", path = "examples/signal", package = "rtc-signal" }
+
+tokio.workspace = true
+env_logger.workspace = true
+anyhow = "1"
+clap.workspace = true
+hyper = { version = "0.14.32", features = ["full"] }
+tokio-util = { version = "0.7.17", features = ["codec"] }
+chrono.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json = "1.0.145"
+bytes.workspace = true
+rand.workspace = true
+ctrlc.workspace = true
+tokio-tungstenite = "0.28.0"
+futures-util = "0.3"
+
+[[example]]
+name = "broadcast"
+path = "examples/broadcast/broadcast.rs"
+bench = false
+
+[[example]]
+name = "data-channels"
+path = "examples/data-channels/data-channels.rs"
+bench = false
+
+[[example]]
+name = "data-channels-create"
+path = "examples/data-channels-create/data-channels-create.rs"
+bench = false
+
+[[example]]
+name = "data-channels-close"
+path = "examples/data-channels-close/data-channels-close.rs"
+bench = false
+
+[[example]]
+name = "data-channels-flow-control"
+path = "examples/data-channels-flow-control/data-channels-flow-control.rs"
+bench = false
+
+[[example]]
+name = "data-channels-offer"
+path = "examples/data-channels-offer-answer/data-channels-offer.rs"
+bench = false
+
+[[example]]
+name = "data-channels-answer"
+path = "examples/data-channels-offer-answer/data-channels-answer.rs"
+bench = false
+
+[[example]]
+name = "insertable-streams"
+path = "examples/insertable-streams/insertable-streams.rs"
+bench = false
+
+[[example]]
+name = "play-from-disk-vpx"
+path = "examples/play-from-disk-vpx/play-from-disk-vpx.rs"
+bench = false
+
+[[example]]
+name = "play-from-disk-h26x"
+path = "examples/play-from-disk-h26x/play-from-disk-h26x.rs"
+bench = false
+
+[[example]]
+name = "save-to-disk-vpx"
+path = "examples/save-to-disk-vpx/save-to-disk-vpx.rs"
+bench = false
+
+[[example]]
+name = "save-to-disk-h26x"
+path = "examples/save-to-disk-h26x/save-to-disk-h26x.rs"
+bench = false
+
+[[example]]
+name = "play-from-disk-renegotiation"
+path = "examples/play-from-disk-renegotiation/play-from-disk-renegotiation.rs"
+bench = false
+
+[[example]]
+name = "reflect"
+path = "examples/reflect/reflect.rs"
+bench = false
+
+[[example]]
+name = "rtp-forwarder"
+path = "examples/rtp-forwarder/rtp-forwarder.rs"
+bench = false
+
+[[example]]
+name = "rtp-to-webrtc"
+path = "examples/rtp-to-webrtc/rtp-to-webrtc.rs"
+bench = false
+
+[[example]]
+name = "simulcast"
+path = "examples/simulcast/simulcast.rs"
+bench = false
+
+[[example]]
+name = "simulcast_bidirection"
+path = "examples/simulcast_bidirection/simulcast_bidirection.rs"
+bench = false
+
+[[example]]
+name = "stats"
+path = "examples/stats/stats.rs"
+bench = false
+
+[[example]]
+name = "mdns-query-and-gather"
+path = "examples/mdns-query-and-gather/mdns-query-and-gather.rs"
+bench = false
+
+[[example]]
+name = "swap-tracks"
+path = "examples/swap-tracks/swap-tracks.rs"
+bench = false
+
+[[example]]
+name = "ice-restart"
+path = "examples/ice-restart/ice-restart.rs"
+bench = false
+
+[[example]]
+name = "trickle-ice-host"
+path = "examples/trickle-ice-host/trickle-ice-host.rs"
+bench = false
+
+[[example]]
+name = "trickle-ice-srflx"
+path = "examples/trickle-ice-srflx/trickle-ice-srflx.rs"
+bench = false
+
+[[example]]
+name = "trickle-ice-relay"
+path = "examples/trickle-ice-relay/trickle-ice-relay.rs"
+bench = false
+
+[[example]]
+name = "trickle-ice"
+path = "examples/trickle-ice/trickle-ice.rs"
+bench = false
+
+[[example]]
+name = "ice-tcp"
+path = "examples/ice-tcp/ice-tcp.rs"
+bench = false
+
+[[example]]
+name = "ice-tcp-active-offer"
+path = "examples/ice-tcp-active-passive/ice-tcp-active-offer.rs"
+bench = false
+
+[[example]]
+name = "ice-tcp-passive-answer"
+path = "examples/ice-tcp-active-passive/ice-tcp-passive-answer.rs"
+bench = false
+
+[[example]]
+name = "rtcp-processing"
+path = "examples/rtcp-processing/rtcp-processing.rs"
+bench = false
+
+[[example]]
+name = "data-channels-simple"
+path = "examples/data-channels-simple/data-channels-simple.rs"
+bench = false
+
+[[example]]
+name = "save-to-disk-av1"
+path = "examples/save-to-disk-av1/save-to-disk-av1.rs"
+bench = false
+
+[[example]]
+name = "play-from-disk-playlist-control"
+path = "examples/play-from-disk-playlist-control/play-from-disk-playlist-control.rs"
+bench = false
+
+[[example]]
+name = "perfect-negotiation"
+path = "examples/perfect-negotiation/perfect-negotiation.rs"
+bench = false

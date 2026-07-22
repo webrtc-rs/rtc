@@ -235,20 +235,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The repository includes comprehensive examples demonstrating various use cases:
 
-- [data-channels-offer-answer](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/data-channels-offer-answer/) -
+- [data-channels-offer-answer](https://github.com/webrtc-rs/rtc/tree/master/examples/data-channels-offer-answer/) -
   Complete data channel setup with
   signaling
-- [reflect](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/reflect/) - Echo server that reflects
+- [reflect](https://github.com/webrtc-rs/rtc/tree/master/examples/reflect/) - Echo server that reflects
   media back to sender
-- [save-to-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/save-to-disk-vpx/) - Receive and
+- [save-to-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/save-to-disk-vpx/) - Receive and
   save VP8/VP9 video
-- [play-from-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/play-from-disk-vpx/) - Send
+- [play-from-disk-vpx](https://github.com/webrtc-rs/rtc/tree/master/examples/play-from-disk-vpx/) - Send
   VP8/VP9 video from disk
-- [simulcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/simulcast) - Receive 3
+- [simulcast](https://github.com/webrtc-rs/rtc/tree/master/examples/simulcast) - Receive 3
   simulcast encodings in one track
-- [broadcast](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/broadcast) - Broadcast a video to multiple
+- [broadcast](https://github.com/webrtc-rs/rtc/tree/master/examples/broadcast) - Broadcast a video to multiple
   peers
-- [stats](https://github.com/webrtc-rs/rtc/tree/master/examples/examples/stats) - Gives statistical
+- [stats](https://github.com/webrtc-rs/rtc/tree/master/examples/stats) - Gives statistical
   information about a PeerConnection
 
 Run an example:
@@ -384,7 +384,7 @@ This implementation follows these specifications:
 ## Documentation
 
 - [API Documentation](https://docs.rs/rtc) - Complete API reference
-- [Examples](https://github.com/webrtc-rs/rtc/tree/master/examples/examples) - Working code examples
+- [Examples](https://github.com/webrtc-rs/rtc/tree/master/examples) - Working code examples
 - [Sans-I/O Pattern](https://sans-io.readthedocs.io/) - Detailed explanation of the sans-I/O design
 - [WebRTC for the Curious](https://webrtcforthecurious.com/) - Comprehensive WebRTC guide
 
@@ -412,7 +412,8 @@ This project follows [Semantic Versioning](https://semver.org/):
 - **Minor** (`0.X.0`): Backwards-compatible additions or deprecations to the public API.
 - **Major** (`X.0.0`): Breaking changes to the public API.
 
-While the version is `0.x`, the minor version acts as the major — i.e., a minor bump may include breaking changes. Once `1.0.0` is released, full semver stability guarantees apply.
+While the version is `0.x`, the minor version acts as the major — i.e., a minor bump may include breaking changes. Once
+`1.0.0` is released, full semver stability guarantees apply.
 
 Pre-release versions are published with the following suffixes, in order of increasing stability:
 

@@ -29,7 +29,10 @@ crossbeam-channel = "0.5"
 ctrlc.workspace = true
 
 [features]
+default = ["ring"]
 metrics = []
+ring = ["stun/ring"]
+aws-lc-rs = ["stun/aws-lc-rs"]
 
 [[bench]]
 name = "bench"
