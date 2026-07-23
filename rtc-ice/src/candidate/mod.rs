@@ -327,6 +327,29 @@ impl Candidate {
         self.resolved_addr
     }
 
+    /// Returns the candidate's base address: the local transport address the
+    /// candidate was derived from, i.e. the address packets for this candidate
+    /// must be sent from (RFC 8445 §5.1.1).
+    ///
+    /// For server-reflexive and peer-reflexive candidates this is the related
+    /// (host) address; for host and relay candidates the base is the candidate
+    /// address itself.
+    pub fn base_addr(&self) -> SocketAddr {
+        match self.candidate_type {
+            CandidateType::ServerReflexive | CandidateType::PeerReflexive => self
+                .related_address
+                .as_ref()
+                .and_then(|ra| {
+                    ra.address
+                        .parse::<IpAddr>()
+                        .ok()
+                        .map(|ip| SocketAddr::new(ip, ra.port))
+                })
+                .unwrap_or(self.resolved_addr),
+            _ => self.resolved_addr,
+        }
+    }
+
     pub fn seen(&mut self, outbound: bool) {
         let now = Instant::now();
 

@@ -121,7 +121,10 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             // transmits stay stamped UDP even when the selected pair is TCP,
             // and consumers routing poll_write() output by transport_protocol
             // send every non-STUN packet down the wrong transport.
-            msg.transport.local_addr = local.addr();
+            // Use the local candidate's base address: for (server/peer-)
+            // reflexive candidates the candidate address is the NAT mapping,
+            // not a bound local socket (RFC 8445 §5.1.1).
+            msg.transport.local_addr = local.base_addr();
             msg.transport.peer_addr = remote.addr();
             msg.transport.transport_protocol = local.network_type().to_protocol();
             debug!("Bypass ice write {:?}", msg.transport.peer_addr);
