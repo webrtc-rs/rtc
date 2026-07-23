@@ -323,16 +323,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
-        let dtls_endpoint = self
-            .ctx
-            .dtls_transport
-            .dtls_endpoint
-            .as_mut()
-            .ok_or(Error::ErrDtlsTransportNotStarted)?;
+        let Some(dtls_endpoint) = self.ctx.dtls_transport.dtls_endpoint.as_mut() else {
+            return Ok(());
+        };
 
         let remotes: Vec<SocketAddr> = dtls_endpoint.get_connections_keys().copied().collect();
         for remote in remotes {
-            let _ = dtls_endpoint.handle_timeout(remote, now);
+            dtls_endpoint.handle_timeout(remote, now)?;
         }
         while let Some(transmit) = dtls_endpoint.poll_transmit() {
             self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
@@ -431,5 +428,19 @@ impl<'a> DtlsHandler<'a> {
         )?;
 
         Ok((local_context, remote_context))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_before_dtls_starts_is_a_noop() {
+        let mut context = DtlsHandlerContext::default();
+        let mut stats = RTCStatsAccumulator::default();
+        let mut handler = DtlsHandler::new(&mut context, &mut stats);
+
+        sansio::Protocol::handle_timeout(&mut handler, Instant::now()).unwrap();
     }
 }
