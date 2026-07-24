@@ -1381,7 +1381,10 @@ impl Agent {
 
     pub(crate) fn send_stun(&mut self, msg: &Message, local_index: usize, remote_index: usize) {
         let peer_addr = self.remote_candidates[remote_index].addr();
-        let local_addr = self.local_candidates[local_index].addr();
+        // RFC 8445 §6.1.2: checks for a (server/peer-)reflexive candidate must
+        // be sent from its base, the bound local socket the candidate was
+        // derived from; the mapped address is not a local socket.
+        let local_addr = self.local_candidates[local_index].base_addr();
         let transport_protocol = if self.local_candidates[local_index].network_type().is_tcp() {
             TransportProtocol::TCP
         } else {

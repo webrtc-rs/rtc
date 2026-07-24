@@ -2879,3 +2879,60 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
 
     Ok(())
 }
+
+/// Regression test: connectivity checks for a server-reflexive local candidate
+/// must be tagged with the candidate's base (the bound host socket), not the
+/// NAT-mapped srflx address (RFC 8445 §6.1.2). Drivers that route outbound
+/// transmits by `transport.local_addr` otherwise have no socket to send from
+/// and drop the packet.
+#[test]
+fn test_send_stun_from_srflx_uses_base_addr() -> Result<()> {
+    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+
+    let srflx_local = CandidateServerReflexiveConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "10.79.12.1".to_owned(), // NAT mapping; no local socket here
+            port: 60823,
+            component: 1,
+            ..Default::default()
+        },
+        rel_addr: "192.168.0.2".to_owned(), // base: bound host socket
+        rel_port: 5000,
+        ..Default::default()
+    }
+    .new_candidate_server_reflexive()?;
+    a.add_local_candidate(srflx_local)?;
+
+    let host_remote = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "10.79.11.1".to_owned(),
+            port: 37983,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(host_remote)?;
+
+    a.write_outs.clear();
+
+    let msg = Message::new();
+    a.send_stun(&msg, 0, 0);
+
+    let transmit = a.write_outs.pop_front().expect("send_stun must emit");
+    assert_eq!(
+        transmit.transport.local_addr,
+        "192.168.0.2:5000".parse().unwrap(),
+        "srflx checks must be sent from the candidate's base, not the mapped address"
+    );
+    assert_eq!(
+        transmit.transport.peer_addr,
+        "10.79.11.1:37983".parse().unwrap()
+    );
+
+    a.close()?;
+    Ok(())
+}
