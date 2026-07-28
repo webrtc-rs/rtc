@@ -45,6 +45,7 @@ pub(crate) struct RTCDtlsTransport {
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     pub(crate) allow_insecure_verification_algorithm: bool,
+    pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
 }
 
@@ -54,6 +55,7 @@ impl RTCDtlsTransport {
         answering_dtls_role: RTCDtlsRole,
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
         allow_insecure_verification_algorithm: bool,
+        disable_certificate_fingerprint_verification: bool,
         replay_protection: ReplayProtection,
     ) -> Result<Self> {
         if !certificates.is_empty() {
@@ -79,6 +81,7 @@ impl RTCDtlsTransport {
             answering_dtls_role,
             srtp_protection_profiles,
             allow_insecure_verification_algorithm,
+            disable_certificate_fingerprint_verification,
             replay_protection,
         })
     }
@@ -129,31 +132,47 @@ impl RTCDtlsTransport {
         self.dtls_role = self.derive_role(ice_role, remote_dtls_parameters.role);
 
         let remote_fingerprints = remote_dtls_parameters.fingerprints;
-        let verify_peer_certificate: VerifyPeerCertificateFn = Arc::new(
-            move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| -> Result<()> {
-                if certs.is_empty() {
-                    return Err(Error::ErrNonCertificate);
-                }
+        // Leaving the callback out is what disables the check: `insecure_skip_verify` is
+        // already true, so this comparison is the only thing standing between the peer's
+        // certificate and acceptance. Dropping it does not accept a peer that presents no
+        // certificate at all — `client_auth` is `RequireAnyClientCert`, which the DTLS layer
+        // enforces on its own.
+        //
+        // Protocols where the answerer cannot know the offerer's fingerprint ahead of time
+        // need this. libp2p's WebRTC-Direct is the canonical case: the server synthesizes the
+        // client's offer locally with a placeholder fingerprint and authenticates the peer
+        // afterwards with a Noise handshake over the data channel.
+        let verify_peer_certificate: Option<VerifyPeerCertificateFn> =
+            if !self.disable_certificate_fingerprint_verification {
+                Some(Arc::new(
+                    move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| -> Result<()> {
+                        if certs.is_empty() {
+                            return Err(Error::ErrNonCertificate);
+                        }
 
-                for fp in &remote_fingerprints {
-                    if fp.algorithm != "sha-256" {
-                        return Err(Error::ErrUnsupportedFingerprintAlgorithm);
-                    }
+                        for fp in &remote_fingerprints {
+                            if fp.algorithm != "sha-256" {
+                                return Err(Error::ErrUnsupportedFingerprintAlgorithm);
+                            }
 
-                    let mut h = Sha256::new();
-                    h.update(&certs[0]);
-                    let hashed = h.finalize();
-                    let values: Vec<String> = hashed.iter().map(|x| format! {"{x:02x}"}).collect();
-                    let remote_value = values.join(":").to_lowercase();
+                            let mut h = Sha256::new();
+                            h.update(&certs[0]);
+                            let hashed = h.finalize();
+                            let values: Vec<String> =
+                                hashed.iter().map(|x| format! {"{x:02x}"}).collect();
+                            let remote_value = values.join(":").to_lowercase();
 
-                    if remote_value == fp.value.to_lowercase() {
-                        return Ok(());
-                    }
-                }
+                            if remote_value == fp.value.to_lowercase() {
+                                return Ok(());
+                            }
+                        }
 
-                Err(Error::ErrNoMatchingCertificateFingerprint)
-            },
-        );
+                        Err(Error::ErrNoMatchingCertificateFingerprint)
+                    },
+                ))
+            } else {
+                None
+            };
 
         let certificate = if let Some(cert) = self.certificates.first() {
             cert.dtls_certificate.clone()
@@ -173,7 +192,7 @@ impl RTCDtlsTransport {
                 .with_client_auth(ClientAuthType::RequireAnyClientCert)
                 .with_insecure_skip_verify(true)
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
-                .with_verify_peer_certificate(Some(verify_peer_certificate))
+                .with_verify_peer_certificate(verify_peer_certificate)
                 .with_extended_master_secret(::dtls::config::ExtendedMasterSecretType::Require)
                 .with_replay_protection_window(self.replay_protection.dtls)
                 .build(self.dtls_role == RTCDtlsRole::Client, None)?,

@@ -92,6 +92,7 @@ where
             setting_engine.answering_dtls_role,
             setting_engine.srtp_protection_profiles.clone(),
             setting_engine.allow_insecure_verification_algorithm,
+            setting_engine.disable_certificate_fingerprint_verification,
             setting_engine.replay_protection,
         )?;
 
