@@ -21,7 +21,7 @@
 ///     ..Default::default()
 /// };
 /// ```
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct RTCDataChannelInit {
     /// If set to `false`, data is allowed to be delivered out of order.
     ///
@@ -76,4 +76,26 @@ pub struct RTCDataChannelInit {
     ///
     /// [W3C specification]: https://www.w3.org/TR/webrtc/#dom-rtcdatachannelinit-negotiated
     pub negotiated: Option<u16>,
+}
+
+impl Default for RTCDataChannelInit {
+    /// The defaults defined by [W3C `RTCDataChannelInit`].
+    ///
+    /// Note `ordered`: it defaults to `true`, so `..Default::default()` yields an ordered,
+    /// reliable channel — what an application asking for "a plain data channel" expects.
+    /// A derived `Default` would make it `false`, and an unordered channel does more than
+    /// reorder application messages: unordered chunks bypass SCTP's ordered-delivery queue,
+    /// so a first message can overtake the `DATA_CHANNEL_OPEN` sent on the same stream and
+    /// be dropped by the peer as data on a stream it has not accepted yet.
+    ///
+    /// [W3C `RTCDataChannelInit`]: https://www.w3.org/TR/webrtc/#dom-rtcdatachannelinit
+    fn default() -> Self {
+        Self {
+            ordered: true,
+            max_packet_life_time: None,
+            max_retransmits: None,
+            protocol: String::new(),
+            negotiated: None,
+        }
+    }
 }
