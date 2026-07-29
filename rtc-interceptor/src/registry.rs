@@ -152,7 +152,14 @@ impl<P: Interceptor> Registry<P> {
     ///     .with_interceptor_registry(registry.boxed())
     ///     .build()?;
     /// ```
-    pub fn boxed(self) -> Registry<BoxedInterceptor> {
+    ///
+    /// `P: 'static` is required because [`BoxedInterceptor`] is `Box<dyn Interceptor + 'static>`,
+    /// so the chain must not borrow anything shorter-lived. This is the only operation that needs
+    /// the bound, which is why [`Interceptor`] itself does not require `'static`.
+    pub fn boxed(self) -> Registry<BoxedInterceptor>
+    where
+        P: 'static,
+    {
         Registry {
             inner: Box::new(self.inner),
         }

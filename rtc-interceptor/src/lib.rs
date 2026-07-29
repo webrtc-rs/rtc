@@ -315,7 +315,6 @@ pub trait Interceptor:
         Error = shared::error::Error,
     > + Send
     + Sync
-    + 'static
 {
     /// Wrap this interceptor with another layer.
     ///
@@ -364,6 +363,33 @@ pub trait Interceptor:
 pub type BoxedInterceptor = Box<dyn Interceptor>;
 
 impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
+    fn bind_local_stream(&mut self, info: &StreamInfo) {
+        (**self).bind_local_stream(info)
+    }
+
+    fn unbind_local_stream(&mut self, info: &StreamInfo) {
+        (**self).unbind_local_stream(info)
+    }
+
+    fn bind_remote_stream(&mut self, info: &StreamInfo) {
+        (**self).bind_remote_stream(info)
+    }
+
+    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
+        (**self).unbind_remote_stream(info)
+    }
+}
+
+/// Blanket implementation for mutable references.
+///
+/// This lets a borrowed chain satisfy an `Interceptor` bound, so a function taking
+/// `I: Interceptor` by value can be called with `&mut chain` and leave ownership with the
+/// caller. It mirrors [`sansio::Protocol`]'s own `&mut P` implementation, and the same idiom
+/// in `std` (`impl Read for &mut R`, `impl Iterator for &mut I`).
+///
+/// This is only expressible because [`Interceptor`] does not require `'static`: `&'a mut P`
+/// outlives only `'a`. See [`Registry::boxed`], which carries that bound locally instead.
+impl<P: Interceptor + ?Sized> Interceptor for &mut P {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
     }
@@ -447,5 +473,47 @@ mod derive_tests {
         chain.unbind_local_stream(&info);
         chain.bind_remote_stream(&info);
         chain.unbind_remote_stream(&info);
+    }
+
+    /// Consumes an interceptor by value, as the `Registry`/`with` builders do.
+    fn takes_by_value<I: Interceptor>(mut interceptor: I, info: &StreamInfo) {
+        interceptor.bind_local_stream(info);
+        interceptor.unbind_local_stream(info);
+    }
+
+    #[test]
+    fn test_borrowed_chain_satisfies_interceptor_bound() {
+        let mut chain = SimplePassthrough::new(NoopInterceptor::new());
+        let info = StreamInfo {
+            ssrc: 12345,
+            ..Default::default()
+        };
+
+        // `&mut chain` satisfies a by-value `I: Interceptor` bound thanks to the blanket impl.
+        takes_by_value(&mut chain, &info);
+
+        // Ownership stayed with us, so the chain is still usable afterwards.
+        takes_by_value(&mut chain, &info);
+        chain.bind_remote_stream(&info);
+
+        // The borrow also still drives the Protocol side.
+        let pkt = TaggedPacket {
+            now: std::time::Instant::now(),
+            transport: Default::default(),
+            message: Packet::Rtp(rtp::Packet::default()),
+        };
+        sansio::Protocol::handle_write(&mut chain, pkt).unwrap();
+        assert!(sansio::Protocol::poll_write(&mut chain).is_some());
+    }
+
+    #[test]
+    fn test_boxed_chain_still_satisfies_interceptor_bound() {
+        // The `Box<P>` impl coexists with the new `&mut P` impl.
+        let chain: BoxedInterceptor = Box::new(SimplePassthrough::new(NoopInterceptor::new()));
+        let info = StreamInfo {
+            ssrc: 999,
+            ..Default::default()
+        };
+        takes_by_value(chain, &info);
     }
 }
