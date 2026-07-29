@@ -456,6 +456,49 @@
 //! # }
 //! ```
 //!
+//! #### Type-erasing the interceptor chain
+//!
+//! [`RTCPeerConnection`](peer_connection::RTCPeerConnection) is generic over its
+//! interceptor chain, and a chain's type spells out its entire composition
+//! (`TwccReceiverInterceptor<SenderReportInterceptor<…>>`). That type propagates into
+//! everything that *holds* a peer connection, which is a problem when the chain is chosen
+//! at runtime or when connections have to live in your own structs and collections.
+//!
+//! [`Registry::boxed`](interceptor::Registry::boxed) erases the chain to
+//! [`BoxedInterceptor`](interceptor::BoxedInterceptor), giving every connection the same
+//! concrete type no matter how it was built:
+//!
+//! ```no_run
+//! use rtc::interceptor::{BoxedInterceptor, Registry};
+//! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+//! use rtc::peer_connection::configuration::media_engine::MediaEngine;
+//! use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
+//!
+//! // No type parameter: this struct does not have to know the chain.
+//! struct Session {
+//!     peer_connection: RTCPeerConnection<BoxedInterceptor>,
+//! }
+//!
+//! # fn example(with_nack: bool) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut media_engine = MediaEngine::default();
+//! let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
+//!
+//! let mut sessions: Vec<Session> = Vec::new();
+//! sessions.push(Session {
+//!     peer_connection: RTCPeerConnectionBuilder::new()
+//!         .with_media_engine(media_engine)
+//!         .with_interceptor_registry(registry.boxed())
+//!         .build()?,
+//! });
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The cost is one virtual call per chain entry point (`handle_read`, `poll_write`,
+//! `handle_timeout`, …); the chain's interior remains statically dispatched and inlined.
+//! Static dispatch is still the default — keep the generic form when the chain is fixed at
+//! compile time.
+//!
 //! ### Creating and Using Data Channels
 //!
 //! ```no_run

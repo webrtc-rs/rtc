@@ -22,30 +22,27 @@ use crate::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 ///
 /// ## Accessing track components
 ///
-/// ```ignore
-/// // Note: Accessing receiver/transceiver requires &mut RTCPeerConnection
+/// ```
+/// // Note: accessing the receiver requires `&mut RTCPeerConnection`
 /// use rtc::peer_connection::RTCPeerConnection;
 /// use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 ///
-/// fn handle_event(mut peer_connection: RTCPeerConnection, event: RTCPeerConnectionEvent) {
-///     match event {
-///         RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
-///             // Access the receiver
-///             if let Some(receiver) = peer_connection.rtp_receiver(init.receiver_id) {
-///                 // Get receiver parameters
-///                 let params = receiver.get_parameters();
-///                 println!("Codecs: {:?}", params.codecs);
-///             }
-///             
-///             // Print associated stream IDs
-///             println!("Stream IDs: {:?}", init.stream_ids);
-///             
-///             // Check if this is a simulcast stream
-///             if let Some(rid) = &init.rid {
-///                 println!("Simulcast RID: {}", rid);
-///             }
+/// fn handle_event(peer_connection: &mut RTCPeerConnection, event: RTCPeerConnectionEvent) {
+///     if let RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) = event {
+///         // Access the receiver
+///         if let Some(mut receiver) = peer_connection.rtp_receiver(init.receiver_id) {
+///             // Get receiver parameters
+///             let params = receiver.get_parameters();
+///             println!("Codecs: {:?}", params.rtp_parameters.codecs);
 ///         }
-///         _ => {}
+///
+///         // Print associated stream IDs
+///         println!("Stream IDs: {:?}", init.stream_ids);
+///
+///         // Check if this is a simulcast stream
+///         if let Some(rid) = &init.rid {
+///             println!("Simulcast RID: {}", rid);
+///         }
 ///     }
 /// }
 /// ```
@@ -129,30 +126,35 @@ pub struct RTCTrackEventInit {
 /// # }
 /// ```
 ///
-/// ## Reading media from track (conceptual)
+/// ## Reading media from track
 ///
-/// ```ignore
-/// // Note: poll_read() is part of sans-I/O design
+/// `poll_event()` and `poll_read()` come from the [`sansio::Protocol`] implementation on
+/// [`RTCPeerConnection`](crate::peer_connection::RTCPeerConnection), so that trait must be
+/// in scope.
+///
+/// ```
 /// use rtc::peer_connection::RTCPeerConnection;
 /// use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 /// use rtc::peer_connection::message::RTCMessage;
+/// use rtc::sansio::Protocol;
 ///
-/// fn handle_events(mut peer_connection: RTCPeerConnection) {
+/// fn handle_events(peer_connection: &mut RTCPeerConnection) {
 ///     // Poll events
 ///     while let Some(event) = peer_connection.poll_event() {
-///         if let RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) = event {
+///         if let RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(_init)) = event {
 ///             println!("Track opened, ready to receive media");
 ///         }
 ///     }
 ///
-///     // Poll incoming media
+///     // Poll incoming media. Both RTP and RTCP are tagged with the *track* id they
+///     // belong to.
 ///     while let Some(message) = peer_connection.poll_read() {
 ///         match message {
 ///             RTCMessage::RtpPacket(track_id, rtp) => {
 ///                 println!("RTP packet from track {:?}: {} bytes", track_id, rtp.payload.len());
 ///             }
-///             RTCMessage::RtcpPacket(receiver_id, rtcp) => {
-///                 println!("RTCP packet: {:?}", rtcp);
+///             RTCMessage::RtcpPacket(track_id, rtcp) => {
+///                 println!("RTCP packet for track {:?}: {:?}", track_id, rtcp);
 ///             }
 ///             _ => {}
 ///         }

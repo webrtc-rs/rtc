@@ -1133,7 +1133,7 @@ impl SettingEngine {
     /// bytes**; smaller values (including `0`) are raised to that floor here, because a
     /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
     /// association never establishes. The window should also be **≥ the largest SCTP
-    /// message this endpoint will receive** ([`set_sctp_max_message_size`], default
+    /// message this endpoint will receive** ([`Self::set_sctp_max_message_size`], default
     /// 64 KiB): a buffer smaller than one message cannot hold it for reassembly, so a
     /// full-size inbound message would stall that receive direction. `0` here is *not*
     /// "unbounded" (unlike some other knobs) — to keep the default window, leave this

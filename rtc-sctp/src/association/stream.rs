@@ -159,9 +159,8 @@ impl Stream<'_> {
     ///
     /// Unlike [`write_with_ppi`](Self::write_with_ppi), which takes a `&[u8]` and
     /// must copy it into a freshly allocated buffer, this enqueues the payload
-    /// zero-copy: each fragment is a refcounted slice of `data` (see
-    /// [`BytesChunk`]). Prefer this on the hot send path when the caller already
-    /// owns the payload as `Bytes`.
+    /// zero-copy: each fragment is a refcounted slice of `data`. Prefer this on the
+    /// hot send path when the caller already owns the payload as `Bytes`.
     ///
     /// Returns the number of bytes successfully written.
     pub fn write_chunk_with_ppi(

@@ -550,9 +550,11 @@ where
     /// - TWCC (Transport-Wide Congestion Control) for bandwidth estimation
     /// - RTCP Reports for quality statistics
     ///
-    /// This method changes the interceptor type from `NoopInterceptor` to the
-    /// registry's interceptor type. It must be the last builder method called
-    /// before `build()` when used.
+    /// This method replaces the builder's interceptor type — `NoopInterceptor` by default —
+    /// with the registry's, so it returns a `RTCPeerConnectionBuilder<P>` rather than
+    /// `Self`. Every other builder setting is carried over, and the remaining setters are
+    /// available on the returned builder, so this does not have to be the last call before
+    /// `build()`; it is simply the only one that changes the builder's type.
     ///
     /// # Type Parameters
     ///
@@ -578,6 +580,47 @@ where
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Type-erasing the chain
+    ///
+    /// A chain's type spells out its whole composition
+    /// (`TwccReceiverInterceptor<SenderReportInterceptor<…>>`), and it propagates into
+    /// every type that holds the peer connection. [`Registry::boxed`] erases it to
+    /// [`BoxedInterceptor`], so the connection has one concrete type —
+    /// `RTCPeerConnection<BoxedInterceptor>` — whatever chain it was built from. That is
+    /// what lets a non-generic struct own one, or two connections with *different* chains
+    /// share a collection:
+    ///
+    /// ```
+    /// use rtc::interceptor::{BoxedInterceptor, Registry};
+    /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+    /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+    /// use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
+    ///
+    /// struct Session {
+    ///     peer_connection: RTCPeerConnection<BoxedInterceptor>, // no type parameter
+    /// }
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut media_engine = MediaEngine::default();
+    /// let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
+    ///
+    /// let session = Session {
+    ///     peer_connection: RTCPeerConnectionBuilder::new()
+    ///         .with_media_engine(media_engine)
+    ///         .with_interceptor_registry(registry.boxed())
+    ///         .build()?,
+    /// };
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The cost is one virtual call per chain entry point; the chain's interior stays
+    /// statically dispatched. Keep the generic form when the chain is fixed at compile
+    /// time.
+    ///
+    /// [`BoxedInterceptor`]: crate::interceptor::BoxedInterceptor
+    /// [`Registry::boxed`]: crate::interceptor::Registry::boxed
     pub fn with_interceptor_registry<P>(
         self,
         interceptor_registry: Registry<P>,

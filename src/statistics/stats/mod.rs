@@ -14,10 +14,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use std::time::Instant;
+//! ```
+//! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::statistics::StatsSelector;
+//! use std::time::Instant;
 //!
+//! # fn example(peer_connection: &mut RTCPeerConnection) {
 //! let report = peer_connection.get_stats(Instant::now(), StatsSelector::None);
 //!
 //! // Access transport statistics
@@ -30,6 +32,7 @@
 //! for dc in report.data_channels() {
 //!     println!("Channel '{}': {} messages sent", dc.label, dc.messages_sent);
 //! }
+//! # }
 //! ```
 
 use ::serde::{Deserialize, Serialize};

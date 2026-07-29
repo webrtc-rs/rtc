@@ -702,8 +702,9 @@ impl RTCStatsAccumulator {
     ///
     /// # Arguments
     ///
-    /// * `pair_id` - The ID of the candidate pair to sync
-    /// * `cp_stats.` - CandidatePairStats
+    /// * `local_id` - The local candidate ID of the pair to sync
+    /// * `remote_id` - The remote candidate ID of the pair to sync
+    /// * `cp_stats` - The ice agent's stats for that candidate pair
     pub(crate) fn update_ice_agent_stats(
         &mut self,
         local_id: &str,

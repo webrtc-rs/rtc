@@ -28,33 +28,40 @@
 //! For most applications, use [`register_default_interceptors`] to enable
 //! standard WebRTC functionality:
 //!
-//! ```ignore
+//! ```no_run
+//! use rtc::interceptor::Registry;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
-//! use interceptor::Registry;
 //!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
 //! let registry = Registry::new();
 //!
-//! // Register NACK, RTCP reports, simulcast headers, and TWCC receiver
+//! // Register NACK, RTCP reports, simulcast headers, and TWCC receiver.
+//! // Note this takes `&mut media_engine`: it registers the RTCP feedback types and
+//! // header extensions the interceptors need, so pass that same engine to the builder.
 //! let registry = register_default_interceptors(registry, &mut media_engine)?;
 //!
-//! // Use with RTCConfigurationBuilder
-//! let config = RTCConfigurationBuilder::new()
+//! let pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build();
+//!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Custom Configuration
 //!
 //! For fine-grained control, configure individual interceptors:
 //!
-//! ```ignore
-//! use rtc::peer_connection::configuration::interceptor_registry::*;
+//! ```no_run
+//! use rtc::interceptor::Registry;
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
+//! use rtc::peer_connection::configuration::interceptor_registry::{configure_nack, configure_twcc};
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
-//! use interceptor::Registry;
 //!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
 //! let registry = Registry::new();
 //!
@@ -63,6 +70,13 @@
 //!
 //! // Or enable full TWCC for bandwidth estimation
 //! let registry = configure_twcc(registry, &mut media_engine)?;
+//!
+//! let pc = RTCPeerConnectionBuilder::new()
+//!     .with_media_engine(media_engine)
+//!     .with_interceptor_registry(registry)
+//!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Available Configurations
@@ -117,14 +131,17 @@ use shared::error::Result;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use interceptor::Registry;
 ///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// let registry = Registry::new();
 /// let registry = register_default_interceptors(registry, &mut media_engine)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Customization
@@ -169,10 +186,10 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_nack;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use interceptor::Registry;
 ///
 /// let mut media_engine = MediaEngine::default();
 /// let registry = Registry::new();
@@ -237,9 +254,9 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_rtcp_reports;
-/// use interceptor::Registry;
 ///
 /// let registry = Registry::new();
 /// let registry = configure_rtcp_reports(registry);
@@ -276,12 +293,15 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_simulcast_extension_headers;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// configure_simulcast_extension_headers(&mut media_engine)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # References
@@ -344,14 +364,17 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use interceptor::Registry;
 ///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// let registry = Registry::new();
 /// let registry = configure_twcc(registry, &mut media_engine)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # References
@@ -423,14 +446,17 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc_sender_only;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use interceptor::Registry;
 ///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// let registry = Registry::new();
 /// let registry = configure_twcc_sender_only(registry, &mut media_engine)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn configure_twcc_sender_only<P>(
     registry: Registry<P>,
@@ -501,14 +527,17 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::interceptor::Registry;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc_receiver_only;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
-/// use interceptor::Registry;
 ///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
 /// let registry = Registry::new();
 /// let registry = configure_twcc_receiver_only(registry, &mut media_engine)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn configure_twcc_receiver_only<P>(
     registry: Registry<P>,

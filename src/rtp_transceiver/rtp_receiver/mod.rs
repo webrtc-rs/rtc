@@ -317,15 +317,26 @@ where
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// // Send a Picture Loss Indication to request a keyframe
-    /// use rtcp::picture_loss_indication::PictureLossIndication;
+    /// use rtc::peer_connection::RTCPeerConnection;
+    /// use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+    /// use rtc::rtp_transceiver::RTCRtpReceiverId;
     ///
-    /// let pli = PictureLossIndication {
-    ///     sender_ssrc: 0,
-    ///     media_ssrc: remote_ssrc,
-    /// };
-    /// receiver.write_rtcp(vec![Box::new(pli)])?;
+    /// # fn example(
+    /// #     peer_connection: &mut RTCPeerConnection,
+    /// #     receiver_id: RTCRtpReceiverId,
+    /// #     remote_ssrc: u32,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
+    /// if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
+    ///     let pli = PictureLossIndication {
+    ///         sender_ssrc: 0,
+    ///         media_ssrc: remote_ssrc,
+    ///     };
+    ///     receiver.write_rtcp(vec![Box::new(pli)])?;
+    /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and

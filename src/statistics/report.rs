@@ -116,9 +116,13 @@ impl RTCStatsReportEntry {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use rtc::peer_connection::RTCPeerConnection;
 /// use rtc::statistics::StatsSelector;
+/// use rtc::statistics::stats::RTCStatsType;
+/// use std::time::Instant;
 ///
+/// # fn example(peer_connection: &mut RTCPeerConnection) {
 /// let report = peer_connection.get_stats(Instant::now(), StatsSelector::None);
 ///
 /// // Iterate over all stats
@@ -135,6 +139,7 @@ impl RTCStatsReportEntry {
 /// for inbound in report.iter_by_type(RTCStatsType::InboundRTP) {
 ///     println!("Inbound RTP: {:?}", inbound.id());
 /// }
+/// # }
 /// ```
 #[derive(Debug, Default)]
 pub struct RTCStatsReport {

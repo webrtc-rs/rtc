@@ -12,18 +12,25 @@
 //!
 //! # Examples
 //!
-//! ## Basic event loop pattern (conceptual)
+//! ## Basic event loop pattern
 //!
-//! ```ignore
-//! // Note: poll_event() and related methods are part of the sans-I/O design
-//! // but may not be fully exposed in the current public API
-//! use rtc::peer_connection::RTCPeerConnection;
+//! `poll_event()`, `poll_timeout()` and `handle_timeout()` come from the
+//! [`sansio::Protocol`] implementation on [`RTCPeerConnection`](crate::peer_connection::RTCPeerConnection),
+//! so that trait must be in
+//! scope to call them.
+//!
+//! ```no_run
+//! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::event::RTCPeerConnectionEvent;
+//! use rtc::sansio::Protocol;
 //! use std::time::Instant;
 //!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = RTCConfigurationBuilder::new().build();
-//! let mut peer_connection = RTCPeerConnection::new(config)?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new()
+//!     .with_configuration(config)
+//!     .build()?;
 //!
 //! loop {
 //!     // Poll and handle events
@@ -49,7 +56,8 @@
 //!     
 //!     break; // Exit for example
 //! }
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Handling connection state changes

@@ -12,14 +12,19 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! use rtc::peer_connection::RTCPeerConnection;
+//! use rtc::rtp_transceiver::RTCRtpSenderId;
 //! use rtc::statistics::StatsSelector;
+//! use std::time::Instant;
 //!
+//! # fn example(pc: &mut RTCPeerConnection, sender_id: RTCRtpSenderId) {
 //! // Get all stats
 //! let all_stats = pc.get_stats(Instant::now(), StatsSelector::None);
 //!
 //! // Get stats for a specific sender
 //! let sender_stats = pc.get_stats(Instant::now(), StatsSelector::Sender(sender_id));
+//! # }
 //! ```
 
 use crate::rtp_transceiver::{RTCRtpReceiverId, RTCRtpSenderId};
