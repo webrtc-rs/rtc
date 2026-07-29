@@ -64,6 +64,7 @@ Consider adding tests for:
 | 13   | `simulcast_rtc_to_webrtc_interop.rs`                        | Simulcast: rtc→webrtc (IGNORED)         |
 | 14   | `offer_answer_rtc2rtc.rs`                                   | **Pure rtc ↔ rtc (no webrtc)**          |
 | 15   | `interceptor_rtcp_reports_interop.rs`                       | **RTCP report interceptor integration** |
+| 16   | `rtcp_processing_boxed_interop.rs`                          | **Type-erased (`BoxedInterceptor`) chain**  |
 
 ---
 
@@ -741,3 +742,49 @@ Run these with:
 ```bash
 cargo test --package rtc-interceptor --test rtcp_report_integration
 ```
+
+---
+
+## Test 16: Type-Erased Interceptor Chain (`BoxedInterceptor`)
+
+**File:** `rtcp_processing_boxed_interop.rs`
+
+**Purpose:** The `RTCPeerConnection<BoxedInterceptor>` counterpart of Test 15's `rtcp_processing_interop.rs`. It
+installs the same custom `RtcpForwarderInterceptor`, but erases the chain's type so that every peer connection has the
+one concrete type `RTCPeerConnection<BoxedInterceptor>`.
+
+### Why
+
+`RTCPeerConnection<I>` is generic over its interceptor chain. Returning `RTCPeerConnection<impl Interceptor>` (what
+Test 15 does) works while the value flows straight into a local, but the opaque type cannot be stored in a non-generic
+struct, put in a collection next to a peer with a different chain, or produced by two branches of an `if`. Erasing the
+chain with `Registry::boxed()` removes all three limits, at the cost of one virtual call per chain entry point.
+
+The file demonstrates both halves of that: `build_boxed_rtc_peer(forward_rtcp, is_answerer)` picks its chain at
+runtime (the branches unify only after `.boxed()`), and `struct RtcpPeer` — which owns a peer connection, a socket and
+the test's counters — has **no type parameter**.
+
+### Tests
+
+| Test                                                     | Description                                                       |
+|----------------------------------------------------------|-------------------------------------------------------------------|
+| `test_boxed_rtcp_processing_webrtc_offerer_rtc_answerer` | webrtc sends video; the boxed chain still surfaces RTCP via `poll_read()` |
+| `test_boxed_rtcp_processing_rtc_sender_receives_feedback` | the boxed-chain RTC sender receives RTCP feedback about its own stream |
+| `test_boxed_rtc_to_rtc_heterogeneous_chains`             | two rtc peers with **different** chains driven out of a single `Vec<RtcpPeer>` |
+
+The third test is the one the non-erased form cannot express. The offerer streams RTP (so its
+`SenderReportInterceptor` emits periodic SRs) and is built **without** the forwarder; the answerer is built **with**
+it. Both live in one `Vec` and are driven by the same non-generic loop, and the assertion is that their behaviour
+differs accordingly: the answerer surfaces the SRs to the application, while the offerer — same type, different chain
+— never surfaces a single RTCP packet.
+
+### Running the Tests
+
+```bash
+cargo test --test rtcp_processing_boxed_interop -- --nocapture
+```
+
+### Related
+
+The `rtcp-processing-boxed` example (`examples/rtcp-processing-boxed/`) is the browser-driven version of the same
+pattern, with a `--no-rtcp-forwarding` flag that switches the chain at runtime.
