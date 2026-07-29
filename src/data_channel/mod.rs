@@ -241,11 +241,37 @@ where
         }
     }
 
-    /// send sends the binary message to the DataChannel peer
-    pub fn send(&mut self, data: BytesMut) -> Result<()> {
-        if !self.peer_connection.data_channels.contains_key(&self.id) {
-            return Err(Error::ErrDataChannelClosed);
+    /// Rejects a send the write path could not carry out.
+    ///
+    /// The condition mirrors what `DataChannelHandler::handle_write` requires: the channel
+    /// must be registered *and* its SCTP stream established. Checking it here, synchronously,
+    /// is what makes the failure visible — the handler runs later, on the pipeline's write
+    /// pass, where an `Err` is only logged and cannot reach the caller.
+    fn ensure_sendable(&self) -> Result<()> {
+        let dc = self
+            .peer_connection
+            .data_channels
+            .get(&self.id)
+            .ok_or(Error::ErrDataChannelClosed)?;
+
+        if dc.data_channel.is_none() {
+            // No stream yet: either it is still being negotiated, or it is already gone.
+            return Err(if dc.ready_state == RTCDataChannelState::Connecting {
+                Error::ErrDataChannelNotOpen
+            } else {
+                Error::ErrDataChannelClosed
+            });
         }
+
+        Ok(())
+    }
+
+    /// send sends the binary message to the DataChannel peer
+    ///
+    /// Returns [`Error::ErrDataChannelNotOpen`] if the channel's SCTP stream has not been
+    /// established yet, and [`Error::ErrDataChannelClosed`] once it is gone.
+    pub fn send(&mut self, data: BytesMut) -> Result<()> {
+        self.ensure_sendable()?;
         let data_len = data.len();
         self.peer_connection
             .handle_write(RTCMessage::DataChannelMessage(
@@ -265,10 +291,10 @@ where
     }
 
     /// send_text sends the text message to the DataChannel peer
+    ///
+    /// Error contract matches [`send`](Self::send).
     pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
-        if !self.peer_connection.data_channels.contains_key(&self.id) {
-            return Err(Error::ErrDataChannelClosed);
-        }
+        self.ensure_sendable()?;
         let data = BytesMut::from(s.into().as_str());
         let data_len = data.len();
         self.peer_connection

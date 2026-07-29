@@ -1247,6 +1247,12 @@ pub enum Error {
     #[error("data channel closed")]
     ErrDataChannelClosed,
 
+    /// ErrDataChannelNotOpen indicates a send was attempted on a data channel
+    /// whose underlying SCTP stream has not been established yet — its
+    /// `ready_state` is still `connecting`. Wait for the channel to open.
+    #[error("data channel is not open yet")]
+    ErrDataChannelNotOpen,
+
     /// ErrDataChannelNonExist indicates an operation executed when the data
     /// channel not existed.
     #[error("data channel not existed")]
