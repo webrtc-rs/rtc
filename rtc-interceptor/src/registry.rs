@@ -19,8 +19,8 @@
 //! Results in: C wraps B wraps A wraps NoopInterceptor
 //! ```
 
-use crate::Interceptor;
 use crate::noop::NoopInterceptor;
+use crate::{BoxedInterceptor, Interceptor};
 
 /// Registry for constructing interceptor chains.
 ///
@@ -135,6 +135,27 @@ impl<P: Interceptor> Registry<P> {
     /// ```
     pub fn build(self) -> P {
         self.inner
+    }
+
+    /// Erase the chain's type, turning this into a `Registry<BoxedInterceptor>`.
+    ///
+    /// The chain an application assembles at runtime is a deep nest of generic types
+    /// (`TwccSender<NackResponder<...<NoopInterceptor>>>`), which otherwise leaks into every
+    /// type that holds the peer connection. Boxing it collapses that to one concrete type, so
+    /// a struct can store an `RTCPeerConnection<BoxedInterceptor>` field directly.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
+    /// let pc: RTCPeerConnection<BoxedInterceptor> = RTCPeerConnectionBuilder::new()
+    ///     .with_interceptor_registry(registry.boxed())
+    ///     .build()?;
+    /// ```
+    pub fn boxed(self) -> Registry<BoxedInterceptor> {
+        Registry {
+            inner: Box::new(self.inner),
+        }
     }
 }
 

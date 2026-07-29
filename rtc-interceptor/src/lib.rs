@@ -313,8 +313,7 @@ pub trait Interceptor:
         Eout = (),
         Time = Instant,
         Error = shared::error::Error,
-    > + Sized
-    + Send
+    > + Send
     + Sync
     + 'static
 {
@@ -335,6 +334,7 @@ pub trait Interceptor:
     /// ```
     fn with<O, F>(self, f: F) -> O
     where
+        Self: Sized,
         F: FnOnce(Self) -> O,
         O: Interceptor,
     {
@@ -354,6 +354,31 @@ pub trait Interceptor:
 
     /// unbind_remote_stream is called when the Stream is removed. It can be used to clean up any data related to that track.
     fn unbind_remote_stream(&mut self, info: &StreamInfo);
+}
+
+/// A type-erased interceptor chain.
+///
+/// `Interceptor` is object safe, so a chain built at runtime can be erased into this one
+/// concrete type. That lets an application store a `RTCPeerConnection<BoxedInterceptor>`
+/// (see [`Registry::boxed`]) instead of being generic over the chain's type.
+pub type BoxedInterceptor = Box<dyn Interceptor>;
+
+impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
+    fn bind_local_stream(&mut self, info: &StreamInfo) {
+        (**self).bind_local_stream(info)
+    }
+
+    fn unbind_local_stream(&mut self, info: &StreamInfo) {
+        (**self).unbind_local_stream(info)
+    }
+
+    fn bind_remote_stream(&mut self, info: &StreamInfo) {
+        (**self).bind_remote_stream(info)
+    }
+
+    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
+        (**self).unbind_remote_stream(info)
+    }
 }
 
 #[cfg(test)]
