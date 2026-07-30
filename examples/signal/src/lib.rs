@@ -8,6 +8,19 @@
 //! paste it into the other. This crate holds the few functions that make that work, so the
 //! examples can stay focused on the WebRTC parts.
 //!
+//! # Example
+//!
+//! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let json = r#"{"type":"offer","sdp":"v=0\r\n"}"#;
+//!
+//! // The examples print this blob for you to paste into the other peer.
+//! let blob = rtc_signal::encode(json);
+//! assert_eq!(rtc_signal::decode(&blob)?, json);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! It is a support crate for the examples, not part of the WebRTC API — nothing here is
 //! needed to use [`rtc`](https://docs.rs/rtc) or [`webrtc`](https://docs.rs/webrtc).
 

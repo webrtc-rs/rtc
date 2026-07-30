@@ -1,3 +1,10 @@
+//! Shared helpers: packet demultiplexing and random strings.
+//!
+//! WebRTC multiplexes STUN, DTLS and SRTP onto one port, so the first byte of a datagram decides
+//! which layer receives it ([RFC 7983]). The `match_*` predicates implement those ranges, and
+//! [`is_rtcp`](crate::util::is_rtcp) separates RTCP from RTP once a packet is known to be one of the two.
+//!
+//! [RFC 7983]: https://datatracker.ietf.org/doc/html/rfc7983
 use crate::error::{Error, Result};
 use rand::{RngExt, rng};
 use std::net::{SocketAddr, ToSocketAddrs};

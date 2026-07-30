@@ -8,10 +8,18 @@
 //!
 //! # Design Pattern
 //!
+//! The examples below are illustrative rather than compiled: the macros only expand to something
+//! meaningful in the presence of the `Interceptor` trait from
+//! [`rtc-interceptor`](https://docs.rs/rtc-interceptor), which depends on *this* crate — so a
+//! doctest here cannot import it. They are exercised for real by `rtc-interceptor`'s own
+//! documentation and tests.
+//!
 //! The design follows Rust's derive pattern (similar to `#[derive(Default)]` with `#[default]`):
 //!
 //! ```ignore
-//! use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, Packet, StreamInfo};
+//! use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+//! use rtc_shared::error::Error;
+//! use sansio::Protocol;
 //! use std::collections::VecDeque;
 //!
 //! #[derive(Interceptor)]
@@ -36,6 +44,10 @@
 //! For interceptors that just pass through without modification:
 //!
 //! ```ignore
+//! # use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+//! # use rtc_shared::error::Error;
+//! # use sansio::Protocol;
+//! # use std::collections::VecDeque;
 //! #[derive(Interceptor)]
 //! pub struct PassthroughInterceptor<P: Interceptor> {
 //!     #[next]
@@ -51,12 +63,22 @@
 //!
 //! The macros require certain types to be in scope:
 //!
+//! The generated code names `sansio::Protocol`, `Error`, `StreamInfo` and
+//! `TaggedPacket`, so all four must be in scope at the use site — not only the macros
+//! themselves:
+//!
 //! ```ignore
-//! use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, Packet, StreamInfo};
-//! // Or through rtc umbrella crate:
-//! use rtc::interceptor::{Interceptor, interceptor, TaggedPacket, Packet, StreamInfo};
+//! use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+//! use rtc_shared::error::Error;
+//! use sansio::Protocol;
+//! ```
+//!
+//! Through the `rtc` umbrella crate the same imports are:
+//!
+//! ```ignore
+//! use rtc::interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+//! use rtc::sansio::Protocol;
 //! use rtc::shared::error::Error;
-//! use rtc::sansio;  // Required for macro-generated code
 //! ```
 
 use proc_macro::TokenStream;
@@ -77,6 +99,10 @@ use syn::{Data, DeriveInput, Fields, Ident, ImplItem, ItemImpl, Type, parse_macr
 ///
 /// Pure delegation (no custom logic):
 /// ```ignore
+/// # use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+/// # use rtc_shared::error::Error;
+/// # use sansio::Protocol;
+/// # use std::collections::VecDeque;
 /// #[derive(Interceptor)]
 /// pub struct PassthroughInterceptor<P: Interceptor> {
 ///     #[next]
@@ -89,6 +115,10 @@ use syn::{Data, DeriveInput, Fields, Ident, ImplItem, ItemImpl, Type, parse_macr
 ///
 /// With custom logic:
 /// ```ignore
+/// # use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+/// # use rtc_shared::error::Error;
+/// # use sansio::Protocol;
+/// # use std::collections::VecDeque;
 /// #[derive(Interceptor)]
 /// pub struct MyInterceptor<P: Interceptor> {
 ///     #[next]
@@ -150,6 +180,10 @@ pub fn derive_interceptor(input: TokenStream) -> TokenStream {
 ///
 /// With custom logic:
 /// ```ignore
+/// # use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+/// # use rtc_shared::error::Error;
+/// # use sansio::Protocol;
+/// # use std::collections::VecDeque;
 /// #[derive(Interceptor)]
 /// pub struct MyInterceptor<P: Interceptor> {
 ///     #[next]
@@ -169,6 +203,10 @@ pub fn derive_interceptor(input: TokenStream) -> TokenStream {
 ///
 /// Pure delegation (no custom logic):
 /// ```ignore
+/// # use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+/// # use rtc_shared::error::Error;
+/// # use sansio::Protocol;
+/// # use std::collections::VecDeque;
 /// #[derive(Interceptor)]
 /// pub struct PassthroughInterceptor<P: Interceptor> {
 ///     #[next]

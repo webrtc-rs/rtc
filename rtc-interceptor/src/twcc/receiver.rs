@@ -18,7 +18,7 @@ const DEFAULT_INTERVAL: Duration = Duration::from_millis(100);
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, TwccReceiverBuilder};
 /// use std::time::Duration;
 ///

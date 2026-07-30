@@ -1,3 +1,11 @@
+//! The `ERROR-CODE` attribute.
+//!
+//! An [`ErrorCodeAttribute`](crate::error_code::ErrorCodeAttribute) is a numeric [`ErrorCode`](crate::error_code::ErrorCode) plus a reason phrase. The codes here span
+//! three specs — STUN's own (400, 401, 420, 500), ICE's role conflict (487), and TURN's
+//! allocation failures (437, 441, 486, 508) — because all three share this attribute.
+//!
+//! [`ERROR_REASONS`](crate::error_code::ERROR_REASONS) maps each known code to the phrase it is normally sent with, so a responder
+//! does not have to invent one.
 #[cfg(test)]
 mod error_code_test;
 

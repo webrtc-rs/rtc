@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, TwccSenderBuilder};
 ///
 /// let chain = Registry::new()

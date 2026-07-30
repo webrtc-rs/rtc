@@ -17,6 +17,31 @@
 //! * [`message`] — the DCEP messages themselves: `DataChannelOpen`, `DataChannelAck`, and
 //!   the channel-type encoding.
 //!
+//! # Example
+//!
+//! ```
+//! use bytes::Bytes;
+//! use rtc_datachannel::message::message_channel_open::{ChannelType, DataChannelOpen};
+//! use rtc_datachannel::message::{Message, message_type::MessageType};
+//! use shared::marshal::{Marshal, Unmarshal};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let open = Message::DataChannelOpen(DataChannelOpen {
+//!     channel_type: ChannelType::PartialReliableRexmit,
+//!     priority: 256,
+//!     reliability_parameter: 3, // give up after 3 retransmissions
+//!     label: b"chat".to_vec(),
+//!     protocol: Vec::new(),
+//! });
+//! assert_eq!(open.message_type(), MessageType::DataChannelOpen);
+//!
+//! let encoded = open.marshal()?;
+//! let mut buf = Bytes::from(encoded.to_vec());
+//! assert_eq!(Message::unmarshal(&mut buf)?, open);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate layers it over [`rtc-sctp`] and exposes
 //! `RTCDataChannel`.

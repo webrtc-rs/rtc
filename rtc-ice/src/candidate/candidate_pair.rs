@@ -1,3 +1,12 @@
+//! Candidate pairs and their check state.
+//!
+//! ICE forms a pair from each compatible local/remote candidate combination and works through
+//! them in priority order. A pair's combined priority is computed from both sides' priorities with
+//! the controlling agent's dominating, so both agents derive the same ordering.
+//!
+//! [`CandidatePairState`](crate::candidate::candidate_pair::CandidatePairState) tracks how far a pair has got: waiting, in progress, succeeded or
+//! failed. The controlling agent nominates one of the succeeded pairs, and that pair carries the
+//! media.
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;

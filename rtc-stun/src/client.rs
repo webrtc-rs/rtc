@@ -1,3 +1,8 @@
+//! A Sans-I/O STUN client.
+//!
+//! Sends Binding requests and matches the responses, applying the retransmission schedule the RFC
+//! specifies (an initial RTO, doubling per retry) so a lost request on a UDP path is retried
+//! rather than lost. Build one with [`ClientBuilder`](crate::client::ClientBuilder); drive it with datagrams and time.
 use bytes::BytesMut;
 use shared::error::*;
 use std::collections::{HashMap, VecDeque};

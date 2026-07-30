@@ -1,3 +1,15 @@
+//! One data channel over an SCTP stream.
+//!
+//! A [`DataChannel`](crate::data_channel::DataChannel) is opened either by the DCEP handshake (`DATA_CHANNEL_OPEN`, then
+//! `DATA_CHANNEL_ACK`) or out of band when [`DataChannelConfig::negotiated`](crate::data_channel::DataChannelConfig::negotiated) is set and both
+//! sides already agreed the stream id through signalling.
+//!
+//! The reliability the channel is opened with maps onto SCTP send parameters:
+//! [`get_reliability_params`](crate::data_channel::DataChannel::get_reliability_params) turns a
+//! [`ChannelType`](crate::message::message_channel_open::ChannelType) into the ordered flag and
+//! partial-reliability setting SCTP needs, and
+//! [`get_channel_type_and_reliability_parameter`](crate::data_channel::DataChannel::get_channel_type_and_reliability_parameter)
+//! goes the other way from the W3C `maxPacketLifeTime`/`maxRetransmits` pair.
 #[cfg(test)]
 mod data_channel_test;
 

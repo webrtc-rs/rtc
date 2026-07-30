@@ -23,6 +23,25 @@
 //! * [`extension`] — the ClientHello/ServerHello extensions, including `use_srtp` and SNI.
 //! * [`alert`], [`content`], [`record_layer`] — the record layer and its content types.
 //!
+//! # Example
+//!
+//! A WebRTC handshake is configured with a self-signed certificate and the SRTP profiles to
+//! negotiate through `use_srtp`; the keys for those profiles are then exported from the
+//! completed handshake rather than signalled:
+//!
+//! ```
+//! use rtc_dtls::config::{ConfigBuilder, ExtendedMasterSecretType};
+//! use rtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile;
+//!
+//! let builder = ConfigBuilder::default()
+//!     .with_srtp_protection_profiles(vec![
+//!         SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm,
+//!         SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+//!     ])
+//!     .with_extended_master_secret(ExtendedMasterSecretType::Require);
+//! # let _ = builder;
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate drives it as one layer of the peer-connection
 //! pipeline.

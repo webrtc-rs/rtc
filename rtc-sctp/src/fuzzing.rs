@@ -1,3 +1,9 @@
+//! Entry points for fuzz targets and benchmarks.
+//!
+//! Each function drives one encode or decode step over a raw byte slice, so a fuzzer or a
+//! benchmark can reach the packet codec without establishing an association first. Gated behind
+//! `cfg(fuzzing)` or the `bench` feature; not part of the supported API and not subject to the
+//! crate's stability guarantees.
 use bytes::Bytes;
 use shared::error::Result;
 

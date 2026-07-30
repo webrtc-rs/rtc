@@ -17,6 +17,23 @@
 //!   AEAD-AES-128-GCM, and friends) and their key/salt lengths.
 //! * [`config`], [`option`] — how a context is built, including replay-window sizing.
 //!
+//! # Example
+//!
+//! A profile is negotiated through DTLS-SRTP, and it fixes the key, salt and tag sizes the
+//! context will use:
+//!
+//! ```
+//! use rtc_srtp::protection_profile::ProtectionProfile;
+//!
+//! let profile = ProtectionProfile::Aes128CmHmacSha1_80;
+//! assert_eq!(profile.key_len(), 16); // AES-128
+//! assert_eq!(profile.salt_len(), 14);
+//! assert_eq!(profile.rtp_auth_tag_len(), 10); // 80-bit tag
+//!
+//! // The AEAD profiles authenticate inside the cipher, so they carry no HMAC key.
+//! assert_eq!(ProtectionProfile::AeadAes128Gcm.auth_key_len(), 0);
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate creates the contexts from the DTLS handshake and
 //! applies them to media as one layer of the peer-connection pipeline.

@@ -1,3 +1,15 @@
+//! H.265/HEVC RTP payload format ([RFC 7798]).
+//!
+//! HEVC differs from H.264 in ways that matter to packetization: NAL headers are two bytes
+//! rather than one, and there is an extra aggregation form (PACI) that can carry payload
+//! content information ahead of the NAL unit.
+//!
+//! This module provides the three packet shapes the RFC defines — single NAL unit,
+//! aggregation, and fragmentation unit — plus [`HevcPayloader`](crate::codec::h265::HevcPayloader), which picks between them
+//! based on the MTU, and the depacketizer that reverses the choice.
+//!
+//! [RFC 7798]: https://datatracker.ietf.org/doc/html/rfc7798
+
 use bytes::{BufMut, Bytes, BytesMut};
 
 use super::h264::ANNEXB_NALUSTART_CODE;

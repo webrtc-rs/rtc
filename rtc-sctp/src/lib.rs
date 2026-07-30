@@ -1,16 +1,51 @@
-//! Low-level protocol logic for the SCTP protocol
+//! SCTP for the Sans-I/O WebRTC stack.
 //!
-//! sctp-proto contains a fully deterministic implementation of SCTP protocol logic. It contains
-//! no networking code and does not get any relevant timestamps from the operating system. Most
-//! users may want to use the futures-based sctp-async API instead.
+//! The Stream Control Transmission Protocol ([RFC 4960]) with the extensions WebRTC data
+//! channels need: partial reliability ([RFC 3758]) and stream reset / reconfiguration
+//! ([RFC 6525]). In WebRTC, SCTP runs *over* DTLS rather than over IP, and carries the data
+//! channels described by [`rtc-datachannel`].
 //!
-//! The sctp-proto API might be of interest if you want to use it from a C or C++ project
-//! through C bindings or if you want to use a different event loop than the one tokio provides.
+//! This is a fully deterministic implementation of the protocol logic. It contains no
+//! networking code and reads no clock of its own: you feed it datagrams and time, and poll it
+//! for the datagrams and events it produces. That is what makes it testable without a network
+//! and reusable under any executor.
 //!
-//! The most important types are `Endpoint`, which conceptually represents the protocol state for
-//! a single socket and mostly manages configuration and dispatches incoming datagrams to the
-//! related `Association`. `Association` types contain the bulk of the protocol logic related to
-//! managing a single association and all the related state (such as streams).
+//! # Structure
+//!
+//! * [`Endpoint`] — the protocol state for one socket. It holds configuration and dispatches
+//!   inbound datagrams to the right association.
+//! * [`Association`] — the bulk of the logic for a single
+//!   association: handshake, congestion control, retransmission, and its streams.
+//! * [`Stream`] — one stream's reads, writes and reliability
+//!   settings.
+//! * [`Chunks`] — a reassembled inbound message, delivered once every fragment has arrived.
+//!
+//! # Example
+//!
+//! Configuration is plain data, and the association is driven entirely by the caller — feed it
+//! datagrams and time, poll it for output:
+//!
+//! ```
+//! use rtc_sctp::{EndpointConfig, TransportConfig};
+//! use std::sync::Arc;
+//!
+//! let transport = TransportConfig::default()
+//!     .with_max_message_size(65_536)
+//!     .with_max_num_outbound_streams(1024);
+//!
+//! let endpoint_config = Arc::new(EndpointConfig::new());
+//! assert_eq!(transport.max_message_size(), 65_536);
+//! # let _ = endpoint_config;
+//! ```
+//!
+//! Most applications do not depend on this crate directly — the [`rtc`](https://docs.rs/rtc)
+//! crate drives it as one layer of the peer-connection pipeline and exposes data channels,
+//! and [`webrtc`](https://docs.rs/webrtc) wraps that in an async API.
+//!
+//! [RFC 4960]: https://datatracker.ietf.org/doc/html/rfc4960
+//! [RFC 3758]: https://datatracker.ietf.org/doc/html/rfc3758
+//! [RFC 6525]: https://datatracker.ietf.org/doc/html/rfc6525
+//! [`rtc-datachannel`]: https://docs.rs/rtc-datachannel
 
 #![warn(rust_2018_idioms)]
 #![warn(missing_docs)]
@@ -52,6 +87,11 @@ pub use crate::queue::reassembly_queue::{Chunk, Chunks};
 
 pub(crate) mod util;
 
+/// Entry points for fuzz targets and benchmarks.
+///
+/// Thin wrappers that drive one encode or decode step over a raw byte slice, so a fuzzer or
+/// a benchmark can reach the packet codec without setting up an association. Gated behind
+/// `cfg(fuzzing)` or the `bench` feature; not part of the supported API.
 #[cfg(any(fuzzing, feature = "bench"))]
 pub mod fuzzing;
 

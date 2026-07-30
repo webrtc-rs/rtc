@@ -1,3 +1,11 @@
+//! Fields shared by session and media descriptions.
+//!
+//! `c=` connection data ([`ConnectionInformation`](crate::description::common::ConnectionInformation), [`Address`](crate::description::common::Address)), `b=` bandwidth
+//! ([`Bandwidth`](crate::description::common::Bandwidth)) and `a=` attributes ([`Attribute`](crate::description::common::Attribute)) may appear at either level in SDP, with
+//! the media-level value overriding the session-level one — so they are modelled once here.
+//!
+//! An [`Attribute`](crate::description::common::Attribute) with no value is a flag, which is how `a=rtcp-mux` and the direction
+//! attributes are expressed.
 use std::fmt;
 
 use super::session::ATTR_KEY_CANDIDATE;

@@ -76,7 +76,7 @@
 //!
 //! # Quick Start
 //!
-//! ```ignore
+//! ```
 //! use rtc_interceptor::{
 //!     Registry, SenderReportBuilder, ReceiverReportBuilder,
 //!     NackGeneratorBuilder, NackResponderBuilder,
@@ -109,12 +109,44 @@
 //!     .build();
 //! ```
 //!
+//! # Type-Erasing a Chain
+//!
+//! A chain's type spells out its whole composition
+//! (`TwccReceiverInterceptor<SenderReportInterceptor<…>>`), and it propagates into every type
+//! that holds the peer connection built from it. That is fine when the chain is fixed at compile
+//! time, and a problem when it is chosen at runtime or has to live in your own structs.
+//!
+//! [`Interceptor`] is object safe, so [`Registry::boxed`] can erase the chain to
+//! [`BoxedInterceptor`] — one concrete type, whatever it was built from:
+//!
+//! ```
+//! use rtc_interceptor::{BoxedInterceptor, NackGeneratorBuilder, Registry, SenderReportBuilder};
+//!
+//! // Two different chain types, unified by `.boxed()`.
+//! let chain: BoxedInterceptor = if cfg!(feature = "unstable") {
+//!     Registry::new()
+//!         .with(SenderReportBuilder::new().build())
+//!         .with(NackGeneratorBuilder::new().build())
+//!         .boxed()
+//!         .build()
+//! } else {
+//!     Registry::new().with(SenderReportBuilder::new().build()).boxed().build()
+//! };
+//! ```
+//!
+//! The cost is one virtual call per chain entry point (`handle_read`, `poll_write`,
+//! `handle_timeout`, …); the layers inside still call each other through static dispatch and
+//! inline as before. `Box<P>` and `&mut P` both implement [`Interceptor`], so a boxed or borrowed
+//! chain satisfies an `I: Interceptor` bound like any other.
+//!
 //! # Stream Binding
 //!
 //! Before interceptors can process packets for a stream, the stream must be bound:
 //!
-//! ```ignore
-//! use rtc_interceptor::{StreamInfo, RTCPFeedback, RTPHeaderExtension};
+//! ```
+//! use rtc_interceptor::{Interceptor, RTCPFeedback, RTPHeaderExtension, Registry, StreamInfo};
+//!
+//! let mut chain = Registry::new().build();
 //!
 //! // Create stream info with NACK and TWCC support
 //! let stream_info = StreamInfo {
@@ -144,8 +176,10 @@
 //!
 //! Use the derive macros to easily create custom interceptors:
 //!
-//! ```ignore
-//! use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, StreamInfo};
+//! ```
+//! use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+//! use sansio::Protocol;
+//! use shared::error::Error; // the generated `Protocol` impl names it
 //! use std::collections::VecDeque;
 //!
 //! #[derive(Interceptor)]
@@ -244,8 +278,10 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///
 /// The easiest way to create a custom interceptor is using the derive macros:
 ///
-/// ```ignore
-/// use rtc_interceptor::{Interceptor, interceptor, TaggedPacket, Packet, StreamInfo};
+/// ```
+/// use rtc_interceptor::{Interceptor, StreamInfo, TaggedPacket, interceptor};
+/// use sansio::Protocol;
+/// use shared::error::Error; // the generated `Protocol` impl names it
 /// use std::collections::VecDeque;
 ///
 /// #[derive(Interceptor)]
@@ -274,7 +310,9 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///
 /// ## Manual Implementation
 ///
-/// For more control, you can implement the traits manually:
+/// For more control, you can implement the traits manually. The sketch below omits the
+/// `Protocol` method bodies, so it is not compiled — see [`NoopInterceptor`] for a complete
+/// hand-written implementation:
 ///
 /// ```ignore
 /// pub struct MyInterceptor<P> {
@@ -300,9 +338,14 @@ pub type TaggedPacket = TransportMessage<Packet>;
 ///
 /// # Using with Registry
 ///
-/// ```ignore
-/// let chain = Registry::new()
-///     .with(|inner| MyInterceptor { next: inner, buffer: VecDeque::new() });
+/// A builder is just a closure from the next layer to the wrapping one, so a custom
+/// interceptor can be added the same way as a built-in:
+///
+/// ```
+/// use rtc_interceptor::{Registry, SenderReportBuilder};
+///
+/// let registry = Registry::new().with(SenderReportBuilder::new().build());
+/// // ...or with a closure: `.with(|inner| MyInterceptor { next: inner, .. })`
 /// ```
 pub trait Interceptor:
     sansio::Protocol<
@@ -324,11 +367,11 @@ pub trait Interceptor:
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use rtc_interceptor::{Interceptor, NoopInterceptor, SenderReportBuilder};
     /// use std::time::Duration;
-    /// use rtc_interceptor::{NoopInterceptor, SenderReportBuilder};
     ///
-    /// // Using the builder pattern (recommended)
+    /// // `Interceptor` must be in scope for `with` to resolve.
     /// let chain = NoopInterceptor::new()
     ///     .with(SenderReportBuilder::new().with_interval(Duration::from_secs(1)).build());
     /// ```

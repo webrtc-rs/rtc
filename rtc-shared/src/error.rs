@@ -1,3 +1,9 @@
+//! The error type shared across the stack.
+//!
+//! One [`Error`](crate::error::Error) enum spans every layer — buffers, UDP, ICE, DTLS, SCTP, SRTP, RTP/RTCP, SDP and
+//! the data channel — so a value can propagate from the innermost codec to the application
+//! without conversion at each boundary. The higher-level crates re-export it, which is why an
+//! application only ever imports one error type.
 #![allow(dead_code)]
 
 use std::io;

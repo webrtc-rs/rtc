@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, NackGeneratorBuilder};
 /// use std::time::Duration;
 ///

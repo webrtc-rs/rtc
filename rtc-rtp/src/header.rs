@@ -1,3 +1,19 @@
+//! The RTP header and its extensions.
+//!
+//! [`Header`](crate::header::Header) is the fixed 12-byte header plus the optional CSRC list and header-extension
+//! block. The `*_SHIFT`/`*_MASK` constants describe how the flag fields pack into the first two
+//! octets, and the `*_OFFSET`/`*_LENGTH` constants give the byte positions a caller can patch in
+//! place without re-encoding.
+//!
+//! Header extensions ([RFC 8285]) come in two forms, selected by
+//! [`Header::extension_profile`](crate::header::Header::extension_profile): one-byte ids ([`EXTENSION_PROFILE_ONE_BYTE`](crate::header::EXTENSION_PROFILE_ONE_BYTE)) or two-byte ids
+//! ([`EXTENSION_PROFILE_TWO_BYTE`](crate::header::EXTENSION_PROFILE_TWO_BYTE)) when an id above 14 is needed. Use
+//! [`Header::set_extension`](crate::header::Header::set_extension) and [`Header::get_extension`](crate::header::Header::get_extension) rather than touching
+//! [`Header::extensions`](crate::header::Header::extensions) directly — they keep [`Header::extensions_padding`](crate::header::Header::extensions_padding) and the extension
+//! flag consistent, which marshalling depends on.
+//!
+//! [RFC 8285]: https://datatracker.ietf.org/doc/html/rfc8285
+
 use shared::{
     error::{Error, Result},
     marshal::{Marshal, MarshalSize, Unmarshal},

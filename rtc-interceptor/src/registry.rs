@@ -29,14 +29,11 @@ use crate::{BoxedInterceptor, Interceptor};
 ///
 /// # Example
 ///
-/// ```ignore
-/// use rtc_interceptor::Registry;
+/// ```
+/// use rtc_interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder};
 ///
-/// // Create a new registry
-/// let mut registry = Registry::new();
-///
-/// // Add interceptors (can be done in helper functions)
-/// registry = registry
+/// // Each `with` changes the registry's type, so rebind rather than reassign.
+/// let registry = Registry::new()
 ///     .with(SenderReportBuilder::new().build())
 ///     .with(ReceiverReportBuilder::new().build());
 ///
@@ -46,10 +43,12 @@ use crate::{BoxedInterceptor, Interceptor};
 ///
 /// # Helper Function Pattern
 ///
-/// ```ignore
+/// ```
+/// use rtc_interceptor::{Interceptor, ReceiverReportBuilder, Registry, SenderReportBuilder};
+///
 /// fn register_default_interceptors<P: Interceptor>(
 ///     registry: Registry<P>,
-/// ) -> Registry<impl Interceptor> {
+/// ) -> Registry<impl Interceptor + use<P>> {
 ///     registry
 ///         .with(SenderReportBuilder::new().build())
 ///         .with(ReceiverReportBuilder::new().build())
@@ -71,7 +70,7 @@ impl Registry<NoopInterceptor> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use rtc_interceptor::Registry;
     ///
     /// let registry = Registry::new();
@@ -94,8 +93,10 @@ impl<P: Interceptor> Registry<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let custom = MyCustomInterceptor::new();
+    /// ```
+    /// use rtc_interceptor::{NoopInterceptor, Registry};
+    ///
+    /// let custom = NoopInterceptor::new();
     /// let registry = Registry::from(custom);
     /// ```
     pub fn from(inner: P) -> Self {
@@ -108,7 +109,9 @@ impl<P: Interceptor> Registry<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use rtc_interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder};
+    ///
     /// let registry = Registry::new()
     ///     .with(SenderReportBuilder::new().build())
     ///     .with(ReceiverReportBuilder::new().build());
@@ -129,8 +132,10 @@ impl<P: Interceptor> Registry<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let registry = Registry::new().with(MyInterceptor::new);
+    /// ```
+    /// use rtc_interceptor::{Registry, SenderReportBuilder};
+    ///
+    /// let registry = Registry::new().with(SenderReportBuilder::new().build());
     /// let chain = registry.build();
     /// ```
     pub fn build(self) -> P {
@@ -146,9 +151,22 @@ impl<P: Interceptor> Registry<P> {
     ///
     /// # Example
     ///
+    /// ```
+    /// use rtc_interceptor::{BoxedInterceptor, Registry, SenderReportBuilder};
+    ///
+    /// // Whatever the chain was composed of, the result has one concrete type.
+    /// let chain: BoxedInterceptor = Registry::new()
+    ///     .with(SenderReportBuilder::new().build())
+    ///     .boxed()
+    ///     .build();
+    /// ```
+    ///
+    /// The `rtc` crate accepts the erased registry directly, so a peer connection can be stored
+    /// as `RTCPeerConnection<BoxedInterceptor>`:
+    ///
     /// ```ignore
     /// let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
-    /// let pc: RTCPeerConnection<BoxedInterceptor> = RTCPeerConnectionBuilder::new()
+    /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_interceptor_registry(registry.boxed())
     ///     .build()?;
     /// ```

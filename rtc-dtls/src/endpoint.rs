@@ -1,3 +1,12 @@
+//! The Sans-I/O DTLS endpoint.
+//!
+//! An [`Endpoint`](crate::endpoint::Endpoint) multiplexes several DTLS associations by remote address. Feed it inbound
+//! datagrams, poll it for the datagrams to send and for [`EndpointEvent`](crate::endpoint::EndpointEvent)s, and drive its timers
+//! with `handle_timeout`/`poll_timeout`. It owns no sockets and reads no clock.
+//!
+//! [`EndpointEvent::HandshakeComplete`](crate::endpoint::EndpointEvent::HandshakeComplete) is the signal an application waits for: from that point
+//! application data can be written, and the SRTP keying material can be exported from the
+//! completed handshake.
 use crate::conn::DTLSConn;
 use shared::error::{Error, Result};
 use shared::{EcnCodepoint, TransportContext};

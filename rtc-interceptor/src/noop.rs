@@ -14,12 +14,18 @@ use std::time::Instant;
 ///
 /// # Example
 ///
-/// ```ignore
-/// use rtc_interceptor::NoopInterceptor;
+/// ```
+/// use rtc_interceptor::{NoopInterceptor, Packet, TaggedPacket};
 /// use sansio::Protocol;
+/// use std::time::Instant;
 ///
 /// let mut noop = NoopInterceptor::new();
-/// noop.handle_read(TaggedPacket::Rtp(...)).unwrap();
+/// noop.handle_read(TaggedPacket {
+///     now: Instant::now(),
+///     transport: Default::default(),
+///     message: Packet::Rtp(rtp::Packet::default()),
+/// })
+/// .unwrap();
 /// assert!(noop.poll_read().is_some());
 /// ```
 pub struct NoopInterceptor {

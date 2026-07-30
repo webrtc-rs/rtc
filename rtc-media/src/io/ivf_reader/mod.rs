@@ -1,3 +1,8 @@
+//! Reading IVF files.
+//!
+//! IVF is the minimal container the VPx and AV1 tools use: a 32-byte file header naming the codec
+//! and frame size, then a 12-byte header before each frame giving its length and timestamp.
+//! [`IVFReader`](crate::io::ivf_reader::IVFReader) yields one frame at a time, which is the unit an RTP payloader wants.
 #[cfg(test)]
 mod ivf_reader_test;
 

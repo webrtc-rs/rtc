@@ -28,6 +28,28 @@
 //! `crypto`, `ifaces`, `marshal` and `replay` are all enabled by default; each gates the
 //! correspondingly named module so that dependents can compile only what they use.
 //!
+//! # Example
+//!
+//! Every protocol codec in the stack implements the same three traits, so encoding and decoding
+//! look the same whichever layer you are at:
+//!
+//! ```
+//! use bytes::Bytes;
+//! use rtc_shared::marshal::{Marshal, MarshalSize, Unmarshal};
+//!
+//! # fn round_trip<T: Marshal + Unmarshal + PartialEq + std::fmt::Debug>(value: T)
+//! # -> Result<(), Box<dyn std::error::Error>> {
+//! // Size the buffer, encode into it, then decode the result back.
+//! let n = value.marshal_size();
+//! let encoded = value.marshal()?;
+//! assert_eq!(encoded.len(), n);
+//!
+//! let mut buf = Bytes::from(encoded.to_vec());
+//! assert_eq!(T::unmarshal(&mut buf)?, value);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the [`rtc`](https://docs.rs/rtc)
 //! crate re-exports what it needs as `rtc::shared`.
 

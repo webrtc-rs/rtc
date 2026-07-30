@@ -1,3 +1,14 @@
+//! The STUN message: header, attributes, and encoding.
+//!
+//! A [`Message`](crate::message::Message) is a class and method ([`MessageType`](crate::message::MessageType)), a 96-bit [`TransactionId`](crate::message::TransactionId), and a
+//! list of attributes. Build one by applying [`Setter`](crate::message::Setter)s, read one back with [`Getter`](crate::message::Getter)s, and
+//! move it across the wire with `marshal`/`unmarshal`.
+//!
+//! Two attributes are special, because their value covers the *encoded* message: `FINGERPRINT`
+//! and `MESSAGE-INTEGRITY` must be appended last and are validated through [`Checker`](crate::message::Checker). That is
+//! why [`Message::raw`](crate::message::Message::raw) is kept alongside the parsed attributes — those checks are computed over
+//! it rather than over a re-encoding.
+
 #[cfg(test)]
 mod message_test;
 

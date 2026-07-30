@@ -20,6 +20,24 @@
 //! * [`audio`], [`video`] — per-codec helpers, including audio buffering and frame
 //!   inspection.
 //!
+//! # Example
+//!
+//! ```
+//! use bytes::Bytes;
+//! use rtc_media::Sample;
+//! use shared::time::SystemInstant;
+//! use std::time::Duration;
+//!
+//! // One encoded frame, ready to hand to a sample-based local track.
+//! let sample = Sample {
+//!     data: Bytes::from_static(&[0u8; 128]),
+//!     timestamp: SystemInstant::now(),
+//!     duration: Duration::from_millis(33), // ~30 fps
+//!     ..Default::default()
+//! };
+//! assert_eq!(sample.data.len(), 128);
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate re-exports it as `rtc::media`.
 

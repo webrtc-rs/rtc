@@ -15,32 +15,48 @@
 //! in a streaming multimedia session. An application may use this information to control quality of
 //! service parameters, perhaps by limiting flow, or using a different codec.
 //!
-//! Decoding RTCP packets:
-//!```nobuild
-//!     let pkt = rtcp::unmarshal(&rtcp_data).unwrap();
+//! # Decoding RTCP packets
 //!
-//!     if let Some(e) = pkt
-//!          .as_any()
-//!          .downcast_ref::<PictureLossIndication>()
-//!      {
+//! One datagram may hold several packets — RTCP is compound — so [`packet::unmarshal`]
+//! consumes the buffer and returns them all. Recover each concrete type by downcasting:
 //!
-//!      }
-//!     else if let Some(e) = packet
-//!          .as_any()
-//!          .downcast_ref::<Goodbye>(){}
-//!     ....
-//!```
+//! ```
+//! use bytes::Bytes;
+//! use rtc_rtcp::goodbye::Goodbye;
+//! use rtc_rtcp::packet::unmarshal;
+//! use rtc_rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 //!
-//! Encoding RTCP packets:
-//!```nobuild
-//!     let pkt = PictureLossIndication{
-//!         sender_ssrc: sender_ssrc,
-//!         media_ssrc: media_ssrc
-//!     };
+//! # fn example(rtcp_data: Bytes) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut buf = rtcp_data;
+//! for packet in unmarshal(&mut buf)? {
+//!     if let Some(pli) = packet.as_any().downcast_ref::<PictureLossIndication>() {
+//!         println!("keyframe requested for ssrc {}", pli.media_ssrc);
+//!     } else if let Some(bye) = packet.as_any().downcast_ref::<Goodbye>() {
+//!         println!("{:?} left the session", bye.sources);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
 //!
-//!     let pli_data = pkt.marshal().unwrap();
-//!     // ...
-//!```
+//! # Encoding RTCP packets
+//!
+//! Every packet type implements [`Marshal`](shared::marshal::Marshal), so that trait must be
+//! in scope:
+//!
+//! ```
+//! use rtc_rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+//! use shared::marshal::Marshal;
+//!
+//! # fn example(sender_ssrc: u32, media_ssrc: u32) -> Result<(), Box<dyn std::error::Error>> {
+//! let pli = PictureLossIndication {
+//!     sender_ssrc,
+//!     media_ssrc,
+//! };
+//! let pli_data = pli.marshal()?;
+//! # Ok(())
+//! # }
+//! ```
 
 /// Compound RTCP packets — the several reports that share one datagram.
 pub mod compound_packet;

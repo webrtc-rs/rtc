@@ -1,3 +1,11 @@
+//! The RTCP header.
+//!
+//! Four bytes on every packet: version and padding flags, a 5-bit count whose meaning depends on
+//! the packet type, the [`PacketType`](crate::header::PacketType) itself, and a length in 32-bit words. The `*_SHIFT` and
+//! `*_MASK` constants describe how the flags pack into the first octet.
+//!
+//! The length field is why RTCP is compound: several packets can be concatenated in one
+//! datagram and walked by stepping over each header's length.
 use shared::{
     error::{Error, Result},
     marshal::{Marshal, MarshalSize, Unmarshal},

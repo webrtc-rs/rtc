@@ -1,3 +1,12 @@
+//! The `m=` media description.
+//!
+//! One [`MediaDescription`](crate::description::media::MediaDescription) is a media type, a transport port and protocol, a list of formats,
+//! and the attributes that describe them. For RTP media the formats are payload types, and
+//! [`MediaDescription::codecs`](crate::description::media::MediaDescription::codecs) assembles them into [`Codec`](crate::util::Codec)s by joining the
+//! `a=rtpmap`, `a=fmtp` and `a=rtcp-fb` attributes that belong to each.
+//!
+//! [`RangedPort`](crate::description::media::RangedPort) exists because a media section may claim consecutive ports (`<port>/<count>`),
+//! which RTP/RTCP without multiplexing needs.
 use std::collections::HashMap;
 use std::fmt;
 

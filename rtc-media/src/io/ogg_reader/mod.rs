@@ -1,3 +1,12 @@
+//! Reading Opus audio from an Ogg container.
+//!
+//! An Ogg stream is a sequence of pages; the first two carry the Opus headers (`OpusHead`, then
+//! `OpusTags`), and the rest carry audio packets. [`OggReader`](crate::io::ogg_reader::OggReader) walks the pages and hands back
+//! one Opus packet at a time, which is exactly the unit RTP carries.
+//!
+//! The `OpusHead` fields worth noting are [`pre_skip`](crate::io::ogg_reader::OggHeader::pre_skip) — decoder warm-up
+//! samples to discard — and [`sample_rate`](crate::io::ogg_reader::OggHeader::sample_rate), which records the *original*
+//! input rate; Opus itself always decodes at 48 kHz.
 #[cfg(test)]
 mod ogg_reader_test;
 

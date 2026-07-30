@@ -1,3 +1,13 @@
+//! TURN's STUN attributes and ChannelData framing.
+//!
+//! TURN is defined as a set of STUN methods and attributes, so these build on
+//! [`rtc-stun`](https://docs.rs/rtc-stun). The attributes name the relay's parts:
+//! [`relayaddr`](crate::proto::relayaddr) the allocated public address, [`peeraddr`](crate::proto::peeraddr) the far end, [`lifetime`](crate::proto::lifetime) the
+//! allocation's expiry, [`data`](crate::proto::data) the relayed payload.
+//!
+//! [`chandata`](crate::proto::chandata) is the exception — a ChannelData message is not STUN at all, but a compact
+//! four-byte framing that replaces the 36-byte Send/Data indication header once a channel is
+//! bound. Its [`channum`](crate::proto::channum) range is chosen so the two can be told apart on a shared port.
 #[cfg(test)]
 mod proto_test;
 

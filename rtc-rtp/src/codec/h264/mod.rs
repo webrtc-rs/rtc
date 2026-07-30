@@ -1,3 +1,11 @@
+//! H.264 RTP payload format ([RFC 6184]).
+//!
+//! A NAL unit that fits the MTU is sent as-is. Larger ones are split into FU-A fragments, and
+//! several small ones (typically SPS and PPS) may be combined into one STAP-A aggregate. The
+//! `*_NALU_TYPE` constants name the types this payloader recognises, and the `*_BITMASK`
+//! constants describe how the NAL header and FU header pack their fields.
+//!
+//! [RFC 6184]: https://datatracker.ietf.org/doc/html/rfc6184
 #[cfg(test)]
 mod h264_test;
 

@@ -1,3 +1,11 @@
+//! Transport-wide congestion control feedback.
+//!
+//! Reports the arrival status and time of packets by their *transport-wide* sequence number — the
+//! one the `TransportCcExtension` RTP header extension stamps on every packet
+//! regardless of stream, which is why one report can cover audio and video together.
+//!
+//! Status is run-length or bit-vector encoded ([`StatusChunkTypeTcc`](crate::transport_feedbacks::transport_layer_cc::StatusChunkTypeTcc)) so a report covering
+//! hundreds of packets stays small.
 #[cfg(test)]
 mod transport_layer_cc_test;
 

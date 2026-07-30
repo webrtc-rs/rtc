@@ -23,6 +23,24 @@
 //! * [`stats`] — per-candidate and per-pair counters, surfaced through `getStats`.
 //! * [`mdns`] — mDNS candidate handling, for hiding private addresses.
 //!
+//! # Example
+//!
+//! ```
+//! use rtc_ice::url::{ProtoType, SchemeType, Url};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let stun = Url::parse_url("stun:stun.l.google.com:19302")?;
+//! assert_eq!(stun.scheme, SchemeType::Stun);
+//! assert_eq!(stun.port, 19302);
+//!
+//! // TURN URLs may pin the transport used to reach the server.
+//! let turn = Url::parse_url("turn:turn.example.com:3478?transport=tcp")?;
+//! assert_eq!(turn.scheme, SchemeType::Turn);
+//! assert_eq!(turn.proto, ProtoType::Tcp);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate drives the agent as one layer of the peer-connection
 //! pipeline.

@@ -16,6 +16,30 @@
 //!   `CREATE-PERMISSION`, `CHANNEL-BIND`, `XOR-RELAYED-ADDRESS`, ChannelData framing),
 //!   built on [`rtc-stun`].
 //!
+//! # Example
+//!
+//! A client is configured with the server to allocate from and the long-term credentials to
+//! authenticate with; driving it is then a matter of feeding it datagrams and polling for
+//! [`Event`](client::Event)s:
+//!
+//! ```
+//! use rtc_turn::client::ClientConfig;
+//! use shared::TransportProtocol;
+//!
+//! let config = ClientConfig {
+//!     turn_serv_addr: "turn.example.com:3478".to_owned(),
+//!     local_addr: "0.0.0.0:0".parse().unwrap(),
+//!     transport_protocol: TransportProtocol::UDP,
+//!     username: "user".to_owned(),
+//!     password: "pass".to_owned(),
+//!     realm: "example.com".to_owned(),
+//!     stun_serv_addr: String::new(), // optional: only for Binding requests
+//!     software: String::new(),
+//!     rto_in_ms: 0, // 0 selects the default retransmission timeout
+//! };
+//! assert_eq!(config.turn_serv_addr, "turn.example.com:3478");
+//! ```
+//!
 //! Most applications do not depend on this crate directly — [`rtc-ice`] gathers relay
 //! candidates through it, and the [`rtc`](https://docs.rs/rtc) crate drives that.
 //!

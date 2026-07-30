@@ -1,3 +1,11 @@
+//! STUN transaction tracking.
+//!
+//! The agent remembers which requests are outstanding and when each should be considered lost. It
+//! performs no I/O: the caller submits [`ClientAgent`](crate::agent::ClientAgent) commands — start a transaction, hand over
+//! an inbound message, advance time, stop or close — and polls for the resulting [`Event`](crate::agent::Event)s.
+//!
+//! This split is what lets the retransmission schedule be tested without a network, and lets ICE
+//! reuse the same transaction bookkeeping for its connectivity checks.
 #[cfg(test)]
 mod agent_test;
 

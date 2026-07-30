@@ -114,9 +114,9 @@ pub(crate) fn aes_256_cm_key_derivation(
 /// ROC = a 32-bit unsigned rollover counter (roc), which records how many
 /// times the 16-bit RTP sequence number has been reset to zero after
 /// passing through 65,535
-/// ```nobuild
-/// i = 2^16 * roc + SEQ
-/// IV = (salt*2 ^ 16) | (ssrc*2 ^ 64) | (i*2 ^ 16)
+/// ```text
+/// i  = 2^16 * roc + SEQ
+/// IV = (salt * 2^16) | (ssrc * 2^64) | (i * 2^16)
 /// ```
 pub(crate) fn generate_counter(
     sequence_number: u16,

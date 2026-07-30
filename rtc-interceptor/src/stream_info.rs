@@ -86,7 +86,7 @@ pub struct RTCPFeedback {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{StreamInfo, RTCPFeedback, RTPHeaderExtension};
 ///
 /// let info = StreamInfo {

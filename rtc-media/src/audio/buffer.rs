@@ -1,3 +1,13 @@
+//! Multi-channel audio buffers.
+//!
+//! A buffer is a flat slice of samples plus a [`BufferInfo`](crate::audio::buffer::BufferInfo) recording how many channels and
+//! frames it holds. The layout is a type parameter: [`Interleaved`](crate::audio::buffer::layout::Interleaved) stores
+//! one sample per channel per frame (what most audio APIs use), while
+//! [`Deinterleaved`](crate::audio::buffer::layout::Deinterleaved) stores each channel contiguously.
+//!
+//! Encoding a layout in the type rather than a runtime flag means indexing is resolved at compile
+//! time and the two cannot be mixed up. [`FromBytes`](crate::audio::buffer::FromBytes) and [`ToByteBufferRef`](crate::audio::buffer::ToByteBufferRef) convert to and from
+//! raw bytes in a caller-chosen endianness.
 /// Channel and frame counts for a buffer.
 pub mod info;
 /// The interleaved and deinterleaved buffer layouts.

@@ -1,3 +1,9 @@
+//! Monotonic, Unix and NTP time.
+//!
+//! Protocol logic measures time with a monotonic [`Instant`](std::time::Instant), which cannot go
+//! backwards but has no absolute meaning. RTCP timestamps need the opposite: wall-clock time in
+//! NTP format. [`SystemInstant`](crate::time::SystemInstant) captures both once, so either can be derived from the other later
+//! without re-reading a clock that may have been adjusted in between.
 use std::ops::Add;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

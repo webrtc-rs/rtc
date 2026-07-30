@@ -1,3 +1,12 @@
+//! `a=extmap` RTP header-extension declarations.
+//!
+//! An [`ExtMap`](crate::extmap::ExtMap) binds a header-extension URI to the small integer id that will appear in RTP
+//! packets. Both sides must agree, which is the whole point of negotiating it in SDP: the id is
+//! per-session, while the URI is the stable name.
+//!
+//! The `*_URI` constants are the extensions this stack uses — audio level, video orientation,
+//! absolute send time, transport-wide CC, and the SDES ids that make simulcast demultiplexing
+//! possible.
 #[cfg(test)]
 mod extmap_test;
 

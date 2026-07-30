@@ -1,3 +1,17 @@
+//! ICE candidates: the addresses an agent can be reached at.
+//!
+//! A [`Candidate`](crate::candidate::Candidate) pairs a transport address with a [`CandidateType`](crate::candidate::CandidateType) — host, server-reflexive,
+//! peer-reflexive or relay — and the bookkeeping ICE needs: a priority, a foundation, and
+//! last-sent/last-received times that feed consent freshness.
+//!
+//! Type drives priority, and priority drives check order: host candidates are tried first
+//! because they need no traversal, relay candidates last because they always cost an extra hop.
+//! The [`foundation`](crate::candidate::Candidate::foundation) groups candidates that share a base and transport,
+//! so redundant checks can be skipped.
+//!
+//! Each type has its own constructor module (`candidate_host`, `candidate_relay`, …), all
+//! built on the shared [`CandidateConfig`](crate::candidate::CandidateConfig).
+
 #[cfg(test)]
 mod candidate_pair_test;
 #[cfg(test)]

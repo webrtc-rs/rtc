@@ -1,3 +1,11 @@
+//! Reading H.264/H.265 Annex B byte streams.
+//!
+//! Annex B delimits NAL units with start codes (`00 00 01` or `00 00 00 01`). This module walks
+//! those boundaries and parses each unit's header, which differs between the codecs: H.264 uses
+//! one byte ([`H264NAL`](crate::io::h26x_reader::H264NAL)), H.265 two ([`H265NAL`](crate::io::h26x_reader::H265NAL)).
+//!
+//! Use [`sample_reader`](crate::io::h26x_reader::sample_reader) instead when you want whole access units — the NAL units making up one
+//! frame — rather than individual units.
 #[cfg(test)]
 mod h26x_reader_test;
 /// Reads Annex B streams as whole samples rather than individual NAL units.

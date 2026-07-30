@@ -1,70 +1,7 @@
-//! Sans-I/O mDNS Connection implementation.
+//! The Sans-I/O mDNS connection.
 //!
-//! This module provides [`Mdns`], a sans-I/O implementation of an mDNS client/server
-//! that implements the [`sansio::Protocol`] trait for integration with any I/O framework.
-//!
-//! # Overview
-//!
-//! The [`Mdns`] struct handles the mDNS protocol logic without performing any I/O.
-//! The caller is responsible for:
-//!
-//! 1. **Network I/O**: Reading/writing UDP packets to/from 224.0.0.251:5353
-//! 2. **Timing**: Calling `handle_timeout()` when `poll_timeout()` expires
-//! 3. **Event Processing**: Handling events from `poll_event()`
-//!
-//! # Client Usage
-//!
-//! To query for a hostname:
-//!
-//! ```rust
-//! use rtc_mdns::{MdnsConfig, Mdns, MdnsEvent};
-//! use sansio::Protocol;
-//! use std::time::Instant;
-//!
-//! let mut mdns_client = Mdns::new(MdnsConfig::default());
-//!
-//! // Start a query - this queues a packet to send
-//! let query_id = mdns_client.query("printer.local");
-//!
-//! // Get the packet to send over the network
-//! if let Some(packet) = mdns_client.poll_write() {
-//!     // Send packet.message to packet.transport.peer_addr via UDP
-//!     println!("Send {} bytes to {}", packet.message.len(), packet.transport.peer_addr);
-//! }
-//!
-//! // When a response packet arrives, call handle_read()
-//! // Then check poll_event() for QueryAnswered events
-//! ```
-//!
-//! # Server Usage
-//!
-//! To respond to queries:
-//!
-//! ```rust
-//! use rtc_mdns::{MdnsConfig, Mdns};
-//! use std::net::{IpAddr, Ipv4Addr};
-//!
-//! let config = MdnsConfig::default()
-//!     .with_local_names(vec!["myserver.local".to_string()])
-//!     .with_local_ip(
-//!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-//!     );
-//!
-//! let mut mdns_client = Mdns::new(config);
-//!
-//! // When a query packet arrives, call handle_read()
-//! // The connection automatically queues responses for configured local_names
-//! // Retrieve them with poll_write()
-//! ```
-//!
-//! # Query Lifecycle
-//!
-//! 1. Call [`Mdns::query()`] with the hostname to resolve
-//! 2. Retrieve the query packet from [`poll_write()`](sansio::Protocol::poll_write)
-//! 3. Send the packet to the mDNS multicast address
-//! 4. When responses arrive, pass them to [`handle_read()`](sansio::Protocol::handle_read)
-//! 5. Check [`poll_event()`](sansio::Protocol::poll_event) for [`MdnsEvent::QueryAnswered`]
-//! 6. If no answer, call [`handle_timeout()`](sansio::Protocol::handle_timeout) to trigger retries
+//! This module is private; [`Mdns`] is re-exported as [`crate::Mdns`], where its
+//! documentation and examples live so that rustdoc renders them and their doctests run.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -253,6 +190,24 @@ pub enum MdnsEvent {
 /// assert_eq!(mdns.pending_query_count(), 2);
 /// assert!(!mdns.is_query_pending(id2));
 /// ```
+///
+/// # Overview
+///
+/// The [`Mdns`] struct handles the mDNS protocol logic without performing any I/O.
+/// The caller is responsible for:
+///
+/// 1. **Network I/O**: Reading/writing UDP packets to/from 224.0.0.251:5353
+/// 2. **Timing**: Calling `handle_timeout()` when `poll_timeout()` expires
+/// 3. **Event Processing**: Handling events from `poll_event()`
+///
+/// # Query Lifecycle
+///
+/// 1. Call [`Mdns::query()`] with the hostname to resolve
+/// 2. Retrieve the query packet from [`poll_write()`](sansio::Protocol::poll_write)
+/// 3. Send the packet to the mDNS multicast address
+/// 4. When responses arrive, pass them to [`handle_read()`](sansio::Protocol::handle_read)
+/// 5. Check [`poll_event()`](sansio::Protocol::poll_event) for [`MdnsEvent::QueryAnswered`]
+/// 6. If no answer, call [`handle_timeout()`](sansio::Protocol::handle_timeout) to trigger retries
 pub struct Mdns {
     /// MdnsConfiguration
     config: MdnsConfig,

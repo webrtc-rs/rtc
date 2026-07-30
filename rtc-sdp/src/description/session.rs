@@ -1,3 +1,14 @@
+//! The session description — a whole SDP document.
+//!
+//! A [`SessionDescription`](crate::description::session::SessionDescription) is the session-level fields (`v=`, `o=`, `s=`, `t=`, …) followed by
+//! any number of [`MediaDescription`](crate::description::media::MediaDescription)s. `unmarshal` parses one
+//! from a string and `marshal` prints it back; the round trip is faithful, including attributes
+//! this crate does not interpret.
+//!
+//! The `ATTR_KEY_*` constants name the `a=` attributes WebRTC relies on — `mid`, `msid`,
+//! `setup`, `rtcp-mux`, `extmap` and the direction flags — and the `SEMANTIC_TOKEN_*` constants
+//! name the grouping semantics used with `a=group` and `a=msid-semantic`.
+
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

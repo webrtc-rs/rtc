@@ -14,7 +14,7 @@ use std::time::Instant;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, NackResponderBuilder};
 ///
 /// let chain = Registry::new()

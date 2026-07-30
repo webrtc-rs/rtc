@@ -1,3 +1,12 @@
+//! The DTLS association.
+//!
+//! [`DTLSConn`](crate::conn::DTLSConn) joins the handshake state machine to the record layer for one peer: inbound
+//! datagrams go in through [`read`](crate::conn::DTLSConn::read), application data comes out through
+//! [`incoming_application_data`](crate::conn::DTLSConn::incoming_application_data), and whatever should go on
+//! the wire is collected from [`outgoing_raw_packet`](crate::conn::DTLSConn::outgoing_raw_packet).
+//!
+//! Normally an application drives [`Endpoint`](crate::endpoint::Endpoint) instead, which owns one
+//! of these per remote address.
 #[cfg(test)]
 mod conn_test;
 

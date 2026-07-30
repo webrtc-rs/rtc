@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, ReceiverReportBuilder};
 /// use std::time::Duration;
 ///
@@ -54,12 +54,16 @@ impl<P> ReceiverReportBuilder<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use rtc_interceptor::{ReceiverReportBuilder, Registry};
     /// use std::time::Duration;
-    /// use rtc_interceptor::ReceiverReportBuilder;
     ///
-    /// let builder = ReceiverReportBuilder::new()
-    ///     .with_interval(Duration::from_millis(500));
+    /// // The builder is generic over the next layer, so its type is pinned by `with`.
+    /// let registry = Registry::new().with(
+    ///     ReceiverReportBuilder::new()
+    ///         .with_interval(Duration::from_millis(500))
+    ///         .build(),
+    /// );
     /// ```
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
@@ -72,7 +76,7 @@ impl<P> ReceiverReportBuilder<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use rtc_interceptor::{Registry, ReceiverReportBuilder};
     ///
     /// let registry = Registry::new()
@@ -94,7 +98,7 @@ impl<P> ReceiverReportBuilder<P> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, ReceiverReportBuilder};
 ///
 /// let chain = Registry::new()

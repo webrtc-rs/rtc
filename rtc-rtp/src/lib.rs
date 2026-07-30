@@ -20,6 +20,34 @@
 //! * [`extension`] — the typed header extensions: audio level ([RFC 6464]), video
 //!   orientation, transport-wide CC, and the SDES stream ids used for simulcast.
 //!
+//! # Example
+//!
+//! ```
+//! use bytes::Bytes;
+//! use rtc_rtp::Packet;
+//! use shared::marshal::{Marshal, Unmarshal};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // A minimal RTP packet: version 2, payload type 96, one byte of payload.
+//! let raw = Bytes::from_static(&[
+//!     0x80, 0x60, 0x00, 0x01, // V=2, PT=96, seq=1
+//!     0x00, 0x00, 0x00, 0x20, // timestamp
+//!     0xDE, 0xAD, 0xBE, 0xEF, // ssrc
+//!     0xAA, // payload
+//! ]);
+//!
+//! let mut buf = raw.clone();
+//! let packet = Packet::unmarshal(&mut buf)?;
+//! assert_eq!(packet.header.payload_type, 96);
+//! assert_eq!(packet.header.sequence_number, 1);
+//! assert_eq!(packet.header.ssrc, 0xDEAD_BEEF);
+//!
+//! // Re-encoding reproduces the original bytes.
+//! assert_eq!(packet.marshal()?, raw);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate re-exports it as `rtc::rtp`, and an application
 //! usually meets these types when reading or writing media on a track.

@@ -22,6 +22,32 @@
 //! * [`uri`] — parsing `stun:`/`stuns:` URLs.
 //! * [`checks`] — validation helpers for received messages.
 //!
+//! # Example
+//!
+//! ```
+//! use rtc_stun::attributes::ATTR_SOFTWARE;
+//! use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+//! use rtc_stun::textattrs::TextAttribute;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut msg = Message::new();
+//! msg.build(&[
+//!     Box::new(TransactionId::new()),
+//!     Box::new(BINDING_REQUEST),
+//!     Box::new(TextAttribute::new(ATTR_SOFTWARE, "webrtc-rs".to_owned())),
+//! ])?;
+//!
+//! // `build` encodes as it goes, so `raw` is ready to send.
+//! assert!(!msg.raw.is_empty());
+//!
+//! let mut decoded = Message::new();
+//! decoded.raw = msg.raw.clone();
+//! decoded.decode()?;
+//! assert_eq!(decoded.typ, BINDING_REQUEST);
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! Most applications do not depend on this crate directly — [`rtc-ice`] and
 //! [`rtc-turn`] build on it, and the [`rtc`](https://docs.rs/rtc) crate drives those.
 //!

@@ -1,55 +1,7 @@
-//! MdnsConfiguration for mDNS connections.
+//! `MdnsConfig`, the configuration for an mDNS connection.
 //!
-//! This module provides the [`MdnsConfig`] struct for configuring mDNS client and server behavior.
-//!
-//! # Examples
-//!
-//! ## Client MdnsConfiguration
-//!
-//! For a client that only sends queries:
-//!
-//! ```rust
-//! use rtc_mdns::MdnsConfig;
-//! use std::time::Duration;
-//!
-//! let config = MdnsConfig::default()
-//!     .with_query_interval(Duration::from_millis(500)); // Retry every 500ms
-//! ```
-//!
-//! ## Server MdnsConfiguration
-//!
-//! For a server that responds to queries:
-//!
-//! ```rust
-//! use rtc_mdns::MdnsConfig;
-//! use std::net::{IpAddr, Ipv4Addr};
-//!
-//! let config = MdnsConfig::default()
-//!     .with_local_names(vec![
-//!         "mydevice.local".to_string(),
-//!         "mydevice._http._tcp.local".to_string(),
-//!     ])
-//!     .with_local_ip(
-//!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
-//!     );
-//! ```
-//!
-//! ## Combined Client/Server
-//!
-//! For a connection that both queries and responds:
-//!
-//! ```rust
-//! use rtc_mdns::MdnsConfig;
-//! use std::net::{IpAddr, Ipv4Addr};
-//! use std::time::Duration;
-//!
-//! let config = MdnsConfig::default()
-//!     .with_query_interval(Duration::from_secs(1))
-//!     .with_local_names(vec!["myhost.local".to_string()])
-//!     .with_local_ip(
-//!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
-//!     );
-//! ```
+//! This module is private; the type is re-exported as [`crate::MdnsConfig`], where its
+//! documentation and examples live so that rustdoc renders them and their doctests run.
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -90,6 +42,55 @@ pub(crate) const RESPONSE_TTL: u32 = 120;
 /// - `query_timeout`: Maximum time to wait for a query answer (default: None - no timeout)
 /// - `local_names`: Names this connection will respond to (empty by default)
 /// - `local_addr`: IP address to advertise in responses (required for server mode)
+///
+/// # Configuration scenarios
+///
+/// ## Client MdnsConfiguration
+///
+/// For a client that only sends queries:
+///
+/// ```rust
+/// use rtc_mdns::MdnsConfig;
+/// use std::time::Duration;
+///
+/// let config = MdnsConfig::default()
+///     .with_query_interval(Duration::from_millis(500)); // Retry every 500ms
+/// ```
+///
+/// ## Server MdnsConfiguration
+///
+/// For a server that responds to queries:
+///
+/// ```rust
+/// use rtc_mdns::MdnsConfig;
+/// use std::net::{IpAddr, Ipv4Addr};
+///
+/// let config = MdnsConfig::default()
+///     .with_local_names(vec![
+///         "mydevice.local".to_string(),
+///         "mydevice._http._tcp.local".to_string(),
+///     ])
+///     .with_local_ip(
+///         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+///     );
+/// ```
+///
+/// ## Combined Client/Server
+///
+/// For a connection that both queries and responds:
+///
+/// ```rust
+/// use rtc_mdns::MdnsConfig;
+/// use std::net::{IpAddr, Ipv4Addr};
+/// use std::time::Duration;
+///
+/// let config = MdnsConfig::default()
+///     .with_query_interval(Duration::from_secs(1))
+///     .with_local_names(vec!["myhost.local".to_string()])
+///     .with_local_ip(
+///         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+///     );
+/// ```
 #[derive(Clone, Debug)]
 pub struct MdnsConfig {
     /// How often to retry unanswered queries.

@@ -1,3 +1,18 @@
+//! Handshake configuration.
+//!
+//! [`ConfigBuilder`](crate::config::ConfigBuilder) is what a caller supplies: certificates, the client/server role, which cipher
+//! suites and curves to offer, the SRTP protection profiles to negotiate through `use_srtp`,
+//! and how strictly to require the extended master secret
+//! ([`ExtendedMasterSecretType`](crate::config::ExtendedMasterSecretType)).
+//!
+//! WebRTC authenticates peers by comparing the certificate fingerprint against the one
+//! signalled in SDP, not against a CA chain — so certificates here are normally self-signed
+//! (see [`gen_self_signed_root_cert`](crate::config::gen_self_signed_root_cert)) and the check is implemented by supplying a
+//! [`VerifyPeerCertificateFn`](crate::config::VerifyPeerCertificateFn).
+//!
+//! [`HandshakeConfig`](crate::config::HandshakeConfig) is the resolved form the handshake
+//! actually runs with, produced by [`ConfigBuilder::build`](crate::config::ConfigBuilder::build).
+
 #[cfg(test)]
 mod config_test;
 
@@ -391,7 +406,7 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
 }
 
 #[derive(Clone)]
-/// The resolved configuration a handshake runs with, built from a [`ConfigBuilder`].
+/// The resolved configuration a handshake runs with, produced by [`ConfigBuilder::build`].
 pub struct HandshakeConfig {
     pub(crate) local_psk_callback: Option<PskCallback>,
     pub(crate) local_psk_identity_hint: Option<Vec<u8>>,

@@ -1,3 +1,8 @@
+//! Candidate transports: UDP or TCP, over IPv4 or IPv6.
+//!
+//! A [`NetworkType`](crate::network_type::NetworkType) pairs the transport protocol with the address family, because ICE treats
+//! them together: a candidate's type constrains which remote candidates it can be paired with,
+//! and pairs across families are never formed.
 #[cfg(test)]
 mod network_type_test;
 

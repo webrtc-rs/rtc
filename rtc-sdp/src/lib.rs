@@ -18,6 +18,33 @@
 //!   URIs.
 //! * [`direction`] — `sendrecv`/`sendonly`/`recvonly`/`inactive`.
 //!
+//! # Example
+//!
+//! ```
+//! use rtc_sdp::SessionDescription;
+//! use std::io::Cursor;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let sdp = "v=0\r\n\
+//!            o=- 0 0 IN IP4 127.0.0.1\r\n\
+//!            s=-\r\n\
+//!            t=0 0\r\n\
+//!            m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+//!            a=mid:0\r\n\
+//!            a=sendrecv\r\n";
+//!
+//! let desc = SessionDescription::unmarshal(&mut Cursor::new(sdp))?;
+//! for media in &desc.media_descriptions {
+//!     assert_eq!(media.media_name.media, "audio");
+//!     assert_eq!(media.attribute("mid").flatten(), Some("0"));
+//! }
+//!
+//! // Printing it back yields valid SDP.
+//! assert!(desc.marshal().starts_with("v=0"));
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! This crate is deliberately a *syntax* layer: it parses and prints SDP faithfully and
 //! leaves negotiation semantics ([RFC 8829]) to the [`rtc`](https://docs.rs/rtc) crate,
 //! which re-exports it as `rtc::sdp`.

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, SenderReportBuilder};
 /// use std::time::Duration;
 ///
@@ -63,12 +63,16 @@ impl<P> SenderReportBuilder<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use rtc_interceptor::{Registry, SenderReportBuilder};
     /// use std::time::Duration;
-    /// use rtc_interceptor::SenderReportBuilder;
     ///
-    /// let builder = SenderReportBuilder::new()
-    ///     .with_interval(Duration::from_millis(500));
+    /// // The builder is generic over the next layer, so its type is pinned by `with`.
+    /// let registry = Registry::new().with(
+    ///     SenderReportBuilder::new()
+    ///         .with_interval(Duration::from_millis(500))
+    ///         .build(),
+    /// );
     /// ```
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
@@ -89,11 +93,11 @@ impl<P> SenderReportBuilder<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use rtc_interceptor::SenderReportBuilder;
+    /// ```
+    /// use rtc_interceptor::{Registry, SenderReportBuilder};
     ///
-    /// let builder = SenderReportBuilder::new()
-    ///     .with_use_latest_packet();
+    /// let registry =
+    ///     Registry::new().with(SenderReportBuilder::new().with_use_latest_packet().build());
     /// ```
     pub fn with_use_latest_packet(mut self) -> Self {
         self.use_latest_packet = true;
@@ -106,7 +110,7 @@ impl<P> SenderReportBuilder<P> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use rtc_interceptor::{Registry, SenderReportBuilder};
     ///
     /// let registry = Registry::new()
@@ -129,7 +133,7 @@ impl<P> SenderReportBuilder<P> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rtc_interceptor::{Registry, SenderReportBuilder};
 ///
 /// let chain = Registry::new()

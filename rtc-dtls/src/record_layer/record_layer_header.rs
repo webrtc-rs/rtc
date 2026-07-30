@@ -1,3 +1,12 @@
+//! The DTLS record header.
+//!
+//! Thirteen bytes: content type, protocol version, a 16-bit epoch, a 48-bit sequence number, and
+//! the body length. The epoch is what DTLS adds over TLS here — it increments on every
+//! ChangeCipherSpec, so records protected with the old and new keys can be told apart while a
+//! rekey is in flight.
+//!
+//! The sequence number is 48 bits on the wire but held as a `u64`; [`MAX_SEQUENCE_NUMBER`](crate::record_layer::record_layer_header::MAX_SEQUENCE_NUMBER) is the
+//! largest value that fits.
 use crate::content::*;
 
 use shared::error::*;
