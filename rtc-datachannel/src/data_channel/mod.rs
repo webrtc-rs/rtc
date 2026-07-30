@@ -17,20 +17,35 @@ const RECEIVE_MTU: usize = 8192;
 /// DataChannelConfig is used to configure the data channel.
 #[derive(Eq, PartialEq, Default, Clone, Debug)]
 pub struct DataChannelConfig {
+    /// The reliability and ordering guarantees to request.
     pub channel_type: ChannelType,
+    /// Whether the channel was negotiated out of band.
+    ///
+    /// When `true` no DCEP `DATA_CHANNEL_OPEN` is sent — both sides are assumed to have agreed
+    /// the stream id and parameters through signalling instead.
     pub negotiated: bool,
+    /// The channel's relative priority; see the `CHANNEL_PRIORITY_*` constants.
     pub priority: u16,
+    /// The retransmission count or message lifetime, interpreted according to
+    /// [`Self::channel_type`].
     pub reliability_parameter: u32,
+    /// The channel label, used to distinguish channels on the same association.
     pub label: String,
+    /// The subprotocol name, or empty if none.
     pub protocol: String,
 }
 
 /// DataChannelMessage is used to data sent over SCTP
 #[derive(Debug, Default, Clone)]
 pub struct DataChannelMessage {
+    /// Identifies the SCTP association this message belongs to.
     pub association_handle: usize,
+    /// The SCTP stream the message arrived on or should be sent on.
     pub stream_id: u16,
+    /// The payload protocol identifier, which distinguishes DCEP control messages from string
+    /// and binary user data.
     pub ppi: PayloadProtocolIdentifier,
+    /// The message bytes.
     pub payload: BytesMut,
 
     /// Marks a `DATA_CHANNEL_OPEN` that belongs to an out-of-band *negotiated*
@@ -167,6 +182,7 @@ impl DataChannel {
         self.stream_id
     }
 
+    /// The configuration this channel was opened with.
     pub fn config(&self) -> &DataChannelConfig {
         &self.config
     }
@@ -264,6 +280,10 @@ impl DataChannel {
         self.stream.on_buffered_amount_low(f)
     }*/
 
+    /// Decomposes a [`ChannelType`] into the SCTP send parameters it implies.
+    ///
+    /// Returns whether delivery is unordered, together with the reliability type and value SCTP
+    /// needs for partial reliability.
     pub fn get_reliability_params(channel_type: ChannelType) -> (bool, ReliabilityType) {
         match channel_type {
             ChannelType::Reliable => (false, ReliabilityType::Reliable),
@@ -275,6 +295,10 @@ impl DataChannel {
         }
     }
 
+    /// Derives the [`ChannelType`] and reliability parameter from the `maxPacketLifeTime` /
+    /// `maxRetransmits` pair the W3C API exposes.
+    ///
+    /// The two are mutually exclusive; supplying neither yields a fully reliable channel.
     pub fn get_channel_type_and_reliability_parameter(
         ordered: bool,
         max_retransmits: Option<u16>,
@@ -315,6 +339,10 @@ impl DataChannel {
         (channel_type, reliability_parameter)
     }
 
+    /// Builds the payload protocol identifier and payload for a user message.
+    ///
+    /// Empty messages get their own identifiers (`StringEmpty`/`BinaryEmpty`) because SCTP
+    /// cannot carry a zero-length payload.
     pub fn get_data_channel_message(is_string: bool, data: BytesMut) -> DataChannelMessage {
         // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
         // SCTP does not support the sending of empty user messages.  Therefore,

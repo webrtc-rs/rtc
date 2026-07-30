@@ -27,15 +27,22 @@ pub struct Agent {
 /// Do not reuse outside Handler.
 #[derive(Debug)] //Clone
 pub struct Event {
+    /// The transaction this event belongs to.
     pub id: TransactionId,
+    /// What happened.
     pub evt: StunEvent,
 }
 
 #[derive(Debug)] //Clone
+/// What became of a STUN transaction.
 pub enum StunEvent {
+    /// The agent was closed, abandoning this transaction.
     AgentClosed,
+    /// The transaction was stopped by the caller.
     TransactionStopped,
+    /// The transaction timed out with no response.
     TransactionTimeOut,
+    /// A response arrived for this transaction.
     Message(Message),
 }
 
@@ -54,10 +61,15 @@ const AGENT_COLLECT_CAP: usize = 100;
 /// process transactions.
 #[derive(Debug)]
 pub enum ClientAgent {
+    /// Hand an inbound message to the agent for matching against a transaction.
     Process(Message),
+    /// Advance time so the agent can expire transactions.
     Collect(Instant),
+    /// Register a new transaction with its deadline.
     Start(TransactionId, Instant),
+    /// Abandon a transaction without waiting for its deadline.
     Stop(TransactionId),
+    /// Close the agent, abandoning every outstanding transaction.
     Close,
 }
 
@@ -71,6 +83,11 @@ impl Agent {
         }
     }
 
+    /// Applies an agent command: start, stop, process a message, collect timeouts, or close.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the agent is closed, or a transaction id is already in use.
     pub fn handle_event(&mut self, client_agent: ClientAgent) -> Result<()> {
         match client_agent {
             ClientAgent::Process(message) => self.process(message),
@@ -81,6 +98,7 @@ impl Agent {
         }
     }
 
+    /// When the agent next needs [`ClientAgent::Collect`], or `None` with nothing outstanding.
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         let mut deadline = None;
         for transaction in self.transactions.values() {
@@ -91,6 +109,7 @@ impl Agent {
         deadline
     }
 
+    /// The next transaction event, or `None` when there is nothing to report.
     pub fn poll_event(&mut self) -> Option<Event> {
         self.events_queue.pop_front()
     }

@@ -51,6 +51,7 @@ pub(crate) fn default_candidate_types() -> Vec<CandidateType> {
 /// future-proofness of the interface.
 #[derive(Default)]
 pub struct AgentConfig {
+    /// The STUN and TURN servers to gather reflexive and relay candidates from.
     pub urls: Vec<Url>,
 
     /// It is used to perform connectivity checks. The values MUST be unguessable, with at least
@@ -104,6 +105,7 @@ pub struct AgentConfig {
     /// request or a nomination we set the pair as failed.
     pub max_binding_requests: Option<u16>,
 
+    /// Whether this agent takes the controlling role.
     pub is_controlling: bool,
 
     /// lite agents do not perform connectivity check and only provide host candidates.

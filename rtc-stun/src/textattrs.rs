@@ -13,30 +13,33 @@ const MAX_REALM_B: usize = 763;
 const MAX_SOFTWARE_B: usize = 763;
 const MAX_NONCE_B: usize = 763;
 
-// Username represents USERNAME attribute.
-//
-// RFC 5389 Section 15.3
+/// USERNAME attribute.
+///
+/// RFC 5389 Section 15.3.
 pub type Username = TextAttribute;
 
-// Realm represents REALM attribute.
-//
-// RFC 5389 Section 15.7
+/// REALM attribute.
+///
+/// RFC 5389 Section 15.7.
 pub type Realm = TextAttribute;
 
-// Nonce represents NONCE attribute.
-//
-// RFC 5389 Section 15.8
+/// NONCE attribute.
+///
+/// RFC 5389 Section 15.8.
 pub type Nonce = TextAttribute;
 
-// Software is SOFTWARE attribute.
-//
-// RFC 5389 Section 15.10
+/// SOFTWARE attribute.
+///
+/// RFC 5389 Section 15.10.
 pub type Software = TextAttribute;
 
 // TextAttribute is helper for adding and getting text attributes.
 #[derive(Clone, Default)]
+/// A text-valued attribute such as `USERNAME`, `REALM`, `NONCE` or `SOFTWARE`.
 pub struct TextAttribute {
+    /// Which attribute this text belongs to.
     pub attr: AttrType,
+    /// The text value.
     pub text: String,
 }
 
@@ -74,11 +77,12 @@ impl Getter for TextAttribute {
 }
 
 impl TextAttribute {
+    /// A text attribute of type `attr` holding `text`.
     pub fn new(attr: AttrType, text: String) -> Self {
         TextAttribute { attr, text }
     }
 
-    // get_from_as gets t attribute from m and appends its value to reset v.
+    /// Get_from_as gets t attribute from m and appends its value to reset v.
     pub fn get_from_as(m: &Message, attr: AttrType) -> Result<Self> {
         match attr {
             ATTR_USERNAME => {}

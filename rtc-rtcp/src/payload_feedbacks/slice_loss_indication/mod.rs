@@ -34,6 +34,7 @@ pub struct SliceLossIndication {
     /// SSRC of the media source
     pub media_ssrc: u32,
 
+    /// The lost slices being reported.
     pub sli_entries: Vec<SliEntry>,
 }
 

@@ -4,6 +4,7 @@ use crate::crypto::crypto_ccm::{CryptoCcm, CryptoCcmTagLen};
 use crate::prf::*;
 
 #[derive(Clone)]
+/// The shared AES-128-CCM implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes128Ccm {
     ccm: Option<CryptoCcm>,
     client_certificate_type: ClientCertificateType,
@@ -17,6 +18,7 @@ impl CipherSuiteAes128Ccm {
     const PRF_KEY_LEN: usize = 16;
     const PRF_IV_LEN: usize = 4;
 
+    /// Builds an uninitialized AES-128-CCM suite; keys are installed later via `init`.
     pub fn new(
         client_certificate_type: ClientCertificateType,
         id: CipherSuiteId,

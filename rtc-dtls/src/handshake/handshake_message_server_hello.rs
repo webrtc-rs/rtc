@@ -20,6 +20,7 @@ failure alert.
 https://tools.ietf.org/html/rfc5246#section-7.4.1.3
 */
 #[derive(Clone)]
+/// The server's reply: its random, and the cipher suite and extensions it selected.
 pub struct HandshakeMessageServerHello {
     pub(crate) version: ProtocolVersion,
     pub(crate) random: HandshakeRandom,
@@ -52,10 +53,12 @@ impl fmt::Debug for HandshakeMessageServerHello {
 }
 
 impl HandshakeMessageServerHello {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ServerHello
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         let mut len = 2 + self.random.size();
 
@@ -74,6 +77,11 @@ impl HandshakeMessageServerHello {
         len
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u8(self.version.major)?;
         writer.write_u8(self.version.minor)?;
@@ -100,6 +108,11 @@ impl HandshakeMessageServerHello {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let major = reader.read_u8()?;
         let minor = reader.read_u8()?;

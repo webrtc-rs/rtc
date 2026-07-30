@@ -6,6 +6,9 @@ use nearly_eq::NearlyEq;
 
 #[derive(Eq, PartialEq, Copy, Clone, Default, Debug)]
 #[repr(transparent)]
+/// One audio sample of raw type `Raw` (`i16`, `f32`, …).
+///
+/// A transparent newtype, so a `[Sample<T>]` can be reinterpreted as `[T]` without copying.
 pub struct Sample<Raw>(Raw);
 
 impl From<i16> for Sample<i16> {

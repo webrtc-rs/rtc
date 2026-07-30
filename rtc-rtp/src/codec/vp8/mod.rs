@@ -6,11 +6,15 @@ use shared::error::{Error, Result};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
+/// Bytes of mandatory VP8 payload descriptor prefixed to each payload.
 pub const VP8_HEADER_SIZE: usize = 1;
 
 /// Vp8Payloader payloads VP8 packets
 #[derive(Default, Debug, Copy, Clone)]
 pub struct Vp8Payloader {
+    /// Whether to include the optional picture id in the payload descriptor.
+    ///
+    /// Lets a receiver detect loss within a frame, at one or two bytes per packet.
     pub enable_picture_id: bool,
     picture_id: u16,
 }

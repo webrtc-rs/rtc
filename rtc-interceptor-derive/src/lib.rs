@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Derive macros for RTC Interceptor trait.
 //!
 //! This crate provides two macros that work together:

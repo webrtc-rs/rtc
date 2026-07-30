@@ -5,8 +5,11 @@ const RLE_REPORT_BLOCK_MIN_LENGTH: u16 = 8;
 /// ChunkType enumerates the three kinds of chunks described in RFC 3611 section 4.1.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ChunkType {
+    /// A run-length chunk: a bit value repeated a stated number of times.
     RunLength = 0,
+    /// A bit-vector chunk: 15 explicit per-packet bits.
     BitVector = 1,
+    /// The terminating null chunk, which pads the block to a word boundary.
     TerminatingNull = 2,
 }
 
@@ -105,13 +108,19 @@ impl Chunk {
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct RLEReportBlock {
     //not included in marshal/unmarshal
+    /// `true` for a Loss RLE block, `false` for a Duplicate RLE block.
     pub is_loss_rle: bool,
+    /// The block's `T` field.
     pub t: u8,
 
     //marshal/unmarshal
+    /// The SSRC whose packets are reported on.
     pub ssrc: u32,
+    /// The first sequence number covered by this block.
     pub begin_seq: u16,
+    /// One past the last sequence number covered.
     pub end_seq: u16,
+    /// The run-length and bit-vector chunks encoding per-packet status.
     pub chunks: Vec<Chunk>,
 }
 
@@ -126,6 +135,7 @@ pub type LossRLEReportBlock = RLEReportBlock;
 pub type DuplicateRLEReportBlock = RLEReportBlock;
 
 impl RLEReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: if self.is_loss_rle {

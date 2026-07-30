@@ -12,8 +12,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// What the endpoint reports to its caller.
 pub enum EndpointEvent {
+    /// The handshake finished; application data may now be sent, and SRTP keys can be exported.
     HandshakeComplete,
+    /// Decrypted application data arrived.
     ApplicationData(BytesMut),
 }
 
@@ -205,6 +208,11 @@ impl Endpoint {
         Ok(messages)
     }
 
+    /// Queues application data for `remote`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no association with `remote`, or its handshake has not completed.
     pub fn write(&mut self, remote: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.write(data)?;
@@ -226,6 +234,11 @@ impl Endpoint {
         }
     }
 
+    /// Advances `remote`'s association to `now`, driving handshake retransmissions.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the handshake has exhausted its retransmissions.
     pub fn handle_timeout(&mut self, remote: SocketAddr, now: Instant) -> Result<()> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             if let Some(current_retransmit_timer) = &conn.current_retransmit_timer
@@ -254,6 +267,7 @@ impl Endpoint {
         }
     }
 
+    /// When `remote`'s association next needs [`Self::handle_timeout`].
     pub fn poll_timeout(&self, remote: SocketAddr, eto: &mut Instant) -> Result<()> {
         if let Some(conn) = self.connections.get(&remote) {
             if let Some(current_retransmit_timer) = &conn.current_retransmit_timer

@@ -10,6 +10,7 @@ use shared::{
 use bytes::{Buf, BufMut};
 
 // AUDIO_LEVEL_EXTENSION_SIZE One byte header size
+/// The extension's encoded size in bytes.
 pub const AUDIO_LEVEL_EXTENSION_SIZE: usize = 1;
 
 /// AudioLevelExtension is a extension payload format described in
@@ -39,7 +40,9 @@ pub const AUDIO_LEVEL_EXTENSION_SIZE: usize = 1;
 /// [RFC 6464]: https://tools.ietf.org/html/rfc6464
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct AudioLevelExtension {
+    /// Loudness in −dBov, from 0 (loudest) to 127 (silence).
     pub level: u8,
+    /// Whether the sender detected voice activity in this packet.
     pub voice: bool,
 }
 

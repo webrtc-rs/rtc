@@ -13,8 +13,11 @@ use std::fmt;
 //
 // RFC 5389 Section 15.6
 #[derive(Default)]
+/// The `ERROR-CODE` attribute: a numeric code and a human-readable reason.
 pub struct ErrorCodeAttribute {
+    /// The numeric error code.
     pub code: ErrorCode,
+    /// The reason phrase, as UTF-8 bytes.
     pub reason: Vec<u8>,
 }
 
@@ -81,6 +84,7 @@ impl Getter for ErrorCodeAttribute {
 
 // ErrorCode is code for ERROR-CODE attribute.
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Default)]
+/// A STUN error code, as carried in `ERROR-CODE`.
 pub struct ErrorCode(pub u16);
 
 impl Setter for ErrorCode {
@@ -99,42 +103,59 @@ impl Setter for ErrorCode {
     }
 }
 
-// Possible error codes.
+/// Possible error codes.
 pub const CODE_TRY_ALTERNATE: ErrorCode = ErrorCode(300);
+/// 400 Bad Request: the request was malformed.
 pub const CODE_BAD_REQUEST: ErrorCode = ErrorCode(400);
+/// 401 Unauthorized: authentication is required, or the credentials were wrong.
 pub const CODE_UNAUTHORIZED: ErrorCode = ErrorCode(401);
+/// 420 Unknown Attribute: the request carried a comprehension-required attribute the server
+/// does not understand.
 pub const CODE_UNKNOWN_ATTRIBUTE: ErrorCode = ErrorCode(420);
+/// 438 Stale Nonce: the nonce expired; retry with the one in this response.
 pub const CODE_STALE_NONCE: ErrorCode = ErrorCode(438);
+/// 487 Role Conflict: both ICE agents claimed the same role.
 pub const CODE_ROLE_CONFLICT: ErrorCode = ErrorCode(487);
+/// 500 Server Error: a temporary failure on the server.
 pub const CODE_SERVER_ERROR: ErrorCode = ErrorCode(500);
 
-// DEPRECATED constants.
-// DEPRECATED, use CODE_UNAUTHORIZED.
+/// DEPRECATED constants.
+/// DEPRECATED, use CODE_UNAUTHORIZED.
 pub const CODE_UNAUTHORISED: ErrorCode = CODE_UNAUTHORIZED;
 
-// Error codes from RFC 5766.
-//
-// RFC 5766 Section 15
-pub const CODE_FORBIDDEN: ErrorCode = ErrorCode(403); // Forbidden
-pub const CODE_ALLOC_MISMATCH: ErrorCode = ErrorCode(437); // Allocation Mismatch
-pub const CODE_WRONG_CREDENTIALS: ErrorCode = ErrorCode(441); // Wrong Credentials
-pub const CODE_UNSUPPORTED_TRANS_PROTO: ErrorCode = ErrorCode(442); // Unsupported Transport Protocol
-pub const CODE_ALLOC_QUOTA_REACHED: ErrorCode = ErrorCode(486); // Allocation Quota Reached
-pub const CODE_INSUFFICIENT_CAPACITY: ErrorCode = ErrorCode(508); // Insufficient Capacity
+/// Error codes from RFC 5766.
+///
+/// RFC 5766 Section 15.
+/// Forbidden.
+pub const CODE_FORBIDDEN: ErrorCode = ErrorCode(403);
+/// Allocation Mismatch.
+pub const CODE_ALLOC_MISMATCH: ErrorCode = ErrorCode(437);
+/// Wrong Credentials.
+pub const CODE_WRONG_CREDENTIALS: ErrorCode = ErrorCode(441);
+/// Unsupported Transport Protocol.
+pub const CODE_UNSUPPORTED_TRANS_PROTO: ErrorCode = ErrorCode(442);
+/// Allocation Quota Reached.
+pub const CODE_ALLOC_QUOTA_REACHED: ErrorCode = ErrorCode(486);
+/// Insufficient Capacity.
+pub const CODE_INSUFFICIENT_CAPACITY: ErrorCode = ErrorCode(508);
 
-// Error codes from RFC 6062.
-//
-// RFC 6062 Section 6.3
+/// Error codes from RFC 6062.
+///
+/// RFC 6062 Section 6.3.
 pub const CODE_CONN_ALREADY_EXISTS: ErrorCode = ErrorCode(446);
+/// 447 Connection Timeout or Failure: the TURN TCP connection to the peer failed.
 pub const CODE_CONN_TIMEOUT_OR_FAILURE: ErrorCode = ErrorCode(447);
 
-// Error codes from RFC 6156.
-//
-// RFC 6156 Section 10.2
-pub const CODE_ADDR_FAMILY_NOT_SUPPORTED: ErrorCode = ErrorCode(440); // Address Family not Supported
-pub const CODE_PEER_ADDR_FAMILY_MISMATCH: ErrorCode = ErrorCode(443); // Peer Address Family Mismatch
+/// Error codes from RFC 6156.
+///
+/// RFC 6156 Section 10.2.
+/// Address Family not Supported.
+pub const CODE_ADDR_FAMILY_NOT_SUPPORTED: ErrorCode = ErrorCode(440);
+/// Peer Address Family Mismatch.
+pub const CODE_PEER_ADDR_FAMILY_MISMATCH: ErrorCode = ErrorCode(443);
 
 lazy_static! {
+    /// The reason phrase each known [`ErrorCode`] is sent with.
     pub static ref ERROR_REASONS:HashMap<ErrorCode, Vec<u8>> =
         [
             (CODE_TRY_ALTERNATE,     b"Try Alternate".to_vec()),

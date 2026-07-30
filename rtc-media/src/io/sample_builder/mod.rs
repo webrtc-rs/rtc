@@ -3,6 +3,7 @@ mod sample_builder_test;
 #[cfg(test)]
 mod sample_sequence_location_test;
 
+/// Tracks where a sample sits within the RTP sequence-number space.
 pub mod sample_sequence_location;
 
 use self::sample_sequence_location::{Comparison, SampleSequenceLocation};
@@ -69,6 +70,10 @@ impl<T: Depacketizer> SampleBuilder<T> {
         }
     }
 
+    /// Sets how long to wait for a missing packet before giving up on the sample it belongs to.
+    ///
+    /// Bounds head-of-line blocking: without it a single lost packet would stall reassembly
+    /// indefinitely.
     pub fn with_max_time_delay(mut self, max_late_duration: Duration) -> Self {
         self.max_late_timestamp =
             (self.sample_rate as u128 * max_late_duration.as_millis() / 1000) as u32;

@@ -16,6 +16,7 @@ const RRT_REPORT_BLOCK_LENGTH: u16 = 8;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct ReceiverReferenceTimeReportBlock {
+    /// The receiver's NTP timestamp, which DLRR blocks refer back to.
     pub ntp_timestamp: u64,
 }
 
@@ -26,6 +27,7 @@ impl fmt::Display for ReceiverReferenceTimeReportBlock {
 }
 
 impl ReceiverReferenceTimeReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::ReceiverReferenceTime,

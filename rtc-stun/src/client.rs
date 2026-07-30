@@ -55,6 +55,8 @@ impl Default for ClientSettings {
 }
 
 #[derive(Default)]
+/// Builds a [`Client`] with a chosen transaction timeout, retransmission schedule and
+/// handler.
 pub struct ClientBuilder {
     settings: ClientSettings,
 }
@@ -90,12 +92,18 @@ impl ClientBuilder {
         self
     }
 
+    /// A builder with the RFC's default timings.
     pub fn new() -> Self {
         ClientBuilder {
             settings: ClientSettings::default(),
         }
     }
 
+    /// Builds the client for the given local and remote addresses.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the configured timings are inconsistent.
     pub fn build(
         self,
         local: SocketAddr,
@@ -135,10 +143,12 @@ impl Client {
         }
     }
 
+    /// The address this client sends from.
     pub fn local_addr(&self) -> SocketAddr {
         self.local
     }
 
+    /// The STUN server this client talks to.
     pub fn peer_addr(&self) -> SocketAddr {
         self.remote
     }

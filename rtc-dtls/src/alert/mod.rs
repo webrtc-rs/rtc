@@ -161,14 +161,21 @@ impl fmt::Display for Alert {
 }
 
 impl Alert {
+    /// The record content type this message is carried in.
     pub fn content_type(&self) -> ContentType {
         ContentType::Alert
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         2
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u8(self.alert_level as u8)?;
         writer.write_u8(self.alert_description as u8)?;
@@ -176,6 +183,11 @@ impl Alert {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let alert_level = reader.read_u8()?.into();
         let alert_description = reader.read_u8()?.into();

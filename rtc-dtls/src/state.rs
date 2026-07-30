@@ -10,6 +10,8 @@ use shared::error::*;
 use std::io::{BufWriter, Cursor};
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
+/// The negotiated connection state: keys, sequence numbers, peer identity and the active
+/// cipher suite.
 pub struct State {
     pub(crate) local_epoch: u16,
     pub(crate) remote_epoch: u16,
@@ -20,7 +22,11 @@ pub struct State {
     pub(crate) cipher_suite: Option<Box<dyn CipherSuite>>, // nil if a cipher_suite hasn't been chosen
 
     pub(crate) srtp_protection_profile: SrtpProtectionProfile, // Negotiated srtp_protection_profile
+    /// The peer's certificate chain, DER-encoded.
+    ///
+    /// WebRTC checks its fingerprint against the one signalled in SDP.
     pub peer_certificates: Vec<Vec<u8>>,
+    /// The PSK identity hint, for pre-shared-key handshakes.
     pub identity_hint: Vec<u8>,
 
     pub(crate) is_client: bool,
@@ -174,6 +180,11 @@ impl State {
         Ok(())
     }
 
+    /// Installs the negotiated keys into the cipher suite.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the master secret or randoms are not yet available.
     pub fn init_cipher_suite(&mut self) -> Result<()> {
         if let Some(cipher_suite) = &mut self.cipher_suite {
             if cipher_suite.is_initialized() {
@@ -202,6 +213,11 @@ impl State {
     }
 
     // marshal_binary is a binary.BinaryMarshaler.marshal_binary implementation
+    /// Serializes the state, so a connection can be resumed or migrated.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the state is incomplete.
     pub fn marshal_binary(&self) -> Result<Vec<u8>> {
         let serialized = self.serialize()?;
 
@@ -212,6 +228,11 @@ impl State {
     }
 
     // unmarshal_binary is a binary.BinaryUnmarshaler.unmarshal_binary implementation
+    /// Restores state previously produced by [`Self::marshal_binary`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if `data` is truncated or malformed.
     pub fn unmarshal_binary(&mut self, data: &[u8]) -> Result<()> {
         let serialized: SerializedState =
             match rkyv::access::<ArchivedSerializedState, rkyv::rancor::Error>(data)
@@ -226,14 +247,17 @@ impl State {
         Ok(())
     }
 
+    /// The SRTP protection profile negotiated through `use_srtp`.
     pub fn srtp_protection_profile(&self) -> SrtpProtectionProfile {
         self.srtp_protection_profile
     }
 
+    /// Whether this endpoint took the client role.
     pub fn is_client(&self) -> bool {
         self.is_client
     }
 
+    /// The active cipher suite, once one has been negotiated.
     pub fn cipher_suite(&self) -> Option<&dyn CipherSuite> {
         self.cipher_suite.as_deref()
     }

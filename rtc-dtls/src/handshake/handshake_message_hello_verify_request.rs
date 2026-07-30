@@ -34,14 +34,21 @@ pub struct HandshakeMessageHelloVerifyRequest {
 }
 
 impl HandshakeMessageHelloVerifyRequest {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::HelloVerifyRequest
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         1 + 1 + 1 + self.cookie.len()
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         if self.cookie.len() > 255 {
             return Err(Error::ErrCookieTooLong);
@@ -55,6 +62,11 @@ impl HandshakeMessageHelloVerifyRequest {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let major = reader.read_u8()?;
         let minor = reader.read_u8()?;

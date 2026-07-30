@@ -1,15 +1,56 @@
 #![warn(rust_2018_idioms)]
+#![warn(missing_docs)]
 #![allow(dead_code)]
 
+//! ICE for the Sans-I/O WebRTC stack.
+//!
+//! Interactive Connectivity Establishment ([RFC 8445], superseding [RFC 5245]) with the
+//! extensions WebRTC uses: ICE-TCP candidates ([RFC 6544]), consent freshness
+//! ([RFC 7675]), and Trickle ICE. ICE is what finds a path between two peers behind NATs:
+//! it gathers candidate addresses, pairs local with remote, and probes each pair with STUN
+//! connectivity checks until one succeeds.
+//!
+//! # Structure
+//!
+//! * [`agent`] — the Sans-I/O [`Agent`]: give it candidates and inbound
+//!   datagrams, poll it for checks to send, state transitions, and the selected pair. It
+//!   owns no sockets and no clock.
+//! * [`candidate`] — the candidate types (host, server-reflexive, peer-reflexive, relay),
+//!   their priorities, and SDP `a=candidate` parsing.
+//! * [`state`] — connection and gathering states, and the checklist state machine.
+//! * [`url`] — parsing `stun:`/`turn:` server URLs into something the agent can gather from.
+//! * [`network_type`], [`tcp_type`] — UDP/TCP and active/passive/simultaneous-open.
+//! * [`stats`] — per-candidate and per-pair counters, surfaced through `getStats`.
+//! * [`mdns`] — mDNS candidate handling, for hiding private addresses.
+//!
+//! Most applications do not depend on this crate directly — the
+//! [`rtc`](https://docs.rs/rtc) crate drives the agent as one layer of the peer-connection
+//! pipeline.
+//!
+//! [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
+//! [RFC 5245]: https://datatracker.ietf.org/doc/html/rfc5245
+//! [RFC 6544]: https://datatracker.ietf.org/doc/html/rfc6544
+//! [RFC 7675]: https://datatracker.ietf.org/doc/html/rfc7675
+
+/// The Sans-I/O ICE agent: candidate pairing, connectivity checks, and nomination.
 pub mod agent;
+/// The ICE-specific STUN attributes carried in connectivity checks.
 pub mod attributes;
+/// Candidate types, priorities, and SDP `a=candidate` parsing.
 pub mod candidate;
+/// mDNS candidate handling, which hides private addresses behind `.local` names.
 pub mod mdns;
+/// UDP/TCP over IPv4/IPv6, as a candidate's transport.
 pub mod network_type;
+/// Random ICE credentials and identifiers.
 pub mod rand;
+/// Connection and gathering states.
 pub mod state;
+/// Per-candidate and per-pair counters, surfaced through `getStats`.
 pub mod stats;
+/// Active, passive and simultaneous-open, for ICE-TCP candidates.
 pub mod tcp_type;
+/// Parsing `stun:`/`turn:` server URLs.
 pub mod url;
 
 pub use agent::{

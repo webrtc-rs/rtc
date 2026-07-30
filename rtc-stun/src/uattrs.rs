@@ -7,9 +7,9 @@ use shared::error::*;
 
 use std::fmt;
 
-// UnknownAttributes represents UNKNOWN-ATTRIBUTES attribute.
-//
-// RFC 5389 Section 15.9
+/// UNKNOWN-ATTRIBUTES attribute.
+///
+/// RFC 5389 Section 15.9.
 pub struct UnknownAttributes(pub Vec<AttrType>);
 
 impl fmt::Display for UnknownAttributes {

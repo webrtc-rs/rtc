@@ -10,15 +10,25 @@ use shared::error::*;
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-18
 // Supported hash hash algorithms
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// The hash algorithms that may be paired with a signature algorithm.
 pub enum HashAlgorithm {
-    Md2 = 0,  // Blacklisted
-    Md5 = 1,  // Blacklisted
+    /// `MD2` (`0`).
+    Md2 = 0, // Blacklisted
+    /// `MD5` (`1`).
+    Md5 = 1, // Blacklisted
+    /// `SHA1` (`2`).
     Sha1 = 2, // Blacklisted
+    /// `SHA224` (`3`).
     Sha224 = 3,
+    /// `SHA256` (`4`).
     Sha256 = 4,
+    /// `SHA384` (`5`).
     Sha384 = 5,
+    /// `SHA512` (`6`).
     Sha512 = 6,
+    /// `ED25519` (`8`).
     Ed25519 = 8,
+    /// An algorithm this crate does not implement.
     Unsupported,
 }
 
@@ -69,10 +79,15 @@ impl HashAlgorithm {
 
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-16
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// The signature algorithms this crate can verify and produce.
 pub enum SignatureAlgorithm {
+    /// `RSA` (`1`).
     Rsa = 1,
+    /// `ECDSA` (`3`).
     Ecdsa = 3,
+    /// `ED25519` (`7`).
     Ed25519 = 7,
+    /// An algorithm this crate does not implement.
     Unsupported,
 }
 
@@ -88,8 +103,11 @@ impl From<u8> for SignatureAlgorithm {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// A signature and hash pair, as negotiated for certificate verification.
 pub struct SignatureHashAlgorithm {
+    /// The hash to digest the signed data with.
     pub hash: HashAlgorithm,
+    /// The signature algorithm to apply.
     pub signature: SignatureAlgorithm,
 }
 
@@ -155,27 +173,40 @@ pub(crate) fn select_signature_scheme(
 // SignatureScheme identifies a signature algorithm supported by TLS. See
 // RFC 8446, Section 4.2.3.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// A TLS signature scheme, which names a signature and hash together ([RFC 8446] §4.2.3).
 pub enum SignatureScheme {
     // RSASSA-PKCS1-v1_5 algorithms.
+    /// `PKCS1_WITH_SHA256` (`0x0401`).
     Pkcs1WithSha256 = 0x0401,
+    /// `PKCS1_WITH_SHA384` (`0x0501`).
     Pkcs1WithSha384 = 0x0501,
+    /// `PKCS1_WITH_SHA512` (`0x0601`).
     Pkcs1WithSha512 = 0x0601,
 
     // RSASSA-PSS algorithms with public key OID rsaEncryption.
+    /// `PSS_WITH_SHA256` (`0x0804`).
     PssWithSha256 = 0x0804,
+    /// `PSS_WITH_SHA384` (`0x0805`).
     PssWithSha384 = 0x0805,
+    /// `PSS_WITH_SHA512` (`0x0806`).
     PssWithSha512 = 0x0806,
 
     // ECDSA algorithms. Only constrained to a specific curve in TLS 1.3.
+    /// `ECDSA_WITH_P256_AND_SHA256` (`0x0403`).
     EcdsaWithP256AndSha256 = 0x0403,
+    /// `ECDSA_WITH_P384_AND_SHA384` (`0x0503`).
     EcdsaWithP384AndSha384 = 0x0503,
+    /// `ECDSA_WITH_P521_AND_SHA512` (`0x0603`).
     EcdsaWithP521AndSha512 = 0x0603,
 
     // EdDSA algorithms.
+    /// `ED25519` (`0x0807`).
     Ed25519 = 0x0807,
 
     // Legacy signature and hash algorithms for TLS 1.2.
+    /// `PKCS1_WITH_SHA1` (`0x0201`).
     Pkcs1WithSha1 = 0x0201,
+    /// `ECDSA_WITH_SHA1` (`0x0203`).
     EcdsaWithSha1 = 0x0203,
 }
 

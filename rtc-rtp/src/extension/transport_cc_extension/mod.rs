@@ -10,6 +10,7 @@ use shared::{
 use bytes::{Buf, BufMut};
 
 // transport-wide sequence
+/// The extension's encoded size in bytes.
 pub const TRANSPORT_CC_EXTENSION_SIZE: usize = 2;
 
 /// TransportCCExtension is a extension payload format in
@@ -23,6 +24,9 @@ pub const TRANSPORT_CC_EXTENSION_SIZE: usize = 2;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct TransportCcExtension {
+    /// A sequence number counting every packet sent on the transport, across all streams.
+    ///
+    /// TWCC feedback reports arrival times against these, which is why it spans SSRCs.
     pub transport_sequence: u16,
 }
 

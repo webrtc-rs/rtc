@@ -25,12 +25,17 @@ const PRT_REPORT_BLOCK_MIN_LENGTH: u16 = 8;
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct PacketReceiptTimesReportBlock {
     //not included in marshal/unmarshal
+    /// The block's `T` field, which scales the receipt-time values.
     pub t: u8,
 
     //marshal/unmarshal
+    /// The SSRC whose packets are reported on.
     pub ssrc: u32,
+    /// The first sequence number covered by this block.
     pub begin_seq: u16,
+    /// One past the last sequence number covered.
     pub end_seq: u16,
+    /// Receipt time for each packet in the range, in the block's timestamp units.
     pub receipt_time: Vec<u32>,
 }
 
@@ -41,6 +46,7 @@ impl fmt::Display for PacketReceiptTimesReportBlock {
 }
 
 impl PacketReceiptTimesReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::PacketReceiptTimes,

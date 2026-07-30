@@ -14,32 +14,55 @@ use super::media::*;
 
 /// Constants for SDP attributes used in JSEP
 pub const ATTR_KEY_CANDIDATE: &str = "candidate";
+/// `a=end-of-candidates`: ICE gathering for this section is complete.
 pub const ATTR_KEY_END_OF_CANDIDATES: &str = "end-of-candidates";
+/// `a=identity`: an identity assertion for the session.
 pub const ATTR_KEY_IDENTITY: &str = "identity";
+/// `a=group`: groups m-lines, as BUNDLE does.
 pub const ATTR_KEY_GROUP: &str = "group";
+/// `a=ssrc`: declares an SSRC and its attributes.
 pub const ATTR_KEY_SSRC: &str = "ssrc";
+/// `a=ssrc-group`: relates SSRCs, such as an RTX stream to its primary.
 pub const ATTR_KEY_SSRC_GROUP: &str = "ssrc-group";
+/// `a=msid`: associates a track with a media stream.
 pub const ATTR_KEY_MSID: &str = "msid";
+/// `a=msid-semantic`: declares the semantics used by `a=msid`.
 pub const ATTR_KEY_MSID_SEMANTIC: &str = "msid-semantic";
+/// `a=setup`: the DTLS role — `active`, `passive` or `actpass`.
 pub const ATTR_KEY_CONNECTION_SETUP: &str = "setup";
+/// `a=mid`: the media identification tag that names this m-line.
 pub const ATTR_KEY_MID: &str = "mid";
+/// `a=ice-lite`: the endpoint is an ICE-lite implementation.
 pub const ATTR_KEY_ICELITE: &str = "ice-lite";
+/// `a=rtcp-mux`: RTP and RTCP share one port.
 pub const ATTR_KEY_RTCPMUX: &str = "rtcp-mux";
+/// `a=rtcp-rsize`: reduced-size RTCP is supported.
 pub const ATTR_KEY_RTCPRSIZE: &str = "rtcp-rsize";
+/// `a=inactive`: neither send nor receive.
 pub const ATTR_KEY_INACTIVE: &str = "inactive";
+/// `a=recvonly`: receive only.
 pub const ATTR_KEY_RECV_ONLY: &str = "recvonly";
+/// `a=sendonly`: send only.
 pub const ATTR_KEY_SEND_ONLY: &str = "sendonly";
+/// `a=sendrecv`: send and receive.
 pub const ATTR_KEY_SEND_RECV: &str = "sendrecv";
+/// `a=extmap`: maps an RTP header-extension URI to an id.
 pub const ATTR_KEY_EXT_MAP: &str = "extmap";
+/// `a=extmap-allow-mixed`: one- and two-byte header extensions may be mixed.
 pub const ATTR_KEY_EXTMAP_ALLOW_MIXED: &str = "extmap-allow-mixed";
+/// `a=max-message-size`: the largest SCTP message this endpoint accepts.
 pub const ATTR_KEY_MAX_MESSAGE_SIZE: &str = "max-message-size";
 
 /// Constants for semantic tokens used in JSEP
 pub const SEMANTIC_TOKEN_LIP_SYNCHRONIZATION: &str = "LS";
+/// `FID`: flow identification — the SSRCs carry the same content, as RTX does.
 pub const SEMANTIC_TOKEN_FLOW_IDENTIFICATION: &str = "FID";
+/// `FEC`: one SSRC carries error-correction data for another.
 pub const SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION: &str = "FEC";
 // https://datatracker.ietf.org/doc/html/rfc5956#section-4.1
+/// `FEC-FR`: the FEC framework grouping semantic.
 pub const SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION_FRAMEWORK: &str = "FEC-FR";
+/// `WMS`: WebRTC media streams, used with `a=msid-semantic`.
 pub const SEMANTIC_TOKEN_WEBRTC_MEDIA_STREAMS: &str = "WMS";
 
 /// Version describes the value provided by the "v=" field which gives
@@ -50,11 +73,17 @@ pub type Version = isize;
 /// originator of the session plus a session identifier and version number.
 #[derive(Debug, Default, Clone)]
 pub struct Origin {
+    /// The originator's user name, or `-` when withheld.
     pub username: String,
+    /// A globally unique session identifier.
     pub session_id: u64,
+    /// Incremented on each modification of the session description.
     pub session_version: u64,
+    /// The network type, always `IN` in practice.
     pub network_type: String,
+    /// The address type, `IP4` or `IP6`.
     pub address_type: String,
+    /// The originator's address. WebRTC does not use it and sends a placeholder.
     pub unicast_address: String,
 }
 
@@ -74,6 +103,7 @@ impl fmt::Display for Origin {
 }
 
 impl Origin {
+    /// An empty session description with SDP version 0.
     pub fn new() -> Self {
         Origin {
             username: "".to_owned(),
@@ -104,7 +134,9 @@ pub type PhoneNumber = String;
 /// repeated sessions scheduling.
 #[derive(Debug, Default, Clone)]
 pub struct TimeZone {
+    /// The time at which the offset takes effect.
     pub adjustment_time: u64,
+    /// The offset from the session's base time, in seconds.
     pub offset: i64,
 }
 
@@ -134,7 +166,9 @@ pub struct TimeDescription {
 /// stop times.
 #[derive(Debug, Default, Clone)]
 pub struct Timing {
+    /// Session start time in NTP seconds; `0` means unbounded.
     pub start_time: u64,
+    /// Session stop time in NTP seconds; `0` means unbounded.
     pub stop_time: u64,
 }
 
@@ -148,8 +182,11 @@ impl fmt::Display for Timing {
 /// represents the intervals and durations for repeated scheduled sessions.
 #[derive(Debug, Default, Clone)]
 pub struct RepeatTime {
+    /// How often the session repeats, in seconds.
     pub interval: i64,
+    /// How long each repetition lasts, in seconds.
     pub duration: i64,
+    /// Offsets from the start time at which the session repeats.
     pub offsets: Vec<i64>,
 }
 

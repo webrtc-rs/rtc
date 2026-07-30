@@ -20,7 +20,9 @@ pub(crate) const IPV6LEN: usize = 16;
 ///
 /// RFC 5389 Section 15.1
 pub struct MappedAddress {
+    /// The IP address.
     pub ip: IpAddr,
+    /// The port.
     pub port: u16,
 }
 

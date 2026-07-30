@@ -112,8 +112,11 @@ impl Getter for AttrControl {
 #[derive(Default, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum Role {
     #[default]
+    /// This agent is controlling.
     Controlling,
+    /// This agent is controlled.
     Controlled,
+    /// No role attribute was present.
     Unspecified,
 }
 

@@ -28,27 +28,49 @@ const VM_REPORT_BLOCK_LENGTH: u16 = 4 + 4 + 2 * 4 + 10 + 2 * 3;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct VoIPMetricsReportBlock {
+    /// The SSRC these metrics describe.
     pub ssrc: u32,
+    /// Fraction of packets lost, as 256ths.
     pub loss_rate: u8,
+    /// Fraction of packets discarded by the jitter buffer, as 256ths.
     pub discard_rate: u8,
+    /// Fraction of packets lost or discarded during bursts, as 256ths.
     pub burst_density: u8,
+    /// Fraction lost or discarded during gaps between bursts, as 256ths.
     pub gap_density: u8,
+    /// Mean burst length in milliseconds.
     pub burst_duration: u16,
+    /// Mean gap length in milliseconds.
     pub gap_duration: u16,
+    /// Round-trip delay in milliseconds.
     pub round_trip_delay: u16,
+    /// End-system delay in milliseconds, covering encode, buffer and decode.
     pub end_system_delay: u16,
+    /// Signal level in dBm0.
     pub signal_level: u8,
+    /// Noise level in dBm0.
     pub noise_level: u8,
+    /// Residual echo return loss, in dB.
     pub rerl: u8,
+    /// The gap threshold: consecutive received packets needed to end a burst.
     pub gmin: u8,
+    /// The R factor, a 0–100 voice-quality estimate.
     pub rfactor: u8,
+    /// An external-network R factor, for the segment beyond this one.
     pub ext_rfactor: u8,
+    /// Listening-quality mean opinion score, in tenths.
     pub mos_lq: u8,
+    /// Conversational-quality mean opinion score, in tenths.
     pub mos_cq: u8,
+    /// Receiver configuration: packet-loss concealment and jitter-buffer flags.
     pub rx_config: u8,
+    /// Reserved; sent as zero.
     pub reserved: u8,
+    /// Nominal jitter-buffer delay in milliseconds.
     pub jb_nominal: u16,
+    /// Maximum jitter-buffer delay in milliseconds.
     pub jb_maximum: u16,
+    /// The absolute maximum the jitter buffer can grow to, in milliseconds.
     pub jb_abs_max: u16,
 }
 
@@ -59,6 +81,7 @@ impl fmt::Display for VoIPMetricsReportBlock {
 }
 
 impl VoIPMetricsReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::VoIPMetrics,

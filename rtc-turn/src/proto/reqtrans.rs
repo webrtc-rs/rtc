@@ -19,6 +19,7 @@ use shared::error::Result;
 /// [RFC 5766 Section 14.7](https://www.rfc-editor.org/rfc/rfc5766#section-14.7).
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct RequestedTransport {
+    /// The transport the relay should use toward peers. WebRTC always requests UDP.
     pub protocol: Protocol,
 }
 

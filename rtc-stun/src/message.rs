@@ -9,22 +9,26 @@ use rand::RngExt;
 use std::fmt;
 use std::io::{Read, Write};
 
-// MAGIC_COOKIE is fixed value that aids in distinguishing STUN packets
-// from packets of other protocols when STUN is multiplexed with those
-// other protocols on the same Port.
-//
-// The magic cookie field MUST contain the fixed value 0x2112A442 in
-// network byte order.
-//
-// Defined in "STUN Message Structure", section 6.
+/// Fixed value that aids in distinguishing STUN packets
+/// from packets of other protocols when STUN is multiplexed with those
+/// other protocols on the same Port.
+///
+/// The magic cookie field MUST contain the fixed value 0x2112A442 in
+/// network byte order.
+///
+/// Defined in "STUN Message Structure", section 6.
 pub const MAGIC_COOKIE: u32 = 0x2112A442;
+/// Bytes of type and length preceding each attribute value.
 pub const ATTRIBUTE_HEADER_SIZE: usize = 4;
+/// Bytes in the STUN message header.
 pub const MESSAGE_HEADER_SIZE: usize = 20;
 
-// TRANSACTION_ID_SIZE is length of transaction id array (in bytes).
-pub const TRANSACTION_ID_SIZE: usize = 12; // 96 bit
+/// Length of transaction id array (in bytes).
+/// 96 bit.
+pub const TRANSACTION_ID_SIZE: usize = 12;
 
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Default, Debug)]
+/// A 96-bit transaction id, which pairs a response with its request.
 pub struct TransactionId(pub [u8; TRANSACTION_ID_SIZE]);
 
 impl TransactionId {
@@ -45,26 +49,44 @@ impl Setter for TransactionId {
     }
 }
 
-// Interfaces that are implemented by message attributes, shorthands for them,
-// or helpers for message fields as type or transaction id.
+/// Interfaces that are implemented by message attributes, shorthands for them,
+/// or helpers for message fields as type or transaction id.
 pub trait Setter {
     // Setter sets *Message attribute.
+    /// Encodes this value into `m` as an attribute.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the value cannot be encoded, or the message has no room for it.
     fn add_to(&self, m: &mut Message) -> Result<()>;
 }
 
-// Getter parses attribute from *Message.
+/// Getter parses attribute from *Message.
 pub trait Getter {
+    /// Decodes this value from the corresponding attribute of `m`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the attribute is absent or malformed.
     fn get_from(&mut self, m: &Message) -> Result<()>;
 }
 
-// Checker checks *Message attribute.
+/// Checker checks *Message attribute.
 pub trait Checker {
+    /// Validates this value against `m`.
+    ///
+    /// Used by attributes whose value depends on the encoded message, such as
+    /// `MESSAGE-INTEGRITY` and `FINGERPRINT`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the check does not hold.
     fn check(&self, m: &Message) -> Result<()>;
 }
 
-// is_stun_message returns true if b looks like STUN message.
-// Useful for multiplexing. is_stun_message does not guarantee
-// that decoding will be successful.
+/// Is_stun_message returns true if b looks like STUN message.
+/// Useful for multiplexing. is_stun_message does not guarantee
+/// that decoding will be successful.
 pub fn is_stun_message(b: &[u8]) -> bool {
     b.len() >= MESSAGE_HEADER_SIZE && u32::from_be_bytes([b[4], b[5], b[6], b[7]]) == MAGIC_COOKIE
 }
@@ -75,11 +97,17 @@ pub fn is_stun_message(b: &[u8]) -> bool {
 // 	Message, its fields, results of m.Get or any attribute a.GetFrom
 //	are valid only until Message.Raw is not modified.
 #[derive(Default, Debug, Clone)]
+/// A STUN message: type, transaction id, and attributes, plus the encoded bytes.
 pub struct Message {
+    /// The message class and method — request, response or indication, and which method.
     pub typ: MessageType,
+    /// The attribute section's length in bytes, header excluded.
     pub length: u32, // len(Raw) not including header
+    /// The transaction id, echoed by the responder.
     pub transaction_id: TransactionId,
+    /// The message's attributes.
     pub attributes: Attributes,
+    /// The encoded message. Attributes whose value covers the message are computed over this.
     pub raw: Vec<u8>,
 }
 
@@ -131,7 +159,7 @@ impl Setter for Message {
 }
 
 impl Message {
-    // New returns *Message with pre-allocated Raw.
+    /// New returns *Message with pre-allocated Raw.
     pub fn new() -> Self {
         Message {
             raw: {
@@ -143,14 +171,14 @@ impl Message {
         }
     }
 
-    // marshal_binary implements the encoding.BinaryMarshaler interface.
+    /// Marshal_binary implements the encoding.BinaryMarshaler interface.
     pub fn marshal_binary(&self) -> Result<Vec<u8>> {
         // We can't return m.Raw, allocation is expected by implicit interface
         // contract induced by other implementations.
         Ok(self.raw.clone())
     }
 
-    // unmarshal_binary implements the encoding.BinaryUnmarshaler interface.
+    /// Unmarshal_binary implements the encoding.BinaryUnmarshaler interface.
     pub fn unmarshal_binary(&mut self, data: &[u8]) -> Result<()> {
         // We can't retain data, copy is expected by interface contract.
         self.raw.clear();
@@ -158,15 +186,15 @@ impl Message {
         self.decode()
     }
 
-    // NewTransactionID sets m.TransactionID to random value from crypto/rand
-    // and returns error if any.
+    /// NewTransactionID sets m.TransactionID to random value from crypto/rand
+    /// and returns error if any.
     pub fn new_transaction_id(&mut self) -> Result<()> {
         rand::rng().fill(&mut self.transaction_id.0);
         self.write_transaction_id();
         Ok(())
     }
 
-    // Reset resets Message, attributes and underlying buffer length.
+    /// Reset resets Message, attributes and underlying buffer length.
     pub fn reset(&mut self) {
         self.raw.clear();
         self.length = 0;
@@ -184,10 +212,10 @@ impl Message {
         self.raw.extend_from_slice(&vec![0; n - self.raw.len()]);
     }
 
-    // Add appends new attribute to message. Not goroutine-safe.
-    //
-    // Value of attribute is copied to internal buffer so
-    // it is safe to reuse v.
+    /// Add appends new attribute to message. Not goroutine-safe.
+    ///
+    /// Value of attribute is copied to internal buffer so
+    /// it is safe to reuse v.
     pub fn add(&mut self, t: AttrType, v: &[u8]) {
         // Allocating buffer for TLV (type-length-value).
         // T = t, L = len(v), V = v.
@@ -237,13 +265,13 @@ impl Message {
         self.write_length();
     }
 
-    // WriteLength writes m.Length to m.Raw.
+    /// WriteLength writes m.Length to m.Raw.
     pub fn write_length(&mut self) {
         self.grow(4, false);
         self.raw[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
     }
 
-    // WriteHeader writes header to underlying buffer. Not goroutine-safe.
+    /// WriteHeader writes header to underlying buffer. Not goroutine-safe.
     pub fn write_header(&mut self) {
         self.grow(MESSAGE_HEADER_SIZE, false);
 
@@ -254,13 +282,13 @@ impl Message {
         // transaction ID
     }
 
-    // WriteTransactionID writes m.TransactionID to m.Raw.
+    /// WriteTransactionID writes m.TransactionID to m.Raw.
     pub fn write_transaction_id(&mut self) {
         self.raw[8..MESSAGE_HEADER_SIZE].copy_from_slice(&self.transaction_id.0);
         // transaction ID
     }
 
-    // WriteAttributes encodes all m.Attributes to m.
+    /// WriteAttributes encodes all m.Attributes to m.
     pub fn write_attributes(&mut self) {
         let attributes: Vec<RawAttribute> = self.attributes.0.drain(..).collect();
         for a in &attributes {
@@ -269,19 +297,19 @@ impl Message {
         self.attributes = Attributes(attributes);
     }
 
-    // WriteType writes m.Type to m.Raw.
+    /// WriteType writes m.Type to m.Raw.
     pub fn write_type(&mut self) {
         self.grow(2, false);
         self.raw[..2].copy_from_slice(&self.typ.value().to_be_bytes()); // message type
     }
 
-    // SetType sets m.Type and writes it to m.Raw.
+    /// SetType sets m.Type and writes it to m.Raw.
     pub fn set_type(&mut self, t: MessageType) {
         self.typ = t;
         self.write_type();
     }
 
-    // Encode re-encodes message into m.Raw.
+    /// Encode re-encodes message into m.Raw.
     pub fn encode(&mut self) {
         self.raw.clear();
         self.write_header();
@@ -289,7 +317,7 @@ impl Message {
         self.write_attributes();
     }
 
-    // Decode decodes m.Raw into m.
+    /// Decode decodes m.Raw into m.
     pub fn decode(&mut self) -> Result<()> {
         // decoding message header
         let buf = &self.raw;
@@ -365,18 +393,18 @@ impl Message {
         Ok(())
     }
 
-    // WriteTo implements WriterTo via calling Write(m.Raw) on w and returning
-    // call result.
+    /// WriteTo implements WriterTo via calling Write(m.Raw) on w and returning
+    /// call result.
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<usize> {
         let n = writer.write(&self.raw)?;
         Ok(n)
     }
 
-    // ReadFrom implements ReaderFrom. Reads message from r into m.Raw,
-    // Decodes it and return error if any. If m.Raw is too small, will return
-    // ErrUnexpectedEOF, ErrUnexpectedHeaderEOF or *DecodeErr.
-    //
-    // Can return *DecodeErr while decoding too.
+    /// ReadFrom implements ReaderFrom. Reads message from r into m.Raw,
+    /// Decodes it and return error if any. If m.Raw is too small, will return
+    /// ErrUnexpectedEOF, ErrUnexpectedHeaderEOF or *DecodeErr.
+    ///
+    /// Can return *DecodeErr while decoding too.
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> Result<usize> {
         let mut t_buf = vec![0; DEFAULT_RAW_CAPACITY];
         let n = reader.read(&mut t_buf)?;
@@ -385,9 +413,9 @@ impl Message {
         Ok(n)
     }
 
-    // Write decodes message and return error if any.
-    //
-    // Any error is unrecoverable, but message could be partially decoded.
+    /// Write decodes message and return error if any.
+    ///
+    /// Any error is unrecoverable, but message could be partially decoded.
     pub fn write(&mut self, t_buf: &[u8]) -> Result<usize> {
         self.raw.clear();
         self.raw.extend_from_slice(t_buf);
@@ -395,14 +423,14 @@ impl Message {
         Ok(t_buf.len())
     }
 
-    // CloneTo clones m to b securing any further m mutations.
+    /// CloneTo clones m to b securing any further m mutations.
     pub fn clone_to(&self, b: &mut Message) -> Result<()> {
         b.raw.clear();
         b.raw.extend_from_slice(&self.raw);
         b.decode()
     }
 
-    // Contains return true if message contain t attribute.
+    /// Contains return true if message contain t attribute.
     pub fn contains(&self, t: AttrType) -> bool {
         for a in &self.attributes.0 {
             if a.typ == t {
@@ -412,9 +440,9 @@ impl Message {
         false
     }
 
-    // get returns byte slice that represents attribute value,
-    // if there is no attribute with such type,
-    // ErrAttributeNotFound is returned.
+    /// Get returns byte slice that represents attribute value,
+    /// if there is no attribute with such type,
+    /// ErrAttributeNotFound is returned.
     pub fn get(&self, t: AttrType) -> Result<Vec<u8>> {
         let (v, ok) = self.attributes.get(t);
         if ok {
@@ -424,21 +452,21 @@ impl Message {
         }
     }
 
-    // Build resets message and applies setters to it in batch, returning on
-    // first error. To prevent allocations, pass pointers to values.
-    //
-    // Example:
-    //  var (
-    //  	t        = BindingRequest
-    //  	username = NewUsername("username")
-    //  	nonce    = NewNonce("nonce")
-    //  	realm    = NewRealm("example.org")
-    //  )
-    //  m := new(Message)
-    //  m.Build(t, username, nonce, realm)     // 4 allocations
-    //  m.Build(&t, &username, &nonce, &realm) // 0 allocations
-    //
-    // See BenchmarkBuildOverhead.
+    /// Build resets message and applies setters to it in batch, returning on
+    /// first error. To prevent allocations, pass pointers to values.
+    ///
+    /// Example:
+    ///  var (
+    ///  	t        = BindingRequest
+    ///  	username = NewUsername("username")
+    ///  	nonce    = NewNonce("nonce")
+    ///  	realm    = NewRealm("example.org")
+    ///  )
+    ///  m := new(Message)
+    ///  m.Build(t, username, nonce, realm)     // 4 allocations
+    ///  m.Build(&t, &username, &nonce, &realm) // 0 allocations
+    ///
+    /// See BenchmarkBuildOverhead.
     pub fn build(&mut self, setters: &[Box<dyn Setter>]) -> Result<()> {
         self.reset();
         self.write_header();
@@ -448,7 +476,7 @@ impl Message {
         Ok(())
     }
 
-    // Check applies checkers to message in batch, returning on first error.
+    /// Check applies checkers to message in batch, returning on first error.
     pub fn check<C: Checker>(&self, checkers: &[C]) -> Result<()> {
         for c in checkers {
             c.check(self)?;
@@ -456,7 +484,7 @@ impl Message {
         Ok(())
     }
 
-    // Parse applies getters to message in batch, returning on first error.
+    /// Parse applies getters to message in batch, returning on first error.
     pub fn parse<G: Getter>(&self, getters: &mut [G]) -> Result<()> {
         for c in getters {
             c.get_from(self)?;
@@ -467,13 +495,18 @@ impl Message {
 
 // MessageClass is 8-bit representation of 2-bit class of STUN Message Class.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+/// A STUN message class: request, indication, success response or error response.
 pub struct MessageClass(u8);
 
-// Possible values for message class in STUN Message Type.
-pub const CLASS_REQUEST: MessageClass = MessageClass(0x00); // 0b00
-pub const CLASS_INDICATION: MessageClass = MessageClass(0x01); // 0b01
-pub const CLASS_SUCCESS_RESPONSE: MessageClass = MessageClass(0x02); // 0b10
-pub const CLASS_ERROR_RESPONSE: MessageClass = MessageClass(0x03); // 0b11
+/// Possible values for message class in STUN Message Type.
+/// 0b00.
+pub const CLASS_REQUEST: MessageClass = MessageClass(0x00);
+/// 0b01.
+pub const CLASS_INDICATION: MessageClass = MessageClass(0x01);
+/// 0b10.
+pub const CLASS_SUCCESS_RESPONSE: MessageClass = MessageClass(0x02);
+/// 0b11.
+pub const CLASS_ERROR_RESPONSE: MessageClass = MessageClass(0x03);
 
 impl fmt::Display for MessageClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -491,20 +524,29 @@ impl fmt::Display for MessageClass {
 
 // Method is uint16 representation of 12-bit STUN method.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+/// A STUN method, such as Binding or one of TURN's.
 pub struct Method(u16);
 
-// Possible methods for STUN Message.
+/// Possible methods for STUN Message.
 pub const METHOD_BINDING: Method = Method(0x001);
+/// TURN Allocate: asks a relay for a public address.
 pub const METHOD_ALLOCATE: Method = Method(0x003);
+/// TURN Refresh: extends or releases an allocation.
 pub const METHOD_REFRESH: Method = Method(0x004);
+/// TURN Send: an indication carrying data to a peer through the relay.
 pub const METHOD_SEND: Method = Method(0x006);
+/// TURN Data: an indication carrying data from a peer through the relay.
 pub const METHOD_DATA: Method = Method(0x007);
+/// TURN CreatePermission: authorizes traffic to and from a peer address.
 pub const METHOD_CREATE_PERMISSION: Method = Method(0x008);
+/// TURN ChannelBind: binds a channel number to a peer for compact framing.
 pub const METHOD_CHANNEL_BIND: Method = Method(0x009);
 
-// Methods from RFC 6062.
+/// Methods from RFC 6062.
 pub const METHOD_CONNECT: Method = Method(0x000a);
+/// TURN-TCP ConnectionBind: associates a new TCP connection with an allocation.
 pub const METHOD_CONNECTION_BIND: Method = Method(0x000b);
+/// TURN-TCP ConnectionAttempt: notifies the client of an inbound TCP connection.
 pub const METHOD_CONNECTION_ATTEMPT: Method = Method(0x000c);
 
 impl fmt::Display for Method {
@@ -533,23 +575,26 @@ impl fmt::Display for Method {
 
 // MessageType is STUN Message Type Field.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+/// A message's class and method together, as encoded in the first two header bytes.
 pub struct MessageType {
-    pub method: Method,      // e.g. binding
+    /// The method, such as Binding or Allocate.
+    pub method: Method, // e.g. binding
+    /// The class: request, indication, success response, or error response.
     pub class: MessageClass, // e.g. request
 }
 
-// Common STUN message types.
-// Binding request message type.
+/// Common STUN message types.
+/// Binding request message type.
 pub const BINDING_REQUEST: MessageType = MessageType {
     method: METHOD_BINDING,
     class: CLASS_REQUEST,
 };
-// Binding success response message type
+/// Binding success response message type.
 pub const BINDING_SUCCESS: MessageType = MessageType {
     method: METHOD_BINDING,
     class: CLASS_SUCCESS_RESPONSE,
 };
-// Binding error response message type.
+/// Binding error response message type.
 pub const BINDING_ERROR: MessageType = MessageType {
     method: METHOD_BINDING,
     class: CLASS_ERROR_RESPONSE,
@@ -586,12 +631,12 @@ impl Setter for MessageType {
 }
 
 impl MessageType {
-    // NewType returns new message type with provided method and class.
+    /// NewType returns new message type with provided method and class.
     pub fn new(method: Method, class: MessageClass) -> Self {
         MessageType { method, class }
     }
 
-    // Value returns bit representation of messageType.
+    /// Value returns bit representation of messageType.
     pub fn value(&self) -> u16 {
         //	 0                 1
         //	 2  3  4 5 6 7 8 9 0 1 2 3 4 5
@@ -625,7 +670,7 @@ impl MessageType {
         method + class
     }
 
-    // ReadValue decodes uint16 into MessageType.
+    /// ReadValue decodes uint16 into MessageType.
     pub fn read_value(&mut self, value: u16) {
         // Decoding class.
         // We are taking first bit from v >> 4 and second from v >> 7.

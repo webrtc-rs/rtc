@@ -14,7 +14,9 @@ use std::fmt;
 /// NOTE: Raw is populated by Marshal/Unmarshal and should not be modified
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Packet {
+    /// The packet header.
     pub header: Header,
+    /// The media payload, in whatever format the payload type implies.
     pub payload: Bytes,
 }
 

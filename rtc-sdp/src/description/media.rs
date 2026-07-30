@@ -9,6 +9,7 @@ use crate::util::{Codec, merge_codecs, parse_fmtp, parse_rtcp_fb, parse_rtpmap};
 
 /// Constants for extmap key
 pub const EXT_MAP_VALUE_TRANSPORT_CC_KEY: u16 = 3;
+/// The transport-wide congestion control header-extension URI.
 pub const EXT_MAP_VALUE_TRANSPORT_CC_URI: &str =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
 
@@ -81,6 +82,10 @@ impl MediaDescription {
         None
     }
 
+    /// The codecs this media section offers, keyed by payload type.
+    ///
+    /// Assembled from the `m=` format list plus the `a=rtpmap`, `a=fmtp` and `a=rtcp-fb`
+    /// attributes that describe them.
     pub fn codecs(&self) -> HashMap<u8, Codec> {
         let mut codecs: HashMap<u8, Codec> = HashMap::new();
 
@@ -207,6 +212,7 @@ impl MediaDescription {
         self.with_value_attribute("candidate".to_string(), value)
     }
 
+    /// Appends an `a=extmap` header-extension declaration.
     pub fn with_extmap(self, e: ExtMap) -> Self {
         self.with_property_attribute(e.marshal())
     }
@@ -238,7 +244,9 @@ impl MediaDescription {
 /// offsetting range.
 #[derive(Debug, Default, Clone)]
 pub struct RangedPort {
+    /// The first port number.
     pub value: isize,
+    /// How many consecutive ports the media uses, for `<port>/<count>` form.
     pub range: Option<isize>,
 }
 
@@ -255,9 +263,13 @@ impl fmt::Display for RangedPort {
 /// MediaName describes the "m=" field storage structure.
 #[derive(Debug, Default, Clone)]
 pub struct MediaName {
+    /// The media type: `audio`, `video`, or `application` for data channels.
     pub media: String,
+    /// The transport port, possibly a range.
     pub port: RangedPort,
+    /// The transport protocol tokens, such as `UDP`, `TLS`, `RTP`, `SAVPF`.
     pub protos: Vec<String>,
+    /// The payload types (for RTP media) or format tokens this section offers.
     pub formats: Vec<String>,
 }
 

@@ -13,25 +13,41 @@ pub struct H264Payloader {
     pps_nalu: Option<Bytes>,
 }
 
+/// NAL type 24: STAP-A, which aggregates several small NAL units into one payload.
 pub const STAPA_NALU_TYPE: u8 = 24;
+/// NAL type 28: FU-A, which fragments one NAL unit across several payloads.
 pub const FUA_NALU_TYPE: u8 = 28;
+/// NAL type 29: FU-B, FU-A with a decoding-order number. Not used by WebRTC.
 pub const FUB_NALU_TYPE: u8 = 29;
+/// NAL type 7: sequence parameter set.
 pub const SPS_NALU_TYPE: u8 = 7;
+/// NAL type 8: picture parameter set.
 pub const PPS_NALU_TYPE: u8 = 8;
+/// NAL type 9: access unit delimiter.
 pub const AUD_NALU_TYPE: u8 = 9;
+/// NAL type 12: filler data, which is dropped rather than sent.
 pub const FILLER_NALU_TYPE: u8 = 12;
 
+/// Bytes of FU-A header prefixed to each fragment.
 pub const FUA_HEADER_SIZE: usize = 2;
+/// Bytes of STAP-A header prefixed to an aggregate.
 pub const STAPA_HEADER_SIZE: usize = 1;
+/// Bytes of length prefix before each NAL unit inside a STAP-A.
 pub const STAPA_NALU_LENGTH_SIZE: usize = 2;
 
+/// Mask selecting the NAL type from a NAL header byte.
 pub const NALU_TYPE_BITMASK: u8 = 0x1F;
+/// Mask selecting `nal_ref_idc` from a NAL header byte.
 pub const NALU_REF_IDC_BITMASK: u8 = 0x60;
+/// FU header start bit: this fragment begins a NAL unit.
 pub const FU_START_BITMASK: u8 = 0x80;
+/// FU header end bit: this fragment completes a NAL unit.
 pub const FU_END_BITMASK: u8 = 0x40;
 
+/// The STAP-A header byte this payloader emits.
 pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 
+/// The Annex B start code (`00 00 00 01`) that delimits NAL units in a byte stream.
 pub static ANNEXB_NALUSTART_CODE: Bytes = Bytes::from_static(&[0x00, 0x00, 0x00, 0x01]);
 
 impl H264Payloader {
@@ -199,6 +215,7 @@ impl Payloader for H264Payloader {
 /// H264Packet represents the H264 header that is stored in the payload of an RTP Packet
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
 pub struct H264Packet {
+    /// Whether to emit AVCC length-prefixed output instead of Annex B start codes.
     pub is_avc: bool,
     fua_buffer: Option<BytesMut>,
 }

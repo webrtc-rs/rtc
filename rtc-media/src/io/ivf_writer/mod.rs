@@ -16,8 +16,11 @@ use shared::error::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IvfCodec {
     #[default]
+    /// VP8, written with the `VP80` FourCC.
     Vp8,
+    /// VP9, written with the `VP90` FourCC.
     Vp9,
+    /// AV1, written with the `AV01` FourCC.
     Av1,
 }
 

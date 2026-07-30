@@ -19,6 +19,7 @@ impl Setter for UseCandidateAttr {
 
 impl UseCandidateAttr {
     #[must_use]
+    /// A `USE-CANDIDATE` attribute, which carries no value.
     pub const fn new() -> Self {
         Self
     }

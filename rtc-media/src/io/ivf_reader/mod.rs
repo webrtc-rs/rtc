@@ -9,32 +9,47 @@ use bytes::BytesMut;
 use crate::io::ResetFn;
 use shared::error::{Error, Result};
 
+/// The four-byte signature every IVF file starts with.
 pub const IVF_FILE_HEADER_SIGNATURE: &[u8] = b"DKIF";
+/// The size of the IVF file header in bytes.
 pub const IVF_FILE_HEADER_SIZE: usize = 32;
+/// The size of each IVF frame header in bytes.
 pub const IVF_FRAME_HEADER_SIZE: usize = 12;
 
 /// IVFFileHeader 32-byte header for IVF files
 /// <https://wiki.multimedia.cx/index.php/IVF>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IVFFileHeader {
-    pub signature: [u8; 4],        // 0-3
-    pub version: u16,              // 4-5
-    pub header_size: u16,          // 6-7
-    pub four_cc: [u8; 4],          // 8-11
-    pub width: u16,                // 12-13
-    pub height: u16,               // 14-15
+    /// Bytes 0–3: always `DKIF`.
+    pub signature: [u8; 4], // 0-3
+    /// Bytes 4–5: the format version, currently 0.
+    pub version: u16, // 4-5
+    /// Bytes 6–7: the header length, normally 32.
+    pub header_size: u16, // 6-7
+    /// Bytes 8–11: the codec FourCC, such as `VP80`, `VP90` or `AV01`.
+    pub four_cc: [u8; 4], // 8-11
+    /// Bytes 12–13: frame width in pixels.
+    pub width: u16, // 12-13
+    /// Bytes 14–15: frame height in pixels.
+    pub height: u16, // 14-15
+    /// Bytes 16–19: the timebase denominator — the frame rate's numerator, confusingly.
     pub timebase_denominator: u32, // 16-19
-    pub timebase_numerator: u32,   // 20-23
-    pub num_frames: u32,           // 24-27
-    pub unused: u32,               // 28-31
+    /// Bytes 20–23: the timebase numerator.
+    pub timebase_numerator: u32, // 20-23
+    /// Bytes 24–27: the frame count, if the writer knew it.
+    pub num_frames: u32, // 24-27
+    /// Bytes 28–31: reserved.
+    pub unused: u32, // 28-31
 }
 
 /// IVFFrameHeader 12-byte header for IVF frames
 /// <https://wiki.multimedia.cx/index.php/IVF>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct IVFFrameHeader {
+    /// Bytes 0–3: the frame's payload length in bytes.
     pub frame_size: u32, // 0-3
-    pub timestamp: u64,  // 4-11
+    /// Bytes 4–11: the frame's presentation timestamp, in timebase units.
+    pub timestamp: u64, // 4-11
 }
 
 /// IVFReader is used to read IVF files and return frame payloads

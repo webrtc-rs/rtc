@@ -6,9 +6,13 @@ const LABEL_EXTRACTOR_DTLS_SRTP: &str = "EXTRACTOR-dtls_srtp";
 /// SessionKeys bundles the keys required to setup an SRTP session
 #[derive(Default, Debug, Clone)]
 pub struct SessionKeys {
+    /// The master key used to protect outbound packets.
     pub local_master_key: Vec<u8>,
+    /// The master salt used to protect outbound packets.
     pub local_master_salt: Vec<u8>,
+    /// The master key used to unprotect inbound packets.
     pub remote_master_key: Vec<u8>,
+    /// The master salt used to unprotect inbound packets.
     pub remote_master_salt: Vec<u8>,
 }
 
@@ -18,16 +22,21 @@ pub struct SessionKeys {
 /// After a Config is passed to a session it must not be modified.
 #[derive(Default)]
 pub struct Config {
+    /// The master keys and salts for both directions.
     pub keys: SessionKeys,
+    /// The negotiated protection profile, which fixes the cipher and tag lengths.
     pub profile: ProtectionProfile,
     //LoggerFactory: logging.LoggerFactory
     /// List of local/remote context options.
     /// ReplayProtection is enabled on remote context by default.
     /// Default replay protection window size is 64.
     pub local_rtp_options: Option<ContextOption>,
+    /// Replay-protection options for the inbound RTP context. Enabled by default.
     pub remote_rtp_options: Option<ContextOption>,
 
+    /// Replay-protection options for the outbound RTCP context.
     pub local_rtcp_options: Option<ContextOption>,
+    /// Replay-protection options for the inbound RTCP context. Enabled by default.
     pub remote_rtcp_options: Option<ContextOption>,
 }
 

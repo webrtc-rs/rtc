@@ -13,6 +13,7 @@ const CRYPTO_CHACHA20_NONCE_LENGTH: usize = 12;
 
 // State needed to handle encrypted input/output
 #[derive(Clone)]
+/// ChaCha20-Poly1305 authenticated encryption for DTLS records, holding the per-direction keys.
 pub struct CryptoChaCha20 {
     local_cc: ChaCha20Poly1305,
     remote_cc: ChaCha20Poly1305,
@@ -31,6 +32,7 @@ fn noncegen(nonce: &mut [u8], epoch: u16, seqnum: u64) {
 }
 
 impl CryptoChaCha20 {
+    /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
         local_key: &[u8],
         local_write_iv: &[u8],
@@ -53,6 +55,11 @@ impl CryptoChaCha20 {
         }
     }
 
+    /// Protects one record, returning header plus ciphertext.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
     pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
@@ -87,6 +94,11 @@ impl CryptoChaCha20 {
         Ok(r)
     }
 
+    /// Unprotects one record.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;

@@ -7,16 +7,19 @@ use byteorder::{BigEndian, WriteBytesExt};
 use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The client's half of the key agreement — its ECDHE public key, or a PSK identity.
 pub struct HandshakeMessageClientKeyExchange {
     pub(crate) identity_hint: Vec<u8>,
     pub(crate) public_key: Vec<u8>,
 }
 
 impl HandshakeMessageClientKeyExchange {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ClientKeyExchange
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         if !self.public_key.is_empty() {
             1 + self.public_key.len()
@@ -25,6 +28,11 @@ impl HandshakeMessageClientKeyExchange {
         }
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         if (!self.identity_hint.is_empty() && !self.public_key.is_empty())
             || (self.identity_hint.is_empty() && self.public_key.is_empty())
@@ -43,6 +51,11 @@ impl HandshakeMessageClientKeyExchange {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let mut data = vec![];
         reader.read_to_end(&mut data)?;

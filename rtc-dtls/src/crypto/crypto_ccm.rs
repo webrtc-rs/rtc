@@ -31,8 +31,11 @@ type AesCcm8 = Ccm<Aes128, U8, U12>;
 type AesCcm = Ccm<Aes128, U16, U12>;
 
 #[derive(Clone)]
+/// The authentication tag length a CCM suite uses.
 pub enum CryptoCcmTagLen {
+    /// An 8-byte tag, as the `_CCM_8` suites use.
     CryptoCcm8TagLength,
+    /// The full 16-byte tag.
     CryptoCcmTagLength,
 }
 
@@ -42,6 +45,7 @@ enum CryptoCcmType {
 }
 
 // State needed to handle encrypted input/output
+/// AES-CCM authenticated encryption for DTLS records, holding the per-direction keys.
 pub struct CryptoCcm {
     local_ccm: CryptoCcmType,
     remote_ccm: CryptoCcmType,
@@ -74,6 +78,7 @@ impl Clone for CryptoCcm {
 }
 
 impl CryptoCcm {
+    /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
         tag_len: &CryptoCcmTagLen,
         local_key: &[u8],
@@ -103,6 +108,11 @@ impl CryptoCcm {
         }
     }
 
+    /// Protects one record, returning header plus ciphertext.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
     pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
@@ -142,6 +152,11 @@ impl CryptoCcm {
         Ok(r)
     }
 
+    /// Unprotects one record.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;

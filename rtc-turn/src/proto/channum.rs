@@ -16,7 +16,11 @@ const CHANNEL_NUMBER_SIZE: usize = 4;
 //
 // 0x4000 through 0x7FFF: These values are the allowed channel
 // numbers (16,383 possible values).
+/// The lowest channel number a client may bind.
+///
+/// The range is chosen so ChannelData can be told apart from STUN messages on the same port.
 pub const MIN_CHANNEL_NUMBER: u16 = 0x4000;
+/// The highest channel number a client may bind.
 pub const MAX_CHANNEL_NUMBER: u16 = 0x7FFF;
 
 /// `ChannelNumber` represents `CHANNEL-NUMBER` attribute. Encoded as `u16`.

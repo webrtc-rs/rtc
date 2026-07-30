@@ -34,6 +34,7 @@ pub struct Av1Depacketizer {
 }
 
 impl Av1Depacketizer {
+    /// An AV1 depacketizer with no buffered fragments.
     pub fn new() -> Self {
         Self::default()
     }

@@ -11,37 +11,41 @@ const CHANNEL_TYPE_LEN: usize = 1;
 
 /// ChannelPriority
 pub const CHANNEL_PRIORITY_BELOW_NORMAL: u16 = 128;
+/// The default channel priority.
 pub const CHANNEL_PRIORITY_NORMAL: u16 = 256;
+/// A higher-than-default channel priority.
 pub const CHANNEL_PRIORITY_HIGH: u16 = 512;
+/// The highest channel priority defined by the spec.
 pub const CHANNEL_PRIORITY_EXTRA_HIGH: u16 = 1024;
 
 #[derive(Default, Eq, PartialEq, Copy, Clone, Debug)]
+/// The reliability and ordering guarantees a data channel is opened with.
+///
+/// Carried in the `DATA_CHANNEL_OPEN` message ([RFC 8832] §5.1); `reliability_parameter`
+/// supplies the retransmission count or lifetime for the partial-reliability variants.
+///
+/// [RFC 8832]: https://datatracker.ietf.org/doc/html/rfc8832
 pub enum ChannelType {
-    // `Reliable` determines the Data Channel provides a
-    // reliable in-order bi-directional communication.
+    /// Reliable, in-order delivery — the SCTP default, and what `RTCDataChannel` gives you
+    /// unless you ask otherwise.
     #[default]
     Reliable,
-    // `ReliableUnordered` determines the Data Channel
-    // provides a reliable unordered bi-directional communication.
+    /// Reliable delivery, but messages may arrive out of order.
     ReliableUnordered,
-    // `PartialReliableRexmit` determines the Data Channel
-    // provides a partially-reliable in-order bi-directional communication.
-    // User messages will not be retransmitted more times than specified in the Reliability Parameter.
+    /// Partially reliable and in-order: a message is retransmitted at most
+    /// `reliability_parameter` times before being abandoned.
+    ///
+    /// This is what `maxRetransmits` maps to.
     PartialReliableRexmit,
-    // `PartialReliableRexmitUnordered` determines
-    //  the Data Channel provides a partial reliable unordered bi-directional communication.
-    // User messages will not be retransmitted more times than specified in the Reliability Parameter.
+    /// As [`Self::PartialReliableRexmit`], but messages may arrive out of order.
     PartialReliableRexmitUnordered,
-    // `PartialReliableTimed` determines the Data Channel
-    // provides a partial reliable in-order bi-directional communication.
-    // User messages might not be transmitted or retransmitted after
-    // a specified life-time given in milli- seconds in the Reliability Parameter.
-    // This life-time starts when providing the user message to the protocol stack.
+    /// Partially reliable and in-order: a message is abandoned once
+    /// `reliability_parameter` milliseconds have passed.
+    ///
+    /// The lifetime starts when the message is handed to the stack, not when it is first
+    /// transmitted. This is what `maxPacketLifeTime` maps to.
     PartialReliableTimed,
-    // The Data Channel provides a partial reliable unordered bi-directional
-    // communication.  User messages might not be transmitted or retransmitted
-    // after a specified life-time given in milli- seconds in the Reliability Parameter.
-    // This life-time starts when providing the user message to the protocol stack.
+    /// As [`Self::PartialReliableTimed`], but messages may arrive out of order.
     PartialReliableTimedUnordered,
 }
 
@@ -135,10 +139,16 @@ const CHANNEL_OPEN_HEADER_LEN: usize = 11;
 /// ```
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct DataChannelOpen {
+    /// The reliability and ordering guarantees requested for the channel.
     pub channel_type: ChannelType,
+    /// The channel's relative priority, one of the `CHANNEL_PRIORITY_*` constants.
     pub priority: u16,
+    /// The retransmission count or message lifetime in milliseconds, interpreted according to
+    /// [`Self::channel_type`].
     pub reliability_parameter: u32,
+    /// The channel label, as UTF-8 bytes.
     pub label: Vec<u8>,
+    /// The subprotocol name, as UTF-8 bytes. Empty if none was negotiated.
     pub protocol: Vec<u8>,
 }
 

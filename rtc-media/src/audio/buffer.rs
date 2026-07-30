@@ -1,4 +1,6 @@
+/// Channel and frame counts for a buffer.
 pub mod info;
+/// The interleaved and deinterleaved buffer layouts.
 pub mod layout;
 
 use std::mem::{ManuallyDrop, MaybeUninit};
@@ -10,16 +12,33 @@ pub use layout::BufferLayout;
 use layout::{Deinterleaved, Interleaved};
 use thiserror::Error;
 
+/// Decodes a buffer from raw little- or big-endian bytes.
+///
+/// `L` is the [`BufferLayout`] the decoded samples are arranged in.
 pub trait FromBytes<L>: Sized {
+    /// The error type produced by a failed conversion.
     type Error;
 
+    /// Decodes `channels` channels of samples from `bytes`, reading in byte order `B`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `bytes` is too short for a whole number of frames.
     fn from_bytes<B: ByteOrder>(bytes: &[u8], channels: usize) -> Result<Self, Self::Error>;
 }
 
+/// Encodes a buffer into raw bytes in a caller-chosen endianness.
 pub trait ToByteBufferRef<L>: Sized {
+    /// The error type produced by a failed conversion.
     type Error;
 
+    /// The number of bytes [`Self::to_bytes`] will write.
     fn bytes_len(&self);
+    /// Encodes the buffer into `bytes` in byte order `B`, returning the bytes written.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `bytes` is too short.
     fn to_bytes<B: ByteOrder>(
         &self,
         bytes: &mut [u8],
@@ -28,18 +47,29 @@ pub trait ToByteBufferRef<L>: Sized {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+/// Errors from converting between buffers and raw bytes.
 pub enum Error {
     #[error("Unexpected end of buffer: (expected: {expected}, actual: {actual})")]
-    UnexpectedEndOfBuffer { expected: usize, actual: usize },
+    /// The byte slice was too short to hold the expected number of samples.
+    UnexpectedEndOfBuffer {
+        /// Bytes required.
+        expected: usize,
+        /// Bytes available.
+        actual: usize,
+    },
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
+/// A borrowed view of multi-channel audio: samples of type `T` in layout `L`.
 pub struct BufferRef<'a, T, L> {
     samples: &'a [T],
     info: BufferInfo<L>,
 }
 
 impl<'a, T, L> BufferRef<'a, T, L> {
+    /// Wraps `samples` as `channels` interleaved or deinterleaved channels.
+    ///
+    /// The frame count is derived from the slice length, which must divide evenly by `channels`.
     pub fn new(samples: &'a [T], channels: usize) -> Self {
         debug_assert_eq!(samples.len() % channels, 0);
         let info = {
@@ -58,6 +88,9 @@ pub struct Buffer<T, L> {
 }
 
 impl<T, L> Buffer<T, L> {
+    /// Takes ownership of `samples` as `channels` channels.
+    ///
+    /// The frame count is derived from the length, which must divide evenly by `channels`.
     pub fn new(samples: Vec<T>, channels: usize) -> Self {
         debug_assert_eq!(samples.len() % channels, 0);
         let info = {
@@ -67,6 +100,7 @@ impl<T, L> Buffer<T, L> {
         Self { samples, info }
     }
 
+    /// Borrows the whole buffer as a [`BufferRef`].
     pub fn as_ref(&'_ self) -> BufferRef<'_, T, L> {
         BufferRef {
             samples: &self.samples[..],
@@ -74,6 +108,7 @@ impl<T, L> Buffer<T, L> {
         }
     }
 
+    /// Borrows a sample range of the buffer as a [`BufferRef`].
     pub fn sub_range(&'_ self, range: Range<usize>) -> BufferRef<'_, T, L> {
         let samples_len = range.len();
         let samples = &self.samples[range];

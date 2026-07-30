@@ -1,3 +1,4 @@
+/// Multi-channel audio buffers in interleaved or deinterleaved layout.
 pub mod buffer;
 mod sample;
 

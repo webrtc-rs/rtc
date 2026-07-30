@@ -1,17 +1,29 @@
 #[cfg(test)]
 mod proto_test;
 
+/// Address helpers and the five-tuple that identifies an allocation.
 pub mod addr;
+/// ChannelData messages — the compact 4-byte framing for relayed data.
 pub mod chandata;
+/// The `CHANNEL-NUMBER` attribute.
 pub mod channum;
+/// The `DATA` attribute, which carries relayed payloads in Send/Data indications.
 pub mod data;
+/// The `DONT-FRAGMENT` attribute, asking the server to set DF on relayed packets.
 pub mod dontfrag;
+/// The `EVEN-PORT` attribute, requesting an even relayed port (for RTP/RTCP pairs).
 pub mod evenport;
+/// The `LIFETIME` attribute, which sets and reports allocation expiry.
 pub mod lifetime;
+/// The `XOR-PEER-ADDRESS` attribute, naming the peer in permission and data messages.
 pub mod peeraddr;
+/// The `XOR-RELAYED-ADDRESS` attribute, which reports the allocated public address.
 pub mod relayaddr;
+/// The `REQUESTED-ADDRESS-FAMILY` attribute, for asking for an IPv4 or IPv6 allocation.
 pub mod reqfamily;
+/// The `REQUESTED-TRANSPORT` attribute, which selects the relay's transport to peers.
 pub mod reqtrans;
+/// The `RESERVATION-TOKEN` attribute, used to claim a previously reserved port.
 pub mod rsrvtoken;
 
 use std::fmt;

@@ -14,7 +14,9 @@ use std::fmt;
 /// A FIREntry is a (ssrc, seqno) pair, as carried by FullIntraRequest.
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct FirEntry {
+    /// The SSRC being asked for an intra frame.
     pub ssrc: u32,
+    /// A counter incremented per request, so a sender can ignore retransmitted duplicates.
     pub sequence_number: u8,
 }
 
@@ -23,8 +25,11 @@ pub struct FirEntry {
 /// recovery, which should use PictureLossIndication (PLI) instead.
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct FullIntraRequest {
+    /// The SSRC of the requesting receiver.
     pub sender_ssrc: u32,
+    /// The media source being addressed.
     pub media_ssrc: u32,
+    /// One entry per SSRC an intra frame is requested from.
     pub fir: Vec<FirEntry>,
 }
 

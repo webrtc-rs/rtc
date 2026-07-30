@@ -22,6 +22,7 @@ pub struct Vp9Payloader {
     picture_id: u16,
     initialized: bool,
 
+    /// Supplies the starting picture id; randomized when absent.
     pub initial_picture_id_fn: Option<InitialPictureIDFn>,
 }
 
@@ -188,7 +189,9 @@ pub struct Vp9Packet {
     pub g: bool,
     /// N_G indicates the number of pictures in a Picture Group (PG)
     pub ng: u8,
+    /// Frame width for each spatial layer.
     pub width: Vec<u16>,
+    /// Frame height for each spatial layer.
     pub height: Vec<u16>,
     /// Temporal layer ID of pictures in a Picture Group
     pub pgtid: Vec<u8>,

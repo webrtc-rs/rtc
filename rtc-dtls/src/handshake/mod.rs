@@ -1,15 +1,28 @@
+/// Buffers handshake messages so their hash can be computed for `Finished` verification.
 pub mod handshake_cache;
+/// The header prefixing every handshake message, including fragment offsets.
 pub mod handshake_header;
+/// Certificate: the sender's certificate chain.
 pub mod handshake_message_certificate;
+/// CertificateRequest: the server asks the client to authenticate.
 pub mod handshake_message_certificate_request;
+/// CertificateVerify: proves possession of the certificate's private key.
 pub mod handshake_message_certificate_verify;
+/// ClientHello: opens the handshake with the client's offers.
 pub mod handshake_message_client_hello;
+/// ClientKeyExchange: the client's half of the key agreement.
 pub mod handshake_message_client_key_exchange;
+/// Finished: a hash over the handshake, proving both sides saw the same messages.
 pub mod handshake_message_finished;
+/// HelloVerifyRequest: DTLS's cookie exchange, which resists amplification attacks.
 pub mod handshake_message_hello_verify_request;
+/// ServerHello: the server's chosen parameters.
 pub mod handshake_message_server_hello;
+/// ServerHelloDone: the server has finished its first flight.
 pub mod handshake_message_server_hello_done;
+/// ServerKeyExchange: the server's half of the key agreement.
 pub mod handshake_message_server_key_exchange;
+/// The 32-byte random each side contributes to key derivation.
 pub mod handshake_random;
 
 #[cfg(test)]
@@ -40,18 +53,30 @@ use handshake_message_server_key_exchange::*;
 /// [RFC 5246 §7.4]: https://tools.ietf.org/html/rfc5246#section-7.4
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HandshakeType {
+    /// `HELLO_REQUEST` (`0`).
     HelloRequest = 0,
+    /// `CLIENT_HELLO` (`1`).
     ClientHello = 1,
+    /// `SERVER_HELLO` (`2`).
     ServerHello = 2,
+    /// `HELLO_VERIFY_REQUEST` (`3`).
     HelloVerifyRequest = 3,
+    /// `CERTIFICATE` (`11`).
     Certificate = 11,
+    /// `SERVER_KEY_EXCHANGE` (`12`).
     ServerKeyExchange = 12,
+    /// `CERTIFICATE_REQUEST` (`13`).
     CertificateRequest = 13,
+    /// `SERVER_HELLO_DONE` (`14`).
     ServerHelloDone = 14,
+    /// `CERTIFICATE_VERIFY` (`15`).
     CertificateVerify = 15,
+    /// `CLIENT_KEY_EXCHANGE` (`16`).
     ClientKeyExchange = 16,
+    /// `FINISHED` (`20`).
     Finished = 20,
     #[default]
+    /// A handshake type this crate does not recognise.
     Invalid,
 }
 
@@ -94,21 +119,33 @@ impl From<u8> for HandshakeType {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+/// A parsed handshake message.
 pub enum HandshakeMessage {
     //HelloRequest(errNotImplemented),
+    /// ClientHello, which opens the handshake.
     ClientHello(HandshakeMessageClientHello),
+    /// ServerHello, carrying the server's chosen parameters.
     ServerHello(HandshakeMessageServerHello),
+    /// HelloVerifyRequest, DTLS's cookie challenge.
     HelloVerifyRequest(HandshakeMessageHelloVerifyRequest),
+    /// Certificate, carrying a certificate chain.
     Certificate(HandshakeMessageCertificate),
+    /// ServerKeyExchange, the server's key-agreement share.
     ServerKeyExchange(HandshakeMessageServerKeyExchange),
+    /// CertificateRequest, asking the client to authenticate.
     CertificateRequest(HandshakeMessageCertificateRequest),
+    /// ServerHelloDone, ending the server's first flight.
     ServerHelloDone(HandshakeMessageServerHelloDone),
+    /// CertificateVerify, proving possession of the certificate key.
     CertificateVerify(HandshakeMessageCertificateVerify),
+    /// ClientKeyExchange, the client's key-agreement share.
     ClientKeyExchange(HandshakeMessageClientKeyExchange),
+    /// Finished, a hash over the handshake that both sides verify.
     Finished(HandshakeMessageFinished),
 }
 
 impl HandshakeMessage {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         match self {
             HandshakeMessage::ClientHello(msg) => msg.handshake_type(),
@@ -124,6 +161,7 @@ impl HandshakeMessage {
         }
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         match self {
             HandshakeMessage::ClientHello(msg) => msg.size(),
@@ -139,6 +177,11 @@ impl HandshakeMessage {
         }
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         match self {
             HandshakeMessage::ClientHello(msg) => msg.marshal(writer)?,
@@ -164,12 +207,14 @@ impl HandshakeMessage {
 // certificates signed by a trusted certificate authority.
 // https://tools.ietf.org/html/rfc5246#section-7.3
 #[derive(PartialEq, Debug, Clone)]
+/// A handshake record: its header plus the message it carries.
 pub struct Handshake {
     pub(crate) handshake_header: HandshakeHeader,
     pub(crate) handshake_message: HandshakeMessage,
 }
 
 impl Handshake {
+    /// Wraps a message in a handshake record, filling in its header.
     pub fn new(handshake_message: HandshakeMessage) -> Self {
         Handshake {
             handshake_header: HandshakeHeader {
@@ -183,20 +228,32 @@ impl Handshake {
         }
     }
 
+    /// The record content type this message is carried in.
     pub fn content_type(&self) -> ContentType {
         ContentType::Handshake
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         self.handshake_header.size() + self.handshake_message.size()
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         self.handshake_header.marshal(writer)?;
         self.handshake_message.marshal(writer)?;
         Ok(())
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let handshake_header = HandshakeHeader::unmarshal(reader)?;
 

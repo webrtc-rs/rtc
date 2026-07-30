@@ -1,5 +1,15 @@
 #![warn(rust_2018_idioms)]
+#![warn(missing_docs)]
 #![allow(dead_code)]
+
+//! Signaling helpers for the WebRTC.rs examples.
+//!
+//! The examples in this workspace exchange SDP by hand: one side prints a base64 blob, you
+//! paste it into the other. This crate holds the few functions that make that work, so the
+//! examples can stay focused on the WebRTC parts.
+//!
+//! It is a support crate for the examples, not part of the WebRTC API — nothing here is
+//! needed to use [`rtc`](https://docs.rs/rtc) or [`webrtc`](https://docs.rs/webrtc).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
@@ -102,6 +112,11 @@ pub fn decode(s: &str) -> Result<String> {
     Ok(s)
 }
 
+/// Best-effort discovery of this host's primary local IPv4 address.
+///
+/// Opens a UDP socket toward a public address and reads back the local address the OS
+/// picked — no packet is sent. Falls back to `127.0.0.1` if that fails, which is what the
+/// examples want when running offline.
 pub fn get_local_ip() -> IpAddr {
     if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0")
         && socket.connect("8.8.8.8:80").is_ok()

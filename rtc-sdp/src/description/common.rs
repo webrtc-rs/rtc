@@ -10,8 +10,11 @@ pub type Information = String;
 /// containing connection data.
 #[derive(Debug, Default, Clone)]
 pub struct ConnectionInformation {
+    /// The network type, always `IN` (Internet) in practice.
     pub network_type: String,
+    /// The address type, `IP4` or `IP6`.
     pub address_type: String,
+    /// The connection address, absent for a bare `c=` line.
     pub address: Option<Address>,
 }
 
@@ -28,8 +31,11 @@ impl fmt::Display for ConnectionInformation {
 /// Address describes a structured address token from within the "c=" field.
 #[derive(Debug, Default, Clone)]
 pub struct Address {
+    /// The address itself: a host name, IPv4/IPv6 literal, or multicast group.
     pub address: String,
+    /// The multicast TTL, for multicast addresses.
     pub ttl: Option<isize>,
+    /// The number of consecutive multicast addresses in the range.
     pub range: Option<isize>,
 }
 
@@ -50,8 +56,11 @@ impl fmt::Display for Address {
 /// to be used by the session or media.
 #[derive(Debug, Default, Clone)]
 pub struct Bandwidth {
+    /// Whether the bandwidth type is experimental, written with an `X-` prefix.
     pub experimental: bool,
+    /// The bandwidth modifier, such as `AS` (application-specific) or `CT` (conference total).
     pub bandwidth_type: String,
+    /// The proposed bandwidth in kilobits per second.
     pub bandwidth: u64,
 }
 
@@ -69,7 +78,9 @@ pub type EncryptionKey = String;
 /// extending SDP.
 #[derive(Debug, Default, Clone)]
 pub struct Attribute {
+    /// The attribute name, the part before the `:`.
     pub key: String,
+    /// The attribute value, or `None` for a flag attribute such as `a=rtcp-mux`.
     pub value: Option<String>,
 }
 

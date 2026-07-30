@@ -9,15 +9,18 @@ mod handshake_message_certificate_test;
 const HANDSHAKE_MESSAGE_CERTIFICATE_LENGTH_FIELD_SIZE: usize = 3;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+/// The sender's certificate chain.
 pub struct HandshakeMessageCertificate {
     pub(crate) certificate: Vec<Vec<u8>>,
 }
 
 impl HandshakeMessageCertificate {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::Certificate
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         let mut len = 3;
 
@@ -28,6 +31,11 @@ impl HandshakeMessageCertificate {
         len
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         let mut payload_size = 0;
         for r in &self.certificate {
@@ -48,6 +56,11 @@ impl HandshakeMessageCertificate {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let mut certificate: Vec<Vec<u8>> = vec![];
 

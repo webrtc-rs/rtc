@@ -1,6 +1,9 @@
 use cbc::cipher::block_padding::{PadType, RawPadding, UnpadError};
 use core::panic;
 
+/// DTLS block-cipher padding, as a marker type for the padding scheme.
+///
+/// Has no values — it exists to parameterize the CBC cipher over its padding.
 pub enum DtlsPadding {}
 /// Reference: RFC5246, 6.2.3.2
 impl RawPadding for DtlsPadding {

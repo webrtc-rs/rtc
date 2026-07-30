@@ -8,12 +8,14 @@ use shared::{
 
 use bytes::{Buf, BufMut};
 
+/// The extension's encoded size: 3 bytes of 6.18 fixed-point seconds.
 pub const ABS_SEND_TIME_EXTENSION_SIZE: usize = 3;
 
 /// AbsSendTimeExtension is a extension payload format in
 /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone)]
 pub struct AbsSendTimeExtension {
+    /// The send time in 6.18 fixed-point format — 6 bits of seconds, 18 of fraction.
     pub timestamp: u64,
 }
 

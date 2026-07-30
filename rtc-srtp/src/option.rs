@@ -1,5 +1,11 @@
 use shared::replay_detector::*;
 
+/// A factory for the [`ReplayDetector`] a context
+/// should use.
+///
+/// A factory rather than a value because each SSRC in a session needs its own detector
+/// state. Remote contexts default to a 64-packet sliding window; pass a different factory to
+/// widen it or to disable replay protection.
 pub type ContextOption = Box<dyn Fn() -> Box<dyn ReplayDetector> + Send + Sync>;
 
 pub(crate) const MAX_SEQUENCE_NUMBER: u16 = 65535;

@@ -236,20 +236,29 @@ pub(crate) type PskCallback = Arc<dyn (Fn(&[u8]) -> Result<Vec<u8>>) + Send + Sy
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum ClientAuthType {
     #[default]
+    /// `NO_CLIENT_CERT` (`0`).
     NoClientCert = 0,
+    /// `REQUEST_CLIENT_CERT` (`1`).
     RequestClientCert = 1,
+    /// `REQUIRE_ANY_CLIENT_CERT` (`2`).
     RequireAnyClientCert = 2,
+    /// `VERIFY_CLIENT_CERT_IF_GIVEN` (`3`).
     VerifyClientCertIfGiven = 3,
+    /// `REQUIRE_AND_VERIFY_CLIENT_CERT` (`4`).
     RequireAndVerifyClientCert = 4,
 }
 
 // ExtendedMasterSecretType declares the policy the client and server
 // will follow for the Extended Master Secret extension
 #[derive(Debug, Default, PartialEq, Eq, Copy, Clone)]
+/// How strictly to require the extended master secret extension ([RFC 7627]).
 pub enum ExtendedMasterSecretType {
     #[default]
+    /// `REQUEST` (`0`).
     Request = 0,
+    /// `REQUIRE` (`1`).
     Require = 1,
+    /// `DISABLE` (`2`).
     Disable = 2,
 }
 
@@ -359,9 +368,14 @@ impl ConfigBuilder {
     }
 }
 
+/// A callback that decides whether a peer's certificate chain is acceptable.
+///
+/// WebRTC verifies the fingerprint from SDP instead of a CA chain, so this is where that check
+/// goes.
 pub type VerifyPeerCertificateFn =
     Arc<dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<()>) + Send + Sync>;
 
+/// Generates a self-signed certificate, as WebRTC endpoints use.
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
     let mut certs = rustls::RootCertStore::empty();
     certs
@@ -377,6 +391,7 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
 }
 
 #[derive(Clone)]
+/// The resolved configuration a handshake runs with, built from a [`ConfigBuilder`].
 pub struct HandshakeConfig {
     pub(crate) local_psk_callback: Option<PskCallback>,
     pub(crate) local_psk_identity_hint: Option<Vec<u8>>,

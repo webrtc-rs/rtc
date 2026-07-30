@@ -1,9 +1,18 @@
+/// Server Name Indication (SNI).
 pub mod extension_server_name;
+/// The curves a client will accept for ECDHE.
 pub mod extension_supported_elliptic_curves;
+/// The EC point formats a client will accept; WebRTC uses uncompressed.
 pub mod extension_supported_point_formats;
+/// The signature and hash algorithm pairs a client will accept.
 pub mod extension_supported_signature_algorithms;
+/// The extended master secret extension ([RFC 7627]), which binds the master secret to the
+/// whole handshake.
 pub mod extension_use_extended_master_secret;
+/// The `use_srtp` extension, which negotiates SRTP protection profiles during the DTLS
+/// handshake ([RFC 5764]).
 pub mod extension_use_srtp;
+/// The renegotiation info extension, sent empty to signal renegotiation is not supported.
 pub mod renegotiation_info;
 
 use extension_server_name::*;
@@ -21,14 +30,23 @@ use std::io::{Read, Write};
 
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The extension type code points this crate understands.
 pub enum ExtensionValue {
+    /// `SERVER_NAME` (`0`).
     ServerName = 0,
+    /// `SUPPORTED_ELLIPTIC_CURVES` (`10`).
     SupportedEllipticCurves = 10,
+    /// `SUPPORTED_POINT_FORMATS` (`11`).
     SupportedPointFormats = 11,
+    /// `SUPPORTED_SIGNATURE_ALGORITHMS` (`13`).
     SupportedSignatureAlgorithms = 13,
+    /// `USE_SRTP` (`14`).
     UseSrtp = 14,
+    /// `USE_EXTENDED_MASTER_SECRET` (`23`).
     UseExtendedMasterSecret = 23,
+    /// `RENEGOTIATION_INFO` (`65281`).
     RenegotiationInfo = 65281,
+    /// An extension this crate does not implement, which is ignored.
     Unsupported,
 }
 
@@ -48,17 +66,26 @@ impl From<u16> for ExtensionValue {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+/// A parsed hello extension.
 pub enum Extension {
+    /// Server Name Indication.
     ServerName(ExtensionServerName),
+    /// The curves the sender accepts for ECDHE.
     SupportedEllipticCurves(ExtensionSupportedEllipticCurves),
+    /// The EC point formats the sender accepts.
     SupportedPointFormats(ExtensionSupportedPointFormats),
+    /// The signature and hash pairs the sender accepts.
     SupportedSignatureAlgorithms(ExtensionSupportedSignatureAlgorithms),
+    /// The SRTP protection profiles offered or selected.
     UseSrtp(ExtensionUseSrtp),
+    /// The extended master secret extension.
     UseExtendedMasterSecret(ExtensionUseExtendedMasterSecret),
+    /// The renegotiation info extension.
     RenegotiationInfo(ExtensionRenegotiationInfo),
 }
 
 impl Extension {
+    /// The extension type this value is carried under.
     pub fn extension_value(&self) -> ExtensionValue {
         match self {
             Extension::ServerName(ext) => ext.extension_value(),
@@ -71,6 +98,7 @@ impl Extension {
         }
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         let mut len = 2;
 
@@ -87,6 +115,11 @@ impl Extension {
         len
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u16::<BigEndian>(self.extension_value() as u16)?;
         match self {
@@ -100,6 +133,11 @@ impl Extension {
         }
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let extension_value: ExtensionValue = reader.read_u16::<BigEndian>()?.into();
         match extension_value {

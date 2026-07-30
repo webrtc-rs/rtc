@@ -6,11 +6,15 @@ use shared::error::*;
 /// The config required to create a new `CandidateServerReflexive`.
 #[derive(Default)]
 pub struct CandidateServerReflexiveConfig {
+    /// The fields shared by every candidate type.
     pub base_config: CandidateConfig,
 
+    /// The base address this candidate was derived from, reported as `raddr`.
     pub rel_addr: String,
+    /// The base port, reported as `rport`.
     pub rel_port: u16,
 
+    /// The server this candidate was gathered from.
     pub url: Option<String>,
 }
 

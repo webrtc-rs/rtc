@@ -25,6 +25,7 @@ pub struct NackPair {
     pub lost_packets: PacketBitmap,
 }
 
+/// Iterates the individual sequence numbers a [`NackPair`] encodes.
 pub struct NackIterator {
     packet_id: u16,
     bitfield: PacketBitmap,
@@ -58,6 +59,7 @@ impl Iterator for NackIterator {
 }
 
 impl NackPair {
+    /// A NACK pair naming a single lost sequence number, with no additional bitmask bits set.
     pub fn new(seq: u16) -> Self {
         Self {
             packet_id: seq,
@@ -70,6 +72,9 @@ impl NackPair {
         self.into_iter().collect()
     }
 
+    /// Calls `f` with every sequence number this pair reports lost.
+    ///
+    /// Stops early if `f` returns `false`.
     pub fn range<F>(&self, f: F)
     where
         F: Fn(u16) -> bool,
@@ -119,6 +124,7 @@ pub struct TransportLayerNack {
     /// SSRC of the media source
     pub media_ssrc: u32,
 
+    /// The lost-packet ranges being reported.
     pub nacks: Vec<NackPair>,
 }
 
@@ -252,6 +258,9 @@ impl Unmarshal for TransportLayerNack {
     }
 }
 
+/// Packs a list of lost sequence numbers into the smallest set of [`NackPair`]s.
+///
+/// Each pair covers a base sequence number plus the next 16, so nearby losses share one pair.
 pub fn nack_pairs_from_sequence_numbers(seq_nos: &[u16]) -> Vec<NackPair> {
     if seq_nos.is_empty() {
         return vec![];

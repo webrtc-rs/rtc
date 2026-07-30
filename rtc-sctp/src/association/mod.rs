@@ -100,6 +100,7 @@ pub enum Event {
     AssociationLost {
         /// Reason that the association was closed
         reason: AssociationError,
+        /// The stream the loss was reported against.
         id: StreamId,
     },
     /// Stream events
@@ -721,6 +722,7 @@ impl Association {
         }
     }
 
+    /// The identifiers of every stream currently open on this association.
     pub fn stream_ids(&self) -> Vec<StreamId> {
         self.streams.keys().cloned().collect()
     }

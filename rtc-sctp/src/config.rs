@@ -39,56 +39,69 @@ impl Default for TransportConfig {
 }
 
 impl TransportConfig {
+    /// Sets the SCTP port. WebRTC always uses 5000.
     pub fn with_sctp_port(mut self, value: u16) -> Self {
         self.sctp_port = value;
         self
     }
 
+    /// Sets the advertised receive window (a_rwnd), bounding how much unacknowledged data a peer
+    /// may have in flight toward this endpoint.
     pub fn with_max_receive_buffer_size(mut self, value: u32) -> Self {
         self.max_receive_buffer_size = value;
         self
     }
 
+    /// Sets the largest message this endpoint will accept.
     pub fn with_max_message_size(mut self, value: u32) -> Self {
         self.max_message_size = value;
         self
     }
 
+    /// Sets how many outbound streams to request during the handshake.
     pub fn with_max_num_outbound_streams(mut self, value: u16) -> Self {
         self.max_num_outbound_streams = value;
         self
     }
 
+    /// Sets how many inbound streams this endpoint will accept.
     pub fn with_max_num_inbound_streams(mut self, value: u16) -> Self {
         self.max_num_inbound_streams = value;
         self
     }
 
+    /// Overrides the retransmission limits; see [`TimerConfig`].
     pub fn with_timer_config(mut self, value: TimerConfig) -> Self {
         self.timer_config = value;
         self
     }
 
+    /// The configured SCTP port.
     pub fn sctp_port(&self) -> u16 {
         self.sctp_port
     }
 
+    /// The configured receive window in bytes.
     pub fn max_receive_buffer_size(&self) -> u32 {
         self.max_receive_buffer_size
     }
 
+    /// The configured maximum message size in bytes.
     pub fn max_message_size(&self) -> u32 {
         self.max_message_size
     }
 
+    /// The configured outbound stream count.
     pub fn max_num_outbound_streams(&self) -> u16 {
         self.max_num_outbound_streams
     }
 
+    /// The configured inbound stream count.
     pub fn max_num_inbound_streams(&self) -> u16 {
         self.max_num_inbound_streams
     }
 
+    /// The configured retransmission limits.
     pub fn timer_config(&self) -> TimerConfig {
         self.timer_config
     }

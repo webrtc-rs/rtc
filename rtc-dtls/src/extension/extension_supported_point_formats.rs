@@ -5,8 +5,10 @@ use super::*;
 
 const EXTENSION_SUPPORTED_POINT_FORMATS_SIZE: usize = 5;
 
+/// An EC point format code point.
 pub type EllipticCurvePointFormat = u8;
 
+/// Uncompressed point format, the only one WebRTC uses.
 pub const ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED: EllipticCurvePointFormat = 0;
 
 /// ## Specifications
@@ -20,14 +22,21 @@ pub struct ExtensionSupportedPointFormats {
 }
 
 impl ExtensionSupportedPointFormats {
+    /// The extension type this value is carried under.
     pub fn extension_value(&self) -> ExtensionValue {
         ExtensionValue::SupportedPointFormats
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         2 + 1 + self.point_formats.len()
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u16::<BigEndian>(1 + self.point_formats.len() as u16)?;
         writer.write_u8(self.point_formats.len() as u8)?;
@@ -38,6 +47,11 @@ impl ExtensionSupportedPointFormats {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let _ = reader.read_u16::<BigEndian>()?;
 

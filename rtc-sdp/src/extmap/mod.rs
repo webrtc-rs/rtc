@@ -11,27 +11,41 @@ use url::Url;
 
 /// Default ext values
 pub const DEF_EXT_MAP_VALUE_ABS_SEND_TIME: usize = 1;
+/// The default id this crate assigns to the transport-wide CC extension.
 pub const DEF_EXT_MAP_VALUE_TRANSPORT_CC: usize = 2;
+/// The default id assigned to the SDES `mid` extension.
 pub const DEF_EXT_MAP_VALUE_SDES_MID: usize = 3;
+/// The default id assigned to the SDES RTP stream id extension.
 pub const DEF_EXT_MAP_VALUE_SDES_RTP_STREAM_ID: usize = 4;
 
+/// The absolute-send-time extension URI, used for bandwidth estimation.
 pub const ABS_SEND_TIME_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time";
+/// The transport-wide congestion control extension URI.
 pub const TRANSPORT_CC_URI: &str =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
+/// The SDES `mid` extension URI, which tags each packet with its m-line.
 pub const SDES_MID_URI: &str = "urn:ietf:params:rtp-hdrext:sdes:mid";
+/// The SDES RTP stream id (RID) extension URI, which identifies a simulcast layer.
 pub const SDES_RTP_STREAM_ID_URI: &str = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id";
+/// The SDES repaired RTP stream id extension URI, which identifies an RTX layer's target.
 pub const SDES_REPAIR_RTP_STREAM_ID_URI: &str =
     "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id";
 
+/// The audio-level extension URI, carrying per-packet loudness.
 pub const AUDIO_LEVEL_URI: &str = "urn:ietf:params:rtp-hdrext:ssrc-audio-level";
+/// The video-orientation (CVO) extension URI, carrying rotation flags.
 pub const VIDEO_ORIENTATION_URI: &str = "urn:3gpp:video-orientation";
 
 /// ExtMap represents the activation of a single RTP header extension
 #[derive(Debug, Clone, Default)]
 pub struct ExtMap {
+    /// The id this extension is negotiated under, as it appears in RTP packets.
     pub value: u16,
+    /// The direction the extension applies in, if the attribute restricted it.
     pub direction: Direction,
+    /// The extension's canonical URI.
     pub uri: Option<Url>,
+    /// Extension-specific attributes trailing the URI.
     pub ext_attr: Option<String>,
 }
 

@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod agent_test;
 
+/// Configuration for a new [`Agent`]: servers, timeouts and role.
 pub mod agent_config;
 mod agent_proto;
+/// Pair selection and nomination — which candidate pair becomes the selected one.
 pub mod agent_selector;
+/// Snapshot statistics for an agent's candidates and pairs.
 pub mod agent_stats;
 
 use agent_config::*;
@@ -55,8 +58,11 @@ impl Default for BindingRequest {
 }
 
 #[derive(Default, Clone)]
+/// The ICE credentials for one side of a session, exchanged in SDP.
 pub struct Credentials {
+    /// The username fragment, echoed in every STUN check so a receiver can demultiplex.
     pub ufrag: String,
+    /// The password, used as the `MESSAGE-INTEGRITY` key.
     pub pwd: String,
 }
 
@@ -87,8 +93,13 @@ fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
     message_integrity_attr.check(m)
 }
 
+/// What the agent reports to its caller.
 pub enum Event {
+    /// The agent's connection state changed.
     ConnectionStateChange(ConnectionState),
+    /// A new pair was selected, carrying the local and remote candidates.
+    ///
+    /// Media should be sent on this pair from now on.
     SelectedCandidatePairChange(Box<Candidate>, Box<Candidate>),
     /// Emitted when the ICE role switches due to a role conflict (RFC 8445 §7.3.1.1).
     /// The bool is `true` if the agent is now controlling, `false` if now controlled.
@@ -533,18 +544,26 @@ impl Agent {
         &self.ufrag_pwd.local_credentials
     }
 
+    /// Whether this agent is the controlling one, which decides nomination.
     pub fn role(&self) -> bool {
         self.is_controlling
     }
 
+    /// Sets the controlling role.
+    ///
+    /// Determined by which side offered; the two agents must not agree, or nomination stalls.
     pub fn set_role(&mut self, is_controlling: bool) {
         self.is_controlling = is_controlling;
     }
 
+    /// The agent's current connection state.
     pub fn state(&self) -> ConnectionState {
         self.connection_state
     }
 
+    /// Whether a non-STUN datagram on `transport` should be accepted as media.
+    ///
+    /// Guards against accepting media from an address that has not passed a connectivity check.
     pub fn is_valid_non_stun_traffic(&mut self, transport: TransportContext) -> bool {
         self.find_local_candidate(transport.local_addr, transport.transport_protocol)
             .is_some()
@@ -595,6 +614,7 @@ impl Agent {
         }
     }
 
+    /// The highest-priority pair that is still usable, whether or not it has been nominated.
     pub fn get_best_available_candidate_pair(&self) -> Option<(&Candidate, &Candidate)> {
         if let Some(pair_index) = self.get_best_available_pair() {
             let candidate_pair = &self.candidate_pairs[pair_index];

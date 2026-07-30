@@ -68,13 +68,25 @@ impl RelayState {
     }
 }
 
-// Relay is the implementation of the Conn interfaces for UDP Relayed network connections.
+/// A borrowed handle to one live allocation on the TURN server.
+///
+/// Obtained from [`Client::relay`](crate::client::Client::relay). Sending to a peer requires
+/// a permission for it first — see [`Self::create_permission`].
 pub struct Relay<'a> {
     pub(crate) relayed_addr: RelayedAddr,
     pub(crate) client: &'a mut Client,
 }
 
 impl Relay<'_> {
+    /// Asks the server to permit traffic to and from `peer_addr`.
+    ///
+    /// The relay silently drops data for peers with no permission, and permissions expire after
+    /// five minutes unless refreshed. Returns the transaction id to match against the resulting
+    /// [`Event`], or `None` if a permission is already in place.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the allocation no longer exists or the request cannot be encoded.
     pub fn create_permission(&mut self, peer_addr: SocketAddr) -> Result<Option<TransactionId>> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             relay
@@ -137,6 +149,13 @@ impl Relay<'_> {
         }
     }
 
+    /// Sends `p` to `peer_addr` through the relay.
+    ///
+    /// Uses ChannelData framing if a channel is bound for that peer, otherwise a Data indication.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the allocation is gone, or if no permission exists for `peer_addr`.
     pub fn send_to(&mut self, p: &[u8], peer_addr: SocketAddr) -> Result<()> {
         // check if we have a permission for the destination IP addr
         let result = if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
@@ -234,6 +253,11 @@ impl Relay<'_> {
 
     // Close closes the connection.
     // Any blocked ReadFrom or write_to operations will be unblocked and return errors.
+    /// Releases the allocation by refreshing it with a zero lifetime.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the refresh request cannot be sent.
     pub fn close(&mut self) -> Result<()> {
         self.refresh_allocation(Duration::from_secs(0))
     }

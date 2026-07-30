@@ -6,12 +6,14 @@ use shared::error::{Error, Result};
 use std::collections::HashMap;
 use std::fmt;
 
+/// The `a=` line prefix.
 pub const ATTRIBUTE_KEY: &str = "a=";
 
 /// ConnectionRole indicates which of the end points should initiate the connection establishment
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ConnectionRole {
     #[default]
+    /// No `a=setup` attribute was present.
     Unspecified,
 
     /// ConnectionRoleActive indicates the endpoint will initiate an outgoing connection.
@@ -80,12 +82,20 @@ pub(crate) fn new_session_id() -> u64 {
 
 // Codec represents a codec
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// One codec offered by a media section, assembled from its `a=rtpmap`, `a=fmtp` and
+/// `a=rtcp-fb` attributes.
 pub struct Codec {
+    /// The RTP payload type that identifies this codec in the stream.
     pub payload_type: u8,
+    /// The encoding name, such as `VP8` or `opus`.
     pub name: String,
+    /// The RTP clock rate in Hz.
     pub clock_rate: u32,
+    /// Codec-specific encoding parameters — the channel count, for audio.
     pub encoding_parameters: String,
+    /// The `a=fmtp` format parameters, verbatim.
     pub fmtp: String,
+    /// The `a=rtcp-fb` feedback types negotiated for this codec, such as `nack` or `goog-remb`.
     pub rtcp_feedback: Vec<String>,
 }
 

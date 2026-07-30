@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use crate::audio::buffer::layout::{Deinterleaved, Interleaved};
 
 #[derive(Eq, PartialEq, Debug)]
+/// The channel and frame counts of a buffer, tagged with its layout `L`.
 pub struct BufferInfo<L> {
     channels: usize,
     frames: usize,
@@ -10,6 +11,7 @@ pub struct BufferInfo<L> {
 }
 
 impl<L> BufferInfo<L> {
+    /// Describes a buffer of `channels` channels and `frames` frames per channel.
     pub fn new(channels: usize, frames: usize) -> Self {
         Self {
             channels,
@@ -38,6 +40,7 @@ impl<L> BufferInfo<L> {
         self.frames = frames;
     }
 
+    /// The total sample count: channels times frames.
     pub fn samples(&self) -> usize {
         self.channels * self.frames
     }

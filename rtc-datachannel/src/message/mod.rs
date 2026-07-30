@@ -1,10 +1,15 @@
 #[cfg(test)]
 mod message_test;
 
+/// The `DATA_CHANNEL_ACK` message, which confirms a channel was opened.
 pub mod message_channel_ack;
+/// An internal close notification (not a DCEP message).
 pub mod message_channel_close;
+/// The `DATA_CHANNEL_OPEN` message and the channel parameters it carries.
 pub mod message_channel_open;
+/// Internal buffered-amount threshold notifications.
 pub mod message_channel_threshold;
+/// The one-byte message type that prefixes every DCEP message.
 pub mod message_type;
 
 use bytes::{Buf, BufMut};
@@ -19,9 +24,14 @@ use shared::marshal::*;
 /// A parsed DataChannel message
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub enum Message {
+    /// A buffered-amount threshold crossing. Internal to this crate — not a DCEP message.
     DataChannelThreshold(DataChannelThreshold), // internal usage only
-    DataChannelClose(DataChannelClose),         // internal usage only
+    /// A channel close notification. Internal to this crate — not a DCEP message.
+    DataChannelClose(DataChannelClose), // internal usage only
+    /// `DATA_CHANNEL_ACK`, sent by the peer to confirm it accepted a `DATA_CHANNEL_OPEN`.
     DataChannelAck(DataChannelAck),
+    /// `DATA_CHANNEL_OPEN`, which opens a channel and carries its label, protocol and
+    /// reliability parameters.
     DataChannelOpen(DataChannelOpen),
 }
 
@@ -79,6 +89,7 @@ impl Unmarshal for Message {
 }
 
 impl Message {
+    /// The type byte that identifies this message on the wire.
     pub fn message_type(&self) -> MessageType {
         match self {
             Self::DataChannelThreshold(_) => MessageType::DataChannelThreshold, // internal usage only

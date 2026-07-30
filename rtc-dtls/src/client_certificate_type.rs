@@ -1,7 +1,11 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// The certificate types a server may request from a client.
 pub enum ClientCertificateType {
+    /// `RSA_SIGN` (`1`).
     RsaSign = 1,
+    /// `ECDSA_SIGN` (`64`).
     EcdsaSign = 64,
+    /// A type this crate does not implement.
     Unsupported,
 }
 

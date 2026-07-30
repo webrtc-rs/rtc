@@ -16,6 +16,8 @@ message (if it is sent; otherwise, this message follows the
 server's Certificate message).
 */
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The server's request that the client authenticate, listing acceptable certificate types
+/// and signature algorithms.
 pub struct HandshakeMessageCertificateRequest {
     pub(crate) certificate_types: Vec<ClientCertificateType>,
     pub(crate) signature_hash_algorithms: Vec<SignatureHashAlgorithm>,
@@ -24,14 +26,21 @@ pub struct HandshakeMessageCertificateRequest {
 const HANDSHAKE_MESSAGE_CERTIFICATE_REQUEST_MIN_LENGTH: usize = 5;
 
 impl HandshakeMessageCertificateRequest {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::CertificateRequest
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         1 + self.certificate_types.len() + 2 + self.signature_hash_algorithms.len() * 2 + 2
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u8(self.certificate_types.len() as u8)?;
         for v in &self.certificate_types {
@@ -49,6 +58,11 @@ impl HandshakeMessageCertificateRequest {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let certificate_types_length = reader.read_u8()?;
 

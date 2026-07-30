@@ -20,6 +20,7 @@ initiative in order to renegotiate the security parameters in an
 existing connection.
 */
 #[derive(Clone)]
+/// The client's opening message: its random, cookie, offered cipher suites and extensions.
 pub struct HandshakeMessageClientHello {
     pub(crate) version: ProtocolVersion,
     pub(crate) random: HandshakeRandom,
@@ -73,10 +74,12 @@ impl fmt::Debug for HandshakeMessageClientHello {
 const HANDSHAKE_MESSAGE_CLIENT_HELLO_VARIABLE_WIDTH_START: usize = 34;
 
 impl HandshakeMessageClientHello {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ClientHello
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         let mut len = 0;
 
@@ -100,6 +103,11 @@ impl HandshakeMessageClientHello {
         len
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         if self.cookie.len() > 255 {
             return Err(Error::ErrCookieTooLong);
@@ -136,6 +144,11 @@ impl HandshakeMessageClientHello {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let major = reader.read_u8()?;
         let minor = reader.read_u8()?;

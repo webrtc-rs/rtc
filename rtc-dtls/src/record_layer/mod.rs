@@ -1,3 +1,4 @@
+/// The record header: content type, version, epoch and sequence number.
 pub mod record_layer_header;
 
 #[cfg(test)]
@@ -35,11 +36,14 @@ use std::io::{Read, Write};
 /// [RFC 4347 §4.1]: https://tools.ietf.org/html/rfc4347#section-4.1
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordLayer {
+    /// The record's header.
     pub record_layer_header: RecordLayerHeader,
+    /// The record's parsed body.
     pub content: Content,
 }
 
 impl RecordLayer {
+    /// Builds a record around `content`, filling in its header.
     pub fn new(protocol_version: ProtocolVersion, epoch: u16, content: Content) -> Self {
         RecordLayer {
             record_layer_header: RecordLayerHeader {
@@ -53,12 +57,22 @@ impl RecordLayer {
         }
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         self.record_layer_header.marshal(writer)?;
         self.content.marshal(writer)?;
         Ok(())
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let record_layer_header = RecordLayerHeader::unmarshal(reader)?;
         let content = match record_layer_header.content_type {

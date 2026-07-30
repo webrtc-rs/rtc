@@ -7,6 +7,7 @@ mod direction_test;
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub enum Direction {
     #[default]
+    /// No direction attribute was present.
     Unspecified = 0,
     /// Direction::SendRecv is for bidirectional communication
     SendRecv = 1,

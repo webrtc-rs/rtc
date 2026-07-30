@@ -7,6 +7,7 @@ use crate::network_type::NetworkType;
 /// Contains ICE candidate pair statistics.
 pub struct CandidatePairStats {
     /// The timestamp associated with this struct.
+    /// When this snapshot was taken.
     pub timestamp: Instant,
 
     /// The id of the local candidate.
@@ -148,7 +149,7 @@ impl Default for CandidatePairStats {
 /// Contains ICE candidate statistics related to the `ICETransport` objects.
 #[derive(Debug, Clone)]
 pub struct CandidateStats {
-    // The timestamp associated with this struct.
+    /// The timestamp associated with this struct.
     pub timestamp: Instant,
 
     /// The candidate id.

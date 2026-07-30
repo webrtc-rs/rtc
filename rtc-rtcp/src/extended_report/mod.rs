@@ -1,12 +1,19 @@
 #[cfg(test)]
 mod extended_report_test;
 
+/// Delay Since Last Receiver Report blocks, for round-trip time between receivers.
 pub mod dlrr;
+/// Packet Receipt Times blocks.
 pub mod prt;
+/// Loss and Duplicate RLE blocks, which run-length encode per-packet receipt.
 pub mod rle;
+/// Receiver Reference Time blocks, which anchor DLRR round-trip calculations.
 pub mod rrt;
+/// Statistics Summary blocks: loss, duplicate, jitter and TTL ranges.
 pub mod ssr;
+/// An unparsed block, for types this crate does not model.
 pub mod unknown;
+/// VoIP Metrics blocks, which carry call-quality estimates.
 pub mod vm;
 
 pub use dlrr::{DLRRReport, DLRRReportBlock};
@@ -35,14 +42,22 @@ const XR_HEADER_LENGTH: usize = 4;
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BlockType {
     #[default]
+    /// A block type this crate does not model.
     Unknown = 0,
-    LossRLE = 1,               // RFC 3611, section 4.1
-    DuplicateRLE = 2,          // RFC 3611, section 4.2
-    PacketReceiptTimes = 3,    // RFC 3611, section 4.3
+    /// Loss RLE report block ([RFC 3611] §4.1).
+    LossRLE = 1, // RFC 3611, section 4.1
+    /// Duplicate RLE report block ([RFC 3611] §4.2).
+    DuplicateRLE = 2, // RFC 3611, section 4.2
+    /// Packet Receipt Times report block ([RFC 3611] §4.3).
+    PacketReceiptTimes = 3, // RFC 3611, section 4.3
+    /// Receiver Reference Time report block ([RFC 3611] §4.4).
     ReceiverReferenceTime = 4, // RFC 3611, section 4.4
-    DLRR = 5,                  // RFC 3611, section 4.5
-    StatisticsSummary = 6,     // RFC 3611, section 4.6
-    VoIPMetrics = 7,           // RFC 3611, section 4.7
+    /// Delay Since Last Receiver Report block ([RFC 3611] §4.5).
+    DLRR = 5, // RFC 3611, section 4.5
+    /// Statistics Summary report block ([RFC 3611] §4.6).
+    StatisticsSummary = 6, // RFC 3611, section 4.6
+    /// VoIP Metrics report block ([RFC 3611] §4.7).
+    VoIPMetrics = 7, // RFC 3611, section 4.7
 }
 
 impl From<u8> for BlockType {
@@ -90,8 +105,11 @@ pub type TypeSpecificField = u8;
 /// packet is marshaled.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct XRHeader {
+    /// Which kind of report block follows.
     pub block_type: BlockType,
+    /// Bits whose meaning depends on the block type.
     pub type_specific: TypeSpecificField,
+    /// The block's length in 32-bit words, excluding this header.
     pub block_length: u16,
 }
 
@@ -155,7 +173,9 @@ impl Unmarshal for XRHeader {
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct ExtendedReport {
+    /// The SSRC of the sender of this extended report.
     pub sender_ssrc: u32,
+    /// The report blocks this packet carries.
     pub reports: Vec<Box<dyn Packet>>,
 }
 

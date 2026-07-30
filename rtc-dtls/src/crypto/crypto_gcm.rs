@@ -26,6 +26,7 @@ const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
 // (handshake signatures / key generation). `LessSafeKey` is `Clone`, so
 // `CryptoGcm` stays cloneable for the cipher-suite state that embeds it.
 #[derive(Clone)]
+/// AES-GCM authenticated encryption for DTLS records, holding the per-direction keys.
 pub struct CryptoGcm {
     #[cfg(feature = "ring")]
     local_gcm: LessSafeKey,
@@ -42,6 +43,7 @@ pub struct CryptoGcm {
 }
 
 impl CryptoGcm {
+    /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
         local_key: &[u8],
         local_write_iv: &[u8],
@@ -70,6 +72,11 @@ impl CryptoGcm {
         }
     }
 
+    /// Protects one record, returning header plus ciphertext.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
     pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
@@ -108,6 +115,11 @@ impl CryptoGcm {
         Ok(r)
     }
 
+    /// Unprotects one record.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;

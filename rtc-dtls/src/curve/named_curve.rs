@@ -5,10 +5,15 @@ use shared::error::*;
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+/// The named elliptic curves this crate can perform ECDHE over.
 pub enum NamedCurve {
+    /// `UNSUPPORTED` (`0x0000`).
     Unsupported = 0x0000,
+    /// `P256` (`0x0017`).
     P256 = 0x0017,
+    /// `P384` (`0x0018`).
     P384 = 0x0018,
+    /// `X25519` (`0x001d`).
     X25519 = 0x001d,
 }
 
@@ -29,6 +34,7 @@ pub(crate) enum NamedCurvePrivateKey {
     StaticSecretX25519(x25519_dalek::StaticSecret),
 }
 
+/// An ephemeral ECDHE key pair, with the curve it belongs to.
 pub struct NamedCurveKeypair {
     pub(crate) curve: NamedCurve,
     pub(crate) public_key: Vec<u8>,
@@ -72,6 +78,11 @@ fn elliptic_curve_keypair(curve: NamedCurve) -> Result<NamedCurveKeypair> {
 }
 
 impl NamedCurve {
+    /// Generates an ephemeral key pair on this curve.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the curve is unsupported or key generation fails.
     pub fn generate_keypair(&self) -> Result<NamedCurveKeypair> {
         match *self {
             NamedCurve::X25519 => elliptic_curve_keypair(NamedCurve::X25519),

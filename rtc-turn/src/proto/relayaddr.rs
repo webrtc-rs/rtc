@@ -17,7 +17,9 @@ use stun::xoraddr::*;
 /// [RFC 5766 Section 14.5](https://www.rfc-editor.org/rfc/rfc5766#section-14.5).
 #[derive(PartialEq, Eq, Debug)]
 pub struct RelayedAddress {
+    /// The relayed IP address.
     pub ip: IpAddr,
+    /// The relayed port.
     pub port: u16,
 }
 

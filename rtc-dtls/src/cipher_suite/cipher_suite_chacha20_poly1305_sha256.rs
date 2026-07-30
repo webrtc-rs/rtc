@@ -3,6 +3,7 @@ use crate::crypto::crypto_chacha20::*;
 use crate::prf::*;
 
 #[derive(Clone)]
+/// The shared ChaCha20-Poly1305 with SHA-256 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteChaCha20Poly1305Sha256 {
     rsa: bool,
     cipher: Option<CryptoChaCha20>,
@@ -13,6 +14,7 @@ impl CipherSuiteChaCha20Poly1305Sha256 {
     const PRF_KEY_LEN: usize = 32;
     const PRF_IV_LEN: usize = 12;
 
+    /// Builds an uninitialized ChaCha20-Poly1305 with SHA-256 suite; keys are installed later via `init`.
     pub fn new(rsa: bool) -> Self {
         CipherSuiteChaCha20Poly1305Sha256 { rsa, cipher: None }
     }

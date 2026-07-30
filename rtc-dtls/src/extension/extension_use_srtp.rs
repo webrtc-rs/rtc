@@ -12,10 +12,15 @@ use super::*;
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SrtpProtectionProfile {
+    /// `SRTP_AES128_CM_HMAC_SHA1_80` (`0x0001`).
     Srtp_Aes128_Cm_Hmac_Sha1_80 = 0x0001,
+    /// `SRTP_AES128_CM_HMAC_SHA1_32` (`0x0002`).
     Srtp_Aes128_Cm_Hmac_Sha1_32 = 0x0002,
+    /// `SRTP_AEAD_AES_128_GCM` (`0x0007`).
     Srtp_Aead_Aes_128_Gcm = 0x0007,
+    /// `SRTP_AEAD_AES_256_GCM` (`0x0008`).
     Srtp_Aead_Aes_256_Gcm = 0x0008,
+    /// A protection profile this crate does not implement.
     Unsupported,
 }
 
@@ -45,14 +50,21 @@ pub struct ExtensionUseSrtp {
 }
 
 impl ExtensionUseSrtp {
+    /// The extension type this value is carried under.
     pub fn extension_value(&self) -> ExtensionValue {
         ExtensionValue::UseSrtp
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         2 + 2 + self.protection_profiles.len() * 2 + 1
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_u16::<BigEndian>(
             2 + /* MKI Length */ 1 + 2 * self.protection_profiles.len() as u16,
@@ -68,6 +80,11 @@ impl ExtensionUseSrtp {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let _ = reader.read_u16::<BigEndian>()?;
 

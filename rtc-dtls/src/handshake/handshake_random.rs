@@ -4,7 +4,9 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};
 use std::time::{Duration, SystemTime};
 
+/// Bytes of randomness in a handshake random, excluding the timestamp.
 pub const RANDOM_BYTES_LENGTH: usize = 28;
+/// Total length of a handshake random: 4 bytes of timestamp plus 28 random.
 pub const HANDSHAKE_RANDOM_LENGTH: usize = RANDOM_BYTES_LENGTH + 4;
 
 /// ## Specifications
@@ -14,7 +16,9 @@ pub const HANDSHAKE_RANDOM_LENGTH: usize = RANDOM_BYTES_LENGTH + 4;
 /// [RFC 4346 §7.4.1.2]: https://tools.ietf.org/html/rfc4346#section-7.4.1.2
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeRandom {
+    /// The sender's clock at the time the random was generated.
     pub gmt_unix_time: SystemTime,
+    /// 28 bytes of randomness, which feed key derivation.
     pub random_bytes: [u8; RANDOM_BYTES_LENGTH],
 }
 
@@ -28,10 +32,16 @@ impl Default for HandshakeRandom {
 }
 
 impl HandshakeRandom {
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         4 + RANDOM_BYTES_LENGTH
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let secs = match self.gmt_unix_time.duration_since(SystemTime::UNIX_EPOCH) {
             Ok(d) => d.as_secs() as u32,
@@ -43,6 +53,11 @@ impl HandshakeRandom {
         writer.flush()
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> io::Result<Self> {
         let secs = reader.read_u32::<BigEndian>()?;
         let gmt_unix_time = if let Some(unix_time) =
@@ -64,6 +79,7 @@ impl HandshakeRandom {
 
     // populate fills the HandshakeRandom with random values
     // may be called multiple times
+    /// Fills in the current time and fresh random bytes.
     pub fn populate(&mut self) {
         self.gmt_unix_time = SystemTime::now();
         rand::rng().fill(&mut self.random_bytes);

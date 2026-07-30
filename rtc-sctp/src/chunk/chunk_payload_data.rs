@@ -16,12 +16,20 @@ pub(crate) const PAYLOAD_DATA_HEADER_SIZE: usize = 12;
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
 pub enum PayloadProtocolIdentifier {
+    /// `WebRTC DCEP` (50): a Data Channel Establishment Protocol control message.
     Dcep = 50,
+    /// `WebRTC String` (51): a non-empty UTF-8 string message.
     String = 51,
+    /// `WebRTC Binary` (53): a non-empty binary message.
     Binary = 53,
+    /// `WebRTC String Empty` (56): an empty string message.
+    ///
+    /// Needed because SCTP cannot carry a zero-length payload.
     StringEmpty = 56,
+    /// `WebRTC Binary Empty` (57): an empty binary message.
     BinaryEmpty = 57,
     #[default]
+    /// An identifier this crate does not recognise.
     Unknown,
 }
 

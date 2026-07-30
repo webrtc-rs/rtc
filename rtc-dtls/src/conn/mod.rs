@@ -45,6 +45,7 @@ pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
 ];
 
 // Conn represents a DTLS connection
+/// One DTLS association: the handshake state machine plus the record layer around it.
 pub struct DTLSConn {
     is_client: bool,
     maximum_transmission_unit: usize,
@@ -89,6 +90,12 @@ pub struct DTLSConn {
 }
 
 impl DTLSConn {
+    /// Creates a connection in the given role, ready to handshake.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the configuration is invalid — no certificate for a server, or an unusable cipher
+    /// suite list.
     pub fn new(
         handshake_config: Arc<HandshakeConfig>,
         is_client: bool,
@@ -151,6 +158,7 @@ impl DTLSConn {
     }
 
     // Read reads data from the connection.
+    /// Takes the next decrypted application payload, if one is ready.
     pub fn incoming_application_data(&mut self) -> Option<BytesMut> {
         if !self.is_handshake_completed() {
             None
@@ -159,6 +167,7 @@ impl DTLSConn {
         }
     }
 
+    /// Takes the next datagram the caller should send.
     pub fn outgoing_raw_packet(&mut self) -> Option<BytesMut> {
         if let Err(err) = self.handle_outgoing_packets() {
             warn!(
@@ -171,6 +180,11 @@ impl DTLSConn {
     }
 
     // Write writes p to the DTLS connection
+    /// Queues `p` as application data, encrypting it once the handshake has completed.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the connection is closed or the handshake has not finished.
     pub fn write(&mut self, p: &[u8]) -> Result<()> {
         if self.is_connection_closed() {
             return Err(Error::ErrConnClosed);
@@ -198,6 +212,7 @@ impl DTLSConn {
     }
 
     // Close closes the connection.
+    /// Begins an orderly shutdown by queueing a `close_notify` alert.
     pub fn close(&mut self) {
         if !self.closed {
             self.closed = true;
@@ -437,6 +452,11 @@ impl DTLSConn {
         self.handshake_completed
     }
 
+    /// Feeds one received datagram into the connection.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the record is malformed or fails authentication.
     pub fn read(&mut self, buf: &[u8]) -> Result<()> {
         // Per RFC 6347: buffer future-epoch packets only until Finished is received
         // (i.e. until handshake completes). After that, discard them.

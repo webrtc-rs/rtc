@@ -24,6 +24,7 @@ type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
 // State needed to handle encrypted input/output
 #[derive(Clone)]
+/// AES-CBC encryption with a separate HMAC for DTLS records, holding the per-direction keys.
 pub struct CryptoCbc {
     local_key: Vec<u8>,
     remote_key: Vec<u8>,
@@ -35,6 +36,7 @@ impl CryptoCbc {
     const BLOCK_SIZE: usize = 16;
     const MAC_SIZE: usize = 20;
 
+    /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
         local_key: &[u8],
         local_mac: &[u8],
@@ -50,6 +52,11 @@ impl CryptoCbc {
         })
     }
 
+    /// Protects one record, returning header plus ciphertext.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the cipher rejects the input.
     pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let mut payload = raw[RECORD_LAYER_HEADER_SIZE..].to_vec();
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
@@ -86,6 +93,11 @@ impl CryptoCbc {
         Ok(r)
     }
 
+    /// Unprotects one record.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails or the record is too short.
     pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;

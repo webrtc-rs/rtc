@@ -3,6 +3,7 @@ use crate::crypto::crypto_gcm::*;
 use crate::prf::*;
 
 #[derive(Clone, Default)]
+/// The shared `TLS_PSK_WITH_AES_128_GCM_SHA256` implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteTlsPskWithAes128GcmSha256 {
     gcm: Option<CryptoGcm>,
 }

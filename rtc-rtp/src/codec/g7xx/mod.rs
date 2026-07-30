@@ -12,6 +12,7 @@ pub type G711Payloader = G7xxPayloader;
 pub type G722Payloader = G7xxPayloader;
 
 #[derive(Default, Debug, Copy, Clone)]
+/// Packetizes G.711/G.722 audio, which needs no fragmentation — one payload per frame.
 pub struct G7xxPayloader;
 
 impl Payloader for G7xxPayloader {

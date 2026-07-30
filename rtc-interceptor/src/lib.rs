@@ -172,6 +172,7 @@
 //! See the [`Interceptor`] trait documentation for more details.
 
 #![warn(rust_2018_idioms)]
+#![warn(missing_docs)]
 #![allow(dead_code)]
 
 use shared::TransportMessage;

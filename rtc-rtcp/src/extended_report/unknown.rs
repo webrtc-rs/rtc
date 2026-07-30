@@ -4,6 +4,7 @@ use super::*;
 /// that has an unknown Report Block Type.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct UnknownReportBlock {
+    /// The block's bytes, left unparsed.
     pub bytes: Bytes,
 }
 
@@ -14,6 +15,7 @@ impl fmt::Display for UnknownReportBlock {
 }
 
 impl UnknownReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::Unknown,

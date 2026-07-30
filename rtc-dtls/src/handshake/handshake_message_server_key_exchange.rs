@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 
 // Structure supports ECDH and PSK
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The server's half of the key agreement, signed so the client can authenticate it.
 pub struct HandshakeMessageServerKeyExchange {
     pub(crate) identity_hint: Vec<u8>,
 
@@ -22,10 +23,12 @@ pub struct HandshakeMessageServerKeyExchange {
 }
 
 impl HandshakeMessageServerKeyExchange {
+    /// The handshake type that identifies this message on the wire.
     pub fn handshake_type(&self) -> HandshakeType {
         HandshakeType::ServerKeyExchange
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         if !self.identity_hint.is_empty() {
             2 + self.identity_hint.len()
@@ -34,6 +37,11 @@ impl HandshakeMessageServerKeyExchange {
         }
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         if !self.identity_hint.is_empty() {
             writer.write_u16::<BigEndian>(self.identity_hint.len() as u16)?;
@@ -56,6 +64,11 @@ impl HandshakeMessageServerKeyExchange {
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         let mut data = vec![];
         reader.read_to_end(&mut data)?;

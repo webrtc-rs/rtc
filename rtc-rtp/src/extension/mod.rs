@@ -6,28 +6,41 @@ use shared::{
     marshal::{Marshal, MarshalSize},
 };
 
+/// Absolute send time, for one-way-delay based bandwidth estimation.
 pub mod abs_send_time_extension;
+/// Per-packet audio loudness and voice activity ([RFC 6464]).
 pub mod audio_level_extension;
+/// A requested playout-delay range, for latency/smoothness trade-offs.
 pub mod playout_delay_extension;
+/// The transport-wide sequence number that TWCC feedback refers to.
 pub mod transport_cc_extension;
+/// Camera direction and rotation (CVO), so a receiver can display video upright.
 pub mod video_orientation_extension;
 
 /// A generic RTP header extension.
 pub enum HeaderExtension {
+    /// The absolute-send-time extension.
     AbsSendTime(abs_send_time_extension::AbsSendTimeExtension),
+    /// The audio-level extension.
     AudioLevel(audio_level_extension::AudioLevelExtension),
+    /// The playout-delay extension.
     PlayoutDelay(playout_delay_extension::PlayoutDelayExtension),
+    /// The transport-wide CC extension.
     TransportCc(transport_cc_extension::TransportCcExtension),
+    /// The video-orientation extension.
     VideoOrientation(video_orientation_extension::VideoOrientationExtension),
 
     /// A custom extension
     Custom {
+        /// The extension's canonical URI, which is what SDP negotiates ids against.
         uri: Cow<'static, str>,
+        /// The extension value, erased so extensions of different types can be held together.
         extension: Box<dyn Marshal + 'static>,
     },
 }
 
 impl HeaderExtension {
+    /// The extension's URI.
     pub fn uri(&self) -> Cow<'static, str> {
         use HeaderExtension::*;
 
@@ -43,6 +56,7 @@ impl HeaderExtension {
         }
     }
 
+    /// Whether both refer to the same extension, comparing URIs rather than values.
     pub fn is_same(&self, other: &Self) -> bool {
         use HeaderExtension::*;
         match (self, other) {

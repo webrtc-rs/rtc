@@ -67,7 +67,9 @@ pub fn xor_bytes(dst: &mut [u8], a: &[u8], b: &[u8]) -> usize {
 ///
 /// RFC 5389 Section 15.2
 pub struct XorMappedAddress {
+    /// The IP address.
     pub ip: IpAddr,
+    /// The port.
     pub port: u16,
 }
 

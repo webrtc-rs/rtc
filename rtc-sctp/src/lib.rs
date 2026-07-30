@@ -13,6 +13,7 @@
 //! managing a single association and all the related state (such as streams).
 
 #![warn(rust_2018_idioms)]
+#![warn(missing_docs)]
 #![allow(dead_code)]
 #![allow(clippy::bool_to_int_with_if)]
 
@@ -103,6 +104,8 @@ use crate::packet::PartialDecode;
 /// Payload in Incoming/outgoing Transmit
 #[derive(Debug)]
 pub enum Payload {
+    /// An inbound packet whose header has been decoded but whose chunks have not.
     PartialDecode(PartialDecode),
+    /// Outbound packets, already encoded and ready to hand to the transport.
     RawEncode(Vec<Bytes>),
 }

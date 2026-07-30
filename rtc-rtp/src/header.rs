@@ -5,32 +5,58 @@ use shared::{
 
 use bytes::{Buf, BufMut, Bytes};
 
+/// The length of the extension-profile and length fields that precede header extensions.
 pub const HEADER_LENGTH: usize = 4;
+/// Bit offset of the version field in the first header octet.
 pub const VERSION_SHIFT: u8 = 6;
+/// Bit mask of the version field once shifted.
 pub const VERSION_MASK: u8 = 0x3;
+/// Bit offset of the padding flag.
 pub const PADDING_SHIFT: u8 = 5;
+/// Bit mask of the padding flag once shifted.
 pub const PADDING_MASK: u8 = 0x1;
+/// Bit offset of the extension flag.
 pub const EXTENSION_SHIFT: u8 = 4;
+/// Bit mask of the extension flag once shifted.
 pub const EXTENSION_MASK: u8 = 0x1;
+/// Extension profile `0xBEDE`, which selects one-byte header extension ids ([RFC 8285]).
 pub const EXTENSION_PROFILE_ONE_BYTE: u16 = 0xBEDE;
+/// Extension profile `0x1000`, which selects two-byte header extension ids, allowing ids
+/// above 14.
 pub const EXTENSION_PROFILE_TWO_BYTE: u16 = 0x1000;
+/// Extension id 15, reserved by the RFC and never assigned.
 pub const EXTENSION_ID_RESERVED: u8 = 0xF;
+/// Bit mask of the CSRC count field.
 pub const CC_MASK: u8 = 0xF;
+/// Bit offset of the marker bit.
 pub const MARKER_SHIFT: u8 = 7;
+/// Bit mask of the marker bit once shifted.
 pub const MARKER_MASK: u8 = 0x1;
+/// Bit mask of the payload-type field.
 pub const PT_MASK: u8 = 0x7F;
+/// Byte offset of the sequence number within the header.
 pub const SEQ_NUM_OFFSET: usize = 2;
+/// Length of the sequence number in bytes.
 pub const SEQ_NUM_LENGTH: usize = 2;
+/// Byte offset of the timestamp within the header.
 pub const TIMESTAMP_OFFSET: usize = 4;
+/// Length of the timestamp in bytes.
 pub const TIMESTAMP_LENGTH: usize = 4;
+/// Byte offset of the SSRC within the header.
 pub const SSRC_OFFSET: usize = 8;
+/// Length of the SSRC in bytes.
 pub const SSRC_LENGTH: usize = 4;
+/// Byte offset of the first CSRC within the header.
 pub const CSRC_OFFSET: usize = 12;
+/// Length of each CSRC in bytes.
 pub const CSRC_LENGTH: usize = 4;
 
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
+/// One RTP header extension: an id and its payload bytes.
 pub struct Extension {
+    /// The extension id, as negotiated by `a=extmap`.
     pub id: u8,
+    /// The extension's value.
     pub payload: Bytes,
 }
 
@@ -38,17 +64,30 @@ pub struct Extension {
 /// NOTE: PayloadOffset is populated by Marshal/Unmarshal and should not be modified
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Header {
+    /// The RTP version, always 2.
     pub version: u8,
+    /// Whether the payload is followed by padding octets, the last giving the padding length.
     pub padding: bool,
+    /// Whether a header-extension block follows the fixed header.
     pub extension: bool,
+    /// The marker bit: the last packet of a video frame, or the start of a talk spurt for audio.
     pub marker: bool,
+    /// The payload type, which identifies the codec as negotiated in SDP.
     pub payload_type: u8,
+    /// Increments by one per packet sent; used to detect loss and restore order.
     pub sequence_number: u16,
+    /// The sampling instant of the first octet, in the codec's clock rate.
     pub timestamp: u32,
+    /// The synchronization source — the identifier of the stream this packet belongs to.
     pub ssrc: u32,
+    /// The contributing sources, listed when a mixer combined several streams.
     pub csrc: Vec<u32>,
+    /// Which header-extension form is in use: [`EXTENSION_PROFILE_ONE_BYTE`] or
+    /// [`EXTENSION_PROFILE_TWO_BYTE`].
     pub extension_profile: u16,
+    /// The header extensions present on this packet.
     pub extensions: Vec<Extension>,
+    /// Padding bytes appended to the extension block so it ends on a 32-bit boundary.
     pub extensions_padding: usize,
 }
 
@@ -357,6 +396,7 @@ impl Marshal for Header {
 }
 
 impl Header {
+    /// The total encoded length of the extension payloads, padding excluded.
     pub fn get_extension_payload_len(&self) -> usize {
         let payload_len: usize = self
             .extensions

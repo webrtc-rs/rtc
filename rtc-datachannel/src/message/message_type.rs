@@ -8,12 +8,16 @@ pub(crate) const MESSAGE_TYPE_ACK: u8 = 0x02;
 pub(crate) const MESSAGE_TYPE_OPEN: u8 = 0x03;
 pub(crate) const MESSAGE_TYPE_LEN: usize = 1;
 
-// A parsed DataChannel message
+/// The one-byte type that prefixes a DCEP message.
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum MessageType {
+    /// A buffered-amount threshold crossing. Internal to this crate.
     DataChannelThreshold, // internal usage only
-    DataChannelClose,     // internal usage only
+    /// A channel close notification. Internal to this crate.
+    DataChannelClose, // internal usage only
+    /// `DATA_CHANNEL_ACK` (`0x02`).
     DataChannelAck,
+    /// `DATA_CHANNEL_OPEN` (`0x03`).
     DataChannelOpen,
 }
 

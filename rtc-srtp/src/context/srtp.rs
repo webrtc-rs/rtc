@@ -7,6 +7,15 @@ use shared::{
 use bytes::BytesMut;
 
 impl Context {
+    /// Decrypts an SRTP packet whose header has already been parsed.
+    ///
+    /// Saves re-parsing when the caller needed the header to route the packet. The header must
+    /// be the one belonging to `encrypted`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if authentication fails, if the packet is a replay, or if it is too short to hold
+    /// the profile's auth tag.
     pub fn decrypt_rtp_with_header(
         &mut self,
         encrypted: &[u8],
@@ -47,6 +56,14 @@ impl Context {
         self.decrypt_rtp_with_header(encrypted, &header)
     }
 
+    /// Encrypts an RTP payload, using an already-parsed header.
+    ///
+    /// Saves re-parsing when the caller has just built the header. Returns the full protected
+    /// packet, header included.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the SRTP context has no key for this SSRC or the cipher rejects the input.
     pub fn encrypt_rtp_with_header(
         &mut self,
         plaintext: &[u8],

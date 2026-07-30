@@ -49,7 +49,9 @@ use std::fmt;
 #[repr(u16)]
 pub enum StatusChunkTypeTcc {
     #[default]
+    /// A run-length chunk: one status repeated for a stated number of packets.
     RunLengthChunk = 0,
+    /// A status-vector chunk: explicit per-packet status for a small group.
     StatusVectorChunk = 1,
 }
 
@@ -76,6 +78,7 @@ pub enum SymbolSizeTypeTcc {
     /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.4>
     #[default]
     OneBit = 0,
+    /// Two-bit symbols, which can also express "received, large delta".
     TwoBit = 1,
 }
 
@@ -112,7 +115,9 @@ impl From<u16> for SymbolTypeTcc {
 /// RunLengthChunk and StatusVectorChunk
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketStatusChunk {
+    /// A run-length encoded chunk.
     RunLengthChunk(RunLengthChunk),
+    /// A status-vector chunk.
     StatusVectorChunk(StatusVectorChunk),
 }
 
@@ -313,6 +318,7 @@ impl Unmarshal for StatusVectorChunk {
 /// <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01#section-3.1.5>
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RecvDelta {
+    /// Which symbol size this chunk uses.
     pub type_tcc_packet: SymbolTypeTcc,
     /// us
     pub delta: i64,

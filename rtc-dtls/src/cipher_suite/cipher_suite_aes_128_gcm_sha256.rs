@@ -3,6 +3,7 @@ use crate::crypto::crypto_gcm::*;
 use crate::prf::*;
 
 #[derive(Clone)]
+/// The shared AES-128-GCM with SHA-256 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes128GcmSha256 {
     gcm: Option<CryptoGcm>,
     rsa: bool,
@@ -13,6 +14,7 @@ impl CipherSuiteAes128GcmSha256 {
     const PRF_KEY_LEN: usize = 16;
     const PRF_IV_LEN: usize = 4;
 
+    /// Builds an uninitialized AES-128-GCM with SHA-256 suite; keys are installed later via `init`.
     pub fn new(rsa: bool) -> Self {
         CipherSuiteAes128GcmSha256 { gcm: None, rsa }
     }

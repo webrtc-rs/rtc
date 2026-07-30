@@ -6,9 +6,12 @@ use shared::error::*;
 /// The config required to create a new `CandidatePeerReflexive`.
 #[derive(Default)]
 pub struct CandidatePeerReflexiveConfig {
+    /// The fields shared by every candidate type.
     pub base_config: CandidateConfig,
 
+    /// The base address this candidate was derived from, reported as `raddr`.
     pub rel_addr: String,
+    /// The base port, reported as `rport`.
     pub rel_port: u16,
 }
 

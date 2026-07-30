@@ -91,66 +91,106 @@ impl AttrType {
 }
 
 /// Attributes from comprehension-required range (0x0000-0x7FFF).
-pub const ATTR_MAPPED_ADDRESS: AttrType = AttrType(0x0001); // MAPPED-ADDRESS
-pub const ATTR_USERNAME: AttrType = AttrType(0x0006); // USERNAME
-pub const ATTR_MESSAGE_INTEGRITY: AttrType = AttrType(0x0008); // MESSAGE-INTEGRITY
-pub const ATTR_ERROR_CODE: AttrType = AttrType(0x0009); // ERROR-CODE
-pub const ATTR_UNKNOWN_ATTRIBUTES: AttrType = AttrType(0x000A); // UNKNOWN-ATTRIBUTES
-pub const ATTR_REALM: AttrType = AttrType(0x0014); // REALM
-pub const ATTR_NONCE: AttrType = AttrType(0x0015); // NONCE
-pub const ATTR_XORMAPPED_ADDRESS: AttrType = AttrType(0x0020); // XOR-MAPPED-ADDRESS
+/// MAPPED-ADDRESS.
+pub const ATTR_MAPPED_ADDRESS: AttrType = AttrType(0x0001);
+/// USERNAME.
+pub const ATTR_USERNAME: AttrType = AttrType(0x0006);
+/// MESSAGE-INTEGRITY.
+pub const ATTR_MESSAGE_INTEGRITY: AttrType = AttrType(0x0008);
+/// ERROR-CODE.
+pub const ATTR_ERROR_CODE: AttrType = AttrType(0x0009);
+/// UNKNOWN-ATTRIBUTES.
+pub const ATTR_UNKNOWN_ATTRIBUTES: AttrType = AttrType(0x000A);
+/// REALM.
+pub const ATTR_REALM: AttrType = AttrType(0x0014);
+/// NONCE.
+pub const ATTR_NONCE: AttrType = AttrType(0x0015);
+/// XOR-MAPPED-ADDRESS.
+pub const ATTR_XORMAPPED_ADDRESS: AttrType = AttrType(0x0020);
 
 /// Attributes from comprehension-optional range (0x8000-0xFFFF).
-pub const ATTR_SOFTWARE: AttrType = AttrType(0x8022); // SOFTWARE
-pub const ATTR_ALTERNATE_SERVER: AttrType = AttrType(0x8023); // ALTERNATE-SERVER
-pub const ATTR_FINGERPRINT: AttrType = AttrType(0x8028); // FINGERPRINT
+/// SOFTWARE.
+pub const ATTR_SOFTWARE: AttrType = AttrType(0x8022);
+/// ALTERNATE-SERVER.
+pub const ATTR_ALTERNATE_SERVER: AttrType = AttrType(0x8023);
+/// FINGERPRINT.
+pub const ATTR_FINGERPRINT: AttrType = AttrType(0x8028);
 
 /// Attributes from RFC 5245 ICE.
-pub const ATTR_PRIORITY: AttrType = AttrType(0x0024); // PRIORITY
-pub const ATTR_USE_CANDIDATE: AttrType = AttrType(0x0025); // USE-CANDIDATE
-pub const ATTR_ICE_CONTROLLED: AttrType = AttrType(0x8029); // ICE-CONTROLLED
-pub const ATTR_ICE_CONTROLLING: AttrType = AttrType(0x802A); // ICE-CONTROLLING
-pub const ATTR_NETWORK_COST: AttrType = AttrType(0xC057); // NETWORK-COST
+/// PRIORITY.
+pub const ATTR_PRIORITY: AttrType = AttrType(0x0024);
+/// USE-CANDIDATE.
+pub const ATTR_USE_CANDIDATE: AttrType = AttrType(0x0025);
+/// ICE-CONTROLLED.
+pub const ATTR_ICE_CONTROLLED: AttrType = AttrType(0x8029);
+/// ICE-CONTROLLING.
+pub const ATTR_ICE_CONTROLLING: AttrType = AttrType(0x802A);
+/// NETWORK-COST.
+pub const ATTR_NETWORK_COST: AttrType = AttrType(0xC057);
 
 /// Attributes from RFC 5766 TURN.
-pub const ATTR_CHANNEL_NUMBER: AttrType = AttrType(0x000C); // CHANNEL-NUMBER
-pub const ATTR_LIFETIME: AttrType = AttrType(0x000D); // LIFETIME
-pub const ATTR_XOR_PEER_ADDRESS: AttrType = AttrType(0x0012); // XOR-PEER-ADDRESS
-pub const ATTR_DATA: AttrType = AttrType(0x0013); // DATA
-pub const ATTR_XOR_RELAYED_ADDRESS: AttrType = AttrType(0x0016); // XOR-RELAYED-ADDRESS
-pub const ATTR_EVEN_PORT: AttrType = AttrType(0x0018); // EVEN-PORT
-pub const ATTR_REQUESTED_TRANSPORT: AttrType = AttrType(0x0019); // REQUESTED-TRANSPORT
-pub const ATTR_DONT_FRAGMENT: AttrType = AttrType(0x001A); // DONT-FRAGMENT
-pub const ATTR_RESERVATION_TOKEN: AttrType = AttrType(0x0022); // RESERVATION-TOKEN
+/// CHANNEL-NUMBER.
+pub const ATTR_CHANNEL_NUMBER: AttrType = AttrType(0x000C);
+/// LIFETIME.
+pub const ATTR_LIFETIME: AttrType = AttrType(0x000D);
+/// XOR-PEER-ADDRESS.
+pub const ATTR_XOR_PEER_ADDRESS: AttrType = AttrType(0x0012);
+/// DATA.
+pub const ATTR_DATA: AttrType = AttrType(0x0013);
+/// XOR-RELAYED-ADDRESS.
+pub const ATTR_XOR_RELAYED_ADDRESS: AttrType = AttrType(0x0016);
+/// EVEN-PORT.
+pub const ATTR_EVEN_PORT: AttrType = AttrType(0x0018);
+/// REQUESTED-TRANSPORT.
+pub const ATTR_REQUESTED_TRANSPORT: AttrType = AttrType(0x0019);
+/// DONT-FRAGMENT.
+pub const ATTR_DONT_FRAGMENT: AttrType = AttrType(0x001A);
+/// RESERVATION-TOKEN.
+pub const ATTR_RESERVATION_TOKEN: AttrType = AttrType(0x0022);
 
 /// Attributes from RFC 5780 NAT Behavior Discovery
-pub const ATTR_CHANGE_REQUEST: AttrType = AttrType(0x0003); // CHANGE-REQUEST
-pub const ATTR_PADDING: AttrType = AttrType(0x0026); // PADDING
-pub const ATTR_RESPONSE_PORT: AttrType = AttrType(0x0027); // RESPONSE-PORT
-pub const ATTR_CACHE_TIMEOUT: AttrType = AttrType(0x8027); // CACHE-TIMEOUT
-pub const ATTR_RESPONSE_ORIGIN: AttrType = AttrType(0x802b); // RESPONSE-ORIGIN
-pub const ATTR_OTHER_ADDRESS: AttrType = AttrType(0x802C); // OTHER-ADDRESS
+/// CHANGE-REQUEST.
+pub const ATTR_CHANGE_REQUEST: AttrType = AttrType(0x0003);
+/// PADDING.
+pub const ATTR_PADDING: AttrType = AttrType(0x0026);
+/// RESPONSE-PORT.
+pub const ATTR_RESPONSE_PORT: AttrType = AttrType(0x0027);
+/// CACHE-TIMEOUT.
+pub const ATTR_CACHE_TIMEOUT: AttrType = AttrType(0x8027);
+/// RESPONSE-ORIGIN.
+pub const ATTR_RESPONSE_ORIGIN: AttrType = AttrType(0x802b);
+/// OTHER-ADDRESS.
+pub const ATTR_OTHER_ADDRESS: AttrType = AttrType(0x802C);
 
 /// Attributes from RFC 3489, removed by RFC 5389,
 ///  but still used by RFC5389-implementing software like Vovida.org, reTURNServer, etc.
-pub const ATTR_SOURCE_ADDRESS: AttrType = AttrType(0x0004); // SOURCE-ADDRESS
-pub const ATTR_CHANGED_ADDRESS: AttrType = AttrType(0x0005); // CHANGED-ADDRESS
+/// SOURCE-ADDRESS.
+pub const ATTR_SOURCE_ADDRESS: AttrType = AttrType(0x0004);
+/// CHANGED-ADDRESS.
+pub const ATTR_CHANGED_ADDRESS: AttrType = AttrType(0x0005);
 
 /// Attributes from RFC 6062 TURN Extensions for TCP Allocations.
-pub const ATTR_CONNECTION_ID: AttrType = AttrType(0x002a); // CONNECTION-ID
+/// CONNECTION-ID.
+pub const ATTR_CONNECTION_ID: AttrType = AttrType(0x002a);
 
 /// Attributes from RFC 6156 TURN IPv6.
-pub const ATTR_REQUESTED_ADDRESS_FAMILY: AttrType = AttrType(0x0017); // REQUESTED-ADDRESS-FAMILY
+/// REQUESTED-ADDRESS-FAMILY.
+pub const ATTR_REQUESTED_ADDRESS_FAMILY: AttrType = AttrType(0x0017);
 
 /// Attributes from An Origin Attribute for the STUN Protocol.
 pub const ATTR_ORIGIN: AttrType = AttrType(0x802F);
 
 /// Attributes from RFC 8489 STUN.
-pub const ATTR_MESSAGE_INTEGRITY_SHA256: AttrType = AttrType(0x001C); // MESSAGE-INTEGRITY-SHA256
-pub const ATTR_PASSWORD_ALGORITHM: AttrType = AttrType(0x001D); // PASSWORD-ALGORITHM
-pub const ATTR_USER_HASH: AttrType = AttrType(0x001E); // USER-HASH
-pub const ATTR_PASSWORD_ALGORITHMS: AttrType = AttrType(0x8002); // PASSWORD-ALGORITHMS
-pub const ATTR_ALTERNATE_DOMAIN: AttrType = AttrType(0x8003); // ALTERNATE-DOMAIN
+/// MESSAGE-INTEGRITY-SHA256.
+pub const ATTR_MESSAGE_INTEGRITY_SHA256: AttrType = AttrType(0x001C);
+/// PASSWORD-ALGORITHM.
+pub const ATTR_PASSWORD_ALGORITHM: AttrType = AttrType(0x001D);
+/// USER-HASH.
+pub const ATTR_USER_HASH: AttrType = AttrType(0x001E);
+/// PASSWORD-ALGORITHMS.
+pub const ATTR_PASSWORD_ALGORITHMS: AttrType = AttrType(0x8002);
+/// ALTERNATE-DOMAIN.
+pub const ATTR_ALTERNATE_DOMAIN: AttrType = AttrType(0x8003);
 
 /// RawAttribute is a Type-Length-Value (TLV) object that
 /// can be added to a STUN message. Attributes are divided into two
@@ -161,8 +201,11 @@ pub const ATTR_ALTERNATE_DOMAIN: AttrType = AttrType(0x8003); // ALTERNATE-DOMAI
 /// understood.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RawAttribute {
+    /// Which attribute this is.
     pub typ: AttrType,
+    /// The value length in bytes; recomputed when encoding, so it is ignored there.
     pub length: u16, // ignored while encoding
+    /// The attribute's raw value.
     pub value: Vec<u8>,
 }
 

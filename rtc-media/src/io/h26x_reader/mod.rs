@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod h26x_reader_test;
+/// Reads Annex B streams as whole samples rather than individual NAL units.
 pub mod sample_reader;
 
 pub use sample_reader::{H26xSample, H26xSampleReader};
@@ -141,11 +142,14 @@ impl From<u8> for H264NalUnitType {
 
 /// NAL H.264 Network Abstraction Layer
 pub struct H264NAL {
+    /// The picture order count parsed from the slice header, which orders frames for display.
     pub picture_order_count: u32,
 
     /// NAL header
     pub forbidden_zero_bit: bool,
+    /// `nal_ref_idc`: how important this unit is as a reference; `0` means it is not referenced.
     pub ref_idc: u8,
+    /// The NAL unit type, which says whether this is a slice, SPS, PPS, and so on.
     pub unit_type: H264NalUnitType,
 
     /// header byte + rbsp
@@ -153,6 +157,7 @@ pub struct H264NAL {
 }
 
 impl H264NAL {
+    /// Wraps `data` as a NAL unit, without parsing its header yet.
     pub fn new(data: BytesMut) -> Self {
         H264NAL {
             picture_order_count: 0,
@@ -163,6 +168,7 @@ impl H264NAL {
         }
     }
 
+    /// Parses the NAL header out of the unit's bytes, filling in the fields above.
     pub fn parse_header(&mut self) {
         let first_byte = self.data[0];
         self.forbidden_zero_bit = ((first_byte & 0x80) >> 7) == 1; // 0x80 = 0b10000000
@@ -302,8 +308,11 @@ impl From<u8> for H265NalUnitType {
 pub struct H265NAL {
     /// NAL header (2 bytes for H.265)
     pub forbidden_zero_bit: bool,
+    /// The NAL unit type.
     pub unit_type: H265NalUnitType,
+    /// `nuh_layer_id`: the scalability layer this unit belongs to; `0` for the base layer.
     pub nuh_layer_id: u8,
+    /// `nuh_temporal_id_plus1`: the temporal sub-layer, offset by one.
     pub nuh_temporal_id_plus1: u8,
 
     /// NAL unit header (2 bytes) + rbsp
@@ -311,6 +320,7 @@ pub struct H265NAL {
 }
 
 impl H265NAL {
+    /// Wraps `data` as a NAL unit, without parsing its header yet.
     pub fn new(data: BytesMut) -> Self {
         H265NAL {
             forbidden_zero_bit: false,
@@ -321,6 +331,7 @@ impl H265NAL {
         }
     }
 
+    /// Parses the NAL header out of the unit's bytes, filling in the fields above.
     pub fn parse_header(&mut self) {
         if self.data.len() < 2 {
             return;
@@ -347,11 +358,14 @@ impl H265NAL {
 
 /// H26xNAL represents either an H264 or H265 NAL unit
 pub enum H26xNAL {
+    /// An H.264 NAL unit.
     H264(H264NAL),
+    /// An H.265 (HEVC) NAL unit.
     H265(H265NAL),
 }
 
 impl H26xNAL {
+    /// The unit's bytes, whichever codec it is.
     pub fn data(&self) -> &BytesMut {
         match self {
             H26xNAL::H264(nal) => &nal.data,

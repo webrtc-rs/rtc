@@ -8,6 +8,14 @@ pub mod instant_to_epoch {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+    /// Serializes an [`Instant`] as a duration relative to the process's reference instant.
+    ///
+    /// [`Instant`] has no absolute representation, so this encodes the offset instead. Use
+    /// with `#[serde(with = "...")]`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure from the underlying serializer.
     pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -24,6 +32,11 @@ pub mod instant_to_epoch {
         epoch_s.serialize(serializer)
     }
 
+    /// Deserializes an [`Instant`] from the relative offset written by [`serialize`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure from the underlying deserializer.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
     where
         D: Deserializer<'de>,

@@ -9,10 +9,15 @@ mod candidate_test;
 TODO: mod candidate_server_reflexive_test;
 */
 
+/// Host candidates: an address on a local interface.
 pub mod candidate_host;
+/// A local/remote candidate pair and its check state.
 pub mod candidate_pair;
+/// Peer-reflexive candidates, learned from an inbound check's source address.
 pub mod candidate_peer_reflexive;
+/// Relay candidates, allocated on a TURN server.
 pub mod candidate_relay;
+/// Server-reflexive candidates, learned from a STUN Binding response.
 pub mod candidate_server_reflexive;
 
 use crate::network_type::NetworkType;
@@ -43,14 +48,26 @@ pub(crate) const COMPONENT_RTCP: u16 = 0;
 pub enum CandidateType {
     #[default]
     #[serde(rename = "unspecified")]
+    /// No candidate type was set.
     Unspecified,
     #[serde(rename = "host")]
+    /// An address on one of this host's own interfaces.
+    ///
+    /// Highest priority: reachable without traversal when both peers share a network.
     Host,
     #[serde(rename = "srflx")]
+    /// This host's address as seen by a STUN server — its public mapping through the NAT.
     ServerReflexive,
     #[serde(rename = "prflx")]
+    /// An address learned from a peer's inbound connectivity check.
+    ///
+    /// Discovered during checking rather than gathering, when a NAT maps a different port per
+    /// destination.
     PeerReflexive,
     #[serde(rename = "relay")]
+    /// An address allocated on a TURN server, which forwards on this host's behalf.
+    ///
+    /// Lowest priority: it always costs an extra hop.
     Relay,
 }
 
@@ -104,7 +121,11 @@ pub(crate) fn contains_candidate_type(
 /// Convey transport addresses related to the candidate, useful for diagnostics and other purposes.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CandidateRelatedAddress {
+    /// The address of the related candidate — the base this one was derived from.
+    /// The candidate's address.
     pub address: String,
+    /// The port of the related candidate.
+    /// The candidate's port.
     pub port: u16,
 }
 
@@ -116,17 +137,29 @@ impl fmt::Display for CandidateRelatedAddress {
 }
 
 #[derive(Default)]
+/// The fields common to every candidate type, used when constructing one.
 pub struct CandidateConfig {
+    /// A unique identifier for this candidate; generated when left empty.
     pub candidate_id: String,
+    /// The transport, `udp` or `tcp`.
     pub network: String,
+    /// The candidate's address.
     pub address: String,
+    /// The candidate's port.
     pub port: u16,
+    /// The RTP component id: `1` for RTP, `2` for RTCP when not multiplexed.
     pub component: u16,
+    /// The candidate priority; computed from the type and local preference when zero.
     pub priority: u32,
+    /// The foundation, which groups candidates that share a base and transport.
+    ///
+    /// Pairs with the same foundation are checked together, so redundant checks are avoided.
     pub foundation: String,
 }
 
 #[derive(Clone, Debug)]
+/// One ICE candidate: a transport address this agent can be reached at, or can reach a peer
+/// at, together with its type, priority and liveness bookkeeping.
 pub struct Candidate {
     pub(crate) id: String,
     pub(crate) network_type: NetworkType,
@@ -205,6 +238,7 @@ impl fmt::Display for Candidate {
 }
 
 impl Candidate {
+    /// The candidate's foundation, computed from its type, base address and transport.
     pub fn foundation(&self) -> String {
         if !self.foundation_override.is_empty() {
             return self.foundation_override.clone();
@@ -287,10 +321,12 @@ impl Candidate {
         self.candidate_type
     }
 
+    /// The TCP role for ICE-TCP candidates; `Unspecified` for UDP.
     pub fn tcp_type(&self) -> TcpType {
         self.tcp_type
     }
 
+    /// The STUN or TURN server this candidate was gathered from, if any.
     pub fn url(&self) -> Option<&str> {
         self.url.as_deref()
     }
@@ -323,6 +359,7 @@ impl Candidate {
         val
     }
 
+    /// The candidate's socket address.
     pub fn addr(&self) -> SocketAddr {
         self.resolved_addr
     }
@@ -350,6 +387,9 @@ impl Candidate {
         }
     }
 
+    /// Records traffic on this candidate, updating its last-sent or last-received time.
+    ///
+    /// Feeds consent freshness — a pair that stops seeing traffic is eventually abandoned.
     pub fn seen(&mut self, outbound: bool) {
         let now = Instant::now();
 
@@ -390,6 +430,11 @@ impl Candidate {
         }
     }
 
+    /// Sets the resolved IP, deriving the network type from it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `ip`'s family does not match this candidate's network type.
     pub fn set_ip(&mut self, ip: &IpAddr) -> Result<()> {
         self.network_type = determine_network_type(&self.network, ip)?;
         self.resolved_addr = SocketAddr::new(*ip, self.port); //TODO:  create_addr(network_type, *ip, self.port);
@@ -398,10 +443,12 @@ impl Candidate {
 }
 
 impl Candidate {
+    /// Records that traffic was received on this candidate at `now`.
     pub fn set_last_received(&mut self, now: Instant) {
         self.last_received = now;
     }
 
+    /// Records that traffic was sent on this candidate at `now`.
     pub fn set_last_sent(&mut self, now: Instant) {
         self.last_sent = now;
     }

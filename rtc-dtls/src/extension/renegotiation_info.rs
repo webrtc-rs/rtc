@@ -21,10 +21,12 @@ pub struct ExtensionRenegotiationInfo {
 
 impl ExtensionRenegotiationInfo {
     // TypeValue returns the extension TypeValue
+    /// The extension type this value is carried under.
     pub fn extension_value(&self) -> ExtensionValue {
         ExtensionValue::RenegotiationInfo
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         3
     }

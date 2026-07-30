@@ -18,7 +18,10 @@ pub type StreamId = u16;
 #[non_exhaustive]
 pub enum StreamEvent {
     /// One or more new streams has been opened
-    Opened { id: StreamId },
+    Opened {
+        /// Which stream was opened.
+        id: StreamId,
+    },
     /// A currently open stream has data or errors waiting to be read
     Readable {
         /// Which stream is now readable
@@ -229,6 +232,7 @@ impl Stream<'_> {
         }
     }
 
+    /// Whether this stream has data or an error waiting to be read.
     pub fn is_readable(&self) -> bool {
         if let Some(s) = self.association.streams.get(&self.stream_identifier) {
             s.state == RecvSendState::Readable || s.state == RecvSendState::ReadWritable
@@ -237,6 +241,7 @@ impl Stream<'_> {
         }
     }
 
+    /// Whether this stream can currently accept more data.
     pub fn is_writable(&self) -> bool {
         if let Some(s) = self.association.streams.get(&self.stream_identifier) {
             s.state == RecvSendState::Writable || s.state == RecvSendState::ReadWritable

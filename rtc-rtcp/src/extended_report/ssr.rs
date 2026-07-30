@@ -31,24 +31,41 @@ const SSR_REPORT_BLOCK_LENGTH: u16 = 4 + 2 * 2 + 4 * 6 + 4;
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct StatisticsSummaryReportBlock {
     //not included in marshal/unmarshal
+    /// Whether the loss fields are present.
     pub loss_reports: bool,
+    /// Whether the duplicate fields are present.
     pub duplicate_reports: bool,
+    /// Whether the jitter fields are present.
     pub jitter_reports: bool,
+    /// Whether the TTL fields hold an IPv4 TTL, an IPv6 hop limit, or nothing.
     pub ttl_or_hop_limit: TTLorHopLimitType,
 
     //marshal/unmarshal
+    /// The SSRC being summarized.
     pub ssrc: u32,
+    /// The first sequence number covered.
     pub begin_seq: u16,
+    /// One past the last sequence number covered.
     pub end_seq: u16,
+    /// Packets lost in the interval.
     pub lost_packets: u32,
+    /// Duplicate packets in the interval.
     pub dup_packets: u32,
+    /// Minimum observed jitter, in RTP timestamp units.
     pub min_jitter: u32,
+    /// Maximum observed jitter.
     pub max_jitter: u32,
+    /// Mean observed jitter.
     pub mean_jitter: u32,
+    /// Standard deviation of observed jitter.
     pub dev_jitter: u32,
+    /// Minimum TTL or hop limit seen.
     pub min_ttl_or_hl: u8,
+    /// Maximum TTL or hop limit seen.
     pub max_ttl_or_hl: u8,
+    /// Mean TTL or hop limit.
     pub mean_ttl_or_hl: u8,
+    /// Standard deviation of TTL or hop limit.
     pub dev_ttl_or_hl: u8,
 }
 
@@ -63,8 +80,11 @@ impl fmt::Display for StatisticsSummaryReportBlock {
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TTLorHopLimitType {
     #[default]
+    /// No TTL or hop-limit data is present.
     Missing = 0,
+    /// The fields hold an IPv4 TTL.
     IPv4 = 1,
+    /// The fields hold an IPv6 hop limit.
     IPv6 = 2,
 }
 
@@ -90,6 +110,7 @@ impl fmt::Display for TTLorHopLimitType {
 }
 
 impl StatisticsSummaryReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         let mut type_specific = 0x00;
         if self.loss_reports {

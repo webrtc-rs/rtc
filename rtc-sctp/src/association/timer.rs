@@ -7,12 +7,24 @@ const NO_MAX_RETRANS: usize = usize::MAX;
 const TIMER_COUNT: usize = 6;
 
 #[derive(Debug, Copy, Clone)]
+/// Retransmission limits for the association's timers.
+///
+/// Each field caps how many times the corresponding timer may fire before the association is
+/// abandoned. `Default` follows the RFC 4960 recommendations.
 pub struct TimerConfig {
+    /// How many times INIT may be retransmitted (T1-init) before the association fails.
     pub max_t1_init_retrans: usize,
+    /// How many times COOKIE-ECHO may be retransmitted (T1-cookie).
     pub max_t1_cookie_retrans: usize,
+    /// How many times SHUTDOWN may be retransmitted (T2-shutdown).
     pub max_t2_shutdown_retrans: usize,
+    /// How many times a DATA chunk may be retransmitted on T3-rtx expiry.
+    ///
+    /// Defaults to unlimited, leaving reliability to the per-stream partial-reliability settings.
     pub max_t3_rtx_retrans: usize,
+    /// How many times a RE-CONFIG chunk (stream reset) may be retransmitted.
     pub max_reconfig_retrans: usize,
+    /// How many times a delayed SACK may be retransmitted.
     pub max_ack_retrans: usize,
 }
 

@@ -15,7 +15,13 @@ use std::time::Instant;
 
 /// Payloader payloads a byte array for use as rtp.Packet payloads
 pub trait Payloader: Send + Sync + fmt::Debug {
+    /// Splits one encoded frame into payloads no larger than `mtu`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the frame is malformed for this codec, or `mtu` is too small to make progress.
     fn payload(&mut self, mtu: usize, b: &Bytes) -> Result<Vec<Bytes>>;
+    /// Clones this payloader behind a trait object.
     fn clone_to(&self) -> Box<dyn Payloader>;
 }
 
@@ -27,9 +33,20 @@ impl Clone for Box<dyn Payloader> {
 
 /// Packetizer packetizes a payload
 pub trait Packetizer: Send + Sync + fmt::Debug {
+    /// Attaches the absolute-send-time header extension under id `value`.
     fn enable_abs_send_time(&mut self, value: u8);
+    /// Packetizes one frame, advancing the timestamp by `samples`.
+    ///
+    /// Assigns sequence numbers, sets the marker bit on the final packet, and applies any
+    /// enabled header extensions.
+    ///
+    /// # Errors
+    ///
+    /// Propagates payloader failures.
     fn packetize(&mut self, payload: &Bytes, samples: u32) -> Result<Vec<Packet>>;
+    /// Advances the timestamp without sending anything, for dropped or silent frames.
     fn skip_samples(&mut self, skipped_samples: u32);
+    /// Clones this packetizer behind a trait object.
     fn clone_to(&self) -> Box<dyn Packetizer>;
 }
 
@@ -41,6 +58,11 @@ impl Clone for Box<dyn Packetizer> {
 
 /// Depacketizer depacketizes a RTP payload, removing any RTP specific data from the payload
 pub trait Depacketizer {
+    /// Reassembles a frame from one RTP payload, buffering fragments as needed.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the payload is malformed for this codec.
     fn depacketize(&mut self, b: &Bytes) -> Result<Bytes>;
 
     /// Checks if the packet is at the beginning of a partition.  This
@@ -83,6 +105,10 @@ impl fmt::Debug for PacketizerImpl {
     }
 }
 
+/// Builds a packetizer for one outbound stream.
+///
+/// Ties together the codec's payloader, a sequencer, and the SSRC, payload type, MTU and clock
+/// rate the stream was negotiated with.
 pub fn new_packetizer(
     mtu: usize,
     payload_type: u8,

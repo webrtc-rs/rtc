@@ -5,8 +5,11 @@ const DLRR_REPORT_LENGTH: u16 = 12;
 /// DLRRReport encodes a single report inside a DLRRReportBlock.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct DLRRReport {
+    /// The SSRC this sub-block reports on.
     pub ssrc: u32,
+    /// The middle 32 bits of the NTP timestamp from that receiver's last Receiver Reference Time.
     pub last_rr: u32,
+    /// Delay since that report was received, in units of 1/65536 seconds.
     pub dlrr: u32,
 }
 
@@ -36,6 +39,7 @@ impl fmt::Display for DLRRReport {
 /// +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct DLRRReportBlock {
+    /// One sub-block per SSRC reported on.
     pub reports: Vec<DLRRReport>,
 }
 
@@ -46,6 +50,7 @@ impl fmt::Display for DLRRReportBlock {
 }
 
 impl DLRRReportBlock {
+    /// The XR block header describing this block's type and length.
     pub fn xr_header(&self) -> XRHeader {
         XRHeader {
             block_type: BlockType::DLRR,

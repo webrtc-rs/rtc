@@ -20,11 +20,20 @@ use std::fmt;
 /// Packet represents an RTCP packet, a protocol used for out-of-band statistics and
 /// control information for an RTP session
 pub trait Packet: Send + Sync + Marshal + Unmarshal + fmt::Display + fmt::Debug {
+    /// This packet's RTCP header.
     fn header(&self) -> Header;
+    /// The SSRCs this packet is about.
+    ///
+    /// Used to route feedback: a report's destination SSRCs identify the streams it concerns,
+    /// which is how an SFU decides where to forward it.
     fn destination_ssrc(&self) -> Vec<u32>;
+    /// The encoded size in bytes, header and padding included.
     fn raw_size(&self) -> usize;
+    /// Downcasting hook, so a caller holding `Box<dyn Packet>` can recover the concrete type.
     fn as_any(&self) -> &dyn Any;
+    /// Compares against another packet, since `PartialEq` is not object safe.
     fn equal(&self, other: &dyn Packet) -> bool;
+    /// Clones this packet behind a trait object, since `Clone` is not object safe.
     fn cloned(&self) -> Box<dyn Packet>;
 }
 

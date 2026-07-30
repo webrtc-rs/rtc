@@ -16,7 +16,9 @@ use crate::option::*;
 use crate::protection_profile::*;
 use shared::error::{Error, Result};
 
+/// SRTCP protection and unprotection.
 pub mod srtcp;
+/// SRTP protection and unprotection.
 pub mod srtp;
 
 const MAX_ROC: u32 = u32::MAX;

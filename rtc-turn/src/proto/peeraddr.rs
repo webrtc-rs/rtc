@@ -18,7 +18,9 @@ use stun::xoraddr::*;
 /// [RFC 5766 Section 14.3](https://www.rfc-editor.org/rfc/rfc5766#section-14.3).
 #[derive(PartialEq, Eq, Debug)]
 pub struct PeerAddress {
+    /// The peer IP address.
     pub ip: IpAddr,
+    /// The peer port.
     pub port: u16,
 }
 

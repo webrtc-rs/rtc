@@ -10,7 +10,9 @@ use stun::message::*;
 use shared::error::{Error, Result};
 
 // Values for RequestedAddressFamily as defined in RFC 6156 Section 4.1.1.
+/// Requests an IPv4 relayed address.
 pub const REQUESTED_FAMILY_IPV4: RequestedAddressFamily = RequestedAddressFamily(0x01);
+/// Requests an IPv6 relayed address.
 pub const REQUESTED_FAMILY_IPV6: RequestedAddressFamily = RequestedAddressFamily(0x02);
 
 /// `RequestedAddressFamily` represents the `REQUESTED-ADDRESS-FAMILY` Attribute as

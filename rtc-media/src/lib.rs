@@ -1,8 +1,33 @@
 #![warn(rust_2018_idioms)]
+#![warn(missing_docs)]
 #![allow(dead_code)]
 
+//! Media samples and container I/O.
+//!
+//! The bridge between encoded media and RTP: a codec-agnostic [`Sample`] type, and readers
+//! and writers for the container formats the examples and tests use.
+//!
+//! # Structure
+//!
+//! * [`Sample`] — one encoded unit of media (a video frame, an audio frame) with its
+//!   duration, timestamp and packet metadata. Hand these to a sample-based local track and
+//!   the RTP packetizer does the rest.
+//! * [`io`] — the [`Writer`](io::Writer) trait plus concrete readers and writers for IVF
+//!   (VP8/VP9), Ogg (Opus) and H.264/H.265 Annex B — [`IVFReader`](io::ivf_reader::IVFReader),
+//!   [`OggReader`](io::ogg_reader::OggReader) and friends — enough to play media from disk or
+//!   record it to disk. [`SampleBuilder`](io::sample_builder::SampleBuilder) goes the other
+//!   way, reassembling inbound RTP into [`Sample`]s.
+//! * [`audio`], [`video`] — per-codec helpers, including audio buffering and frame
+//!   inspection.
+//!
+//! Most applications do not depend on this crate directly — the
+//! [`rtc`](https://docs.rs/rtc) crate re-exports it as `rtc::media`.
+
+/// Audio sample types and multi-channel buffers.
 pub mod audio;
+/// Container readers and writers, plus RTP sample reassembly.
 pub mod io;
+/// Video frame helpers.
 pub mod video;
 
 use bytes::Bytes;

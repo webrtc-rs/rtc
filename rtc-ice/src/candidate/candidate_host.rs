@@ -4,8 +4,10 @@ use crate::rand::generate_cand_id;
 /// The config required to create a new `CandidateHost`.
 #[derive(Default)]
 pub struct CandidateHostConfig {
+    /// The fields shared by every candidate type.
     pub base_config: CandidateConfig,
 
+    /// The TCP role, for ICE-TCP host candidates.
     pub tcp_type: TcpType,
 }
 

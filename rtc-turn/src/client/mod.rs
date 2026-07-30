@@ -1,10 +1,14 @@
 #[cfg(test)]
 mod client_test;
 
+/// Channel bindings, which replace the 36-byte Data indication header with a 4-byte one.
 pub mod binding;
+/// Per-peer send permissions, which a relay requires before it will forward to an address.
 pub mod permission;
 mod proto;
+/// A live allocation on the server, and sending or receiving through it.
 pub mod relay;
+/// Outstanding request tracking, with the RFC's retransmission schedule.
 pub mod transaction;
 
 use bytes::BytesMut;
@@ -41,23 +45,43 @@ const DEFAULT_RTO_IN_MS: u64 = 200;
 const MAX_DATA_BUFFER_SIZE: usize = u16::MAX as usize; // message size limit for Chromium
 const MAX_READ_QUEUE_SIZE: usize = 1024;
 
+/// The public address the TURN server allocated on this client's behalf.
+///
+/// Peers send here; the server forwards to the client.
 pub type RelayedAddr = SocketAddr;
+/// The client's own address as seen by the server — its server-reflexive address.
 pub type ReflexiveAddr = SocketAddr;
+/// The address of a remote peer the client exchanges data with through the relay.
 pub type PeerAddr = SocketAddr;
 
 #[derive(Debug)]
+/// What the client produces in response to inbound datagrams and elapsed time.
+///
+/// Every variant carries the [`TransactionId`] of the request it answers, so a caller can
+/// match responses to the requests it issued.
 pub enum Event {
+    /// A request exhausted its retransmissions without a response.
     TransactionTimeout(TransactionId),
 
+    /// A STUN Binding succeeded, reporting this client's server-reflexive address.
     BindingResponse(TransactionId, ReflexiveAddr),
+    /// A STUN Binding failed.
     BindingError(TransactionId, Error),
 
+    /// An Allocate succeeded; the relayed address is now usable.
     AllocateResponse(TransactionId, RelayedAddr),
+    /// An Allocate failed — commonly authentication, or the server being out of ports.
     AllocateError(TransactionId, Error),
 
+    /// A CreatePermission succeeded; the relay will now forward to and from this peer.
     CreatePermissionResponse(TransactionId, PeerAddr),
+    /// A CreatePermission failed.
     CreatePermissionError(TransactionId, Error),
 
+    /// Data arrived from a peer through the relay.
+    ///
+    /// The channel number is `Some` when it came as ChannelData and `None` when it came as a
+    /// Data indication.
     DataIndicationOrChannelData(Option<ChannelNumber>, PeerAddr, BytesMut),
 }
 
@@ -78,14 +102,23 @@ enum AllocateState {
 
 /// ClientConfig is a bag of config parameters for Client.
 pub struct ClientConfig {
+    /// The STUN server to use for Binding requests, as `host:port`. May be empty.
     pub stun_serv_addr: String, // STUN server address (e.g. "stun.abc.com:3478")
+    /// The TURN server to allocate from, as `host:port`.
     pub turn_serv_addr: String, // TURN server address (e.g. "turn.abc.com:3478")
+    /// The local address the client sends from.
     pub local_addr: SocketAddr,
+    /// Whether to reach the server over UDP or TCP.
     pub transport_protocol: TransportProtocol,
+    /// The long-term credential username for the TURN server.
     pub username: String,
+    /// The long-term credential password.
     pub password: String,
+    /// The authentication realm, used in the `MESSAGE-INTEGRITY` computation.
     pub realm: String,
+    /// An optional `SOFTWARE` attribute value, sent for diagnostics.
     pub software: String,
+    /// The initial retransmission timeout in milliseconds; each retry doubles it.
     pub rto_in_ms: u64,
 }
 
@@ -333,6 +366,12 @@ impl Client {
         Ok(())
     }
 
+    /// Borrows the allocation for `relayed_addr` so data can be sent or permissions created.
+    ///
+    /// # Errors
+    ///
+    /// Fails if this client has no allocation for that address — it was never allocated, or has
+    /// already been closed.
     pub fn relay(&mut self, relayed_addr: SocketAddr) -> Result<Relay<'_>> {
         if !self.relays.contains_key(&relayed_addr) {
             Err(Error::ErrStreamNotExisted)

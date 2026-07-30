@@ -1,11 +1,18 @@
 use crate::audio::buffer::BufferInfo;
 use crate::audio::sealed::Sealed;
 
+/// How multi-channel samples are arranged in a flat buffer.
+///
+/// Sealed: the only layouts are [`Interleaved`] and [`Deinterleaved`].
 pub trait BufferLayout: Sized + Sealed {
+    /// The flat index of `frame` on `channel`, for a buffer described by `info`.
     fn index_of(info: &BufferInfo<Self>, channel: usize, frame: usize) -> usize;
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+/// Channels stored one after another: all of channel 0, then all of channel 1.
+///
+/// A marker type — it has no values.
 pub enum Deinterleaved {}
 
 impl Sealed for Deinterleaved {}
@@ -18,6 +25,9 @@ impl BufferLayout for Deinterleaved {
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+/// Frames stored one after another, each holding one sample per channel.
+///
+/// The layout most audio APIs use, and a marker type with no values.
 pub enum Interleaved {}
 
 impl Sealed for Interleaved {}

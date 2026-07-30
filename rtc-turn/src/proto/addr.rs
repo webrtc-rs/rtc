@@ -49,9 +49,16 @@ impl Addr {
 
 // FiveTuple represents 5-TUPLE value.
 #[derive(PartialEq, Eq, Default)]
+/// The five-tuple that uniquely identifies a TURN allocation.
+///
+/// Client address, server address and transport together — the server keys allocations by
+/// this, so the same client may hold several over different transports.
 pub struct FiveTuple {
+    /// The client's transport address.
     pub client: Addr,
+    /// The server's transport address.
     pub server: Addr,
+    /// The transport carrying the allocation.
     pub proto: Protocol,
 }
 

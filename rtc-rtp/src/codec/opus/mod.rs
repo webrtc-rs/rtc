@@ -7,6 +7,7 @@ use shared::error::{Error, Result};
 use bytes::Bytes;
 
 #[derive(Default, Debug, Copy, Clone)]
+/// Packetizes Opus audio: one RTP payload per Opus frame, never fragmented.
 pub struct OpusPayloader;
 
 impl Payloader for OpusPayloader {

@@ -95,11 +95,18 @@ impl MulticastSocket {
         }
     }
 
+    /// Sets the local IPv4 address to bind the multicast socket to.
+    ///
+    /// Defaults to unspecified (`0.0.0.0`), letting the OS choose.
     pub fn with_multicast_local_ipv4(mut self, multicast_local_ipv4: Ipv4Addr) -> Self {
         self.multicast_local_ipv4 = Some(multicast_local_ipv4);
         self
     }
 
+    /// Sets the local port to bind the multicast socket to.
+    ///
+    /// Defaults to the mDNS port (5353), which is required to receive multicast queries
+    /// from other hosts; a different port is only useful for testing.
     pub fn with_multicast_local_port(mut self, multicast_local_port: u16) -> Self {
         self.multicast_local_port = Some(multicast_local_port);
         self

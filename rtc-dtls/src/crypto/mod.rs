@@ -1,10 +1,15 @@
 #[cfg(test)]
 mod crypto_test;
 
+/// AES-CBC with a separate HMAC, for the older CBC suites.
 pub mod crypto_cbc;
+/// AES-CCM authenticated encryption.
 pub mod crypto_ccm;
+/// ChaCha20-Poly1305 authenticated encryption.
 pub mod crypto_chacha20;
+/// AES-GCM authenticated encryption.
 pub mod crypto_gcm;
+/// Block-cipher padding for the CBC suites.
 pub mod padding;
 
 use std::convert::TryFrom;
@@ -154,8 +159,11 @@ pub trait CustomSigner: Send + Sync + std::fmt::Debug {
 /// Either ED25519, ECDSA, RSA keypair, or a custom external signer.
 #[derive(Debug)]
 pub enum CryptoPrivateKeyKind {
+    /// An Ed25519 key pair.
     Ed25519(Ed25519KeyPair),
+    /// An ECDSA key pair over NIST P-256.
     Ecdsa256(EcdsaKeyPair),
+    /// An RSA key pair used with SHA-256.
     Rsa256(ring::rsa::KeyPair),
     /// Delegate signing to an external provider. The signer receives the raw
     /// message bytes and must return a signature in the format expected by the
@@ -241,6 +249,11 @@ impl TryFrom<&KeyPair> for CryptoPrivateKey {
 }
 
 impl CryptoPrivateKey {
+    /// Derives the signature scheme that matches `key_pair`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the key type has no supported scheme.
     pub fn from_key_pair(key_pair: &KeyPair) -> Result<Self> {
         let serialized_der = key_pair.serialize_der();
         if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
@@ -323,7 +336,9 @@ pub(crate) fn generate_key_signature(
 }
 
 // add OID_ED25519 which is not defined in x509_parser
+/// The X.509 algorithm OID for Ed25519.
 pub const OID_ED25519: Oid<'static> = oid!(1.3.101.112);
+/// The X.509 algorithm OID for ECDSA with a named curve.
 pub const OID_ECDSA: Oid<'static> = oid!(1.2.840.10045.2.1);
 
 fn verify_signature(

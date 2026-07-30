@@ -11,6 +11,7 @@ use shared::{
 };
 
 // One byte header size
+/// The extension's encoded size in bytes.
 pub const VIDEO_ORIENTATION_EXTENSION_SIZE: usize = 1;
 
 /// Coordination of Video Orientation in RTP streams.
@@ -38,24 +39,35 @@ pub const VIDEO_ORIENTATION_EXTENSION_SIZE: usize = 1;
 ///   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct VideoOrientationExtension {
+    /// Which camera produced the frame.
     pub direction: CameraDirection,
+    /// Whether the image is horizontally mirrored, as front cameras usually are.
     pub flip: bool,
+    /// How far the receiver must rotate the image to display it upright.
     pub rotation: VideoRotation,
 }
 
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+/// Which camera a frame came from.
 pub enum CameraDirection {
     #[default]
+    /// The front-facing (user-facing) camera.
     Front = 0,
+    /// The rear-facing camera.
     Back = 1,
 }
 
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+/// Clockwise rotation to apply when displaying the frame.
 pub enum VideoRotation {
     #[default]
+    /// No rotation.
     Degree0 = 0,
+    /// Rotate 90° clockwise.
     Degree90 = 1,
+    /// Rotate 180°.
     Degree180 = 2,
+    /// Rotate 270° clockwise.
     Degree270 = 3,
 }
 

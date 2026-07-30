@@ -4,8 +4,13 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 
 /// Sequencer generates sequential sequence numbers for building RTP packets
 pub trait Sequencer: Send + Sync + fmt::Debug {
+    /// Returns the next sequence number, wrapping at `u16::MAX` and counting the rollover.
     fn next_sequence_number(&self) -> u16;
+    /// How many times the sequence number has wrapped.
+    ///
+    /// SRTP needs this: the rollover counter is part of the packet index it encrypts with.
     fn roll_over_count(&self) -> u64;
+    /// Clones this sequencer behind a trait object.
     fn clone_to(&self) -> Box<dyn Sequencer>;
 }
 

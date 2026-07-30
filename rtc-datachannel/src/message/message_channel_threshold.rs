@@ -13,8 +13,14 @@ use shared::error::Result;
 ///+-+-+-+-+-+-+-+-+
 /// ```
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+/// A buffered-amount threshold crossing, reported internally so the channel can raise
+/// `OnBufferedAmountLow`/`OnBufferedAmountHigh`.
+///
+/// Not a DCEP message — it never appears on the wire.
 pub enum DataChannelThreshold {
+    /// The buffered amount fell to or below the low threshold, carrying its value.
     Low(u32),
+    /// The buffered amount rose to or above the high threshold, carrying its value.
     High(u32),
 } // internal usage only
 

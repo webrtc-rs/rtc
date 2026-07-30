@@ -7,14 +7,20 @@ use std::fmt;
 
 // SCHEME definitions from RFC 7064 Section 3.2.
 
+/// The `stun:` URI scheme.
 pub const SCHEME: &str = "stun";
+/// The `stuns:` URI scheme, for STUN over TLS or DTLS.
 pub const SCHEME_SECURE: &str = "stuns";
 
 // URI as defined in RFC 7064.
 #[derive(PartialEq, Eq, Debug)]
+/// A parsed `stun:` or `stuns:` URI.
 pub struct Uri {
+    /// The scheme, `stun` or `stuns`.
     pub scheme: String,
+    /// The server host name or address.
     pub host: String,
+    /// The port, if the URI specified one.
     pub port: Option<u16>,
 }
 
@@ -35,7 +41,7 @@ impl fmt::Display for Uri {
 }
 
 impl Uri {
-    // parse_uri parses URI from string.
+    /// Parse_uri parses URI from string.
     pub fn parse_uri(raw: &str) -> Result<Self> {
         // work around for url crate
         if raw.contains("//") {

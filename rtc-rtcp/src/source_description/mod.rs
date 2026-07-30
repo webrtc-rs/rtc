@@ -25,15 +25,27 @@ const SDES_TEXT_OFFSET: usize = 2;
 #[repr(u8)]
 pub enum SdesType {
     #[default]
+    /// End of the SDES item list ([RFC 3550] §6.5).
     SdesEnd = 0, // end of SDES list                RFC 3550, 6.5
-    SdesCname = 1,    // canonical name                  RFC 3550, 6.5.1
-    SdesName = 2,     // user name                       RFC 3550, 6.5.2
-    SdesEmail = 3,    // user's electronic mail address  RFC 3550, 6.5.3
-    SdesPhone = 4,    // user's phone number             RFC 3550, 6.5.4
+    /// CNAME: the canonical end-point identifier, which ties an SSRC to a participant.
+    ///
+    /// The one item WebRTC always sends — it is how a receiver associates streams that belong
+    /// together.
+    SdesCname = 1, // canonical name                  RFC 3550, 6.5.1
+    /// NAME: the participant's display name.
+    SdesName = 2, // user name                       RFC 3550, 6.5.2
+    /// EMAIL: the participant's email address.
+    SdesEmail = 3, // user's electronic mail address  RFC 3550, 6.5.3
+    /// PHONE: the participant's phone number.
+    SdesPhone = 4, // user's phone number             RFC 3550, 6.5.4
+    /// LOC: the participant's geographic location.
     SdesLocation = 5, // geographic user location        RFC 3550, 6.5.5
-    SdesTool = 6,     // name of application or tool     RFC 3550, 6.5.6
-    SdesNote = 7,     // notice about the source         RFC 3550, 6.5.7
-    SdesPrivate = 8,  // private extensions              RFC 3550, 6.5.8  (not implemented)
+    /// TOOL: the name and version of the sending application.
+    SdesTool = 6, // name of application or tool     RFC 3550, 6.5.6
+    /// NOTE: a transient note about the source, such as "on hold".
+    SdesNote = 7, // notice about the source         RFC 3550, 6.5.7
+    /// PRIV: a private extension.
+    SdesPrivate = 8, // private extensions              RFC 3550, 6.5.8  (not implemented)
 }
 
 impl fmt::Display for SdesType {
@@ -74,6 +86,7 @@ impl From<u8> for SdesType {
 pub struct SourceDescriptionChunk {
     /// The source (ssrc) or contributing source (csrc) identifier this packet describes
     pub source: u32,
+    /// The items describing this source.
     pub items: Vec<SourceDescriptionItem>,
 }
 
@@ -272,6 +285,7 @@ impl Unmarshal for SourceDescriptionItem {
 /// A SourceDescription (SDES) packet describes the sources in an RTP stream.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct SourceDescription {
+    /// One chunk per source described by this packet.
     pub chunks: Vec<SourceDescriptionChunk>,
 }
 

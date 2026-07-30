@@ -6,6 +6,9 @@ use std::fmt;
 // TCPType is the type of ICE TCP candidate as described in
 // https://tools.ietf.org/html/rfc6544#section-4.5
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+/// The role of an ICE-TCP candidate, per [RFC 6544] §4.5.
+///
+/// [RFC 6544]: https://datatracker.ietf.org/doc/html/rfc6544#section-4.5
 pub enum TcpType {
     /// The default value. For example UDP candidates do not need this field.
     #[default]

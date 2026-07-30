@@ -18,6 +18,7 @@ mod packetizer;
 pub use depacketizer::Av1Depacketizer;
 
 #[derive(Default, Clone, Debug)]
+/// Packetizes AV1 temporal units into RTP payloads.
 pub struct Av1Payloader {}
 
 impl Payloader for Av1Payloader {

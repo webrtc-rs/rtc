@@ -19,7 +19,9 @@ pub struct Chunk {
 pub struct Chunks {
     /// used only with the ordered chunks
     pub ssn: u16,
+    /// The payload protocol identifier shared by every fragment of this message.
     pub ppi: PayloadProtocolIdentifier,
+    /// The fragments, in order, that make up one complete message.
     pub chunks: Vec<ChunkPayloadData>,
     offset: usize,
     index: usize,
@@ -27,10 +29,12 @@ pub struct Chunks {
 }
 
 impl Chunks {
+    /// Whether the reassembled message carries no bytes.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// The total length in bytes of the reassembled message.
     pub fn len(&self) -> usize {
         let mut l = 0;
         for c in &self.chunks {
@@ -60,7 +64,12 @@ impl Chunks {
         Ok(buf)
     }
 
-    // Concat all fragments into the buffer
+    /// Concatenates every fragment into `buf`, returning the number of bytes written.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ErrShortBuffer`](shared::error::Error::ErrShortBuffer) if `buf` cannot
+    /// hold the whole message; the partial copy is left in place.
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let mut n_written = 0;
         for c in &self.chunks {
@@ -75,6 +84,10 @@ impl Chunks {
         Ok(n_written)
     }
 
+    /// Yields the next slice of the reassembled message, up to `max_length` bytes.
+    ///
+    /// Advances an internal cursor, so repeated calls walk the message; returns `None` once it is
+    /// exhausted.
     pub fn next(&mut self, max_length: usize) -> Option<Chunk> {
         if self.index >= self.chunks.len() {
             return None;

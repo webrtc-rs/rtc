@@ -3,6 +3,7 @@ use crate::crypto::crypto_cbc::*;
 use crate::prf::*;
 
 #[derive(Clone)]
+/// The shared AES-256-CBC with SHA-1 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes256CbcSha {
     cbc: Option<CryptoCbc>,
     rsa: bool,
@@ -13,6 +14,7 @@ impl CipherSuiteAes256CbcSha {
     const PRF_KEY_LEN: usize = 32;
     const PRF_IV_LEN: usize = 16;
 
+    /// Builds an uninitialized AES-256-CBC with SHA-1 suite; keys are installed later via `init`.
     pub fn new(rsa: bool) -> Self {
         CipherSuiteAes256CbcSha { cbc: None, rsa }
     }

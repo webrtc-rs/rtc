@@ -22,8 +22,11 @@ const CHANNEL_DATA_HEADER_SIZE: usize = CHANNEL_DATA_LENGTH_SIZE + CHANNEL_DATA_
 /// [RFC 5766 Section 11.4](https://www.rfc-editor.org/rfc/rfc5766#section-11.4).
 #[derive(Default, Debug)]
 pub struct ChannelData {
+    /// The relayed payload. May be a subslice of [`Self::raw`].
     pub data: Vec<u8>, // can be subslice of Raw
+    /// The channel this data belongs to, which identifies the peer.
     pub number: ChannelNumber,
+    /// The full encoded message, header included.
     pub raw: Vec<u8>,
 }
 

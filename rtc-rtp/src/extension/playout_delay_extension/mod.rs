@@ -5,7 +5,9 @@ use bytes::BufMut;
 use shared::error::{Error, Result};
 use shared::marshal::{Marshal, MarshalSize, Unmarshal};
 
+/// The extension's encoded size: two 12-bit values packed into 3 bytes.
 pub const PLAYOUT_DELAY_EXTENSION_SIZE: usize = 3;
+/// The largest representable delay, in 10 ms units — about 40 seconds.
 pub const PLAYOUT_DELAY_MAX_VALUE: u16 = (1 << 12) - 1;
 
 /// PlayoutDelayExtension is an extension payload format described in
@@ -17,7 +19,9 @@ pub const PLAYOUT_DELAY_MAX_VALUE: u16 = (1 << 12) - 1;
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone)]
 pub struct PlayoutDelayExtension {
+    /// The minimum playout delay in 10 ms units.
     pub min_delay: u16,
+    /// The maximum playout delay in 10 ms units.
     pub max_delay: u16,
 }
 
@@ -72,6 +76,8 @@ impl Marshal for PlayoutDelayExtension {
 }
 
 impl PlayoutDelayExtension {
+    /// A playout-delay extension requesting a delay between `min_delay` and `max_delay`, both in
+    /// 10 ms units.
     pub fn new(min_delay: u16, max_delay: u16) -> Self {
         PlayoutDelayExtension {
             min_delay,

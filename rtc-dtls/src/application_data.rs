@@ -15,24 +15,37 @@ use shared::error::Result;
 /// [RFC 5246 §10]: https://tools.ietf.org/html/rfc5246#section-10
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ApplicationData {
+    /// The application payload.
     pub data: BytesMut,
 }
 
 impl ApplicationData {
+    /// The record content type this message is carried in.
     pub fn content_type(&self) -> ContentType {
         ContentType::ApplicationData
     }
 
+    /// The encoded size of this message in bytes.
     pub fn size(&self) -> usize {
         self.data.len()
     }
 
+    /// Encodes this message to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a write error, or if a field exceeds the length its wire format allows.
     pub fn marshal<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_all(&self.data)?;
 
         Ok(writer.flush()?)
     }
 
+    /// Decodes one of these messages from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `reader` is truncated or its contents are not a valid encoding.
     pub fn unmarshal<R: Read>(reader: &mut R) -> Result<Self> {
         // Read straight into the BytesMut-backed Vec instead of staging in a
         // temporary Vec and copying the whole payload a second time.

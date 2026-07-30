@@ -7,11 +7,15 @@ use super::{H26xNAL, H26xReader, H264NalUnitType, H265NalUnitType};
 const ANNEXB_START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// One access unit read from an Annex B stream — the NAL units making up a single frame.
 pub struct H26xSample {
+    /// The sample's bytes, start codes included.
     pub data: Bytes,
+    /// Whether this sample advances presentation time, i.e. completes a frame.
     pub timed: bool,
 }
 
+/// Reads whole samples from an H.264 or H.265 Annex B stream.
 pub struct H26xSampleReader<R: Read> {
     reader: H26xReader<R>,
     is_hevc: bool,
@@ -19,6 +23,9 @@ pub struct H26xSampleReader<R: Read> {
 }
 
 impl<R: Read> H26xSampleReader<R> {
+    /// Wraps `reader`, buffering up to `capacity` bytes.
+    ///
+    /// Set `is_hevc` for H.265; the two codecs differ in how NAL headers are parsed.
     pub fn new(reader: R, capacity: usize, is_hevc: bool) -> Self {
         Self {
             reader: H26xReader::new(reader, capacity, is_hevc),
@@ -27,6 +34,11 @@ impl<R: Read> H26xSampleReader<R> {
         }
     }
 
+    /// Reads the next sample.
+    ///
+    /// # Errors
+    ///
+    /// Fails on an I/O error, or at end of stream.
     pub fn next_sample(&mut self) -> Result<H26xSample> {
         loop {
             let nal = match self.reader.next_nal() {

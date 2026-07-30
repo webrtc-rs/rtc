@@ -32,12 +32,20 @@ pub fn match_dtls(b: &[u8]) -> bool {
     match_range(20, 63)(b)
 }
 
-// match_srtp_or_srtcp is a MatchFunc that accepts packets with the first byte in [128..191]
-// as defied in RFC7983
+/// Returns `true` if `b` looks like SRTP or SRTCP: its first byte is in `[128, 191]`.
+///
+/// One of the demultiplexing predicates from [RFC 7983], which is how a single port can carry
+/// STUN, DTLS and SRTP at once.
+///
+/// [RFC 7983]: https://datatracker.ietf.org/doc/html/rfc7983
 pub fn match_srtp_or_srtcp(b: &[u8]) -> bool {
     match_range(128, 191)(b)
 }
 
+/// Returns `true` if `buf` is RTCP rather than RTP.
+///
+/// Distinguished by the payload-type byte: RTCP packet types occupy `[192, 223]`, which RTP
+/// cannot use. Returns `false` for buffers too short to tell.
 pub fn is_rtcp(buf: &[u8]) -> bool {
     // Not long enough to determine RTP/RTCP
     if buf.len() < 4 {
@@ -86,6 +94,9 @@ pub fn math_rand_alpha_number(n: usize) -> String {
 }
 
 //TODO: generates a random string for cryptographic usage.
+/// Generates a random `n`-character string drawn from `runes`.
+///
+/// Used for values that must be unguessable, such as ICE credentials and SDP identifiers.
 pub fn generate_crypto_random_string(n: usize, runes: &[u8]) -> String {
     let mut rng = rng();
 
