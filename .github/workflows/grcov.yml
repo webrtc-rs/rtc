@@ -31,8 +31,8 @@ jobs:
             test_args: ""
           - name: aws-lc-rs
             features: aws-lc-rs
-            packages: --package rtc
-            test_args: --lib
+            packages: --workspace
+            test_args: ""
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
