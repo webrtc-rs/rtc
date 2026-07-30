@@ -36,7 +36,7 @@ rcgen.workspace = true
 ring = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 rustls = { version = "0.23.27", default-features = false, features = ["std"] }
-rkyv = "0.8"
+rkyv = "0.8.17"
 bytecheck = "0.8"
 subtle = "2.5.0"
 log.workspace = true
