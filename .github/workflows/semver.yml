@@ -14,14 +14,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry and build artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --locked
-
       - name: Run cargo-semver-checks
-        run: cargo semver-checks --workspace --default-features
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # Overrides the default heuristic to ONLY use default features
+          feature-group: default-features
