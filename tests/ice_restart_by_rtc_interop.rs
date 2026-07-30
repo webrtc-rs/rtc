@@ -33,12 +33,15 @@ use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfigu
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const TEST_MESSAGE: &str = "Hello before restart!";
 const TEST_MESSAGE_AFTER_RESTART: &str = "Hello after restart!";
 
 #[tokio::test]
 async fn test_ice_restart_by_rtc_interop() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

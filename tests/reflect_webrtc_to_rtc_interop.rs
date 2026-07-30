@@ -45,11 +45,14 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test reflect functionality: webrtc sends RTP -> rtc reflects -> webrtc receives
 #[tokio::test]
 async fn test_reflect_webrtc_to_rtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

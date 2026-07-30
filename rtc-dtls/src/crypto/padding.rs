@@ -53,7 +53,7 @@ fn set(dst: &mut [u8], value: u8) {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use rand::RngExt;
 
     use super::*;

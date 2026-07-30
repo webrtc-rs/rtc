@@ -56,6 +56,8 @@ use webrtc::rtp_transceiver::rtp_codec::{
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Integration test for multi-track video streaming (webrtc → rtc)
@@ -92,6 +94,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 #[tokio::test]
 #[ignore]
 async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

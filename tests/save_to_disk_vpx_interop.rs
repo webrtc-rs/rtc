@@ -47,11 +47,14 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test streaming media to disk: webrtc streams -> rtc receives
 #[tokio::test]
 async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

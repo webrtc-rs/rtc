@@ -49,12 +49,15 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test that custom interceptor registry with SenderReportBuilder and ReceiverReportBuilder
 /// can be used with RTCConfigurationBuilder.
 #[tokio::test]
 async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -386,6 +389,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
 /// This test monitors the outgoing packets to verify SR generation.
 #[tokio::test]
 async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .is_test(true)
@@ -672,6 +676,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
 /// Test that using register_default_interceptors helper function works correctly.
 #[tokio::test]
 async fn test_register_default_interceptors_helper() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

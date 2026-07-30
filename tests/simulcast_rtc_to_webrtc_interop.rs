@@ -61,11 +61,14 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as 
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_remote::TrackRemote;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test simulcast: rtc sends 3 layers with RIDs -> webrtc receives all 3 layers
 #[tokio::test]
 async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

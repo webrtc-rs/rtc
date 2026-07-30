@@ -53,6 +53,8 @@ use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::track::track_remote::TrackRemote;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
 const RTP_OUTBOUND_MTU: usize = 1200;
@@ -60,6 +62,7 @@ const RTP_OUTBOUND_MTU: usize = 1200;
 /// Test webrtc as RecvOnly offerer, rtc as answerer streaming from disk
 #[tokio::test]
 async fn test_play_from_disk_rtc_set_remote_before_add_track() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

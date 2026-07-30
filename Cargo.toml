@@ -89,7 +89,6 @@ openssl = ["srtp/openssl"]
 vendored-openssl = ["srtp/vendored-openssl"]
 ring = ["dep:ring", "dtls/ring", "rustls/ring", "rcgen/ring", "ice/ring", "stun/ring", "srtp/ring", "turn/ring"]
 aws-lc-rs = ["dep:aws-lc-rs", "dtls/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs", "ice/aws-lc-rs", "stun/aws-lc-rs", "srtp/aws-lc-rs", "turn/aws-lc-rs"]
-__testing = []
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = ["crypto", "marshal", "replay"] }

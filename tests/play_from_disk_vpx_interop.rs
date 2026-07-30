@@ -55,6 +55,8 @@ use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::track::track_remote::TrackRemote;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const OGG_PAGE_DURATION: Duration = Duration::from_millis(20);
 const RTP_OUTBOUND_MTU: usize = 1200;
@@ -62,6 +64,7 @@ const RTP_OUTBOUND_MTU: usize = 1200;
 /// Test streaming media from disk: rtc streams from disk -> webrtc receives
 #[tokio::test]
 async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

@@ -45,6 +45,8 @@ use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfigu
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Helper function to create a webrtc peer connection (no STUN - local only)
@@ -101,6 +103,7 @@ fn create_rtc_peer_config(
 /// - Data channel communication works with trickle ICE
 #[tokio::test]
 async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -391,6 +394,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// - Data channel communication works with trickle ICE
 #[tokio::test]
 async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

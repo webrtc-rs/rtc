@@ -70,6 +70,8 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 // ============================================================================
@@ -444,6 +446,7 @@ fn dummy_rtp(ssrc: u32, seq: u32, payload_type: u8) -> rtc::rtp::packet::Packet 
 /// surfaces RTCP via `poll_read()`, and the default interceptors still process RTP.
 #[tokio::test]
 async fn test_boxed_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -591,6 +594,7 @@ async fn test_boxed_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> 
 /// exactly what an SFU needs in order to relay PLI/FIR upstream to a publisher.
 #[tokio::test]
 async fn test_boxed_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -713,6 +717,7 @@ async fn test_boxed_rtcp_processing_rtc_sender_receives_feedback() -> Result<()>
 /// the default chain consumes RTCP internally.
 #[tokio::test]
 async fn test_boxed_rtc_to_rtc_heterogeneous_chains() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

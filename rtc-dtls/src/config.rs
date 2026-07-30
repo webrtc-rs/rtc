@@ -35,6 +35,53 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
 use rustls::server::danger::ClientCertVerifier;
 
+/// The rustls [`CryptoProvider`](rustls::crypto::CryptoProvider) this crate was built with.
+///
+/// rustls can infer a process-wide default from its own crate features, but only when exactly
+/// one of `ring`/`aws-lc-rs` is enabled — and it panics otherwise. Feature unification makes
+/// that easy to violate: any other crate in the graph that asks rustls for a different provider
+/// enables both, which is what happens as soon as `rtc`'s `webrtc` interop dev-dependency joins
+/// the build. Since our own `ring`/`aws-lc-rs` features already decide the answer, pass it
+/// explicitly and never consult the global default.
+///
+/// If neither feature is enabled there is no provider to name, so fall back to whatever the
+/// application installed.
+fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
+    #[cfg(feature = "aws-lc-rs")]
+    {
+        return Some(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ));
+    }
+    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+    {
+        return Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()));
+    }
+    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    {
+        None
+    }
+}
+
+/// Builds the default server-certificate verifier, with an explicit provider where we have one.
+///
+/// # Errors
+///
+/// Fails if the root store holds no usable trust anchors.
+fn server_cert_verifier(
+    roots: std::sync::Arc<rustls::RootCertStore>,
+) -> Result<std::sync::Arc<rustls::client::WebPkiServerVerifier>> {
+    let builder = match crypto_provider() {
+        Some(provider) => {
+            rustls::client::WebPkiServerVerifier::builder_with_provider(roots, provider)
+        }
+        None => rustls::client::WebPkiServerVerifier::builder(roots),
+    };
+    builder
+        .build()
+        .map_err(|err| Error::Other(format!("rustls server cert verifier: {err}")))
+}
+
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
 #[derive(Clone)]
@@ -368,11 +415,7 @@ impl ConfigBuilder {
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
             roots_cas: self.roots_cas,
-            server_cert_verifier: rustls::client::WebPkiServerVerifier::builder(Arc::new(
-                gen_self_signed_root_cert(),
-            ))
-            .build()
-            .unwrap(),
+            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))?,
             client_cert_verifier: None,
             retransmit_interval,
             initial_epoch: 0,
@@ -475,11 +518,8 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: rustls::client::WebPkiServerVerifier::builder(Arc::new(
-                gen_self_signed_root_cert(),
-            ))
-            .build()
-            .unwrap(),
+            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))
+                .expect("the built-in self-signed root is always a valid trust anchor"),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,

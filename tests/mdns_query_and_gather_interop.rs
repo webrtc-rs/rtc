@@ -46,6 +46,8 @@ use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfigu
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 const MDNS_LOCAL_NAME: &str = "webrtc-rs-test-mdns.local";
 const WEBRTC_MDNS_LOCAL_NAME: &str = "webrtc-peer-mdns.local";
@@ -287,6 +289,7 @@ async fn run_rtc_event_loop(
 /// advertise its own IP via mDNS.
 #[tokio::test]
 async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -452,6 +455,7 @@ async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// advertises its own IP via an mDNS name.
 #[tokio::test]
 async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -605,6 +609,7 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
 /// Test mDNS QueryOnly mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -779,6 +784,7 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
 /// Test mDNS QueryAndGather mode: sansio RTC as offerer, webrtc as answerer
 #[tokio::test]
 async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

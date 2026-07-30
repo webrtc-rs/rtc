@@ -51,6 +51,8 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 // ============================================================================
@@ -128,6 +130,7 @@ fn create_rtc_peer_config_video_only()
 /// - Video RTP packets are received successfully
 #[tokio::test]
 async fn test_video_only_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -415,6 +418,7 @@ async fn test_video_only_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// sansio RTC correctly rejects audio (port=0) while accepting video.
 #[tokio::test]
 async fn test_sdp_answer_rejects_audio_correctly() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

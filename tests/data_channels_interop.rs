@@ -35,11 +35,14 @@ use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfigu
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Test data channel communication between rtc (sansio) and webrtc (async) implementations
 #[tokio::test]
 async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)

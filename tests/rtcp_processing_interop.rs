@@ -50,6 +50,8 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 
+mod common;
+
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
 // ============================================================================
@@ -213,6 +215,7 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
 /// - RTCP packets can be parsed and inspected
 #[tokio::test]
 async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -474,6 +477,7 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
 /// This test verifies RTCP processing when roles are reversed.
 #[tokio::test]
 async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
@@ -750,6 +754,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
 /// Asserts the RTC peer receives RTCP about its sent stream, tagged with the sender's track id.
 #[tokio::test]
 async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
+    common::install_crypto_provider();
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
