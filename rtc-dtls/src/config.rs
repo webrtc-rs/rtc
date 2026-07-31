@@ -342,12 +342,13 @@ impl ConfigBuilder {
             return Err(Error::ErrIdentityNoPsk);
         }
 
+        // Gates future private key kinds from being automatically allowed.
         for cert in &self.certificates {
             match cert.private_key.kind {
                 CryptoPrivateKeyKind::Ed25519(_) => {}
                 CryptoPrivateKeyKind::Ecdsa256(_) => {}
+                CryptoPrivateKeyKind::Rsa256(_) => {}
                 CryptoPrivateKeyKind::Custom(_) => {}
-                _ => return Err(Error::ErrInvalidPrivateKey),
             }
         }
 
