@@ -463,21 +463,32 @@ impl Message {
         }
     }
 
-    /// Build resets message and applies setters to it in batch, returning on
-    /// first error. To prevent allocations, pass pointers to values.
+    /// Resets the message and applies `setters` to it in order, returning on the first
+    /// error.
     ///
-    /// Example:
-    ///  var (
-    ///  	t        = BindingRequest
-    ///  	username = NewUsername("username")
-    ///  	nonce    = NewNonce("nonce")
-    ///  	realm    = NewRealm("example.org")
-    ///  )
-    ///  m := new(Message)
-    ///  m.Build(t, username, nonce, realm)     // 4 allocations
-    ///  m.Build(&t, &username, &nonce, &realm) // 0 allocations
+    /// Each setter writes its attribute into the message as it is applied, so the encoded
+    /// [`raw`](Self::raw) bytes are complete once this returns. Order matters for setters
+    /// that cover the attributes before them — a
+    /// [`MessageIntegrity`](crate::integrity::MessageIntegrity) or
+    /// [`FINGERPRINT`](crate::fingerprint::FINGERPRINT) therefore goes last.
     ///
-    /// See BenchmarkBuildOverhead.
+    /// ```
+    /// use rtc_stun::attributes::ATTR_SOFTWARE;
+    /// use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+    /// use rtc_stun::textattrs::TextAttribute;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut m = Message::new();
+    /// m.build(&[
+    ///     Box::new(BINDING_REQUEST),
+    ///     Box::new(TransactionId::new()),
+    ///     Box::new(TextAttribute::new(ATTR_SOFTWARE, "webrtc-rs".to_owned())),
+    /// ])?;
+    ///
+    /// assert!(!m.raw.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(&mut self, setters: &[Box<dyn Setter>]) -> Result<()> {
         self.reset();
         self.write_header();

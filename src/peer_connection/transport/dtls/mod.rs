@@ -4,6 +4,7 @@ use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, RTCDtlsRole};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
+use dtls::cipher_suite::CipherSuiteId;
 use dtls::config::{ClientAuthType, VerifyPeerCertificateFn};
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use rcgen::KeyPair;
@@ -44,6 +45,9 @@ pub(crate) struct RTCDtlsTransport {
     // From SettingEngine
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+    /// Empty means "use the `dtls` crate's default set" (see
+    /// [`SettingEngine::set_dtls_cipher_suites`](crate::peer_connection::configuration::setting_engine::SettingEngine::set_dtls_cipher_suites)).
+    pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) replay_protection: ReplayProtection,
@@ -54,6 +58,7 @@ impl RTCDtlsTransport {
         mut certificates: Vec<RTCCertificate>,
         answering_dtls_role: RTCDtlsRole,
         srtp_protection_profiles: Vec<SrtpProtectionProfile>,
+        dtls_cipher_suites: Vec<CipherSuiteId>,
         allow_insecure_verification_algorithm: bool,
         disable_certificate_fingerprint_verification: bool,
         replay_protection: ReplayProtection,
@@ -80,6 +85,7 @@ impl RTCDtlsTransport {
 
             answering_dtls_role,
             srtp_protection_profiles,
+            dtls_cipher_suites,
             allow_insecure_verification_algorithm,
             disable_certificate_fingerprint_verification,
             replay_protection,
@@ -182,6 +188,8 @@ impl RTCDtlsTransport {
                 } else {
                     default_srtp_protection_profiles()
                 })
+                // Empty leaves `dtls`'s default set in place; a non-empty list replaces it.
+                .with_cipher_suites(self.dtls_cipher_suites.clone())
                 .with_client_auth(ClientAuthType::RequireAnyClientCert)
                 .with_insecure_skip_verify(true)
                 .with_insecure_verification(self.allow_insecure_verification_algorithm)
@@ -225,5 +233,76 @@ impl RTCDtlsTransport {
     pub(crate) fn stop(&mut self) -> Result<()> {
         self.state_change(RTCDtlsTransportState::Closed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Cipher-suite plumbing for issue #808.
+    //!
+    //! `HandshakeConfig::local_cipher_suites` is `pub(crate)` to `rtc-dtls`, so these assert
+    //! the setting reached the config *behaviourally*: a list that cannot be satisfied is
+    //! rejected, which can only happen if it was applied rather than ignored.
+
+    use super::*;
+    use crate::peer_connection::configuration::setting_engine::ReplayProtection;
+
+    fn transport(dtls_cipher_suites: Vec<CipherSuiteId>) -> RTCDtlsTransport {
+        RTCDtlsTransport::new(
+            vec![],
+            DEFAULT_DTLS_ROLE_ANSWER,
+            vec![],
+            dtls_cipher_suites,
+            false,
+            false,
+            ReplayProtection::default(),
+        )
+        .expect("a self-signed ECDSA certificate is generated when none is supplied")
+    }
+
+    fn remote_params() -> RTCDtlsParameters {
+        RTCDtlsParameters {
+            role: RTCDtlsRole::Client,
+            fingerprints: vec![],
+        }
+    }
+
+    #[test]
+    fn empty_cipher_suites_keeps_the_dtls_defaults() {
+        // The pre-#808 behaviour, and what every existing caller gets.
+        assert!(
+            transport(vec![])
+                .prepare_transport(RTCIceRole::Controlling, remote_params())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn ecdsa_only_cipher_suites_are_accepted() {
+        // The fix for #808: pin the suites an ECDSA certificate can actually satisfy, so a
+        // peer cannot select an ECDHE_RSA suite and stall the handshake.
+        assert!(
+            transport(vec![
+                CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
+                CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
+                CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
+            ])
+            .prepare_transport(RTCIceRole::Controlling, remote_params())
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn unsatisfiable_cipher_suites_are_rejected_rather_than_ignored() {
+        // This is the assertion that proves plumbing. PSK suites are filtered out when no
+        // PSK is configured, leaving nothing usable. If `set_dtls_cipher_suites` were
+        // dropped on the floor, the default set would be used and this would succeed.
+        let err = transport(vec![CipherSuiteId::Tls_Psk_With_Aes_128_Ccm])
+            .prepare_transport(RTCIceRole::Controlling, remote_params())
+            .expect_err("a PSK-only list with no PSK leaves no usable suite");
+        assert!(
+            err.to_string().contains("CipherSuite"),
+            "expected a cipher-suite error, got: {err}"
+        );
     }
 }

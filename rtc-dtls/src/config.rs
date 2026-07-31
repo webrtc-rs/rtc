@@ -49,13 +49,13 @@ use rustls::server::danger::ClientCertVerifier;
 fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
     #[cfg(feature = "aws-lc-rs")]
     {
-        return Some(std::sync::Arc::new(
+        Some(std::sync::Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
-        ));
+        ))
     }
     #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
     {
-        return Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()));
+        Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
     }
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
     {
