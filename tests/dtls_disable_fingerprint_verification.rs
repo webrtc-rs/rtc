@@ -26,9 +26,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 
-use crate::common::TestPeer;
+use crate::dtls_common::TestPeer;
 
-mod common;
+mod dtls_common;
 
 /// A fingerprint that matches no certificate, standing in for the placeholder a
 /// WebRTC-Direct server puts in the offer it synthesizes for the client.

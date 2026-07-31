@@ -18,9 +18,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 
-use crate::common::TestPeer;
+use crate::dtls_common::TestPeer;
 
-mod common;
+mod dtls_common;
 
 const RSA_OFFERER_KEY: &str = include_str!("testdata/rsa_2048_offerer_key.pem");
 const RSA_ANSWERER_KEY: &str = include_str!("testdata/rsa_2048_answerer_key.pem");
