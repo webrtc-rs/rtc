@@ -344,7 +344,7 @@ impl Relay<'_> {
         }
     }
 
-    fn refresh_allocation(&mut self, lifetime: Duration) -> Result<()> {
+    pub(super) fn refresh_allocation(&mut self, lifetime: Duration) -> Result<()> {
         let (username, realm) = (self.client.username(), self.client.realm());
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             let mut msg = Message::new();
@@ -400,7 +400,7 @@ impl Relay<'_> {
         }
     }
 
-    fn refresh_permissions(&mut self) -> Result<()> {
+    pub(super) fn refresh_permissions(&mut self) -> Result<()> {
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             #[allow(clippy::map_clone)]
             let addrs: Vec<SocketAddr> = relay.perm_map.keys().map(|addr| *addr).collect();

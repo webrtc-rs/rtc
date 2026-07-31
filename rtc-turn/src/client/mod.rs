@@ -24,7 +24,7 @@ use bytes::BytesMut;
 use log::{debug, trace};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use stun::attributes::*;
 use stun::integrity::*;
@@ -477,6 +477,58 @@ impl Client {
       |    XOR-MAPPED-ADDRESS=192.0.2.1:7000            |            |
       |    MESSAGE-INTEGRITY-SHA256=...    |            |            |
     */
+    /// Replaces the long-term credential used to sign subsequent requests, **keeping any
+    /// existing allocation**.
+    ///
+    /// A TURN allocation is a property of the 5-tuple, not of the credential that created
+    /// it: [RFC 5766 §6.2] identifies an allocation by 5-tuple, and a server's
+    /// `Refresh` handling looks it up the same way. So when credentials are rotated on the
+    /// same server there is no need to give up the allocation and re-`Allocate` — which
+    /// would in fact be rejected with **437 (Allocation Mismatch)**, since the server still
+    /// holds the previous allocation for that 5-tuple. Re-signing the existing allocation is
+    /// both correct and seamless: permissions and channel bindings survive.
+    ///
+    /// The realm is *not* re-negotiated. It was learned from the server's 401 during the
+    /// first `Allocate`, and a credential rotation keeps the same server, so it still
+    /// applies. Follow this with [`Relay::refresh`] so the server sees the new credential
+    /// before the allocation would otherwise expire.
+    ///
+    /// [RFC 5766 §6.2]: https://datatracker.ietf.org/doc/html/rfc5766#section-6.2
+    pub fn update_credentials(&mut self, username: String, password: String) {
+        self.username = Username::new(ATTR_USERNAME, username);
+        self.password = password;
+        self.integrity = MessageIntegrity::new_long_term_integrity(
+            self.username.text.clone(),
+            self.realm.text.clone(),
+            self.password.clone(),
+        );
+
+        // Each allocation carries the integrity it will sign its own Refresh /
+        // CreatePermission / ChannelBind with, so they have to be re-signed too — otherwise
+        // the next refresh would still present the retired credential.
+        for relay in self.relays.values_mut() {
+            relay.integrity = self.integrity.clone();
+        }
+    }
+
+    /// Refreshes every live allocation, re-signing each with the current credential.
+    ///
+    /// Each allocation is refreshed with its own current lifetime, so this extends rather
+    /// than changes it. Intended to follow [`update_credentials`](Self::update_credentials).
+    pub fn refresh_allocations(&mut self) -> Result<()> {
+        let relays: Vec<(RelayedAddr, Duration)> = self
+            .relays
+            .iter()
+            .map(|(addr, relay)| (*addr, relay.lifetime))
+            .collect();
+
+        for (relayed_addr, lifetime) in relays {
+            self.relay(relayed_addr)?.refresh_allocation(lifetime)?;
+        }
+
+        Ok(())
+    }
+
     /// Allocate sends a TURN allocation request to the given transport address
     pub fn allocate(&mut self) -> Result<TransactionId> {
         let mut msg = Message::new();
