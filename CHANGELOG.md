@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
--
+- Add RSA as an allowed private key kind in rtc_dtls::ConfigBuilder::
+  validate- [PR #141](https://github.com/webrtc-rs/rtc/pull/141)
 
 ### Security
 
