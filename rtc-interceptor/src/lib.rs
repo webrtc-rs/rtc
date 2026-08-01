@@ -246,6 +246,7 @@ pub use interceptor_derive::{Interceptor, interceptor};
 /// An enum representing either an RTP or RTCP packet that can be processed
 /// by interceptors in the chain.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Packet {
     /// RTP (Real-time Transport Protocol) packet containing media data
     Rtp(rtp::Packet),

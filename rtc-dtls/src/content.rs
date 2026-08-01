@@ -12,6 +12,7 @@ use shared::error::*;
 ///
 /// [RFC 4346 §6.2.1]: https://tools.ietf.org/html/rfc4346#section-6.2.1
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum ContentType {
     /// `CHANGE_CIPHER_SPEC` (`20`).
     ChangeCipherSpec = 20,
@@ -40,6 +41,7 @@ impl From<u8> for ContentType {
 
 #[derive(PartialEq, Debug, Clone)]
 /// The parsed body of a DTLS record.
+#[non_exhaustive]
 pub enum Content {
     /// A ChangeCipherSpec record.
     ChangeCipherSpec(ChangeCipherSpec),

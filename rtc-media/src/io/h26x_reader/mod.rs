@@ -62,6 +62,7 @@ impl ReadBuffer {
 /// H264NalUnitType is the type of a NAL
 /// Enums for H264NalUnitType
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum H264NalUnitType {
     /// Unspecified
     #[default]
@@ -188,6 +189,7 @@ impl H264NAL {
 /// H265NalUnitType is the type of a NAL unit in H.265/HEVC
 /// Based on ITU-T H.265 (04/2013) Table 7-1
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum H265NalUnitType {
     /// Coded slice of a non-TSA, non-STSA trailing picture
     #[default]
@@ -365,6 +367,7 @@ impl H265NAL {
 }
 
 /// H26xNAL represents either an H264 or H265 NAL unit
+#[non_exhaustive]
 pub enum H26xNAL {
     /// An H.264 NAL unit.
     H264(H264NAL),

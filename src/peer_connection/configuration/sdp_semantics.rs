@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 /// * [Unified Plan](https://tools.ietf.org/html/draft-roach-mmusic-unified-plan-00)
 /// * [Plan B (deprecated)](https://tools.ietf.org/html/draft-uberti-rtcweb-plan-00)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCSdpSemantics {
     /// Unspecified - not a valid semantic
     Unspecified = 0,

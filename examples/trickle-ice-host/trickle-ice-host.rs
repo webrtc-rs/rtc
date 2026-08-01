@@ -186,21 +186,20 @@ async fn run_main_loop() -> Result<()> {
                             println!("Peer Connection connected!");
                         }
                     }
-                    RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                        RTCDataChannelEvent::OnOpen(channel_id) => {
-                            if let Some(dc) = pc.data_channel(channel_id) {
-                                println!(
-                                    "{} - Data channel '{}'-'{}' open",
-                                    chrono::Local::now().format("%H:%M:%S"),
-                                    dc.label(),
-                                    dc.id()
-                                );
-                                data_channel_id = Some(channel_id);
-                                last_send = Instant::now();
-                            }
+                    RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(
+                        channel_id,
+                    )) => {
+                        if let Some(dc) = pc.data_channel(channel_id) {
+                            println!(
+                                "{} - Data channel '{}'-'{}' open",
+                                chrono::Local::now().format("%H:%M:%S"),
+                                dc.label(),
+                                dc.id()
+                            );
+                            data_channel_id = Some(channel_id);
+                            last_send = Instant::now();
                         }
-                        _ => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -215,6 +214,7 @@ async fn run_main_loop() -> Result<()> {
                             .unwrap_or_default();
                         println!("Message from DataChannel: '{}'", msg_str);
                     }
+                    _ => {}
                 }
             }
 

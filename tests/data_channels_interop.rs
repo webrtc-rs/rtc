@@ -260,6 +260,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
                     log::info!("RTC echoing message back: '{}'", msg_str);
                     dc.send_text(msg_str)?;
                 }
+                _ => {}
             }
         }
 

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 /// What the endpoint reports to its caller.
+#[non_exhaustive]
 pub enum EndpointEvent {
     /// The handshake finished; application data may now be sent, and SRTP keys can be exported.
     HandshakeComplete,

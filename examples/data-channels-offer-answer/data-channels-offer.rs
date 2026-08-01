@@ -257,20 +257,17 @@ async fn main() -> Result<()> {
                         break 'EventLoop;
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(channel_id) => {
-                        if let Some(dc) = peer_connection.data_channel(channel_id) {
-                            println!(
-                                "Data channel '{}'-'{}' open. Random messages will now be sent every 5 seconds",
-                                dc.label(),
-                                dc.id()
-                            );
-                            data_channel_opened = Some(channel_id);
-                            last_send = Instant::now();
-                        }
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
+                    if let Some(dc) = peer_connection.data_channel(channel_id) {
+                        println!(
+                            "Data channel '{}'-'{}' open. Random messages will now be sent every 5 seconds",
+                            dc.label(),
+                            dc.id()
+                        );
+                        data_channel_opened = Some(channel_id);
+                        last_send = Instant::now();
                     }
-                    _ => {}
-                },
+                }
                 _ => {}
             }
         }
@@ -284,6 +281,7 @@ async fn main() -> Result<()> {
                         String::from_utf8(data_channel_message.data.to_vec()).unwrap_or_default();
                     println!("Message from DataChannel: '{}'", msg_str);
                 }
+                _ => {}
             }
         }
 

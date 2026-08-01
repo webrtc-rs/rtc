@@ -1,5 +1,6 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The certificate types a server may request from a client.
+#[non_exhaustive]
 pub enum ClientCertificateType {
     /// `RSA_SIGN` (`1`).
     RsaSign = 1,

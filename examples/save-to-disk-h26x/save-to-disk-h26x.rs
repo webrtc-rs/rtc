@@ -419,6 +419,7 @@ async fn run(
                     // like NACK this needs to be called.
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

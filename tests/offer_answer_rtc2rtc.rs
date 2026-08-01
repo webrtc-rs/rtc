@@ -215,13 +215,10 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                         offer_connected = true;
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(channel_id) => {
-                        log::info!("Offer data channel {} opened", channel_id);
-                        offer_dc_id = Some(channel_id);
-                    }
-                    _ => {}
-                },
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
+                    log::info!("Offer data channel {} opened", channel_id);
+                    offer_dc_id = Some(channel_id);
+                }
                 _ => {}
             }
         }
@@ -236,6 +233,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                     let mut msgs = offer_received_messages.lock().await;
                     msgs.push(msg_str);
                 }
+                _ => {}
             }
         }
 
@@ -272,12 +270,9 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                         answer_connected = true;
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(channel_id) => {
-                        log::info!("Answer data channel {} opened", channel_id);
-                    }
-                    _ => {}
-                },
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
+                    log::info!("Answer data channel {} opened", channel_id);
+                }
                 _ => {}
             }
         }
@@ -301,6 +296,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                         }
                     }
                 }
+                _ => {}
             }
         }
 

@@ -176,6 +176,7 @@ fn main() -> Result<()> {
                         client.relay(relay_addr)?.send_to(&data[..], from)?;
                     }
                 }
+                _ => {}
             }
         }
 

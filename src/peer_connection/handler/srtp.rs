@@ -143,6 +143,11 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         "application level track message should never reach here".to_string(),
                     ));
                 }
+                RTPMessage::Packet(_) => {
+                    return Err(Error::Other(
+                        "unsupported packet kind for srtp write".to_string(),
+                    ));
+                }
             };
 
             self.ctx.write_outs.push_back(TaggedRTCMessageInternal {

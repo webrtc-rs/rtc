@@ -182,6 +182,7 @@ bitflags! {
 }
 
 #[repr(C)]
+#[non_exhaustive]
 pub enum IpPrefixOrigin {
     Other = 0,
     Manual,
@@ -192,6 +193,7 @@ pub enum IpPrefixOrigin {
 }
 
 #[repr(C)]
+#[non_exhaustive]
 pub enum IpSuffixOrigin {
     Other = 0,
     Manual,
@@ -204,6 +206,7 @@ pub enum IpSuffixOrigin {
 
 #[derive(PartialEq, Eq)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum IpDadState {
     Invalid = 0,
     Tentative,
@@ -213,6 +216,7 @@ pub enum IpDadState {
 }
 
 #[repr(C)]
+#[non_exhaustive]
 pub enum IfOperStatus {
     Up = 1,
     Down = 2,
@@ -224,6 +228,7 @@ pub enum IfOperStatus {
 }
 
 #[repr(C)]
+#[non_exhaustive]
 pub enum NetIfConnectionType {
     Dedicated = 1,
     Passive = 2,
@@ -232,6 +237,7 @@ pub enum NetIfConnectionType {
 }
 
 #[repr(C)]
+#[non_exhaustive]
 pub enum TunnelType {
     None = 0,
     Other = 1,

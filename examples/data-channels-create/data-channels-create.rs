@@ -271,6 +271,7 @@ async fn run(
                     let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                     println!("Message from DataChannel '{}': '{}'", dc.label(), msg_str);
                 }
+                _ => {}
             }
         }
 

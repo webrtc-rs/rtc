@@ -242,6 +242,7 @@ where
                         Packet::Rtcp(packet) => {
                             Some(RTCMessage::RtcpPacket(track_packet.track_id, packet))
                         }
+                        _ => None,
                     }
                 }
                 _ => None,

@@ -273,6 +273,7 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
                     let mut rtc_msgs = rtc_received_messages.lock().await;
                     rtc_msgs.push(msg_str.clone());
                 }
+                _ => {}
             }
         }
 

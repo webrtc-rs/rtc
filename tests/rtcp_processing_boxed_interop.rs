@@ -342,6 +342,7 @@ impl RtcpPeer {
                     }
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
     }

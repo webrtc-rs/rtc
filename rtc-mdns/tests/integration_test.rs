@@ -130,6 +130,7 @@ fn test_server_responds_to_query() {
             assert_eq!(addr, server_addr.ip());
         }
         MdnsEvent::QueryTimeout(_) => panic!("Unexpected QueryTimeout"),
+        other => panic!("Unexpected event: {other:?}"),
     }
 
     // Query should no longer be pending

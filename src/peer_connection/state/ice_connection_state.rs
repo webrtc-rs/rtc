@@ -105,6 +105,7 @@ use std::fmt;
 /// [MDN RTCPeerConnection.iceConnectionState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceConnectionState
 /// [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RTCIceConnectionState {
     /// State not specified. This should not occur in normal operation.
     #[default]

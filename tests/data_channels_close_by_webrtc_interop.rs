@@ -274,6 +274,7 @@ async fn test_data_channel_close_by_webrtc_interop() -> Result<()> {
                     log::info!("RTC received message on channel {}: '{}'", channel_id, data);
                     rtc_received_messages.push(data);
                 }
+                _ => {}
             }
         }
 

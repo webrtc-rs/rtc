@@ -245,6 +245,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
                     trace!("Received RTCP packets");
                 }
                 rtc::peer_connection::message::RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

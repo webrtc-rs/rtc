@@ -4,6 +4,7 @@ pub use ffi::ifaces;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 /// The next hop configured for an interface address.
+#[non_exhaustive]
 pub enum NextHop {
     /// The broadcast address of the attached network.
     Broadcast(::std::net::SocketAddr),
@@ -13,6 +14,7 @@ pub enum NextHop {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 /// The address family or link type an [`Interface`] entry describes.
+#[non_exhaustive]
 pub enum Kind {
     /// A raw packet-level (link layer) address.
     Packet,

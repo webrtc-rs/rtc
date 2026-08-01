@@ -214,6 +214,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 ::ice::Event::RoleChange(is_controlling) => {
                     self.stats.transport.on_ice_role_changed(is_controlling);
                 }
+                _ => {}
             }
         }
 

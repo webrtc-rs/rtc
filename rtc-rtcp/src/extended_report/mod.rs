@@ -40,6 +40,7 @@ const XR_HEADER_LENGTH: usize = 4;
 /// BlockType specifies the type of report in a report block
 /// Extended Report block types from RFC 3611.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BlockType {
     #[default]
     /// A block type this crate does not model.

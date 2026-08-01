@@ -73,6 +73,7 @@ pub enum StreamEvent {
 
 /// Reliability type for stream
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ReliabilityType {
     /// ReliabilityTypeReliable is used for reliable transmission
     #[default]
@@ -392,6 +393,7 @@ impl Stream<'_> {
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RecvSendState {
     #[default]
     Closed = 0,

@@ -323,6 +323,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                     // RTCP packets are handled internally
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

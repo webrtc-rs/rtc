@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// * [W3C RTCBundlePolicy](https://w3c.github.io/webrtc-pc/#rtcbundlepolicy-enum)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCBundlePolicy {
     /// Unspecified - not a valid policy, used as default value
     #[default]

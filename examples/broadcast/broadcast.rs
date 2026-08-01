@@ -326,6 +326,7 @@ async fn run_broadcaster(
                     trace!("[Receiver] Received RTCP packets");
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

@@ -25,6 +25,7 @@ pub const CHANNEL_PRIORITY_EXTRA_HIGH: u16 = 1024;
 /// supplies the retransmission count or lifetime for the partial-reliability variants.
 ///
 /// [RFC 8832]: https://datatracker.ietf.org/doc/html/rfc8832
+#[non_exhaustive]
 pub enum ChannelType {
     /// Reliable, in-order delivery — the SCTP default, and what `RTCDataChannel` gives you
     /// unless you ask otherwise.

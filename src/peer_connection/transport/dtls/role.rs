@@ -76,6 +76,7 @@ use serde::{Deserialize, Serialize};
 /// [RFC 5763]: https://datatracker.ietf.org/doc/html/rfc5763
 /// [RFC 8122]: https://datatracker.ietf.org/doc/html/rfc8122
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCDtlsRole {
     /// Role not specified. This should not occur in normal operation.
     #[default]

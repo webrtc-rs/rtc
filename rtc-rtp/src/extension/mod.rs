@@ -18,6 +18,7 @@ pub mod transport_cc_extension;
 pub mod video_orientation_extension;
 
 /// A generic RTP header extension.
+#[non_exhaustive]
 pub enum HeaderExtension {
     /// The absolute-send-time extension.
     AbsSendTime(abs_send_time_extension::AbsSendTimeExtension),

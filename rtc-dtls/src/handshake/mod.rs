@@ -65,6 +65,7 @@ use handshake_message_server_key_exchange::*;
 ///
 /// [RFC 5246 §7.4]: https://tools.ietf.org/html/rfc5246#section-7.4
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HandshakeType {
     /// `HELLO_REQUEST` (`0`).
     HelloRequest = 0,
@@ -133,6 +134,7 @@ impl From<u8> for HandshakeType {
 
 #[derive(PartialEq, Debug, Clone)]
 /// A parsed handshake message.
+#[non_exhaustive]
 pub enum HandshakeMessage {
     //HelloRequest(errNotImplemented),
     /// ClientHello, which opens the handshake.

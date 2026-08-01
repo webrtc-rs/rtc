@@ -296,6 +296,7 @@ pub(crate) type PskCallback = Arc<dyn (Fn(&[u8]) -> Result<Vec<u8>>) + Send + Sy
 /// ClientAuthType declares the policy the server will follow for
 /// TLS Client Authentication.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ClientAuthType {
     #[default]
     /// `NO_CLIENT_CERT` (`0`).

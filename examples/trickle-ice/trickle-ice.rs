@@ -387,22 +387,19 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                     TurnEvent::TransactionTimeout(_) => {
                         error!("TURN transaction timeout");
                     }
-                    TurnEvent::AllocateResponse(tid, addr) => {
-                        if Some(tid) == allocate_tid {
-                            println!("TURN allocation successful, relay address: {}", addr);
-                            relay_addr = Some(addr);
+                    TurnEvent::AllocateResponse(tid, addr) if Some(tid) == allocate_tid => {
+                        println!("TURN allocation successful, relay address: {}", addr);
+                        relay_addr = Some(addr);
 
-                            // Add relay candidate if peer connection exists
-                            if let Some(pc) = peer_connection.as_mut() {
-                                if !relay_candidate_added {
-                                    if let Err(e) =
-                                        add_relay_candidate(pc, addr, local_addr, &mut ws_stream)
-                                            .await
-                                    {
-                                        error!("Failed to add relay candidate: {}", e);
-                                    } else {
-                                        relay_candidate_added = true;
-                                    }
+                        // Add relay candidate if peer connection exists
+                        if let Some(pc) = peer_connection.as_mut() {
+                            if !relay_candidate_added {
+                                if let Err(e) =
+                                    add_relay_candidate(pc, addr, local_addr, &mut ws_stream).await
+                                {
+                                    error!("Failed to add relay candidate: {}", e);
+                                } else {
+                                    relay_candidate_added = true;
                                 }
                             }
                         }
@@ -410,11 +407,11 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                     TurnEvent::AllocateError(_, err) => {
                         error!("TURN allocation error: {}", err);
                     }
-                    TurnEvent::CreatePermissionResponse(tid, peer_addr) => {
-                        if pending_permissions.remove(&tid).is_some() {
-                            println!("CreatePermission for peer addr {} is granted", peer_addr);
-                            granted_permissions.insert(peer_addr);
-                        }
+                    TurnEvent::CreatePermissionResponse(tid, peer_addr)
+                        if pending_permissions.remove(&tid).is_some() =>
+                    {
+                        println!("CreatePermission for peer addr {} is granted", peer_addr);
+                        granted_permissions.insert(peer_addr);
                     }
                     TurnEvent::CreatePermissionError(_, err) => {
                         error!("CreatePermission error: {}", err);
@@ -498,21 +495,20 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                             println!("Peer Connection connected!");
                         }
                     }
-                    RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                        RTCDataChannelEvent::OnOpen(channel_id) => {
-                            if let Some(dc) = pc.data_channel(channel_id) {
-                                println!(
-                                    "{} - Data channel '{}'-'{}' open",
-                                    chrono::Local::now().format("%H:%M:%S"),
-                                    dc.label(),
-                                    dc.id()
-                                );
-                                data_channel_id = Some(channel_id);
-                                last_send = Instant::now();
-                            }
+                    RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(
+                        channel_id,
+                    )) => {
+                        if let Some(dc) = pc.data_channel(channel_id) {
+                            println!(
+                                "{} - Data channel '{}'-'{}' open",
+                                chrono::Local::now().format("%H:%M:%S"),
+                                dc.label(),
+                                dc.id()
+                            );
+                            data_channel_id = Some(channel_id);
+                            last_send = Instant::now();
                         }
-                        _ => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -527,6 +523,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                             .unwrap_or_default();
                         println!("Message from DataChannel: '{}'", msg_str);
                     }
+                    _ => {}
                 }
             }
 

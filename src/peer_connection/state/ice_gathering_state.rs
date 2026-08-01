@@ -115,6 +115,7 @@ use std::fmt;
 /// [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 /// [RFC 8838]: https://datatracker.ietf.org/doc/html/rfc8838
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RTCIceGatheringState {
     /// State not specified. This should not occur in normal operation.
     #[default]

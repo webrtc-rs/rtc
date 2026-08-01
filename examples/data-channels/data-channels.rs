@@ -263,6 +263,7 @@ async fn run(
                     );
                     dc.send_text(msg_str)?;
                 }
+                _ => {}
             }
         }
 

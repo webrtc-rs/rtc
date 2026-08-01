@@ -864,10 +864,10 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
 
         while let Some(event) = rtc_pc.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
-                    if state == RTCIceConnectionState::Failed {
-                        return Err(anyhow::anyhow!("RTC ICE connection failed"));
-                    }
+                RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state)
+                    if state == RTCIceConnectionState::Failed =>
+                {
+                    return Err(anyhow::anyhow!("RTC ICE connection failed"));
                 }
                 RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
                     log::info!("RTC connection state: {}", state);

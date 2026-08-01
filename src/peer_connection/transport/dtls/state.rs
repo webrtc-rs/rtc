@@ -85,6 +85,7 @@ use std::fmt;
 /// [MDN RTCDtlsTransport.state]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDtlsTransport/state
 /// [RFC 6347]: https://datatracker.ietf.org/doc/html/rfc6347
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCDtlsTransportState {
     /// State not specified. This should not occur in normal operation.
     #[default]

@@ -104,6 +104,7 @@ fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
 }
 
 /// What the agent reports to its caller.
+#[non_exhaustive]
 pub enum Event {
     /// The agent's connection state changed.
     ConnectionStateChange(ConnectionState),

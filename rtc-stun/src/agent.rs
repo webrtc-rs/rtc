@@ -43,6 +43,7 @@ pub struct Event {
 
 #[derive(Debug)] //Clone
 /// What became of a STUN transaction.
+#[non_exhaustive]
 pub enum StunEvent {
     /// The agent was closed, abandoning this transaction.
     AgentClosed,
@@ -68,6 +69,7 @@ const AGENT_COLLECT_CAP: usize = 100;
 /// ClientAgent is Agent implementation that is used by Client to
 /// process transactions.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ClientAgent {
     /// Hand an inbound message to the agent for matching against a transaction.
     Process(Message),

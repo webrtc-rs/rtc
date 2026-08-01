@@ -38,6 +38,7 @@ use cipher_suite_tls_psk_with_aes_128_gcm_sha256::*;
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The cipher suites this crate can negotiate, by their IANA code points.
+#[non_exhaustive]
 pub enum CipherSuiteId {
     // AES-128-CCM
     /// `TLS_ECDHE_ECDSA_WITH_AES_128_CCM` (`0xc0ac`).
@@ -175,6 +176,7 @@ impl From<&str> for CipherSuiteId {
 
 #[derive(Copy, Clone, Debug)]
 /// The hash a suite uses in its PRF and `Finished` computation.
+#[non_exhaustive]
 pub enum CipherSuiteHash {
     /// SHA-256.
     Sha256,

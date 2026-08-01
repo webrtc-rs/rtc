@@ -208,6 +208,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         debug!("recv dtls application RAW {:?}", msg.transport.peer_addr);
                         messages.push(message);
                     }
+                    _ => {}
                 }
             }
 

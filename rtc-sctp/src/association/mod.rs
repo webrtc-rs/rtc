@@ -55,6 +55,7 @@ mod association_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AssociationError {
     /// Handshake failed
     #[error("handshake failed due to {0}")]

@@ -14,6 +14,7 @@ use std::time::Instant;
 /// This enum represents the current state of a candidate pair
 /// in the ICE connectivity check process.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCStatsIceCandidatePairState {
     /// State has not been set.
     #[default]
@@ -48,6 +49,7 @@ impl From<CandidatePairState> for RTCStatsIceCandidatePairState {
             CandidatePairState::InProgress => RTCStatsIceCandidatePairState::InProgress,
             CandidatePairState::Failed => RTCStatsIceCandidatePairState::Failed,
             CandidatePairState::Succeeded => RTCStatsIceCandidatePairState::Succeeded,
+            _ => RTCStatsIceCandidatePairState::Unspecified,
         }
     }
 }

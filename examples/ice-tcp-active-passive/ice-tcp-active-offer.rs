@@ -319,16 +319,13 @@ async fn main() -> Result<()> {
                         println!("[Offer] Connected!");
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(channel_id) => {
-                        if let Some(dc) = peer_connection.data_channel(channel_id) {
-                            println!("[Offer] Data channel '{}'-'{}' open", dc.label(), dc.id());
-                            data_channel_id = Some(channel_id);
-                            last_send = Instant::now();
-                        }
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
+                    if let Some(dc) = peer_connection.data_channel(channel_id) {
+                        println!("[Offer] Data channel '{}'-'{}' open", dc.label(), dc.id());
+                        data_channel_id = Some(channel_id);
+                        last_send = Instant::now();
                     }
-                    _ => {}
-                },
+                }
                 _ => {}
             }
         }
@@ -343,6 +340,7 @@ async fn main() -> Result<()> {
                         String::from_utf8(data_channel_message.data.to_vec()).unwrap_or_default();
                     println!("[Offer] Message from DataChannel: '{}'", msg_str);
                 }
+                _ => {}
             }
         }
 

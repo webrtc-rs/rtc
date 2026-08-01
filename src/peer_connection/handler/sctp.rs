@@ -143,6 +143,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     DatagramEvent::AssociationEvent(event) => {
                         sctp_events.entry(ch).or_default().push_back(event);
                     }
+                    _ => {}
                 }
             }
 
@@ -670,6 +671,7 @@ mod tests {
                                 sc.handle_event(e);
                             }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -774,6 +776,7 @@ mod tests {
                                 c.handle_event(e);
                             }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -789,6 +792,7 @@ mod tests {
                                 c.handle_event(e);
                             }
                         }
+                        _ => {}
                     }
                 }
             }

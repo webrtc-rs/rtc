@@ -243,15 +243,12 @@ async fn test_ice_restart_interop() -> Result<()> {
                         rtc_connected = true;
                     }
                 }
-                RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(channel_id) => {
-                        if let Some(dc) = rtc_pc.data_channel(channel_id) {
-                            log::info!("RTC data channel '{}'-'{}' opened", dc.label(), dc.id());
-                            rtc_dc_id = Some(channel_id);
-                        }
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
+                    if let Some(dc) = rtc_pc.data_channel(channel_id) {
+                        log::info!("RTC data channel '{}'-'{}' opened", dc.label(), dc.id());
+                        rtc_dc_id = Some(channel_id);
                     }
-                    _ => {}
-                },
+                }
                 _ => {}
             }
         }
@@ -265,6 +262,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                     log::info!("RTC received message: {}", msg_str);
                     rtc_received_messages.lock().await.push(msg_str.to_string());
                 }
+                _ => {}
             }
         }
 
@@ -392,6 +390,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                     log::info!("RTC received message: {}", msg_str);
                     rtc_received_messages.lock().await.push(msg_str.to_string());
                 }
+                _ => {}
             }
         }
 
@@ -552,6 +551,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                     log::info!("RTC received message after restart: {}", msg_str);
                     rtc_received_messages.lock().await.push(msg_str.to_string());
                 }
+                _ => {}
             }
         }
 
@@ -624,6 +624,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                     log::info!("RTC received message after restart: {}", msg_str);
                     rtc_received_messages.lock().await.push(msg_str.to_string());
                 }
+                _ => {}
             }
         }
 

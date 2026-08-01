@@ -224,6 +224,7 @@ pub use track_event::{RTCTrackEvent, RTCTrackEventInit};
 /// See [RTCPeerConnection Events](https://www.w3.org/TR/webrtc/#rtcpeerconnection-interface)
 #[allow(clippy::enum_variant_names)]
 #[derive(Default, Clone, Debug)]
+#[non_exhaustive]
 pub enum RTCPeerConnectionEvent {
     /// Fired when negotiation is needed to maintain the connection.
     ///
@@ -520,6 +521,7 @@ pub enum RTCPeerConnectionEvent {
 ///
 /// This enum is currently empty but reserved for potential future event types.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RTCEvent {}
 
 /// Internal event types for WebRTC implementation.

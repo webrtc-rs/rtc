@@ -9,6 +9,7 @@ use std::fmt;
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcsctptransportstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum RTCSctpTransportState {
     /// The transport state is unspecified.
     #[default]

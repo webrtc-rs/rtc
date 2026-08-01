@@ -87,6 +87,8 @@
 //!             println!("Binary message");
 //!         }
 //!     }
+//!     // RTCMessage is #[non_exhaustive]: a wildcard arm is required.
+//!     _ => {}
 //! }
 //! # }
 //! ```
@@ -329,6 +331,8 @@ pub(crate) mod internal;
 ///         println!("Received data on channel {}", channel_id);
 ///         // Process application data
 ///     }
+///     // RTCMessage is #[non_exhaustive]: a wildcard arm is required.
+///     _ => {}
 /// }
 /// # }
 /// ```
@@ -381,6 +385,8 @@ pub(crate) mod internal;
 ///             println!("Binary: {} bytes", msg.data.len());
 ///         }
 ///     }
+///     // RTCMessage is #[non_exhaustive]: a wildcard arm is required.
+///     _ => {}
 /// }
 /// # }
 /// ```
@@ -409,6 +415,7 @@ pub(crate) mod internal;
 /// [RFC 3711]: https://datatracker.ietf.org/doc/html/rfc3711
 /// [RFC 8831]: https://datatracker.ietf.org/doc/html/rfc8831
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RTCMessage {
     /// RTP packet for a specific media track.
     ///

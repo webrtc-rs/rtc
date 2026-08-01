@@ -251,6 +251,7 @@ pub struct ReplayProtection {
 /// Controls the maximum size of messages that can be sent through data channels.
 /// Per [RFC 8841](https://datatracker.ietf.org/doc/html/rfc8841), the default is 64KB.
 #[derive(Copy, Clone)]
+#[non_exhaustive]
 pub enum SctpMaxMessageSize {
     /// Fixed maximum message size in bytes.
     Bounded(u32),

@@ -17,6 +17,7 @@ use bytes::{Buf, BufMut};
 /// RTCP packet types registered with IANA. See: <https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-4>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum PacketType {
     #[default]
     /// A packet type this crate does not model.

@@ -30,6 +30,7 @@ pub fn supported_network_types() -> Vec<NetworkType> {
 
 /// Represents the type of network.
 #[derive(Default, PartialEq, Debug, Copy, Clone, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NetworkType {
     #[serde(rename = "unspecified")]
     #[default]

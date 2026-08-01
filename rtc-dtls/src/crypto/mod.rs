@@ -167,6 +167,7 @@ pub trait CustomSigner: Send + Sync + std::fmt::Debug {
 
 /// Either ED25519, ECDSA, RSA keypair, or a custom external signer.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CryptoPrivateKeyKind {
     /// An Ed25519 key pair.
     Ed25519(Ed25519KeyPair),

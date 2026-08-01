@@ -6,6 +6,7 @@ use shared::error::*;
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 /// The named elliptic curves this crate can perform ECDHE over.
+#[non_exhaustive]
 pub enum NamedCurve {
     /// `UNSUPPORTED` (`0x0000`).
     Unsupported = 0x0000,
