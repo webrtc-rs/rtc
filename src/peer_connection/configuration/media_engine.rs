@@ -403,9 +403,7 @@ impl MediaEngine {
         // type) fmtp parameter points at the primary codec this RTX stream
         // repairs. Browsers offer an RTX codec for every video codec by default
         // and drop RTX negotiation for any primary we do not pair one with, so
-        // register one RTX codec per primary video codec (mirroring pion's
-        // RegisterDefaultCodecs). ulpfec is a FEC codec, not a media codec, and
-        // does not get an RTX pairing.
+        // register one RTX codec per primary video codec.
         let rtx_codec = |payload_type: PayloadType, apt: PayloadType| RTCRtpCodecParameters {
             rtp_codec: RTCRtpCodec {
                 mime_type: MIME_TYPE_RTX.to_owned(),
@@ -550,16 +548,6 @@ impl MediaEngine {
                 payload_type: 126,
             },
             rtx_codec(107, 126),
-            RTCRtpCodecParameters {
-                rtp_codec: RTCRtpCodec {
-                    mime_type: "video/ulpfec".to_owned(),
-                    clock_rate: 90000,
-                    channels: 0,
-                    sdp_fmtp_line: "".to_owned(),
-                    rtcp_feedback: vec![],
-                },
-                payload_type: 116,
-            },
         ] {
             self.register_codec(codec, RtpCodecKind::Video)?;
         }
@@ -1167,6 +1155,61 @@ impl MediaEngine {
 }
 
 #[cfg(test)]
+mod default_fec_codec_tests {
+    use super::*;
+
+    // Issue #837: the default media engine must not offer ULPFEC. The receive path does
+    // not recover media from ULPFEC packets, so advertising it invites a peer to send
+    // repair packets we cannot use. `MIME_TYPE_ULP_FEC` stays exported for applications
+    // that register it deliberately; only the *default* registration is removed.
+    #[test]
+    fn default_codecs_do_not_offer_ulpfec() {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+
+        let ulpfec: Vec<_> = me
+            .video_codecs
+            .iter()
+            .filter(|c| {
+                UniCase::new(c.rtp_codec.mime_type.as_str()) == UniCase::new(MIME_TYPE_ULP_FEC)
+            })
+            .map(|c| c.payload_type)
+            .collect();
+
+        assert!(
+            ulpfec.is_empty(),
+            "default codecs must not advertise ULPFEC while the receive path cannot \
+             recover it; found payload type(s) {ulpfec:?}"
+        );
+    }
+
+    // The constant remains part of the public API so an application can opt in.
+    #[test]
+    fn ulpfec_remains_registerable_explicitly() {
+        let mut me = MediaEngine::default();
+        me.register_default_codecs().unwrap();
+        me.register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_ULP_FEC.to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: "".to_owned(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 116,
+            },
+            RtpCodecKind::Video,
+        )
+        .expect("an application may still register ULPFEC itself");
+
+        assert!(me.video_codecs.iter().any(|c| {
+            UniCase::new(c.rtp_codec.mime_type.as_str()) == UniCase::new(MIME_TYPE_ULP_FEC)
+        }));
+    }
+}
+
+#[cfg(test)]
 mod default_rtx_codec_tests {
     use super::*;
     use crate::rtp_transceiver::rtp_sender::rtp_codec::{find_rtx_payload_type, parse_rtx_apt};
@@ -1186,10 +1229,7 @@ mod default_rtx_codec_tests {
                 let apt = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
                     .expect("rtx codec must carry an apt= parameter");
                 rtx_apts.push(apt);
-            } else if UniCase::new(codec.rtp_codec.mime_type.as_str())
-                != UniCase::new("video/ulpfec")
-            {
-                // ulpfec is a FEC codec and has no RTX pairing.
+            } else {
                 primary_payload_types.push(codec.payload_type);
             }
         }

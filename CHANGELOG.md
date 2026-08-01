@@ -13,7 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
--
+- **`MediaEngine::register_default_codecs` no longer registers `video/ulpfec`**
+  ([#837](https://github.com/webrtc-rs/webrtc/issues/837)). The receive path does not recover
+  media from ULPFEC packets, so offering the codec invited peers to send repair packets that
+  could not be used. Applications that want it can still register it explicitly with
+  `MIME_TYPE_ULP_FEC`, which remains public. **This changes the default offer's SDP**: payload
+  type 116 is no longer present. ULPFEC will return to the defaults once receive-side recovery
+  is implemented.
 
 ### Deprecated
 
