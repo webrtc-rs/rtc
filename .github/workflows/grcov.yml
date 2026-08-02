@@ -2,9 +2,9 @@ name: coverage
 
 on:
   push:
-    branches: [ master, v0.20.x ]
+    branches: [ master, v0.20.x, v0.21.x ]
   pull_request:
-    branches: [ master, v0.20.x ]
+    branches: [ master, v0.20.x, v0.21.x ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
