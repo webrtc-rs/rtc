@@ -200,11 +200,11 @@ async fn run_requester(
         // Poll requester events
         while let Some(event) = requester.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                    if state == RTCPeerConnectionState::Failed {
-                        eprintln!("Requester peer connection failed");
-                        break 'EventLoop;
-                    }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state)
+                    if state == RTCPeerConnectionState::Failed =>
+                {
+                    eprintln!("Requester peer connection failed");
+                    break 'EventLoop;
                 }
                 RTCPeerConnectionEvent::OnDataChannel(data_channel_event) => {
                     match data_channel_event {
@@ -358,21 +358,16 @@ async fn run_responder(
         // Poll responder events
         while let Some(event) = responder.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                    if state == RTCPeerConnectionState::Failed {
-                        eprintln!("Responder peer connection failed");
-                        break 'EventLoop;
-                    }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state)
+                    if state == RTCPeerConnectionState::Failed =>
+                {
+                    eprintln!("Responder peer connection failed");
+                    break 'EventLoop;
                 }
-                RTCPeerConnectionEvent::OnDataChannel(data_channel_event) => {
-                    match data_channel_event {
-                        RTCDataChannelEvent::OnOpen(_channel_id) => {
-                            println!("Responder: Data channel opened");
-                            resp_data_channel_opened = true;
-                            throughput_start = Instant::now();
-                        }
-                        _ => {}
-                    }
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(_channel_id)) => {
+                    println!("Responder: Data channel opened");
+                    resp_data_channel_opened = true;
+                    throughput_start = Instant::now();
                 }
                 _ => {}
             }
@@ -385,6 +380,7 @@ async fn run_responder(
                 RTCMessage::DataChannelMessage(_channel_id, data_channel_message) => {
                     total_bytes_received += data_channel_message.data.len();
                 }
+                _ => {}
             }
         }
 

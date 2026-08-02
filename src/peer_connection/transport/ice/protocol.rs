@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidate/protocol
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtciceprotocol-enum
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCIceProtocol {
     /// The protocol is unspecified.
     #[default]

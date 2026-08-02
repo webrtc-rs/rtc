@@ -10,6 +10,7 @@ use std::fmt;
 
 /// Codec kind identifying the media type.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RtpCodecKind {
     /// Unspecified or unknown codec type
     #[default]

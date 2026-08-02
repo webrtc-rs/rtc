@@ -355,6 +355,7 @@ impl IndexMut<AssociationHandle> for Slab<AssociationMeta> {
 
 /// Event resulting from processing a single datagram
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
+#[non_exhaustive]
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Association`
     AssociationEvent(AssociationEvent),
@@ -366,6 +367,7 @@ pub enum DatagramEvent {
 ///
 /// These arise before any I/O has been performed.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectError {
     /// The endpoint can no longer create new associations
     ///

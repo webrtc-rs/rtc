@@ -378,6 +378,7 @@ async fn test_reflect_webrtc_to_rtc() -> Result<()> {
                     // like NACK this needs to be called.
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

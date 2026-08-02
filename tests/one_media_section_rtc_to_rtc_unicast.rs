@@ -342,6 +342,7 @@ async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
                     // RTCP packets are handled internally
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

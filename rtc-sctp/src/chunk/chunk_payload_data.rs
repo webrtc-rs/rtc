@@ -15,6 +15,7 @@ pub(crate) const PAYLOAD_DATA_HEADER_SIZE: usize = 12;
 /// <https://www.iana.org/assignments/sctp-parameters/sctp-parameters.xhtml#sctp-parameters-25>
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
+#[non_exhaustive]
 pub enum PayloadProtocolIdentifier {
     /// `WebRTC DCEP` (50): a Data Channel Establishment Protocol control message.
     Dcep = 50,

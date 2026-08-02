@@ -13,6 +13,7 @@ use std::time::Duration;
 
 /// Represent the ICE candidate pair state.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CandidatePairState {
     #[default]
     #[serde(rename = "unspecified")]

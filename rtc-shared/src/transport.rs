@@ -31,6 +31,7 @@ impl EcnCodepoint {
 
 /// Type of transport protocol, either UDP or TCP
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum TransportProtocol {
     /// UDP
     #[default]

@@ -24,6 +24,7 @@ use std::collections::HashMap;
 ///
 /// Each variant corresponds to a different W3C WebRTC stats dictionary type.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RTCStatsReportEntry {
     /// Peer connection level statistics.
     PeerConnection(RTCPeerConnectionStats),

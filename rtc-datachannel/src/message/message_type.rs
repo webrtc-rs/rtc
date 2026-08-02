@@ -10,6 +10,7 @@ pub(crate) const MESSAGE_TYPE_LEN: usize = 1;
 
 /// The one-byte type that prefixes a DCEP message.
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum MessageType {
     /// A buffered-amount threshold crossing. Internal to this crate.
     DataChannelThreshold, // internal usage only

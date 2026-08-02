@@ -11,6 +11,7 @@ use shared::error::*;
 // Supported hash hash algorithms
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The hash algorithms that may be paired with a signature algorithm.
+#[non_exhaustive]
 pub enum HashAlgorithm {
     /// `MD2` (`0`).
     Md2 = 0, // Blacklisted
@@ -80,6 +81,7 @@ impl HashAlgorithm {
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-16
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// The signature algorithms this crate can verify and produce.
+#[non_exhaustive]
 pub enum SignatureAlgorithm {
     /// `RSA` (`1`).
     Rsa = 1,
@@ -174,6 +176,7 @@ pub(crate) fn select_signature_scheme(
 // RFC 8446, Section 4.2.3.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// A TLS signature scheme, which names a signature and hash together ([RFC 8446] §4.2.3).
+#[non_exhaustive]
 pub enum SignatureScheme {
     // RSASSA-PKCS1-v1_5 algorithms.
     /// `PKCS1_WITH_SHA256` (`0x0401`).

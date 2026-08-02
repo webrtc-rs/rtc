@@ -40,6 +40,7 @@ pub const ID_PAGE_PAYLOAD_SIZE: usize = 19;
 
 /// Header type classification for Opus pages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OggHeaderType {
     /// OpusHead - Opus ID page
     OpusHead,

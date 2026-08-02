@@ -181,6 +181,8 @@ impl<W: Write> H26xWriter<W> {
                         self.buffer.clear();
                     }
                 }
+                // Unknown payload kind: skip it rather than corrupt the Annex-B stream.
+                _ => {}
             }
         }
 

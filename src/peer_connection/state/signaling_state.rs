@@ -184,6 +184,7 @@ impl fmt::Display for StateChangeOp {
 /// [MDN RTCPeerConnection.signalingState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/signalingState
 /// [RFC 3264]: https://datatracker.ietf.org/doc/html/rfc3264
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RTCSignalingState {
     /// State not specified. This should not occur in normal operation.
     Unspecified = 0,

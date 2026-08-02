@@ -318,6 +318,7 @@ async fn run(
                     // Read incoming RTCP packets
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

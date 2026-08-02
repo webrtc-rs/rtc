@@ -255,6 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         format!("Query {} timed out after {} seconds", id, args.timeout).into(),
                     );
                 }
+                _ => {}
             }
         }
     }

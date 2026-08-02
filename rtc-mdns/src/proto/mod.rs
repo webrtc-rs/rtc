@@ -85,6 +85,7 @@ pub struct Query {
 /// }
 /// ```
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MdnsEvent {
     /// A query was successfully answered.
     ///
@@ -163,6 +164,8 @@ pub enum MdnsEvent {
 ///         MdnsEvent::QueryTimeout(id) => {
 ///             println!("Query {} timed out", id);
 ///         }
+///         // MdnsEvent is #[non_exhaustive]: a wildcard arm is required.
+///         _ => {}
 ///     }
 /// }
 /// ```

@@ -185,10 +185,10 @@ async fn test_data_channel_statistics_collection() -> Result<()> {
         // Process offer peer events
         while let Some(event) = runner.offer_pc.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                    if state == RTCPeerConnectionState::Connected {
-                        offer_connected = true;
-                    }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state)
+                    if state == RTCPeerConnectionState::Connected =>
+                {
+                    offer_connected = true;
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
                     offer_dc_id = Some(channel_id);
@@ -215,10 +215,10 @@ async fn test_data_channel_statistics_collection() -> Result<()> {
         // Process answer peer events
         while let Some(event) = runner.answer_pc.poll_event() {
             match event {
-                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                    if state == RTCPeerConnectionState::Connected {
-                        answer_connected = true;
-                    }
+                RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state)
+                    if state == RTCPeerConnectionState::Connected =>
+                {
+                    answer_connected = true;
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
                     _answer_dc_id = Some(channel_id);
@@ -891,6 +891,7 @@ async fn test_stats_json_serialization() -> Result<()> {
             RTCStatsReportEntry::AudioSource(s) => serde_json::to_string(s),
             RTCStatsReportEntry::VideoSource(s) => serde_json::to_string(s),
             RTCStatsReportEntry::AudioPlayout(s) => serde_json::to_string(s),
+            _ => continue, // Skip unknown variants for forward compatibility
         };
 
         assert!(

@@ -23,6 +23,7 @@ use shared::marshal::*;
 
 /// A parsed DataChannel message
 #[derive(Eq, PartialEq, Clone, Debug)]
+#[non_exhaustive]
 pub enum Message {
     /// A buffered-amount threshold crossing. Internal to this crate — not a DCEP message.
     DataChannelThreshold(DataChannelThreshold), // internal usage only

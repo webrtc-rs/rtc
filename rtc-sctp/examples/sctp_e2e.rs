@@ -69,6 +69,7 @@ impl Node {
                             assoc.handle_event(event);
                         }
                     }
+                    _ => {}
                 }
             }
         }

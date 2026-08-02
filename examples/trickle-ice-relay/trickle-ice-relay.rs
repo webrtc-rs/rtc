@@ -225,44 +225,42 @@ async fn run_main_loop(
                 Event::TransactionTimeout(_) => {
                     error!("TURN transaction timeout");
                 }
-                Event::AllocateResponse(tid, addr) => {
-                    if tid == allocate_tid {
-                        println!("TURN allocation successful, relay address: {}", addr);
-                        relay_addr = Some(addr);
+                Event::AllocateResponse(tid, addr) if tid == allocate_tid => {
+                    println!("TURN allocation successful, relay address: {}", addr);
+                    relay_addr = Some(addr);
 
-                        // If peer connection already exists and we haven't added the relay candidate yet, add it now
-                        if let Some(pc) = peer_connection.as_mut() {
-                            if !relay_candidate_added {
-                                match add_relay_candidate(pc, addr, relay_local_addr) {
-                                    Ok(local_candidate_init) => {
-                                        relay_candidate_added = true;
-                                        println!(
-                                            "Added local Relay ICE candidate: {}",
-                                            local_candidate_init.candidate
-                                        );
+                    // If peer connection already exists and we haven't added the relay candidate yet, add it now
+                    if let Some(pc) = peer_connection.as_mut() {
+                        if !relay_candidate_added {
+                            match add_relay_candidate(pc, addr, relay_local_addr) {
+                                Ok(local_candidate_init) => {
+                                    relay_candidate_added = true;
+                                    println!(
+                                        "Added local Relay ICE candidate: {}",
+                                        local_candidate_init.candidate
+                                    );
 
-                                        // Send to browser via WebSocket
-                                        if let Some(ref mut ws) = ws_stream {
-                                            if let Ok(json) =
-                                                serde_json::to_string(&local_candidate_init)
+                                    // Send to browser via WebSocket
+                                    if let Some(ref mut ws) = ws_stream {
+                                        if let Ok(json) =
+                                            serde_json::to_string(&local_candidate_init)
+                                        {
+                                            info!(
+                                                "Sending local ICE candidate: {}",
+                                                local_candidate_init.candidate
+                                            );
+                                            if let Err(e) =
+                                                ws.send(Message::Text(json.into())).await
                                             {
-                                                info!(
-                                                    "Sending local ICE candidate: {}",
-                                                    local_candidate_init.candidate
+                                                error!(
+                                                    "Failed to send relay candidate to browser: {}",
+                                                    e
                                                 );
-                                                if let Err(e) =
-                                                    ws.send(Message::Text(json.into())).await
-                                                {
-                                                    error!(
-                                                        "Failed to send relay candidate to browser: {}",
-                                                        e
-                                                    );
-                                                }
                                             }
                                         }
                                     }
-                                    Err(e) => error!("Failed to add relay candidate: {}", e),
                                 }
+                                Err(e) => error!("Failed to add relay candidate: {}", e),
                             }
                         }
                     }
@@ -270,11 +268,11 @@ async fn run_main_loop(
                 Event::AllocateError(_, err) => {
                     error!("TURN allocation error: {}", err);
                 }
-                Event::CreatePermissionResponse(tid, peer_addr) => {
-                    if pending_permissions.remove(&tid).is_some() {
-                        println!("CreatePermission for peer addr {} is granted", peer_addr);
-                        granted_permissions.insert(peer_addr);
-                    }
+                Event::CreatePermissionResponse(tid, peer_addr)
+                    if pending_permissions.remove(&tid).is_some() =>
+                {
+                    println!("CreatePermission for peer addr {} is granted", peer_addr);
+                    granted_permissions.insert(peer_addr);
                 }
                 Event::CreatePermissionError(_, err) => {
                     error!("CreatePermission error: {}", err);
@@ -349,21 +347,20 @@ async fn run_main_loop(
                             println!("Peer Connection connected!");
                         }
                     }
-                    RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                        RTCDataChannelEvent::OnOpen(channel_id) => {
-                            if let Some(dc) = pc.data_channel(channel_id) {
-                                println!(
-                                    "{} - Data channel '{}'-'{}' open",
-                                    chrono::Local::now().format("%H:%M:%S"),
-                                    dc.label(),
-                                    dc.id()
-                                );
-                                data_channel_id = Some(channel_id);
-                                last_send = Instant::now();
-                            }
+                    RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(
+                        channel_id,
+                    )) => {
+                        if let Some(dc) = pc.data_channel(channel_id) {
+                            println!(
+                                "{} - Data channel '{}'-'{}' open",
+                                chrono::Local::now().format("%H:%M:%S"),
+                                dc.label(),
+                                dc.id()
+                            );
+                            data_channel_id = Some(channel_id);
+                            last_send = Instant::now();
                         }
-                        _ => {}
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -378,6 +375,7 @@ async fn run_main_loop(
                             .unwrap_or_default();
                         println!("Message from DataChannel: '{}'", msg_str);
                     }
+                    _ => {}
                 }
             }
 

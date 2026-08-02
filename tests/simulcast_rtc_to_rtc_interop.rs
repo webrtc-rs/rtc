@@ -427,6 +427,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
                     // RTCP packets are handled internally
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

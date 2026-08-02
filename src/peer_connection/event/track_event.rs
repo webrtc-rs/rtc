@@ -167,6 +167,7 @@ pub struct RTCTrackEventInit {
 /// See [RTCTrackEvent](https://www.w3.org/TR/webrtc/#rtctrackevent)
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RTCTrackEvent {
     /// Track has opened and is ready to receive media.
     ///

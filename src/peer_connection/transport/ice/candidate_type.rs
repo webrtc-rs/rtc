@@ -105,6 +105,7 @@ use serde::{Deserialize, Serialize};
 /// [W3C RTCIceCandidateStats.candidateType]: https://w3c.github.io/webrtc-stats/#dom-rtcicecandidatestats-candidatetype
 /// [MDN RTCIceCandidateStats.candidateType]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidateStats/candidateType
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCIceCandidateType {
     /// Type not specified. This should not occur in normal operation.
     #[default]

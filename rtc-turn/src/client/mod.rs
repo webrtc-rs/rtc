@@ -68,6 +68,7 @@ pub type PeerAddr = SocketAddr;
 ///
 /// Every variant carries the [`TransactionId`] of the request it answers, so a caller can
 /// match responses to the requests it issued.
+#[non_exhaustive]
 pub enum Event {
     /// A request exhausted its retransmissions without a response.
     TransactionTimeout(TransactionId),

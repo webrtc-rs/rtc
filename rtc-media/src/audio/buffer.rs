@@ -58,6 +58,7 @@ pub trait ToByteBufferRef<L>: Sized {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 /// Errors from converting between buffers and raw bytes.
+#[non_exhaustive]
 pub enum Error {
     #[error("Unexpected end of buffer: (expected: {expected}, actual: {actual})")]
     /// The byte slice was too short to hold the expected number of samples.

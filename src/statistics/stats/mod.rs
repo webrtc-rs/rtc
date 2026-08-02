@@ -59,6 +59,7 @@ pub mod transport;
 /// Values are serialized using the W3C-specified lowercase hyphenated format
 /// (e.g., `InboundRTP` serializes to `"inbound-rtp"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCStatsType {
     /// Statistics for a media codec.
     #[serde(rename = "codec")]
@@ -142,6 +143,7 @@ pub struct RTCStats {
 /// This enum indicates why the video encoder may have reduced quality
 /// (resolution, frame rate, or bitrate) during encoding.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCQualityLimitationReason {
     /// No quality limitation is active.
     #[default]

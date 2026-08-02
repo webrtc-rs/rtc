@@ -416,6 +416,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
                     // Process RTCP packets
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

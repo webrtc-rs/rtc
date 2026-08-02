@@ -13,6 +13,7 @@ pub use ice::candidate::{
 };
 
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCIceTcpCandidateType {
     #[default]
     Unspecified,
@@ -34,6 +35,7 @@ impl From<TcpType> for RTCIceTcpCandidateType {
             TcpType::Active => RTCIceTcpCandidateType::Active,
             TcpType::Passive => RTCIceTcpCandidateType::Passive,
             TcpType::SimultaneousOpen => RTCIceTcpCandidateType::SimultaneousOpen,
+            _ => RTCIceTcpCandidateType::Unspecified,
         }
     }
 }
@@ -50,6 +52,7 @@ impl RTCIceTcpCandidateType {
 }
 
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCIceServerTransportProtocol {
     #[default]
     Unspecified,

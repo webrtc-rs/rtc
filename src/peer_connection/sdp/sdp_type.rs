@@ -52,6 +52,8 @@ use serde::{Deserialize, Serialize};
 ///     RTCSdpType::Pranswer => println!("This is a provisional answer"),
 ///     RTCSdpType::Rollback => println!("This is a rollback"),
 ///     RTCSdpType::Unspecified => println!("Type not specified"),
+///     // RTCSdpType is #[non_exhaustive]: a wildcard arm is required.
+///     _ => {}
 /// }
 /// # Ok(())
 /// # }
@@ -85,6 +87,7 @@ use serde::{Deserialize, Serialize};
 /// [MDN RTCSessionDescription.type]: https://developer.mozilla.org/en-US/docs/Web/API/RTCSessionDescription/type
 /// [RFC 3264]: https://datatracker.ietf.org/doc/html/rfc3264
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCSdpType {
     /// Type not specified. This is the default value and should not be used
     /// in actual WebRTC negotiation.

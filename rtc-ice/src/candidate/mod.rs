@@ -59,6 +59,7 @@ pub(crate) const COMPONENT_RTCP: u16 = 0;
 
 /// Represents the type of candidate `CandidateType` enum.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CandidateType {
     #[default]
     #[serde(rename = "unspecified")]

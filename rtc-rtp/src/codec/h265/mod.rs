@@ -55,6 +55,7 @@ pub const NAL_HEADER_SIZE: usize = 2;
 
 #[derive(PartialEq, Hash, Debug, Copy, Clone)]
 /// The H.265 NAL unit types this payloader distinguishes.
+#[non_exhaustive]
 pub enum UnitType {
     /// Video parameter set.
     VPS = 32,
@@ -1023,6 +1024,7 @@ impl H265TSCI {
 /// H265 Payload Enum
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum H265Payload {
     /// One NAL unit carried whole in a single packet.
     H265SingleNALUnitPacket(H265SingleNALUnitPacket),

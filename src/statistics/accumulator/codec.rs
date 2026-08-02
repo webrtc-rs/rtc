@@ -9,6 +9,7 @@ use std::time::Instant;
 
 /// Direction qualifier for codec stats IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CodecDirection {
     /// Codec used for sending (encoding).
     Send,

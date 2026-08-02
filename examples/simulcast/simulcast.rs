@@ -408,6 +408,7 @@ async fn run(
                     // RTCP packets are handled internally
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

@@ -169,6 +169,8 @@
 //!                 println!("Received data channel message on channel {:?}", channel_id);
 //!                 // Process data channel message
 //!             }
+//!             // RTCMessage is #[non_exhaustive]: a wildcard arm is required.
+//!             _ => {}
 //!         }
 //!     }
 //!

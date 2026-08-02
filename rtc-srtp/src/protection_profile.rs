@@ -1,6 +1,7 @@
 /// ProtectionProfile specifies Cipher and AuthTag details, similar to TLS cipher suite
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ProtectionProfile {
     #[default]
     /// `SRTP_AES128_CM_HMAC_SHA1_80`: AES-128 counter mode with an 80-bit HMAC-SHA1 tag.

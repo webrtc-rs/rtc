@@ -81,6 +81,7 @@ impl RTCMessageInternal {
                         }
                         rtcp_packet_size
                     }
+                    _ => 0, // Future Packet variants: size unknown; treat as 0 for accounting.
                 },
                 RTPMessage::TrackPacket(tp) => match &tp.packet {
                     Packet::Rtp(rtp) => rtp.marshal_size(),
@@ -91,6 +92,7 @@ impl RTCMessageInternal {
                         }
                         rtcp_packet_size
                     }
+                    _ => 0,
                 },
             },
         }

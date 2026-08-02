@@ -9,6 +9,7 @@ use shared::error::*;
 
 /// The type of server used in the ice.URL structure.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+#[non_exhaustive]
 pub enum SchemeType {
     /// The URL represents a STUN server.
     Stun,
@@ -57,6 +58,7 @@ impl fmt::Display for SchemeType {
 
 /// The transport protocol type that is used in the `ice::url::Url` structure.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+#[non_exhaustive]
 pub enum ProtoType {
     /// The URL uses a UDP transport.
     #[default]

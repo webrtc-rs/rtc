@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// Compression methods. DTLS in WebRTC always negotiates `Null`.
+#[non_exhaustive]
 pub enum CompressionMethodId {
     /// `NULL` (`0`).
     Null = 0,

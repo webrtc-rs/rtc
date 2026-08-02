@@ -393,6 +393,7 @@ impl RtcpSession {
                     println!();
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
     }

@@ -286,6 +286,7 @@ fn parse_playlist(path: &str) -> Result<Vec<OggTrack>> {
                     }
                     continue;
                 }
+                _ => {}
             }
         }
 

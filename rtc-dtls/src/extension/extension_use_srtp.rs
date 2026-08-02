@@ -11,6 +11,7 @@ use super::*;
 /// [RFC 5764 §4.1.2]: https://tools.ietf.org/html/rfc5764#section-4.1.2
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SrtpProtectionProfile {
     /// `SRTP_AES128_CM_HMAC_SHA1_80` (`0x0001`).
     Srtp_Aes128_Cm_Hmac_Sha1_80 = 0x0001,

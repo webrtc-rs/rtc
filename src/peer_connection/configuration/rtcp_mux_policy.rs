@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 /// * [W3C RTCRtcpMuxPolicy](https://w3c.github.io/webrtc-pc/#rtcrtcpmuxpolicy-enum)
 /// * [RFC 5761 - Multiplexing RTP and RTCP](https://tools.ietf.org/html/rfc5761)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCRtcpMuxPolicy {
     /// Unspecified - not a valid policy, used as default value
     #[default]

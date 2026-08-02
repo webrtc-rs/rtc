@@ -31,6 +31,7 @@ use std::io::{Read, Write};
 // https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// The extension type code points this crate understands.
+#[non_exhaustive]
 pub enum ExtensionValue {
     /// `SERVER_NAME` (`0`).
     ServerName = 0,
@@ -67,6 +68,7 @@ impl From<u16> for ExtensionValue {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 /// A parsed hello extension.
+#[non_exhaustive]
 pub enum Extension {
     /// Server Name Indication.
     ServerName(ExtensionServerName),

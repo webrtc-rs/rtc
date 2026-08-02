@@ -391,6 +391,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
                     println!();
                 }
                 RTCMessage::DataChannelMessage(_, _) => {}
+                _ => {}
             }
         }
 

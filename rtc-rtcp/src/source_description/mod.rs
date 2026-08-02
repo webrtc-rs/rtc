@@ -23,6 +23,7 @@ const SDES_TEXT_OFFSET: usize = 2;
 /// RTP SDES item types registered with IANA. See: <https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-5>
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum SdesType {
     #[default]
     /// End of the SDES item list ([RFC 3550] §6.5).

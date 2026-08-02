@@ -260,6 +260,7 @@ where
                             );
                         }
                     }
+                    _ => {}
                 }
 
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {

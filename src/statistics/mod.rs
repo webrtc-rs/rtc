@@ -51,6 +51,7 @@ pub mod stats;
 /// - `None` - Return all statistics for the entire connection
 /// - `Sender` - Return statistics for a specific RTP sender and referenced objects
 /// - `Receiver` - Return statistics for a specific RTP receiver and referenced objects
+#[non_exhaustive]
 pub enum StatsSelector {
     /// Gather stats for the whole connection.
     ///

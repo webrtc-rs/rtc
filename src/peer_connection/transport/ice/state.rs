@@ -12,6 +12,7 @@ use std::fmt;
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceTransport/state
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicetransportstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RTCIceTransportState {
     /// The transport state is unspecified.
     #[default]

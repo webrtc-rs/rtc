@@ -143,6 +143,7 @@ use crate::packet::PartialDecode;
 
 /// Payload in Incoming/outgoing Transmit
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Payload {
     /// An inbound packet whose header has been decoded but whose chunks have not.
     PartialDecode(PartialDecode),

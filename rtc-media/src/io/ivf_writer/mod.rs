@@ -14,6 +14,7 @@ use shared::error::Result;
 
 /// Codec type for IVF writer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum IvfCodec {
     #[default]
     /// VP8, written with the `VP80` FourCC.

@@ -11,6 +11,7 @@ use shared::error::Result;
 
 /// Represents the different Multicast modes that ICE can run.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone)]
+#[non_exhaustive]
 pub enum MulticastDnsMode {
     /// Means remote mDNS candidates will be discarded, and local host candidates will use IPs.
     Disabled,

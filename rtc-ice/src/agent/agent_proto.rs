@@ -36,6 +36,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
                                 error!("mDNS Query {} timed out for {}", id, c.address());
                             }
                         }
+                        _ => {}
                     }
                 }
                 remote_candidates
@@ -113,6 +114,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
                             error!("mDNS Query {} timed out for {}", id, c.address());
                         }
                     }
+                    _ => {}
                 }
             }
             remote_candidates
