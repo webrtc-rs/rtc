@@ -2,9 +2,9 @@ name: SemVer Check
 
 on:
   push:
-    branches: [master]
+    branches: [ master, v0.20.x ]
   pull_request:
-    branches: [master]
+    branches: [ master, v0.20.x ]
 
 jobs:
   semver:
