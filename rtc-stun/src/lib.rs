@@ -92,10 +92,3 @@ pub mod xoraddr;
 pub const DEFAULT_PORT: u16 = 3478;
 /// The default port for `stuns:` (STUN over TLS/DTLS).
 pub const DEFAULT_TLS_PORT: u16 = 5349;
-
-#[cfg(all(feature = "aws-lc-rs", feature = "ring"))]
-compile_error!("At most one of the features \"aws-lc-rs\" and \"ring\" can be enabled.");
-#[cfg(not(any(feature = "aws-lc-rs", feature = "ring")))]
-compile_error!("At least one of the features \"aws-lc-rs\" and \"ring\" must be enabled.");
-#[cfg(feature = "aws-lc-rs")]
-extern crate aws_lc_rs as ring;

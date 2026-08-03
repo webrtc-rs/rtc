@@ -21,6 +21,7 @@ pub mod agent_stats;
 
 use agent_config::*;
 use bytes::BytesMut;
+use crypto::RTCCryptoProvider;
 use log::{debug, error, info, trace, warn};
 use mdns::{Mdns, QueryId};
 use sansio::Protocol;
@@ -98,8 +99,13 @@ fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
     Ok(())
 }
 
-fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
-    let message_integrity_attr = MessageIntegrity(key.to_vec());
+fn assert_inbound_message_integrity(
+    m: &mut Message,
+    key: &[u8],
+    provider: Arc<dyn RTCCryptoProvider>,
+) -> Result<()> {
+    let message_integrity_attr =
+        MessageIntegrity::new_raw_integrity_with_provider(key.to_vec(), provider);
     message_integrity_attr.check(m)
 }
 
@@ -119,6 +125,7 @@ pub enum Event {
 
 /// Represents the ICE agent.
 pub struct Agent {
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) tie_breaker: u64,
     pub(crate) is_controlling: bool,
     pub(crate) lite: bool,
@@ -187,6 +194,8 @@ pub struct Agent {
 impl Default for Agent {
     fn default() -> Self {
         Self {
+            crypto_provider: crypto::default_provider()
+                .expect("a default crypto provider is required"),
             tie_breaker: 0,
             is_controlling: false,
             lite: false,
@@ -231,6 +240,16 @@ impl Default for Agent {
 impl Agent {
     /// Creates a new Agent.
     pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
+        let provider =
+            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
+        Self::new_with_provider(config, provider)
+    }
+
+    /// Creates a new Agent using an explicitly selected crypto provider.
+    pub fn new_with_provider(
+        config: Arc<AgentConfig>,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
+    ) -> Result<Self> {
         let mut mdns_local_name = config.multicast_dns_local_name.clone();
         if mdns_local_name.is_empty() {
             mdns_local_name = generate_multicast_dns_name();
@@ -273,6 +292,7 @@ impl Agent {
         }
 
         let mut agent = Self {
+            crypto_provider,
             tie_breaker: rand::random::<u64>(),
             is_controlling: config.is_controlling,
             lite: config.lite,
@@ -1030,7 +1050,10 @@ impl Agent {
                 Box::new(m.clone()),
                 Box::new(BINDING_SUCCESS),
                 Box::new(XorMappedAddress { ip, port }),
-                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    local_pwd,
+                    self.crypto_provider.clone(),
+                )),
                 Box::new(FINGERPRINT),
             ]);
             (out, result)
@@ -1071,7 +1094,10 @@ impl Agent {
                 Box::new(m.clone()),
                 Box::new(stun::message::BINDING_ERROR),
                 Box::new(CODE_ROLE_CONFLICT),
-                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    local_pwd,
+                    self.crypto_provider.clone(),
+                )),
                 Box::new(FINGERPRINT),
             ]);
             (out, result)
@@ -1287,8 +1313,11 @@ impl Agent {
 
         let mut remote_candidate_index = self.find_remote_candidate(remote_addr);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
-            if let Err(err) = assert_inbound_message_integrity(m, remote_credentials.pwd.as_bytes())
-            {
+            if let Err(err) = assert_inbound_message_integrity(
+                m,
+                remote_credentials.pwd.as_bytes(),
+                self.crypto_provider.clone(),
+            ) {
                 warn!(
                     "[{}]: discard message from ({}), {}",
                     self.get_name(),
@@ -1324,6 +1353,7 @@ impl Agent {
                 } else if let Err(err) = assert_inbound_message_integrity(
                     m,
                     self.ufrag_pwd.local_credentials.pwd.as_bytes(),
+                    self.crypto_provider.clone(),
                 ) {
                     warn!(
                         "[{}]: discard message from ({}), {}",

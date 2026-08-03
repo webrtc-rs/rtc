@@ -15,6 +15,7 @@ categories.workspace = true
 shared = { workspace = true, default-features = false, features = [] }
 stun.workspace = true
 sansio.workspace = true
+crypto.workspace = true
 
 bytes.workspace = true
 log.workspace = true
@@ -31,8 +32,8 @@ ctrlc.workspace = true
 [features]
 default = ["ring"]
 metrics = []
-ring = ["stun/ring"]
-aws-lc-rs = ["stun/aws-lc-rs"]
+ring = ["crypto/ring", "stun/ring"]
+aws-lc-rs = ["crypto/aws-lc-rs", "stun/aws-lc-rs"]
 
 [[bench]]
 name = "bench"

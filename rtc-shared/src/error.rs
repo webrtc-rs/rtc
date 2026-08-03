@@ -2326,6 +2326,9 @@ pub enum Error {
     /// Other PeerConnection Err.
     #[error("Other PeerConnection Err: {0}")]
     OtherPeerConnectionErr(String),
+    /// A provider-neutral cryptographic operation failed.
+    #[error("crypto: {0}")]
+    Crypto(String),
     #[error("{0}")]
     /// An error that does not fit any other variant, carrying a description.
     Other(String),

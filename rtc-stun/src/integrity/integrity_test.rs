@@ -3,6 +3,155 @@ use crate::attributes::ATTR_SOFTWARE;
 use crate::fingerprint::FINGERPRINT;
 use crate::message::TransactionId;
 use crate::textattrs::TextAttribute;
+use crypto::{
+    CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, RTCCrypto, RTCCryptoProvider,
+    RTCRandom, constant_time_eq,
+};
+use std::sync::Arc;
+
+struct TestProvider {
+    crypto: TestCrypto,
+    random: TestRandom,
+}
+
+struct TestCrypto;
+
+struct TestRandom;
+
+impl RTCCryptoProvider for TestProvider {
+    fn name(&self) -> &'static str {
+        "test"
+    }
+
+    fn crypto(&self) -> &dyn RTCCrypto {
+        &self.crypto
+    }
+
+    fn random(&self) -> &dyn RTCRandom {
+        &self.random
+    }
+}
+
+impl RTCRandom for TestRandom {
+    fn fill(&self, output: &mut [u8]) -> std::result::Result<(), CryptoError> {
+        output.fill(0x42);
+        Ok(())
+    }
+}
+
+impl RTCCrypto for TestCrypto {
+    fn supports(&self, algorithm: CryptoAlgorithm) -> bool {
+        matches!(
+            algorithm,
+            CryptoAlgorithm::Hash(HashAlgorithm::Md5) | CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1)
+        )
+    }
+
+    fn hash(
+        &self,
+        algorithm: HashAlgorithm,
+        data: &[u8],
+    ) -> std::result::Result<Vec<u8>, CryptoError> {
+        if algorithm != HashAlgorithm::Md5 {
+            return Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hash(
+                algorithm,
+            )));
+        }
+        let mut output = vec![0_u8; 16];
+        let output_len = output.len();
+        for (index, byte) in data.iter().enumerate() {
+            output[index % output_len] ^= byte;
+        }
+        Ok(output)
+    }
+
+    fn hmac(
+        &self,
+        algorithm: HmacAlgorithm,
+        key: &[u8],
+        input: &[&[u8]],
+        output: &mut [u8],
+    ) -> std::result::Result<(), CryptoError> {
+        if algorithm != HmacAlgorithm::Sha1 {
+            return Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hmac(
+                algorithm,
+            )));
+        }
+        if output.len() != algorithm.output_len() {
+            return Err(CryptoError::InvalidTagLength {
+                expected: algorithm.output_len(),
+                actual: output.len(),
+            });
+        }
+        output.fill(0);
+        for (index, byte) in key
+            .iter()
+            .chain(input.iter().flat_map(|part| part.iter()))
+            .enumerate()
+        {
+            output[index % algorithm.output_len()] ^= byte;
+        }
+        Ok(())
+    }
+
+    fn verify_hmac(
+        &self,
+        algorithm: HmacAlgorithm,
+        key: &[u8],
+        input: &[&[u8]],
+        expected: &[u8],
+    ) -> std::result::Result<(), CryptoError> {
+        if expected.len() != algorithm.output_len() {
+            return Err(CryptoError::InvalidTagLength {
+                expected: algorithm.output_len(),
+                actual: expected.len(),
+            });
+        }
+        let mut actual = vec![0_u8; algorithm.output_len()];
+        self.hmac(algorithm, key, input, &mut actual)?;
+        if constant_time_eq(&actual, expected) {
+            Ok(())
+        } else {
+            Err(CryptoError::AuthenticationFailed)
+        }
+    }
+}
+
+fn test_provider() -> Arc<dyn RTCCryptoProvider> {
+    Arc::new(TestProvider {
+        crypto: TestCrypto,
+        random: TestRandom,
+    })
+}
+
+#[test]
+fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<()> {
+    let integrity = MessageIntegrity::new_long_term_integrity_with_provider(
+        "user".to_owned(),
+        "realm".to_owned(),
+        "password".to_owned(),
+        test_provider(),
+    )?;
+    let mut message = Message::new();
+    message.write_header();
+    integrity.add_to(&mut message)?;
+    integrity.check(&mut message)?;
+
+    let attribute = message
+        .attributes
+        .0
+        .iter_mut()
+        .find(|attribute| attribute.typ == ATTR_MESSAGE_INTEGRITY)
+        .expect("MESSAGE-INTEGRITY attribute");
+    attribute.value.pop();
+    attribute.length -= 1;
+    assert_eq!(
+        integrity.check(&mut message),
+        Err(Error::ErrIntegrityMismatch)
+    );
+
+    Ok(())
+}
 
 #[test]
 fn test_message_integrity_add_to_simple() -> Result<()> {
@@ -15,7 +164,7 @@ fn test_message_integrity_add_to_simple() -> Result<()> {
         let expected = vec![
             104, 228, 91, 113, 61, 154, 222, 34, 101, 61, 181, 146, 177, 90, 4, 29,
         ];
-        assert_eq!(i.0, expected, "{}", Error::ErrIntegrityMismatch);
+        assert_eq!(i.key.as_ref(), expected, "{}", Error::ErrIntegrityMismatch);
     }
 
     let i = MessageIntegrity::new_long_term_integrity(
@@ -27,7 +176,7 @@ fn test_message_integrity_add_to_simple() -> Result<()> {
         0x84, 0x93, 0xfb, 0xc5, 0x3b, 0xa5, 0x82, 0xfb, 0x4c, 0x04, 0x4c, 0x45, 0x6b, 0xdc, 0x40,
         0xeb,
     ];
-    assert_eq!(i.0, expected, "{}", Error::ErrIntegrityMismatch);
+    assert_eq!(i.key.as_ref(), expected, "{}", Error::ErrIntegrityMismatch);
 
     //"Check"
     {
@@ -67,7 +216,11 @@ fn test_message_integrity_with_fingerprint() -> Result<()> {
     a.add_to(&mut m)?;
 
     let i = MessageIntegrity::new_short_term_integrity("pwd".to_owned());
-    assert_eq!(i.to_string(), "KEY: 0x[70, 77, 64]", "bad string {i}");
+    assert_eq!(
+        i.to_string(),
+        "MESSAGE-INTEGRITY key: [REDACTED; 3 bytes]",
+        "bad string {i}"
+    );
     let result = i.check(&mut m);
     assert!(result.is_err(), "should error");
 

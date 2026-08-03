@@ -43,8 +43,10 @@ pub const TRANSACTION_ID_SIZE: usize = 12;
 pub struct TransactionId(pub [u8; TRANSACTION_ID_SIZE]);
 
 impl TransactionId {
-    /// new returns new random transaction ID using crypto/rand
-    /// as source.
+    /// Creates a random transaction ID with `rand`'s cryptographically secure thread RNG.
+    ///
+    /// Transaction IDs remain independent of [`crypto::RTCCryptoProvider`] because ordinary STUN
+    /// message construction does not otherwise own a provider.
     pub fn new() -> Self {
         let mut b = TransactionId([0u8; TRANSACTION_ID_SIZE]);
         rand::rng().fill(&mut b.0);
@@ -197,8 +199,10 @@ impl Message {
         self.decode()
     }
 
-    /// NewTransactionID sets m.TransactionID to random value from crypto/rand
-    /// and returns error if any.
+    /// Replaces the transaction ID using `rand`'s cryptographically secure thread RNG.
+    ///
+    /// Transaction IDs remain independent of [`crypto::RTCCryptoProvider`] because a general
+    /// [`Message`] does not otherwise own a provider.
     pub fn new_transaction_id(&mut self) -> Result<()> {
         rand::rng().fill(&mut self.transaction_id.0);
         self.write_transaction_id();

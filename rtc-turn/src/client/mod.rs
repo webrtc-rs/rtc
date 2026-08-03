@@ -21,9 +21,11 @@ pub mod relay;
 pub mod transaction;
 
 use bytes::BytesMut;
+use crypto::RTCCryptoProvider;
 use log::{debug, trace};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use stun::attributes::*;
@@ -134,6 +136,7 @@ pub struct ClientConfig {
 
 /// Client is a STUN client
 pub struct Client {
+    crypto_provider: Arc<dyn RTCCryptoProvider>,
     stun_serv_addr: Option<SocketAddr>,
     turn_serv_addr: Option<SocketAddr>,
     local_addr: SocketAddr,
@@ -155,6 +158,16 @@ pub struct Client {
 impl Client {
     /// new returns a new Client instance. listeningAddress is the address and port to listen on, default "0.0.0.0:0"
     pub fn new(config: ClientConfig) -> Result<Self> {
+        let provider =
+            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
+        Self::new_with_provider(config, provider)
+    }
+
+    /// Creates a client using an explicitly selected crypto provider.
+    pub fn new_with_provider(
+        config: ClientConfig,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
+    ) -> Result<Self> {
         let stun_serv_addr = if config.stun_serv_addr.is_empty() {
             None
         } else {
@@ -174,6 +187,7 @@ impl Client {
         };
 
         Ok(Client {
+            crypto_provider: crypto_provider.clone(),
             stun_serv_addr,
             turn_serv_addr,
             local_addr: config.local_addr,
@@ -189,7 +203,10 @@ impl Client {
             } else {
                 DEFAULT_RTO_IN_MS
             },
-            integrity: MessageIntegrity::new_short_term_integrity(String::new()),
+            integrity: MessageIntegrity::new_short_term_integrity_with_provider(
+                String::new(),
+                crypto_provider,
+            ),
 
             relays: HashMap::new(),
             transmits: VecDeque::new(),
@@ -491,18 +508,21 @@ impl Client {
     ///
     /// The realm is *not* re-negotiated. It was learned from the server's 401 during the
     /// first `Allocate`, and a credential rotation keeps the same server, so it still
-    /// applies. Follow this with [`Relay::refresh`] so the server sees the new credential
-    /// before the allocation would otherwise expire.
+    /// applies. Follow this with [`Self::refresh_allocations`] so the server sees the new
+    /// credential before the allocation would otherwise expire.
     ///
     /// [RFC 5766 §6.2]: https://datatracker.ietf.org/doc/html/rfc5766#section-6.2
-    pub fn update_credentials(&mut self, username: String, password: String) {
-        self.username = Username::new(ATTR_USERNAME, username);
-        self.password = password;
-        self.integrity = MessageIntegrity::new_long_term_integrity(
-            self.username.text.clone(),
+    pub fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
+        let username = Username::new(ATTR_USERNAME, username);
+        let integrity = MessageIntegrity::new_long_term_integrity_with_provider(
+            username.text.clone(),
             self.realm.text.clone(),
-            self.password.clone(),
-        );
+            password.clone(),
+            self.crypto_provider.clone(),
+        )?;
+        self.username = username;
+        self.password = password;
+        self.integrity = integrity;
 
         // Each allocation carries the integrity it will sign its own Refresh /
         // CreatePermission / ChannelBind with, so they have to be re-signed too — otherwise
@@ -510,6 +530,8 @@ impl Client {
         for relay in self.relays.values_mut() {
             relay.integrity = self.integrity.clone();
         }
+
+        Ok(())
     }
 
     /// Refreshes every live allocation, re-signing each with the current credential.
@@ -581,11 +603,12 @@ impl Client {
                     }
                 };
 
-                self.integrity = MessageIntegrity::new_long_term_integrity(
+                self.integrity = MessageIntegrity::new_long_term_integrity_with_provider(
                     self.username.text.clone(),
                     self.realm.text.clone(),
                     self.password.clone(),
-                );
+                    self.crypto_provider.clone(),
+                )?;
 
                 let mut msg = Message::new();
 
