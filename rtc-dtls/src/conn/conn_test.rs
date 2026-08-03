@@ -20,7 +20,6 @@ use shared::error::*;*/
 
 //use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 //use rand::Rng;
-//use shared::crypto::KeyingMaterialExporter;
 
 const ERR_TEST_PSK_INVALID_IDENTITY: &str = "TestPSK: Server got invalid identity";
 const ERR_PSK_REJECTED: &str = "PSK Rejected";

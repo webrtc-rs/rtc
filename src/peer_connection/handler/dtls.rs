@@ -12,7 +12,6 @@ use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
 use log::{debug, warn};
-use sha2::{Digest, Sha256};
 use shared::TransportContext;
 use shared::error::{Error, Result};
 use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
@@ -62,7 +61,7 @@ impl<'a> DtlsHandler<'a> {
         srtp_profile: SrtpProtectionProfile,
         peer_certificates: &[Vec<u8>],
         dtls_cipher: Option<String>,
-    ) {
+    ) -> Result<()> {
         // Update transport DTLS state
         self.stats
             .transport
@@ -91,7 +90,8 @@ impl<'a> DtlsHandler<'a> {
 
         // Register local certificate and set local_certificate_id
         if let Some(local_cert) = self.ctx.dtls_transport.certificates.first() {
-            let fingerprints = local_cert.get_fingerprints();
+            let fingerprints = local_cert
+                .get_fingerprints_with_provider(self.ctx.dtls_transport.crypto_provider.clone())?;
             if let Some(fp) = fingerprints.first() {
                 // Register certificate in accumulator
                 // Use hex encoding for certificate (base64 would need additional dependency)
@@ -115,9 +115,13 @@ impl<'a> DtlsHandler<'a> {
         // Register remote certificate and set remote_certificate_id
         if let Some(peer_cert_der) = peer_certificates.first() {
             // Compute fingerprint from peer certificate
-            let mut hasher = Sha256::new();
-            hasher.update(peer_cert_der);
-            let hash = hasher.finalize();
+            let hash = self
+                .ctx
+                .dtls_transport
+                .crypto_provider
+                .crypto()
+                .hash(crypto::HashAlgorithm::Sha256, peer_cert_der)
+                .map_err(|error| Error::Crypto(error.to_string()))?;
             let fingerprint: String = hash
                 .iter()
                 .map(|b| format!("{:02x}", b))
@@ -140,6 +144,7 @@ impl<'a> DtlsHandler<'a> {
             // Set remote certificate ID in transport stats
             self.stats.transport.remote_certificate_id = cert_id;
         }
+        Ok(())
     }
 }
 
@@ -239,7 +244,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     srtp_profile,
                     &peer_certificates_for_stats,
                     dtls_cipher_for_stats,
-                );
+                )?;
             }
 
             for message in messages {
@@ -398,17 +403,25 @@ impl<'a> DtlsHandler<'a> {
             ));
         }
 
-        srtp_config.extract_session_keys_from_dtls(state, state.is_client())?;
+        let keying_material = state.export_keying_material(
+            srtp::config::LABEL_EXTRACTOR_DTLS_SRTP,
+            &[],
+            srtp_config.keying_material_len(),
+        )?;
+        srtp_config
+            .set_session_keys_from_keying_material(keying_material.as_ref(), state.is_client())?;
+        let crypto_provider = state.crypto_provider()?;
 
-        let local_context = srtp::context::Context::new(
+        let local_context = srtp::context::Context::new_with_provider(
             &srtp_config.keys.local_master_key,
             &srtp_config.keys.local_master_salt,
             srtp_config.profile,
             srtp_config.local_rtp_options,
             srtp_config.local_rtcp_options,
+            crypto_provider.clone(),
         )?;
 
-        let remote_context = srtp::context::Context::new(
+        let remote_context = srtp::context::Context::new_with_provider(
             &srtp_config.keys.remote_master_key,
             &srtp_config.keys.remote_master_salt,
             srtp_config.profile,
@@ -426,6 +439,7 @@ impl<'a> DtlsHandler<'a> {
             } else {
                 srtp_config.remote_rtcp_options
             },
+            crypto_provider,
         )?;
 
         Ok((local_context, remote_context))

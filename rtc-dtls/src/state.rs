@@ -4,8 +4,8 @@ use super::curve::named_curve::*;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
 use super::prf::*;
+use crypto::SecretVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use shared::crypto::KeyingMaterialExporter;
 use shared::error::*;
 use std::io::{BufWriter, Cursor};
 use std::sync::Arc;
@@ -280,19 +280,31 @@ impl State {
     pub fn cipher_suite(&self) -> Option<&dyn CipherSuite> {
         self.cipher_suite.as_deref()
     }
-}
 
-impl KeyingMaterialExporter for State {
-    /// export_keying_material returns length bytes of exported key material in a new
-    /// slice as defined in RFC 5705.
-    /// This allows protocols to use DTLS for key establishment, but
-    /// then use some of the keying material for their own purposes
-    fn export_keying_material(
+    /// Returns the provider selected for this DTLS session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state has not been attached to a configured session.
+    pub fn crypto_provider(&self) -> Result<Arc<dyn crypto::RTCCryptoProvider>> {
+        self.crypto_provider
+            .clone()
+            .ok_or_else(|| Error::Crypto("DTLS crypto provider is not configured".into()))
+    }
+
+    /// Exports `length` bytes of keying material from an established session, as defined in
+    /// RFC 5705.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before the handshake completes, when `context` is non-empty, when the
+    /// label is reserved by TLS, or when the negotiated cipher suite is unavailable.
+    pub fn export_keying_material(
         &self,
         label: &str,
         context: &[u8],
         length: usize,
-    ) -> shared::error::Result<Vec<u8>> {
+    ) -> Result<SecretVec> {
         if self.local_epoch == 0 {
             return Err(Error::HandshakeInProgress);
         } else if !context.is_empty() {
@@ -333,7 +345,7 @@ impl KeyingMaterialExporter for State {
                 length,
                 cipher_suite.hash_func(),
             ) {
-                Ok(v) => Ok(v),
+                Ok(v) => Ok(SecretVec::new(v)),
                 Err(err) => Err(Error::Hash(err.to_string())),
             }
         } else {

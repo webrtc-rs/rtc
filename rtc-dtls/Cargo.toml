@@ -17,29 +17,29 @@ ring = ["crypto/ring", "rustls/ring", "rcgen/ring"]
 aws-lc-rs = ["crypto/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs"]
 
 [dependencies]
-shared = { workspace = true, default-features = false, features = ["crypto", "replay"] }
+shared = { workspace = true, default-features = false, features = ["replay"] }
 crypto.workspace = true
 
 bytes.workspace = true
 byteorder.workspace = true
-x509-parser = "0.16.0"
-der-parser = "9.0.0"
+x509-parser.workspace = true
+der-parser.workspace = true
 rcgen.workspace = true
-rustls = { version = "0.23.27", default-features = false, features = ["std"] }
-rkyv = "0.8.17"
-bytecheck = "0.8"
+rustls.workspace = true
+rkyv.workspace = true
+bytecheck.workspace = true
 log.workspace = true
 pem.workspace = true
 
 [dev-dependencies]
-local-sync = "0.1.1"
-core_affinity = "0.8.1"
+local-sync.workspace = true
+core_affinity.workspace = true
 chrono.workspace = true
 env_logger.workspace = true
 clap.workspace = true
-anyhow = "1.0.80"
+anyhow.workspace = true
 ctrlc.workspace = true
-futures = "0.3.30"
+futures.workspace = true
 
 #[[example]]
 #name = "dtls_chat_server"

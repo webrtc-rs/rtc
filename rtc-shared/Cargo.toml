@@ -12,22 +12,21 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["crypto", "ifaces", "marshal", "replay"]
-crypto = []
+default = ["ifaces", "marshal", "replay"]
 ifaces = []
 marshal = []
 replay = []
 
 [dependencies]
 thiserror.workspace = true
-substring = "1.4.5"
+substring.workspace = true
 bytes.workspace = true
-aes-gcm = { version = "0.10.3", features = ["std"] }
-url = "2.5.0"
+url.workspace = true
 rcgen.workspace = true
-sec1 = { version = "0.7.3", features = ["std"] }
-p256 = { version = "0.13.2", features = ["default", "ecdh", "ecdsa"] }
-aes = "0.8.4"
+sec1.workspace = true
+p256.workspace = true
+aes.workspace = true
+aes-gcm.workspace = true
 rand.workspace = true
 serde.workspace = true
 
@@ -43,4 +42,3 @@ winapi = { version = "0.3.9", features = [
     "winerror",
     "ws2ipdef",
 ] }
-

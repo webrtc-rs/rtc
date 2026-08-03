@@ -37,27 +37,46 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
 use rustls::server::danger::ClientCertVerifier;
 
-/// The rustls [`CryptoProvider`](rustls::crypto::CryptoProvider) this crate was built with.
+/// Explicit rustls/webpki backend used only for CA-chain and hostname verification.
 ///
-/// rustls can infer a process-wide default from its own crate features, but only when exactly
-/// one of `ring`/`aws-lc-rs` is enabled — and it panics otherwise. Feature unification makes
-/// that easy to violate: any other crate in the graph that asks rustls for a different provider
-/// enables both, which is what happens as soon as `rtc`'s `webrtc` interop dev-dependency joins
-/// the build. Since our own `ring`/`aws-lc-rs` features already decide the answer, pass it
-/// explicitly and never consult the global default.
-///
-/// If neither feature is enabled there is no provider to name, so fall back to whatever the
-/// application installed.
-fn rustls_crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
+/// This policy adapter is separate from [`RTCCryptoProvider`]. Applications authenticating with
+/// SDP fingerprints do not need it, while applications enabling WebPKI validation can select its
+/// backend without changing their primitive RTC provider.
+#[derive(Clone)]
+pub struct RustlsVerifierAdapter {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl RustlsVerifierAdapter {
+    /// Wraps a rustls crypto provider for WebPKI verification.
+    #[must_use]
+    pub fn new(provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
+        Self { provider }
+    }
+
+    /// Uses rustls's ring verification backend.
+    #[cfg(feature = "ring")]
+    #[must_use]
+    pub fn ring() -> Self {
+        Self::new(Arc::new(rustls::crypto::ring::default_provider()))
+    }
+
+    /// Uses rustls's AWS-LC-RS verification backend.
+    #[cfg(feature = "aws-lc-rs")]
+    #[must_use]
+    pub fn aws_lc_rs() -> Self {
+        Self::new(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+    }
+}
+
+fn default_verifier_adapter() -> Option<RustlsVerifierAdapter> {
     #[cfg(feature = "ring")]
     {
-        Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        Some(RustlsVerifierAdapter::ring())
     }
     #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
     {
-        Some(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
+        Some(RustlsVerifierAdapter::aws_lc_rs())
     }
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
     {
@@ -72,16 +91,15 @@ fn rustls_crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvi
 /// Fails if the root store holds no usable trust anchors.
 fn server_cert_verifier(
     roots: std::sync::Arc<rustls::RootCertStore>,
-) -> Result<std::sync::Arc<rustls::client::WebPkiServerVerifier>> {
-    let builder = match rustls_crypto_provider() {
-        Some(provider) => {
-            rustls::client::WebPkiServerVerifier::builder_with_provider(roots, provider)
-        }
-        None => rustls::client::WebPkiServerVerifier::builder(roots),
-    };
-    builder
-        .build()
-        .map_err(|err| Error::Other(format!("rustls server cert verifier: {err}")))
+    adapter: &RustlsVerifierAdapter,
+) -> Result<std::sync::Arc<dyn ServerCertVerifier>> {
+    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+        roots,
+        adapter.provider.clone(),
+    )
+    .build()
+    .map_err(|err| Error::Other(format!("rustls server cert verifier: {err}")))?;
+    Ok(verifier)
 }
 
 /// Config is used to configure a DTLS client or server.
@@ -104,6 +122,7 @@ pub struct ConfigBuilder {
     verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     roots_cas: rustls::RootCertStore,
     client_cas: rustls::RootCertStore,
+    verifier_adapter: Option<RustlsVerifierAdapter>,
     server_name: String,
     mtu: usize,
     replay_protection_window: usize,
@@ -128,6 +147,7 @@ impl Default for ConfigBuilder {
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
             client_cas: rustls::RootCertStore::empty(),
+            verifier_adapter: default_verifier_adapter(),
             server_name: String::default(),
             mtu: 0,
             replay_protection_window: 0,
@@ -273,6 +293,12 @@ impl ConfigBuilder {
     /// Used by Server to verify client's certificate
     pub fn with_client_cas(mut self, client_cas: rustls::RootCertStore) -> Self {
         self.client_cas = client_cas;
+        self
+    }
+
+    /// Selects the rustls/webpki adapter used for optional CA-chain and hostname verification.
+    pub fn with_rustls_verifier_adapter(mut self, adapter: RustlsVerifierAdapter) -> Self {
+        self.verifier_adapter = Some(adapter);
         self
     }
 
@@ -467,6 +493,41 @@ impl ConfigBuilder {
             }
         }
 
+        let server_cert_verifier = if self.insecure_skip_verify {
+            None
+        } else {
+            let adapter = self.verifier_adapter.as_ref().ok_or_else(|| {
+                Error::Crypto("CA-chain verification requires a RustlsVerifierAdapter".to_owned())
+            })?;
+            let roots = if self.roots_cas.is_empty() {
+                gen_self_signed_root_cert()
+            } else {
+                self.roots_cas.clone()
+            };
+            Some(server_cert_verifier(Arc::new(roots), adapter)?)
+        };
+
+        let client_cert_verifier = if self.client_auth as u8
+            >= ClientAuthType::VerifyClientCertIfGiven as u8
+        {
+            let adapter = self.verifier_adapter.as_ref().ok_or_else(|| {
+                Error::Crypto(
+                    "client-certificate verification requires a RustlsVerifierAdapter".to_owned(),
+                )
+            })?;
+            Some(
+                rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(self.client_cas.clone()),
+                    adapter.provider.clone(),
+                )
+                .build()
+                .map_err(|err| Error::Other(format!("rustls client cert verifier: {err}")))?
+                    as Arc<dyn ClientCertVerifier>,
+            )
+        } else {
+            None
+        };
+
         Ok(HandshakeConfig {
             crypto_provider,
             local_psk_callback: self.psk.take(),
@@ -483,8 +544,8 @@ impl ConfigBuilder {
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
             roots_cas: self.roots_cas,
-            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))?,
-            client_cert_verifier: None,
+            server_cert_verifier,
+            client_cert_verifier,
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
@@ -503,17 +564,24 @@ pub type VerifyPeerCertificateFn =
 
 /// Generates a self-signed certificate, as WebRTC endpoints use.
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
-    let mut certs = rustls::RootCertStore::empty();
-    certs
-        .add(
-            rcgen::generate_simple_self_signed(vec![])
-                .unwrap()
-                .cert
-                .der()
-                .to_owned(),
-        )
-        .unwrap();
-    certs
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    {
+        let mut certs = rustls::RootCertStore::empty();
+        certs
+            .add(
+                rcgen::generate_simple_self_signed(vec![])
+                    .unwrap()
+                    .cert
+                    .der()
+                    .to_owned(),
+            )
+            .unwrap();
+        certs
+    }
+    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    {
+        rustls::RootCertStore::empty()
+    }
 }
 
 #[derive(Clone)]
@@ -535,7 +603,7 @@ pub struct HandshakeConfig {
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Arc<dyn ServerCertVerifier>,
+    pub(crate) server_cert_verifier: Option<Arc<dyn ServerCertVerifier>>,
     pub(crate) client_cert_verifier: Option<Arc<dyn ClientCertVerifier>>,
     pub(crate) retransmit_interval: std::time::Duration,
     pub(crate) initial_epoch: u16,
@@ -593,8 +661,9 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))
-                .expect("the built-in self-signed root is always a valid trust anchor"),
+            server_cert_verifier: default_verifier_adapter().and_then(|adapter| {
+                server_cert_verifier(Arc::new(gen_self_signed_root_cert()), &adapter).ok()
+            }),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,

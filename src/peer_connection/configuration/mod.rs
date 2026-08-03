@@ -205,7 +205,6 @@
 
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
-use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use std::time::SystemTime;
 
@@ -389,11 +388,7 @@ impl RTCConfiguration {
                     .duration_since(now)
                     .map_err(|_| Error::ErrCertificateExpired)?;
             }
-        } else {
-            let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-            let cert = RTCCertificate::from_key_pair(kp)?;
-            self.certificates = vec![cert];
-        };
+        }
 
         Ok(())
     }

@@ -17,7 +17,7 @@ shared = { workspace = true, default-features = false, features = ["marshal"] }
 bytes.workspace = true
 rand.workspace = true
 serde.workspace = true
-memchr = "2.1.1"
+memchr.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true

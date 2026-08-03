@@ -29,10 +29,20 @@ where
     pub(super) fn new(
         mut configuration: RTCConfiguration,
         media_engine: MediaEngine,
-        setting_engine: SettingEngine,
+        mut setting_engine: SettingEngine,
         interceptor: I,
     ) -> Result<Self> {
         configuration.validate()?;
+
+        let crypto_provider = match setting_engine.crypto_provider.clone() {
+            Some(provider) => provider,
+            None => crypto::default_provider().map_err(|error| {
+                Error::Crypto(format!(
+                    "peer connection requires a crypto provider: {error}; configure one with SettingEngine::set_crypto_provider"
+                ))
+            })?,
+        };
+        setting_engine.crypto_provider = Some(crypto_provider.clone());
 
         let mut candidate_types = vec![];
         if setting_engine.candidates.ice_lite {
@@ -83,19 +93,22 @@ where
         };
 
         // Create the ICE transport
-        let ice_transport = RTCIceTransport::new(agent_config)?;
+        let ice_transport = RTCIceTransport::new(agent_config, crypto_provider.clone())?;
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
-        let dtls_transport = RTCDtlsTransport::new(
+        let dtls_transport = RTCDtlsTransport::new(RTCDtlsTransportConfig {
             certificates,
-            setting_engine.answering_dtls_role,
-            setting_engine.srtp_protection_profiles.clone(),
-            setting_engine.dtls_cipher_suites.clone(),
-            setting_engine.allow_insecure_verification_algorithm,
-            setting_engine.disable_certificate_fingerprint_verification,
-            setting_engine.replay_protection,
-        )?;
+            answering_dtls_role: setting_engine.answering_dtls_role,
+            srtp_protection_profiles: setting_engine.srtp_protection_profiles.clone(),
+            dtls_cipher_suites: setting_engine.dtls_cipher_suites.clone(),
+            allow_insecure_verification_algorithm: setting_engine
+                .allow_insecure_verification_algorithm,
+            disable_certificate_fingerprint_verification: setting_engine
+                .disable_certificate_fingerprint_verification,
+            replay_protection: setting_engine.replay_protection,
+            crypto_provider,
+        })?;
 
         // Create the SCTP transport
         let sctp_transport = RTCSctpTransport::new(
@@ -177,7 +190,7 @@ where
         }
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints()
+            cert.get_fingerprints_with_provider(self.dtls_transport().crypto_provider.clone())?
         } else {
             return Err(Error::ErrNonCertificate);
         };
@@ -322,7 +335,7 @@ where
         };
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints()
+            cert.get_fingerprints_with_provider(self.dtls_transport().crypto_provider.clone())?
         } else {
             return Err(Error::ErrNonCertificate);
         };

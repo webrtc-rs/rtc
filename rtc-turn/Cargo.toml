@@ -29,10 +29,10 @@ log.workspace = true
 [dev-dependencies]
 env_logger.workspace = true
 chrono.workspace = true
-hex = "0.4.3"
+hex.workspace = true
 clap.workspace = true
 criterion.workspace = true
-crossbeam-channel = "0.5"
+crossbeam-channel.workspace = true
 ctrlc.workspace = true
 
 [[bench]]

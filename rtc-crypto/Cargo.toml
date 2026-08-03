@@ -19,14 +19,14 @@ aws-lc-rs = ["dep:aws-lc-rs", "dep:aes", "dep:ccm", "dep:md-5"]
 test-support = []
 
 [dependencies]
-aes = { version = "0.8.4", optional = true }
-ccm = { version = "0.5.0", optional = true }
-md-5 = { version = "0.10.6", optional = true }
-subtle = "2.6.1"
+aes = { workspace = true, optional = true }
+ccm = { workspace = true, optional = true }
+md-5 = { workspace = true, optional = true }
+subtle.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 ring = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
-pem = "3.0.3"
+pem.workspace = true

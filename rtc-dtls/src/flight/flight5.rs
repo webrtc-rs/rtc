@@ -723,22 +723,31 @@ fn initalize_cipher_suite(
 
         let mut chains = vec![];
         if !cfg.insecure_skip_verify {
-            chains = match verify_server_cert(
-                &state.peer_certificates,
-                &cfg.server_cert_verifier,
-                &cfg.server_name,
-            ) {
-                Ok(chains) => chains,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::BadCertificate,
-                        }),
-                        Some(err),
-                    ));
+            let cert_verifier = cfg.server_cert_verifier.as_ref().ok_or_else(|| {
+                (
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::BadCertificate,
+                    }),
+                    Some(Error::Crypto(
+                        "CA-chain verification has no configured verifier adapter".to_owned(),
+                    )),
+                )
+            })?;
+            chains =
+                match verify_server_cert(&state.peer_certificates, cert_verifier, &cfg.server_name)
+                {
+                    Ok(chains) => chains,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::BadCertificate,
+                            }),
+                            Some(err),
+                        ));
+                    }
                 }
-            }
         }
         if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate
             && let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains)

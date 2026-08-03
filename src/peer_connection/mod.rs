@@ -275,12 +275,12 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
-use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{
     DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, RTCDtlsRole,
 };
+use crate::peer_connection::transport::dtls::{RTCDtlsTransport, RTCDtlsTransportConfig};
 use crate::peer_connection::transport::ice::RTCIceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;

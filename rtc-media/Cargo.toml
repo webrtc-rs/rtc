@@ -22,7 +22,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-nearly_eq = "0.2"
+nearly_eq.workspace = true
 
 [[bench]]
 name = "bench"

@@ -33,6 +33,7 @@ use crypto::{
     PublicKey, PublicKeyEncoding, RTCCryptoProvider, SignatureScheme as CryptoSignatureScheme,
     SigningKey,
 };
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 
 use crate::curve::named_curve::*;
@@ -69,12 +70,14 @@ impl Certificate {
     /// Generate a self-signed certificate.
     ///
     /// See [`rcgen::generate_simple_self_signed`].
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn generate_self_signed(subject_alt_names: impl Into<Vec<String>>) -> Result<Self> {
         let provider = crypto::default_provider().map_err(crypto_error)?;
         Self::generate_self_signed_with_provider(subject_alt_names, provider)
     }
 
     /// Generates a self-signed certificate and imports its key into `provider`.
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn generate_self_signed_with_provider(
         subject_alt_names: impl Into<Vec<String>>,
         provider: Arc<dyn RTCCryptoProvider>,
@@ -89,6 +92,7 @@ impl Certificate {
     /// Generate a self-signed certificate with the given algorithm.
     ///
     /// See `rcgen::Certificate::self_signed`.
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn generate_self_signed_with_alg(
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
@@ -98,6 +102,7 @@ impl Certificate {
     }
 
     /// Generates a self-signed certificate with `alg` and imports its key into `provider`.
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn generate_self_signed_with_alg_and_provider(
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
@@ -142,8 +147,7 @@ impl Certificate {
             )));
         }
 
-        let keypair = KeyPair::try_from(pems[0].contents())
-            .map_err(|e| Error::InvalidPEM(format!("can't decode keypair: {e}")))?;
+        let private_key_der = pems[0].contents().to_vec();
 
         let mut rustls_certs = Vec::new();
         for p in pems.drain(1..) {
@@ -156,10 +160,27 @@ impl Certificate {
             rustls_certs.push(CertificateDer::from(p.contents().to_vec()));
         }
 
-        Ok(Certificate {
-            certificate: rustls_certs,
-            private_key: CryptoPrivateKey::from_key_pair_with_provider(&keypair, provider)?,
-        })
+        let schemes = [
+            CryptoSignatureScheme::Ed25519,
+            CryptoSignatureScheme::EcdsaP256Sha256,
+            CryptoSignatureScheme::RsaPkcs1Sha256,
+        ];
+        let signing_key = schemes
+            .into_iter()
+            .filter(|scheme| {
+                provider
+                    .crypto()
+                    .supports(crypto::CryptoAlgorithm::SigningKeyImport(*scheme))
+            })
+            .find_map(|scheme| {
+                provider
+                    .crypto()
+                    .import_signing_key(scheme, &private_key_der)
+                    .ok()
+            })
+            .ok_or_else(|| Error::InvalidPEM("can't decode PKCS#8 signing key".into()))?;
+
+        Ok(Certificate::from_signing_key(rustls_certs, signing_key))
     }
 
     /// Serializes the certificate (including the private key) in PKCS#8 format in PEM.
@@ -257,6 +278,7 @@ impl std::fmt::Debug for CryptoPrivateKey {
     }
 }
 
+#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
 impl TryFrom<&KeyPair> for CryptoPrivateKey {
     type Error = Error;
 
@@ -271,12 +293,14 @@ impl CryptoPrivateKey {
     /// # Errors
     ///
     /// Fails if the key type has no supported scheme.
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn from_key_pair(key_pair: &KeyPair) -> Result<Self> {
         let provider = crypto::default_provider().map_err(crypto_error)?;
         Self::from_key_pair_with_provider(key_pair, provider)
     }
 
     /// Imports an rcgen key pair into an explicit provider.
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
     pub fn from_key_pair_with_provider(
         key_pair: &KeyPair,
         provider: Arc<dyn RTCCryptoProvider>,
