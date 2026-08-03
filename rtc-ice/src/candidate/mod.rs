@@ -254,6 +254,9 @@ impl fmt::Display for Candidate {
 
 impl Candidate {
     /// The candidate's foundation, computed from its type, base address and transport.
+    ///
+    /// A foundation groups equivalent candidates; it is deterministic bookkeeping rather than a
+    /// secret, random identifier. CRC-32C is therefore intentional here.
     pub fn foundation(&self) -> String {
         if !self.foundation_override.is_empty() {
             return self.foundation_override.clone();

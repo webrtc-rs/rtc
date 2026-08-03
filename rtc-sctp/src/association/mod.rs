@@ -26,7 +26,7 @@ use crate::param::{
 };
 use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
-use crate::util::{sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
+use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
@@ -351,6 +351,8 @@ impl Association {
         // The initial cwnd before DATA transmission or after a sufficiently
         // long idle period MUST be set to min(4*MTU, max (2*MTU, 4380bytes)).
         let cwnd = (2 * mtu).clamp(4380, 4 * mtu);
+        // RFC 4960 requires an unpredictable initial TSN. SCTP remains usable without an RTC
+        // crypto provider, so this deliberately uses `rand`'s thread-local CSPRNG.
         let mut tsn = random::<u32>();
         if tsn == 0 {
             tsn += 1;
@@ -1141,14 +1143,14 @@ impl Association {
         if let Some(my_cookie) = &self.my_cookie {
             match state {
                 AssociationState::Established => {
-                    if my_cookie.cookie != c.cookie {
+                    if !constant_time_eq(&my_cookie.cookie, &c.cookie) {
                         return Ok(vec![]);
                     }
                 }
                 AssociationState::Closed
                 | AssociationState::CookieWait
                 | AssociationState::CookieEchoed => {
-                    if my_cookie.cookie != c.cookie {
+                    if !constant_time_eq(&my_cookie.cookie, &c.cookie) {
                         return Ok(vec![]);
                     }
 

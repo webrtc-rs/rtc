@@ -250,6 +250,8 @@ impl Agent {
         config: Arc<AgentConfig>,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {
+        let tie_breaker = generate_tie_breaker(crypto_provider.random())?;
+
         let mut mdns_local_name = config.multicast_dns_local_name.clone();
         if mdns_local_name.is_empty() {
             mdns_local_name = generate_multicast_dns_name();
@@ -293,7 +295,7 @@ impl Agent {
 
         let mut agent = Self {
             crypto_provider,
-            tie_breaker: rand::random::<u64>(),
+            tie_breaker,
             is_controlling: config.is_controlling,
             lite: config.lite,
 
@@ -688,10 +690,10 @@ impl Agent {
         keep_local_candidates: bool,
     ) -> Result<()> {
         if ufrag.is_empty() {
-            ufrag = generate_ufrag();
+            ufrag = generate_ufrag_with_random(self.crypto_provider.random())?;
         }
         if pwd.is_empty() {
-            pwd = generate_pwd();
+            pwd = generate_pwd_with_random(self.crypto_provider.random())?;
         }
 
         if ufrag.len() * 8 < 24 {

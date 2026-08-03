@@ -42,7 +42,11 @@ pub trait AssociationIdGenerator: Send + Sync {
     fn aid_lifetime(&self) -> Option<Duration>;
 }
 
-/// Generates purely random Association IDs of a certain length
+/// Generates nonzero, unpredictable SCTP verification tags.
+///
+/// SCTP is usable as a standalone crate and does not naturally own an RTC crypto provider. The
+/// `rand` convenience API used here draws from its thread-local CSPRNG, preserving that standalone
+/// API while satisfying the verification tag's security requirement.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct RandomAssociationIdGenerator {
     lifetime: Option<Duration>,
@@ -63,7 +67,12 @@ impl RandomAssociationIdGenerator {
 
 impl AssociationIdGenerator for RandomAssociationIdGenerator {
     fn generate_aid(&mut self) -> AssociationId {
-        rand::random::<u32>()
+        loop {
+            let association_id = rand::random::<u32>();
+            if association_id != 0 {
+                return association_id;
+            }
+        }
     }
 
     fn aid_lifetime(&self) -> Option<Duration> {
@@ -314,6 +323,14 @@ mod test {
     use shared::error::Result;
 
     use super::*;
+
+    #[test]
+    fn random_association_ids_are_nonzero() {
+        let mut generator = RandomAssociationIdGenerator::new();
+        for _ in 0..128 {
+            assert_ne!(generator.generate_aid(), 0);
+        }
+    }
 
     #[test]
     fn test_bytes_chunk_pops_zero_copy_slices() {
