@@ -1,6 +1,12 @@
 use super::*;
 use crate::key_derivation::*;
 
+/// The built-in provider, for tests only. Library code never resolves a default: every public
+/// constructor takes the provider from its caller.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 use bytes::{Buf, Bytes, BytesMut};
 use lazy_static::lazy_static;
 
@@ -101,6 +107,7 @@ fn test_rtcp_lifecycle() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )?;
     let mut decrypt_context = Context::new(
         &RTCP_TEST_MASTER_KEY,
@@ -108,6 +115,7 @@ fn test_rtcp_lifecycle() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     for test_case in &*RTCP_TEST_CASES {
@@ -138,6 +146,7 @@ fn test_rtcp_invalid_auth_tag() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     let decrypt_result = decrypt_context.decrypt_rtcp(&RTCP_TEST_CASES[0].encrypted)?;
@@ -169,6 +178,7 @@ fn test_rtcp_replay_detector_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         Some(srtcp_replay_protection(10)),
+        test_crypto_provider(),
     )?;
 
     let rtcp_packet1 = RTCP_TEST_CASES[0].encrypted.clone();
@@ -215,6 +225,7 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     let auth_tag_len = ProtectionProfile::Aes128CmHmacSha1_80.rtcp_auth_tag_len();
@@ -225,6 +236,7 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         Some(srtcp_replay_protection(10)),
+        test_crypto_provider(),
     )?;
 
     let inputs = vec![
@@ -277,7 +289,14 @@ fn test_rtcp_short_packet_errors() -> Result<()> {
     ];
 
     for (profile, salt) in cases {
-        let mut ctx = Context::new(&RTCP_TEST_MASTER_KEY, salt, profile, None, None)?;
+        let mut ctx = Context::new(
+            &RTCP_TEST_MASTER_KEY,
+            salt,
+            profile,
+            None,
+            None,
+            test_crypto_provider(),
+        )?;
 
         // Slices of a real packet (its first 4 bytes are a valid RTCP header, so
         // the header parse succeeds and pre-fix execution reached the

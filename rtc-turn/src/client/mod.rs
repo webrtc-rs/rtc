@@ -156,18 +156,10 @@ pub struct Client {
 }
 
 impl Client {
-    /// new returns a new Client instance. listeningAddress is the address and port to listen on, default "0.0.0.0:0"
-    pub fn new(config: ClientConfig) -> Result<Self> {
-        let provider =
-            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
-        Self::new_with_provider(config, provider)
-    }
-
-    /// Creates a client using an explicitly selected crypto provider.
-    pub fn new_with_provider(
-        config: ClientConfig,
-        crypto_provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
+    /// Returns a new TURN client.
+    ///
+    /// The crypto provider is supplied by the caller; this crate never resolves a default.
+    pub fn new(config: ClientConfig, crypto_provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
         let stun_serv_addr = if config.stun_serv_addr.is_empty() {
             None
         } else {

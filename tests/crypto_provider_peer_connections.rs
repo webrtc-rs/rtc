@@ -86,6 +86,30 @@ impl RTCRandom for RecordingProvider {
     }
 }
 
+/// Counts every tag computation, so the test can assert the provider is actually used. The count
+/// now happens per `sign`/`verify` rather than per one-shot `hmac` call, since keyed MACs are
+/// created once per context.
+struct CountingMac {
+    inner: Box<dyn rtc::crypto::Mac>,
+    calls: Arc<Calls>,
+}
+
+impl rtc::crypto::Mac for CountingMac {
+    fn output_len(&self) -> usize {
+        self.inner.output_len()
+    }
+
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError> {
+        self.calls.hmac.fetch_add(1, Ordering::Relaxed);
+        self.inner.sign(input, output)
+    }
+
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
+        self.calls.hmac.fetch_add(1, Ordering::Relaxed);
+        self.inner.verify(input, expected)
+    }
+}
+
 impl RTCCrypto for RecordingProvider {
     fn supports(&self, algorithm: CryptoAlgorithm) -> bool {
         self.inner.crypto().supports(algorithm)
@@ -96,28 +120,15 @@ impl RTCCrypto for RecordingProvider {
         self.inner.crypto().hash(algorithm, data)
     }
 
-    fn hmac(
+    fn new_hmac(
         &self,
         algorithm: HmacAlgorithm,
         key: &[u8],
-        input: &[&[u8]],
-        output: &mut [u8],
-    ) -> Result<(), CryptoError> {
-        self.calls.hmac.fetch_add(1, Ordering::Relaxed);
-        self.inner.crypto().hmac(algorithm, key, input, output)
-    }
-
-    fn verify_hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        expected: &[u8],
-    ) -> Result<(), CryptoError> {
-        self.calls.hmac.fetch_add(1, Ordering::Relaxed);
-        self.inner
-            .crypto()
-            .verify_hmac(algorithm, key, input, expected)
+    ) -> Result<Box<dyn rtc::crypto::Mac>, CryptoError> {
+        Ok(Box::new(CountingMac {
+            inner: self.inner.crypto().new_hmac(algorithm, key)?,
+            calls: Arc::clone(&self.calls),
+        }))
     }
 
     fn block_encrypt(

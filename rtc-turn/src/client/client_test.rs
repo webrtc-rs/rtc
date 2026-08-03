@@ -3,20 +3,28 @@ use sansio::Protocol;
 use std::collections::HashSet;
 use std::net::UdpSocket;
 
+/// Tests may resolve the built-in provider; library code never does.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
     let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    let client = Client::new(ClientConfig {
-        stun_serv_addr: String::new(),
-        turn_serv_addr: String::new(),
-        local_addr: udp_socket.local_addr()?,
-        transport_protocol: TransportProtocol::UDP,
-        username: String::new(),
-        password: String::new(),
-        realm: String::new(),
-        software: "TEST SOFTWARE".to_owned(),
-        rto_in_ms,
-    })?;
+    let client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: String::new(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: String::new(),
+            password: String::new(),
+            realm: String::new(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms,
+        },
+        test_crypto_provider(),
+    )?;
 
     Ok((udp_socket, client))
 }
@@ -24,17 +32,20 @@ fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
 fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> {
     let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    let client = Client::new(ClientConfig {
-        stun_serv_addr: "stun1.l.google.com:19302".to_owned(),
-        turn_serv_addr: String::new(),
-        local_addr: udp_socket.local_addr()?,
-        transport_protocol: TransportProtocol::UDP,
-        username: String::new(),
-        password: String::new(),
-        realm: String::new(),
-        software: "TEST SOFTWARE".to_owned(),
-        rto_in_ms: 0,
-    })?;
+    let client = Client::new(
+        ClientConfig {
+            stun_serv_addr: "stun1.l.google.com:19302".to_owned(),
+            turn_serv_addr: String::new(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: String::new(),
+            password: String::new(),
+            realm: String::new(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+        },
+        test_crypto_provider(),
+    )?;
 
     Ok((udp_socket, client))
 }

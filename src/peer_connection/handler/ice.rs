@@ -12,7 +12,6 @@ use shared::{TransportContext, TransportMessage};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct IceHandlerContext {
     pub(crate) ice_transport: RTCIceTransport,
 

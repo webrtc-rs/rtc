@@ -623,11 +623,12 @@ fn test_message_full_size() -> Result<()> {
             ATTR_SOFTWARE,
             "webrtc-rs/stun".to_owned(),
         )),
-        Box::new(MessageIntegrity::new_long_term_integrity(
+        Box::new(MessageIntegrity::new_long_term_integrity_with_provider(
             "username".to_owned(),
             "realm".to_owned(),
             "password".to_owned(),
-        )),
+            crypto::default_provider().expect("a built-in provider is enabled for tests"),
+        )?),
         Box::new(FINGERPRINT),
     ])?;
     let l = m.raw.len();
@@ -652,11 +653,12 @@ fn test_message_clone_to() -> Result<()> {
             ATTR_SOFTWARE,
             "webrtc-rs/stun".to_owned(),
         )),
-        Box::new(MessageIntegrity::new_long_term_integrity(
+        Box::new(MessageIntegrity::new_long_term_integrity_with_provider(
             "username".to_owned(),
             "realm".to_owned(),
             "password".to_owned(),
-        )),
+            crypto::default_provider().expect("a built-in provider is enabled for tests"),
+        )?),
         Box::new(FINGERPRINT),
     ])?;
     m.encode();

@@ -14,6 +14,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use ice::candidate::candidate_relay::CandidateRelayConfig;
 use log::{error, info, trace};
+use rtc::crypto;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -188,7 +189,9 @@ async fn run_main_loop(
         rto_in_ms: 0,
     };
 
-    let mut turn_client = Client::new(cfg)?;
+    // An application is the outside caller, so it selects the crypto provider explicitly.
+    // Library code never resolves a default.
+    let mut turn_client = Client::new(cfg, crypto::default_provider()?)?;
     let allocate_tid = turn_client.allocate()?;
     let mut relay_addr: Option<SocketAddr> = None;
     let relay_local_addr = local_addr;

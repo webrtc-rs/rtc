@@ -92,38 +92,41 @@ pub fn assert_hashes_and_hmac(crypto: &dyn RTCCrypto) {
 
     let key = [0x0b; 20];
     let mut sha1 = [0; 20];
-    crypto
-        .hmac(HmacAlgorithm::Sha1, &key, &[b"Hi ", b"There"], &mut sha1)
-        .unwrap();
+    let mut sha1_mac = crypto.new_hmac(HmacAlgorithm::Sha1, &key).unwrap();
+    assert_eq!(sha1_mac.output_len(), 20);
+    sha1_mac.sign(&[b"Hi ", b"There"], &mut sha1).unwrap();
     assert_eq!(
         sha1.as_slice(),
         bytes("b617318655057264e28bc0b6fb378c8ef146be00")
     );
 
+    // A keyed MAC is reusable: the second message must not be affected by the first.
+    let mut repeat = [0; 20];
+    sha1_mac.sign(&[b"Hi ", b"There"], &mut repeat).unwrap();
+    assert_eq!(repeat, sha1, "a Mac must produce the same tag when reused");
+
     let mut sha256 = [0; 32];
-    crypto
-        .hmac(
-            HmacAlgorithm::Sha256,
-            &key,
-            &[b"Hi ", b"There"],
-            &mut sha256,
-        )
-        .unwrap();
+    let mut sha256_mac = crypto.new_hmac(HmacAlgorithm::Sha256, &key).unwrap();
+    sha256_mac.sign(&[b"Hi ", b"There"], &mut sha256).unwrap();
     assert_eq!(
         sha256.as_slice(),
         bytes("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
     );
-    crypto
-        .verify_hmac(HmacAlgorithm::Sha256, &key, &[b"Hi There"], &sha256)
-        .unwrap();
+
+    // Splitting the input across slices must not change the tag.
+    let mut joined = [0; 32];
+    sha256_mac.sign(&[b"Hi There"], &mut joined).unwrap();
+    assert_eq!(joined, sha256, "slice boundaries must not affect the tag");
+
+    sha256_mac.verify(&[b"Hi There"], &sha256).unwrap();
     let mut bad_tag = sha256;
     bad_tag[0] ^= 1;
     assert_eq!(
-        crypto.verify_hmac(HmacAlgorithm::Sha256, &key, &[b"Hi There"], &bad_tag),
+        sha256_mac.verify(&[b"Hi There"], &bad_tag),
         Err(CryptoError::AuthenticationFailed)
     );
     assert!(matches!(
-        crypto.hmac(HmacAlgorithm::Sha256, &key, &[b"x"], &mut [0; 31]),
+        sha256_mac.sign(&[b"x"], &mut [0; 31]),
         Err(CryptoError::InvalidTagLength { .. })
     ));
 }

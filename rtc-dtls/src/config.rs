@@ -393,10 +393,14 @@ impl ConfigBuilder {
         is_client: bool,
         remote_addr: Option<SocketAddr>,
     ) -> Result<HandshakeConfig> {
-        let crypto_provider = match self.crypto_provider.take() {
-            Some(provider) => provider,
-            None => crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?,
-        };
+        // The caller supplies the provider; this crate never resolves a default. An application
+        // that wants the feature-selected built-in passes `crypto::default_provider()?`.
+        let crypto_provider = self.crypto_provider.take().ok_or_else(|| {
+            Error::Crypto(
+                "no crypto provider configured: call ConfigBuilder::with_crypto_provider"
+                    .to_owned(),
+            )
+        })?;
         self.validate(is_client)?;
 
         let mut local_cipher_suites: Vec<CipherSuiteId> =
@@ -528,6 +532,8 @@ impl ConfigBuilder {
             None
         };
 
+        // Fields not derived from the builder come from `HandshakeConfig::new`, which also
+        // supplies `crypto_provider`.
         Ok(HandshakeConfig {
             crypto_provider,
             local_psk_callback: self.psk.take(),
@@ -540,6 +546,7 @@ impl ConfigBuilder {
             server_name,
             client_auth: self.client_auth,
             local_certificates: self.certificates,
+            name_to_certificate: Default::default(),
             insecure_skip_verify: self.insecure_skip_verify,
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
@@ -549,8 +556,8 @@ impl ConfigBuilder {
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
+            maximum_retransmit_number: 0,
             replay_protection_window,
-            ..Default::default()
         })
     }
 }
@@ -605,7 +612,7 @@ pub struct HandshakeConfig {
     pub(crate) roots_cas: rustls::RootCertStore,
     pub(crate) server_cert_verifier: Option<Arc<dyn ServerCertVerifier>>,
     pub(crate) client_cert_verifier: Option<Arc<dyn ClientCertVerifier>>,
-    pub(crate) retransmit_interval: std::time::Duration,
+    pub(crate) retransmit_interval: Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
     pub(crate) maximum_retransmit_number: usize,
@@ -641,11 +648,10 @@ impl fmt::Debug for HandshakeConfig {
     }
 }
 
-impl Default for HandshakeConfig {
-    fn default() -> Self {
-        HandshakeConfig {
-            crypto_provider: crypto::default_provider()
-                .expect("rtc-dtls requires an enabled default crypto provider"),
+impl HandshakeConfig {
+    pub(crate) fn new(crypto_provider: Arc<dyn RTCCryptoProvider>) -> Self {
+        Self {
+            crypto_provider,
             local_psk_callback: None,
             local_psk_identity_hint: None,
             local_cipher_suites: vec![],
@@ -672,9 +678,7 @@ impl Default for HandshakeConfig {
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
     }
-}
 
-impl HandshakeConfig {
     pub(crate) fn provider(&self) -> &Arc<dyn RTCCryptoProvider> {
         &self.crypto_provider
     }

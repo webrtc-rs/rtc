@@ -52,6 +52,14 @@
 //! [RFC 4492]: https://datatracker.ietf.org/doc/html/rfc4492
 //! [RFC 5289]: https://datatracker.ietf.org/doc/html/rfc5289
 
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an `Arc<dyn RTCCryptoProvider>`,
+/// which a caller must be able to name without adding — and version-matching — a direct
+/// `rtc-crypto` dependency. Named `crypto_provider` here because this crate already has its own
+/// [`crypto`] module for DTLS record ciphers and certificates.
+pub use ::crypto as crypto_provider;
+
 /// Alert records: fatal errors and the orderly `close_notify`.
 pub mod alert;
 /// Application data records — the payload DTLS carries once the handshake completes.

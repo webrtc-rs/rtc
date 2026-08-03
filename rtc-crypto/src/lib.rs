@@ -37,6 +37,7 @@ const _: () = {
         _provider: &dyn RTCCryptoProvider,
         _crypto: &dyn RTCCrypto,
         _random: &dyn RTCRandom,
+        _mac: &dyn Mac,
         _stream: &dyn StreamCipher,
         _aead: &dyn AeadCipher,
         _cbc: &dyn CbcCipher,

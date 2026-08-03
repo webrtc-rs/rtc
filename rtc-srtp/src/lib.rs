@@ -38,13 +38,21 @@
 //! [`rtc`](https://docs.rs/rtc) crate creates the contexts from the DTLS handshake and
 //! applies them to media as one layer of the peer-connection pipeline.
 //! Applications constructing contexts directly can select cryptography explicitly with
-//! [`context::Context::new_with_provider`]; [`context::Context::new`] retains default-provider
+//! [`context::Context::new`]; [`context::Context::new`] retains default-provider
 //! compatibility.
 //!
 //! [RFC 3711]: https://datatracker.ietf.org/doc/html/rfc3711
 //! [RFC 5764]: https://datatracker.ietf.org/doc/html/rfc5764
 
 mod cipher;
+
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an
+/// [`Arc<dyn RTCCryptoProvider>`](crypto::RTCCryptoProvider), which a caller must be able to name
+/// without adding — and version-matching — a direct `rtc-crypto` dependency.
+pub use crypto;
+
 /// Session configuration: keys, protection profile, and replay-protection options.
 pub mod config;
 /// The encrypt/decrypt state for one SRTP/SRTCP session.

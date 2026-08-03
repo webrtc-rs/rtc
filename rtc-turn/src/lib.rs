@@ -49,6 +49,13 @@
 //! [`rtc-ice`]: https://docs.rs/rtc-ice
 
 /// The Sans-I/O TURN client: allocate a relayed address and send through it.
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an
+/// [`Arc<dyn RTCCryptoProvider>`](crypto::RTCCryptoProvider), which a caller must be able to name
+/// without adding — and version-matching — a direct `rtc-crypto` dependency.
+pub use crypto;
+
 pub mod client;
 /// The TURN-specific STUN attributes, methods and ChannelData framing.
 pub mod proto;

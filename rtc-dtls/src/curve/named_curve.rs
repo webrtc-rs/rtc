@@ -72,15 +72,4 @@ impl NamedCurve {
             active: Some(active),
         })
     }
-
-    /// Generates an ephemeral key pair on this curve.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the curve is unsupported or key generation fails.
-    pub fn generate_keypair(&self) -> Result<NamedCurveKeypair> {
-        let provider =
-            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
-        self.generate_keypair_with_crypto(provider.crypto())
-    }
 }

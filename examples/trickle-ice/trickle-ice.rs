@@ -21,6 +21,7 @@ use ice::candidate::candidate_host::CandidateHostConfig;
 use ice::candidate::candidate_relay::CandidateRelayConfig;
 use ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use log::{error, info, trace, warn};
+use rtc::crypto;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -281,7 +282,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                     rto_in_ms: 0,
                 };
 
-                let mut client = TurnClient::new(cfg)?;
+                let mut client = TurnClient::new(cfg, crypto::default_provider()?)?;
                 let tid = client.allocate()?;
                 allocate_tid = Some(tid);
                 turn_client = Some(client);

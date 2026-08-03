@@ -76,7 +76,7 @@ impl RTCCryptoProvider for IncompleteProvider {
 fn explicit_incomplete_provider_returns_actionable_capability_error() {
     let profile = ProtectionProfile::Aes128CmHmacSha1_80;
     let (key, salt) = key_material(profile);
-    let error = Context::new_with_provider(
+    let error = Context::new(
         &key,
         &salt,
         profile,
@@ -109,7 +109,7 @@ fn context(
     replay: bool,
 ) -> Result<Context> {
     let (key, salt) = key_material(profile);
-    Context::new_with_provider(
+    Context::new(
         &key,
         &salt,
         profile,
@@ -271,22 +271,13 @@ struct CountingCrypto {
     inner: crypto::providers::RingCrypto,
     stream_constructions: AtomicUsize,
     aead_constructions: AtomicUsize,
+    mac_constructions: AtomicUsize,
 }
 
 #[cfg(feature = "ring")]
 impl RTCCrypto for CountingCrypto {
     fn supports(&self, algorithm: CryptoAlgorithm) -> bool {
         self.inner.supports(algorithm)
-    }
-
-    fn hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        output: &mut [u8],
-    ) -> std::result::Result<(), CryptoError> {
-        self.inner.hmac(algorithm, key, input, output)
     }
 
     fn block_encrypt(
@@ -315,6 +306,15 @@ impl RTCCrypto for CountingCrypto {
         self.aead_constructions.fetch_add(1, Ordering::Relaxed);
         self.inner.new_aead(algorithm, key)
     }
+
+    fn new_hmac(
+        &self,
+        algorithm: HmacAlgorithm,
+        key: &[u8],
+    ) -> std::result::Result<Box<dyn crypto::Mac>, CryptoError> {
+        self.mac_constructions.fetch_add(1, Ordering::Relaxed);
+        self.inner.new_hmac(algorithm, key)
+    }
 }
 
 #[cfg(feature = "ring")]
@@ -331,6 +331,7 @@ impl CountingProvider {
                 inner: crypto::providers::RingCrypto,
                 stream_constructions: AtomicUsize::new(0),
                 aead_constructions: AtomicUsize::new(0),
+                mac_constructions: AtomicUsize::new(0),
             },
             random: crypto::providers::RingRandom,
         }
@@ -368,6 +369,14 @@ fn keyed_ciphers_are_constructed_once_per_context_not_per_packet() -> Result<()>
             .load(Ordering::Relaxed),
         2
     );
+    // Two MACs (SRTP and SRTCP), keyed once alongside the ciphers.
+    assert_eq!(
+        stream_provider
+            .crypto
+            .mac_constructions
+            .load(Ordering::Relaxed),
+        2
+    );
     for sequence_number in 0..4 {
         stream_context.encrypt_rtp(&rtp_packet(sequence_number)?)?;
     }
@@ -377,6 +386,14 @@ fn keyed_ciphers_are_constructed_once_per_context_not_per_packet() -> Result<()>
             .stream_constructions
             .load(Ordering::Relaxed),
         2
+    );
+    assert_eq!(
+        stream_provider
+            .crypto
+            .mac_constructions
+            .load(Ordering::Relaxed),
+        2,
+        "MACs must be keyed once per context, not per packet"
     );
 
     let aead_provider = Arc::new(CountingProvider::new());

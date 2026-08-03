@@ -105,30 +105,10 @@ pub struct Context {
 }
 
 impl Context {
-    /// Creates an SRTP context with the built-in default crypto provider.
+    /// Creates an SRTP context.
     ///
-    /// Applications that select or implement a provider should use [`Self::new_with_provider`].
+    /// The crypto provider is supplied by the caller; this crate never resolves a default.
     pub fn new(
-        master_key: &[u8],
-        master_salt: &[u8],
-        profile: ProtectionProfile,
-        srtp_ctx_opt: Option<ContextOption>,
-        srtcp_ctx_opt: Option<ContextOption>,
-    ) -> Result<Context> {
-        let provider =
-            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
-        Self::new_with_provider(
-            master_key,
-            master_salt,
-            profile,
-            srtp_ctx_opt,
-            srtcp_ctx_opt,
-            provider,
-        )
-    }
-
-    /// Creates an SRTP context with an explicit crypto provider.
-    pub fn new_with_provider(
         master_key: &[u8],
         master_salt: &[u8],
         profile: ProtectionProfile,

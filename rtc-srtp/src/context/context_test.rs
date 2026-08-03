@@ -1,6 +1,12 @@
 use super::*;
 use crate::key_derivation::*;
 
+/// The built-in provider, for tests only. Library code never resolves a default: every public
+/// constructor takes the provider from its caller.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 use bytes::Bytes;
 use lazy_static::lazy_static;
 
@@ -18,6 +24,7 @@ fn test_context_roc() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     let roc = c.get_roc(123);
@@ -45,6 +52,7 @@ fn test_context_index() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     let index = c.get_index(123);
@@ -66,10 +74,24 @@ fn test_key_len() -> Result<()> {
     let key_len = CIPHER_CONTEXT_ALGO.key_len();
     let salt_len = CIPHER_CONTEXT_ALGO.salt_len();
 
-    let result = Context::new(&[], &vec![0; salt_len], CIPHER_CONTEXT_ALGO, None, None);
+    let result = Context::new(
+        &[],
+        &vec![0; salt_len],
+        CIPHER_CONTEXT_ALGO,
+        None,
+        None,
+        test_crypto_provider(),
+    );
     assert!(result.is_err(), "CreateContext accepted a 0 length key");
 
-    let result = Context::new(&vec![0; key_len], &[], CIPHER_CONTEXT_ALGO, None, None);
+    let result = Context::new(
+        &vec![0; key_len],
+        &[],
+        CIPHER_CONTEXT_ALGO,
+        None,
+        None,
+        test_crypto_provider(),
+    );
     assert!(result.is_err(), "CreateContext accepted a 0 length salt");
 
     let result = Context::new(
@@ -78,6 +100,7 @@ fn test_key_len() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
+        test_crypto_provider(),
     );
     assert!(
         result.is_ok(),
@@ -343,6 +366,7 @@ fn test_encrypt_aead_aes_128_gcm_rtp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -364,6 +388,7 @@ fn test_decrypt_aead_aes_128_gcm_rtp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -382,6 +407,7 @@ fn test_encrypt_aead_aes_128_gcm_rtcp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -403,6 +429,7 @@ fn test_decrypt_aead_aes_128_gcm_rtcp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -421,6 +448,7 @@ fn test_encrypt_aes_256_cm_rtp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -442,6 +470,7 @@ fn test_decrypt_aes_256_cm_rtp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -460,6 +489,7 @@ fn test_encrypt_aes_256_cm_rtcp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 
@@ -481,6 +511,7 @@ fn test_decrypt_aes_256_cm_rtcp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
     .expect("Error creating srtp context");
 

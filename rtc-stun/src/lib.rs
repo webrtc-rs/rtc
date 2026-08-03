@@ -61,6 +61,13 @@
 #[macro_use]
 extern crate lazy_static;
 
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an
+/// [`Arc<dyn RTCCryptoProvider>`](crypto::RTCCryptoProvider), which a caller must be able to name
+/// without adding — and version-matching — a direct `rtc-crypto` dependency.
+pub use crypto;
+
 /// Socket-address helpers shared by the address attributes.
 pub mod addr;
 /// Transaction tracking: which requests are outstanding and when they time out.

@@ -3,7 +3,7 @@ mod prf_test;
 
 use std::fmt;
 
-use crypto::{HashAlgorithm as CryptoHashAlgorithm, HmacAlgorithm, RTCCrypto};
+use crypto::{HashAlgorithm as CryptoHashAlgorithm, HmacAlgorithm, Mac, RTCCrypto};
 
 use crate::cipher_suite::CipherSuiteHash;
 use crate::content::ContentType;
@@ -107,7 +107,8 @@ fn hmac_sha(
     };
     let mut output = vec![0; algorithm.output_len()];
     crypto
-        .hmac(algorithm, key, input, &mut output)
+        .new_hmac(algorithm, key)
+        .and_then(|mut mac| mac.sign(input, &mut output))
         .map_err(|error| Error::Crypto(error.to_string()))?;
     Ok(output)
 }
@@ -261,14 +262,17 @@ pub(crate) fn prf_verify_data_server(
 }
 
 // compute the MAC using HMAC-SHA1
+/// Computes the TLS 1.2 record MAC (RFC 5246 section 6.2.3.1) with an already-keyed MAC.
+///
+/// Takes `&mut dyn Mac` rather than a crypto handle plus raw key bytes so the caller keys once
+/// per epoch. Re-deriving the HMAC key schedule per record measured ~2x on the CBC record path.
 pub(crate) fn prf_mac(
-    crypto: &dyn RTCCrypto,
+    mac: &mut dyn Mac,
     epoch: u16,
     sequence_number: u64,
     content_type: ContentType,
     protocol_version: ProtocolVersion,
     payload: &[u8],
-    key: &[u8],
 ) -> Result<Vec<u8>> {
     let mut msg = vec![0u8; 13];
     msg[..2].copy_from_slice(&epoch.to_be_bytes());
@@ -278,9 +282,8 @@ pub(crate) fn prf_mac(
     msg[10] = protocol_version.minor;
     msg[11..].copy_from_slice(&(payload.len() as u16).to_be_bytes());
 
-    let mut output = vec![0; HmacAlgorithm::Sha1.output_len()];
-    crypto
-        .hmac(HmacAlgorithm::Sha1, key, &[&msg, payload], &mut output)
+    let mut output = vec![0; mac.output_len()];
+    mac.sign(&[&msg, payload], &mut output)
         .map_err(|error| Error::Crypto(error.to_string()))?;
     Ok(output)
 }

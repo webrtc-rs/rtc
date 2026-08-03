@@ -786,9 +786,11 @@ mod tests {
     // is missing.
     #[test]
     fn test_flight4_process_certificateverify() {
+        let provider =
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
         let mut state = State {
             cipher_suite: Some(Box::new(MockCipherSuite {})),
-            ..Default::default()
+            ..State::new(provider, false)
         };
 
         let raw_certificate = vec![
@@ -842,7 +844,9 @@ mod tests {
             true,
         );
 
-        let cfg = HandshakeConfig::default();
+        let cfg = HandshakeConfig::new(
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+        );
 
         let f = Flight4 {};
         let res = f.parse(&mut state, &cache, &cfg);

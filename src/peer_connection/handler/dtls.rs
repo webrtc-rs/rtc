@@ -20,7 +20,6 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct DtlsHandlerContext {
     pub(crate) dtls_transport: RTCDtlsTransport,
 
@@ -90,8 +89,8 @@ impl<'a> DtlsHandler<'a> {
 
         // Register local certificate and set local_certificate_id
         if let Some(local_cert) = self.ctx.dtls_transport.certificates.first() {
-            let fingerprints = local_cert
-                .get_fingerprints_with_provider(self.ctx.dtls_transport.crypto_provider.clone())?;
+            let fingerprints =
+                local_cert.get_fingerprints(self.ctx.dtls_transport.crypto_provider.clone())?;
             if let Some(fp) = fingerprints.first() {
                 // Register certificate in accumulator
                 // Use hex encoding for certificate (base64 would need additional dependency)
@@ -410,9 +409,9 @@ impl<'a> DtlsHandler<'a> {
         )?;
         srtp_config
             .set_session_keys_from_keying_material(keying_material.as_ref(), state.is_client())?;
-        let crypto_provider = state.crypto_provider()?;
+        let crypto_provider = state.crypto_provider();
 
-        let local_context = srtp::context::Context::new_with_provider(
+        let local_context = srtp::context::Context::new(
             &srtp_config.keys.local_master_key,
             &srtp_config.keys.local_master_salt,
             srtp_config.profile,
@@ -421,7 +420,7 @@ impl<'a> DtlsHandler<'a> {
             crypto_provider.clone(),
         )?;
 
-        let remote_context = srtp::context::Context::new_with_provider(
+        let remote_context = srtp::context::Context::new(
             &srtp_config.keys.remote_master_key,
             &srtp_config.keys.remote_master_salt,
             srtp_config.profile,
@@ -452,7 +451,22 @@ mod tests {
 
     #[test]
     fn timeout_before_dtls_starts_is_a_noop() {
-        let mut context = DtlsHandlerContext::default();
+        let provider =
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
+        let transport = RTCDtlsTransport::new(
+            crate::peer_connection::transport::dtls::RTCDtlsTransportConfig {
+                certificates: vec![],
+                answering_dtls_role: Default::default(),
+                srtp_protection_profiles: vec![],
+                dtls_cipher_suites: vec![],
+                allow_insecure_verification_algorithm: false,
+                disable_certificate_fingerprint_verification: false,
+                replay_protection: Default::default(),
+                crypto_provider: provider,
+            },
+        )
+        .expect("transport");
+        let mut context = DtlsHandlerContext::new(transport);
         let mut stats = RTCStatsAccumulator::default();
         let mut handler = DtlsHandler::new(&mut context, &mut stats);
 

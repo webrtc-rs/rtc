@@ -67,43 +67,23 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    /// Generate a self-signed certificate.
-    ///
-    /// See [`rcgen::generate_simple_self_signed`].
     #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn generate_self_signed(subject_alt_names: impl Into<Vec<String>>) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::generate_self_signed_with_provider(subject_alt_names, provider)
-    }
-
-    /// Generates a self-signed certificate and imports its key into `provider`.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn generate_self_signed_with_provider(
+    /// Generates a self-signed certificate, importing its key into `provider`.
+    pub fn generate_self_signed(
         subject_alt_names: impl Into<Vec<String>>,
         provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {
-        let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)?;
+        let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)
+            .map_err(|error| Error::Other(error.to_string()))?;
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
-            private_key: CryptoPrivateKey::from_key_pair_with_provider(&signing_key, provider)?,
+            private_key: CryptoPrivateKey::from_key_pair(&signing_key, provider)?,
         })
     }
 
-    /// Generate a self-signed certificate with the given algorithm.
-    ///
-    /// See `rcgen::Certificate::self_signed`.
     #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    /// Generates a self-signed certificate with `alg`, importing its key into `provider`.
     pub fn generate_self_signed_with_alg(
-        subject_alt_names: impl Into<Vec<String>>,
-        alg: &'static rcgen::SignatureAlgorithm,
-    ) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::generate_self_signed_with_alg_and_provider(subject_alt_names, alg, provider)
-    }
-
-    /// Generates a self-signed certificate with `alg` and imports its key into `provider`.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn generate_self_signed_with_alg_and_provider(
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
         provider: Arc<dyn RTCCryptoProvider>,
@@ -118,21 +98,13 @@ impl Certificate {
 
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
-            private_key: CryptoPrivateKey::from_key_pair_with_provider(&key_pair, provider)?,
+            private_key: CryptoPrivateKey::from_key_pair(&key_pair, provider)?,
         })
     }
 
-    /// Parses a certificate from the ASCII PEM format.
-    pub fn from_pem(pem_str: &str) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::from_pem_with_provider(pem_str, provider)
-    }
-
     /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
-    pub fn from_pem_with_provider(
-        pem_str: &str,
-        provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
+    /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
+    pub fn from_pem(pem_str: &str, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
         let mut pems = pem::parse_many(pem_str).map_err(|e| Error::InvalidPEM(e.to_string()))?;
         if pems.len() < 2 {
             return Err(Error::InvalidPEM(format!(
@@ -236,26 +208,11 @@ pub(crate) fn value_key_message(
     plaintext
 }
 
-/// Trait for delegating signing to an external service (e.g., HSM, TPM, cloud KMS).
-///
-/// Implementations must be thread-safe and cloneable. Each DTLS handshake may
-/// clone the signer, so `clone_box` must return a fresh instance that signs
-/// with the same key.
-pub trait CustomSigner: Send + Sync + std::fmt::Debug {
-    /// Sign the given message and return the raw signature bytes.
-    fn sign(&self, message: &[u8]) -> std::result::Result<Vec<u8>, String>;
-
-    /// Clone this signer into a new boxed instance.
-    fn clone_box(&self) -> Box<dyn CustomSigner>;
-}
-
 /// Provider-neutral DTLS signing key.
 #[derive(Clone)]
 pub struct CryptoPrivateKey {
     /// Provider-owned signing key. It may be non-exportable.
     pub signing_key: Arc<dyn SigningKey>,
-    /// DER-encoded keypair retained by the temporary rcgen compatibility adapter.
-    pub serialized_der: Vec<u8>,
 }
 
 impl PartialEq for CryptoPrivateKey {
@@ -273,38 +230,14 @@ impl std::fmt::Debug for CryptoPrivateKey {
             .debug_struct("CryptoPrivateKey")
             .field("public_key_encoding", &public_key.encoding)
             .field("public_key_len", &public_key.bytes.len())
-            .field("exportable", &(!self.serialized_der.is_empty()))
             .finish()
     }
 }
 
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-impl TryFrom<&KeyPair> for CryptoPrivateKey {
-    type Error = Error;
-
-    fn try_from(key_pair: &KeyPair) -> Result<Self> {
-        Self::from_key_pair(key_pair)
-    }
-}
-
 impl CryptoPrivateKey {
-    /// Derives the signature scheme that matches `key_pair`.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the key type has no supported scheme.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn from_key_pair(key_pair: &KeyPair) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::from_key_pair_with_provider(key_pair, provider)
-    }
-
     /// Imports an rcgen key pair into an explicit provider.
     #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn from_key_pair_with_provider(
-        key_pair: &KeyPair,
-        provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
+    pub fn from_key_pair(key_pair: &KeyPair, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
         let serialized_der = key_pair.serialize_der();
         let scheme = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
             CryptoSignatureScheme::Ed25519
@@ -319,50 +252,12 @@ impl CryptoPrivateKey {
             .crypto()
             .import_signing_key(scheme, &serialized_der)
             .map_err(crypto_error)?;
-        Ok(Self {
-            signing_key,
-            serialized_der,
-        })
+        Ok(Self { signing_key })
     }
 
     /// Wraps a provider-neutral, potentially non-exportable signing key.
     pub fn from_signing_key(signing_key: Arc<dyn SigningKey>) -> Self {
-        Self {
-            signing_key,
-            serialized_der: Vec::new(),
-        }
-    }
-
-    /// Adapts the legacy external signer API until that API is removed before 1.0.
-    pub fn from_custom_signer(signer: Box<dyn CustomSigner>) -> Self {
-        Self::from_signing_key(Arc::new(CustomSigningKey { signer }))
-    }
-}
-
-struct CustomSigningKey {
-    signer: Box<dyn CustomSigner>,
-}
-
-impl SigningKey for CustomSigningKey {
-    fn supports(&self, _scheme: CryptoSignatureScheme) -> bool {
-        true
-    }
-
-    fn public_key(&self) -> PublicKey<'_> {
-        PublicKey {
-            encoding: PublicKeyEncoding::SubjectPublicKeyInfoDer,
-            bytes: &[],
-        }
-    }
-
-    fn sign(
-        &self,
-        _scheme: CryptoSignatureScheme,
-        message: &[u8],
-    ) -> std::result::Result<Vec<u8>, crypto::CryptoError> {
-        self.signer
-            .sign(message)
-            .map_err(crypto::CryptoError::Provider)
+        Self { signing_key }
     }
 }
 
@@ -575,10 +470,12 @@ mod test {
 
     #[test]
     fn test_certificate_serialize_pem_and_from_pem() -> Result<()> {
-        let cert = Certificate::generate_self_signed(vec!["webrtc.rs".to_owned()])?;
+        let provider = crypto::default_provider().map_err(crypto_error)?;
+        let cert =
+            Certificate::generate_self_signed(vec!["webrtc.rs".to_owned()], provider.clone())?;
 
         let pem = cert.serialize_pem()?;
-        let loaded_cert = Certificate::from_pem(&pem)?;
+        let loaded_cert = Certificate::from_pem(&pem, provider)?;
 
         assert_eq!(loaded_cert, cert);
 

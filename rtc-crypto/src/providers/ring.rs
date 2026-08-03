@@ -4,15 +4,15 @@ use ring::aead;
 use ring::agreement;
 use ring::digest;
 use ring::hmac;
-use ring::rand::{SecureRandom, SystemRandom};
+use ring::rand::SystemRandom;
 use ring::signature::{self, KeyPair};
 
 use crate::common;
 use crate::{
     ActiveKeyExchange, AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher,
-    CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, KeyExchangeAlgorithm, PublicKey,
-    PublicKeyEncoding, RTCCrypto, RTCCryptoProvider, RTCRandom, SecretVec, SignatureScheme,
-    SigningKey, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
+    CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, KeyExchangeAlgorithm, Mac,
+    PublicKey, PublicKeyEncoding, RTCCrypto, RTCCryptoProvider, RTCRandom, SecretVec,
+    SignatureScheme, SigningKey, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
 };
 
 /// The built-in Ring provider bundle.
@@ -58,9 +58,7 @@ pub struct RingRandom;
 
 impl RTCRandom for RingRandom {
     fn fill(&self, output: &mut [u8]) -> Result<(), CryptoError> {
-        SystemRandom::new()
-            .fill(output)
-            .map_err(|_| CryptoError::RandomnessFailed)
+        common::fill_random(output)
     }
 }
 
@@ -116,37 +114,16 @@ impl RTCCrypto for RingCrypto {
         }
     }
 
-    fn hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        output: &mut [u8],
-    ) -> Result<(), CryptoError> {
-        common::check_tag_len(algorithm.output_len(), output.len())?;
-        let key = hmac::Key::new(hmac_algorithm(algorithm), key);
-        let mut context = hmac::Context::with_key(&key);
-        for part in input {
-            context.update(part);
-        }
-        output.copy_from_slice(context.sign().as_ref());
-        Ok(())
-    }
-
-    fn verify_hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        expected: &[u8],
-    ) -> Result<(), CryptoError> {
-        common::check_tag_len(algorithm.output_len(), expected.len())?;
-        let mut actual = vec![0; algorithm.output_len()];
-        self.hmac(algorithm, key, input, &mut actual)?;
-        if constant_time_eq(&actual, expected) {
-            Ok(())
-        } else {
-            Err(CryptoError::AuthenticationFailed)
+    fn new_hmac(&self, algorithm: HmacAlgorithm, key: &[u8]) -> Result<Box<dyn Mac>, CryptoError> {
+        match algorithm {
+            // ring's SHA-1 is a software implementation and measures 3.3x slower than
+            // RustCrypto's; see common::RustCryptoHmacSha1. SHA-256 stays on ring, which uses
+            // the hardware instructions.
+            HmacAlgorithm::Sha1 => Ok(Box::new(common::RustCryptoHmacSha1::new(key))),
+            HmacAlgorithm::Sha256 => Ok(Box::new(RingHmac {
+                key: hmac::Key::new(hmac_algorithm(algorithm), key),
+                output_len: algorithm.output_len(),
+            })),
         }
     }
 
@@ -221,6 +198,42 @@ impl RTCCrypto for RingCrypto {
         signature::UnparsedPublicKey::new(verification_algorithm(scheme), public_key.bytes)
             .verify(message, signature)
             .map_err(|_| CryptoError::InvalidSignature)
+    }
+}
+
+/// A keyed HMAC holding a `ring::hmac::Key`.
+///
+/// `Key::new` performs the ipad/opad derivation; `Context::with_key` only clones the resulting
+/// state. Keeping the key here is what moves that derivation off the per-packet path.
+struct RingHmac {
+    key: hmac::Key,
+    output_len: usize,
+}
+
+impl Mac for RingHmac {
+    fn output_len(&self) -> usize {
+        self.output_len
+    }
+
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError> {
+        common::check_tag_len(self.output_len, output.len())?;
+        let mut context = hmac::Context::with_key(&self.key);
+        for part in input {
+            context.update(part);
+        }
+        output.copy_from_slice(context.sign().as_ref());
+        Ok(())
+    }
+
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
+        common::check_tag_len(self.output_len, expected.len())?;
+        let mut actual = vec![0; self.output_len];
+        self.sign(input, &mut actual)?;
+        if constant_time_eq(&actual, expected) {
+            Ok(())
+        } else {
+            Err(CryptoError::AuthenticationFailed)
+        }
     }
 }
 

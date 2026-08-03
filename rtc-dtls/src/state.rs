@@ -4,6 +4,7 @@ use super::curve::named_curve::*;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
 use super::prf::*;
+use crypto::RTCCryptoProvider;
 use crypto::SecretVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use shared::error::*;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 /// The negotiated connection state: keys, sequence numbers, peer identity and the active
 /// cipher suite.
 pub struct State {
-    pub(crate) crypto_provider: Option<Arc<dyn crypto::RTCCryptoProvider>>,
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) local_epoch: u16,
     pub(crate) remote_epoch: u16,
     pub(crate) local_sequence_number: Vec<u64>, // uint48
@@ -65,23 +66,28 @@ struct SerializedState {
     is_client: bool,
 }
 
-impl Default for State {
-    fn default() -> Self {
+impl State {
+    /// Creates the initial handshake state for a connection.
+    ///
+    /// The crypto provider comes from the caller — `rtc-dtls` never resolves a default. This
+    /// replaces the former `Default` impl, which resolved one implicitly only for `DTLSConn::new`
+    /// to overwrite it a few lines later.
+    pub fn new(crypto_provider: Arc<dyn RTCCryptoProvider>, is_client: bool) -> Self {
         State {
-            crypto_provider: crypto::default_provider().ok(),
+            crypto_provider,
             local_epoch: 0,
             remote_epoch: 0,
             local_sequence_number: vec![],
             local_random: HandshakeRandom::default(),
             remote_random: HandshakeRandom::default(),
             master_secret: vec![],
-            cipher_suite: None, // nil if a cipher_suite hasn't been chosen
+            cipher_suite: None,
 
-            srtp_protection_profile: SrtpProtectionProfile::Unsupported, // Negotiated srtp_protection_profile
+            srtp_protection_profile: SrtpProtectionProfile::Unsupported,
             peer_certificates: vec![],
             identity_hint: vec![],
 
-            is_client: false,
+            is_client,
 
             pre_master_secret: vec![],
             extended_master_secret: false,
@@ -92,12 +98,11 @@ impl Default for State {
             handshake_send_sequence: 0,
             handshake_recv_sequence: 0,
             server_name: "".to_string(),
-            remote_requested_certificate: false, // Did we get a CertificateRequest
-            local_certificates_verify: vec![],   // cache CertificateVerify
-            local_verify_data: vec![],           // cached VerifyData
-            local_key_signature: vec![],         // cached keySignature
+            remote_requested_certificate: false,
+            local_certificates_verify: vec![],
+            local_verify_data: vec![],
+            local_key_signature: vec![],
             peer_certificates_verified: false,
-            //replay_detector: vec![],
         }
     }
 }
@@ -207,9 +212,7 @@ impl State {
 
             if self.is_client {
                 cipher_suite.init(
-                    self.crypto_provider.clone().ok_or_else(|| {
-                        Error::Crypto("DTLS crypto provider is not configured".into())
-                    })?,
+                    self.crypto_provider.clone(),
                     &self.master_secret,
                     &local_random,
                     &remote_random,
@@ -217,9 +220,7 @@ impl State {
                 )
             } else {
                 cipher_suite.init(
-                    self.crypto_provider.clone().ok_or_else(|| {
-                        Error::Crypto("DTLS crypto provider is not configured".into())
-                    })?,
+                    self.crypto_provider.clone(),
                     &self.master_secret,
                     &remote_random,
                     &local_random,
@@ -282,14 +283,8 @@ impl State {
     }
 
     /// Returns the provider selected for this DTLS session.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the state has not been attached to a configured session.
-    pub fn crypto_provider(&self) -> Result<Arc<dyn crypto::RTCCryptoProvider>> {
-        self.crypto_provider
-            .clone()
-            .ok_or_else(|| Error::Crypto("DTLS crypto provider is not configured".into()))
+    pub fn crypto_provider(&self) -> Arc<dyn crypto::RTCCryptoProvider> {
+        self.crypto_provider.clone()
     }
 
     /// Exports `length` bytes of keying material from an established session, as defined in
@@ -334,10 +329,7 @@ impl State {
         }
 
         if let Some(cipher_suite) = &self.cipher_suite {
-            let provider = self
-                .crypto_provider
-                .as_ref()
-                .ok_or_else(|| Error::Crypto("DTLS crypto provider is not configured".into()))?;
+            let provider = self.crypto_provider.as_ref();
             match prf_p_hash(
                 provider.crypto(),
                 &self.master_secret,

@@ -65,50 +65,63 @@ impl RTCCrypto for TestCrypto {
         Ok(output)
     }
 
-    fn hmac(
+    fn new_hmac(
         &self,
         algorithm: HmacAlgorithm,
         key: &[u8],
-        input: &[&[u8]],
-        output: &mut [u8],
-    ) -> std::result::Result<(), CryptoError> {
+    ) -> std::result::Result<Box<dyn crypto::Mac>, CryptoError> {
         if algorithm != HmacAlgorithm::Sha1 {
             return Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hmac(
                 algorithm,
             )));
         }
-        if output.len() != algorithm.output_len() {
+        Ok(Box::new(TestMac {
+            key: key.to_vec(),
+            output_len: algorithm.output_len(),
+        }))
+    }
+}
+
+/// A deliberately fake MAC: an XOR fold, not HMAC-SHA1. It exists to prove the custom-provider
+/// path is honoured, so tests asserting RFC 5389 vectors must use `builtin_provider()` instead.
+struct TestMac {
+    key: Vec<u8>,
+    output_len: usize,
+}
+
+impl crypto::Mac for TestMac {
+    fn output_len(&self) -> usize {
+        self.output_len
+    }
+
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> std::result::Result<(), CryptoError> {
+        if output.len() != self.output_len {
             return Err(CryptoError::InvalidTagLength {
-                expected: algorithm.output_len(),
+                expected: self.output_len,
                 actual: output.len(),
             });
         }
         output.fill(0);
-        for (index, byte) in key
+        for (index, byte) in self
+            .key
             .iter()
             .chain(input.iter().flat_map(|part| part.iter()))
             .enumerate()
         {
-            output[index % algorithm.output_len()] ^= byte;
+            output[index % self.output_len] ^= byte;
         }
         Ok(())
     }
 
-    fn verify_hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        expected: &[u8],
-    ) -> std::result::Result<(), CryptoError> {
-        if expected.len() != algorithm.output_len() {
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> std::result::Result<(), CryptoError> {
+        if expected.len() != self.output_len {
             return Err(CryptoError::InvalidTagLength {
-                expected: algorithm.output_len(),
+                expected: self.output_len,
                 actual: expected.len(),
             });
         }
-        let mut actual = vec![0_u8; algorithm.output_len()];
-        self.hmac(algorithm, key, input, &mut actual)?;
+        let mut actual = vec![0_u8; self.output_len];
+        self.sign(input, &mut actual)?;
         if constant_time_eq(&actual, expected) {
             Ok(())
         } else {
@@ -122,6 +135,12 @@ fn test_provider() -> Arc<dyn RTCCryptoProvider> {
         crypto: TestCrypto,
         random: TestRandom,
     })
+}
+
+/// A real built-in provider. Tests asserting RFC 5389 key/tag vectors need genuine MD5 and
+/// HMAC-SHA1, not the `TestProvider` stand-in above.
+fn builtin_provider() -> Arc<dyn RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
 }
 
 #[test]
@@ -156,22 +175,24 @@ fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<(
 #[test]
 fn test_message_integrity_add_to_simple() -> Result<()> {
     {
-        let i = MessageIntegrity::new_long_term_integrity(
+        let i = MessageIntegrity::new_long_term_integrity_with_provider(
             "user".to_owned(),
             "realm".to_owned(),
             "passsss".to_owned(),
-        );
+            builtin_provider(),
+        )?;
         let expected = vec![
             104, 228, 91, 113, 61, 154, 222, 34, 101, 61, 181, 146, 177, 90, 4, 29,
         ];
         assert_eq!(i.key.as_ref(), expected, "{}", Error::ErrIntegrityMismatch);
     }
 
-    let i = MessageIntegrity::new_long_term_integrity(
+    let i = MessageIntegrity::new_long_term_integrity_with_provider(
         "user".to_owned(),
         "realm".to_owned(),
         "pass".to_owned(),
-    );
+        builtin_provider(),
+    )?;
     let expected = vec![
         0x84, 0x93, 0xfb, 0xc5, 0x3b, 0xa5, 0x82, 0xfb, 0x4c, 0x04, 0x4c, 0x45, 0x6b, 0xdc, 0x40,
         0xeb,
@@ -215,7 +236,10 @@ fn test_message_integrity_with_fingerprint() -> Result<()> {
     };
     a.add_to(&mut m)?;
 
-    let i = MessageIntegrity::new_short_term_integrity("pwd".to_owned());
+    let i = MessageIntegrity::new_short_term_integrity_with_provider(
+        "pwd".to_owned(),
+        builtin_provider(),
+    );
     assert_eq!(
         i.to_string(),
         "MESSAGE-INTEGRITY key: [REDACTED; 3 bytes]",
@@ -238,7 +262,10 @@ fn test_message_integrity_with_fingerprint() -> Result<()> {
 #[test]
 fn test_message_integrity() -> Result<()> {
     let mut m = Message::new();
-    let i = MessageIntegrity::new_short_term_integrity("password".to_owned());
+    let i = MessageIntegrity::new_short_term_integrity_with_provider(
+        "password".to_owned(),
+        builtin_provider(),
+    );
     m.write_header();
     i.add_to(&mut m)?;
     m.get(ATTR_MESSAGE_INTEGRITY)?;
@@ -250,7 +277,10 @@ fn test_message_integrity_before_fingerprint() -> Result<()> {
     let mut m = Message::new();
     m.write_header();
     FINGERPRINT.add_to(&mut m)?;
-    let i = MessageIntegrity::new_short_term_integrity("password".to_owned());
+    let i = MessageIntegrity::new_short_term_integrity_with_provider(
+        "password".to_owned(),
+        builtin_provider(),
+    );
     let result = i.add_to(&mut m);
     assert!(result.is_err(), "should error");
 

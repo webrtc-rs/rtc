@@ -191,62 +191,11 @@ pub struct Agent {
     pub(crate) event_outs: VecDeque<Event>,
 }
 
-impl Default for Agent {
-    fn default() -> Self {
-        Self {
-            crypto_provider: crypto::default_provider()
-                .expect("a default crypto provider is required"),
-            tie_breaker: 0,
-            is_controlling: false,
-            lite: false,
-            start_time: Instant::now(),
-            connection_state: Default::default(),
-            last_connection_state: Default::default(),
-            ufrag_pwd: Default::default(),
-            local_candidates: vec![],
-            remote_candidates: vec![],
-            candidate_pairs: vec![],
-            nominated_pair: None,
-            selected_pair: None,
-            pending_binding_requests: vec![],
-            insecure_skip_verify: false,
-            max_binding_requests: 0,
-            host_acceptance_min_wait: Default::default(),
-            srflx_acceptance_min_wait: Default::default(),
-            prflx_acceptance_min_wait: Default::default(),
-            relay_acceptance_min_wait: Default::default(),
-            disconnected_timeout: Default::default(),
-            failed_timeout: Default::default(),
-            keepalive_interval: Default::default(),
-            last_consent_sent: Instant::now(),
-            check_interval: Default::default(),
-            checking_duration: Instant::now(),
-            last_checking_time: Instant::now(),
-            force_candidate_contact: false,
-            mdns_mode: MulticastDnsMode::Disabled,
-            mdns_local_name: "".to_owned(),
-            mdns_local_ip: None,
-            mdns_queries: HashMap::new(),
-            mdns: None,
-            candidate_types: vec![],
-            network_types: vec![],
-            urls: vec![],
-            write_outs: Default::default(),
-            event_outs: Default::default(),
-        }
-    }
-}
-
 impl Agent {
     /// Creates a new Agent.
-    pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
-        let provider =
-            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
-        Self::new_with_provider(config, provider)
-    }
-
-    /// Creates a new Agent using an explicitly selected crypto provider.
-    pub fn new_with_provider(
+    ///
+    /// The crypto provider is supplied by the caller; this crate never resolves a default.
+    pub fn new(
         config: Arc<AgentConfig>,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {

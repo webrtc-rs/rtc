@@ -61,12 +61,13 @@ impl Setter for MessageIntegrity {
         m.length += (MESSAGE_INTEGRITY_SIZE + ATTRIBUTE_HEADER_SIZE) as u32;
         m.write_length(); // writing length to m.Raw
         let mut value = [0_u8; MESSAGE_INTEGRITY_SIZE];
-        let result = self.provider.crypto().hmac(
-            HmacAlgorithm::Sha1,
-            self.key.as_ref(),
-            &[&m.raw],
-            &mut value,
-        );
+        // A STUN message is authenticated once, so the MAC is keyed here rather than held. On a
+        // per-packet path the keyed object belongs in the surrounding state instead.
+        let result = self
+            .provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, self.key.as_ref())
+            .and_then(|mut mac| mac.sign(&[&m.raw], &mut value));
         m.length = length; // changing m.Length back
         m.write_length();
         result.map_err(crypto_error)?;
@@ -122,46 +123,6 @@ impl MessageIntegrity {
         Ok(Self::new_raw_integrity_with_provider(key, provider))
     }
 
-    /// Creates a raw-key integrity attribute using the built-in default provider.
-    ///
-    /// This compatibility adapter resolves the default once during construction and panics when
-    /// no built-in provider is enabled. New code should use
-    /// [`Self::new_raw_integrity_with_provider`].
-    #[must_use]
-    pub fn new_raw_integrity(key: impl Into<Vec<u8>>) -> Self {
-        Self::new_raw_integrity_with_provider(
-            key,
-            crypto::default_provider().expect("a default crypto provider is required"),
-        )
-    }
-
-    /// Creates a long-term integrity attribute using the built-in default provider.
-    ///
-    /// Password, username, and realm must be SASL-prepared. This compatibility adapter resolves
-    /// the default once during construction and panics when no built-in provider is enabled. New
-    /// code should use [`Self::new_long_term_integrity_with_provider`].
-    pub fn new_long_term_integrity(username: String, realm: String, password: String) -> Self {
-        Self::new_long_term_integrity_with_provider(
-            username,
-            realm,
-            password,
-            crypto::default_provider().expect("a default crypto provider is required"),
-        )
-        .expect("the default crypto provider must support STUN long-term credentials")
-    }
-
-    /// Creates a short-term integrity attribute using the built-in default provider.
-    ///
-    /// Password must be SASL-prepared. This compatibility adapter resolves the default once during
-    /// construction and panics when no built-in provider is enabled. New code should use
-    /// [`Self::new_short_term_integrity_with_provider`].
-    pub fn new_short_term_integrity(password: String) -> Self {
-        Self::new_short_term_integrity_with_provider(
-            password,
-            crypto::default_provider().expect("a default crypto provider is required"),
-        )
-    }
-
     /// Check checks MESSAGE-INTEGRITY attribute.
     ///
     /// CPU costly, see BenchmarkMessageIntegrity_Check.
@@ -190,10 +151,11 @@ impl MessageIntegrity {
         let start_of_hmac = MESSAGE_HEADER_SIZE + m.length as usize
             - (ATTRIBUTE_HEADER_SIZE + MESSAGE_INTEGRITY_SIZE);
         let b = &m.raw[..start_of_hmac]; // data before integrity attribute
-        let result =
-            self.provider
-                .crypto()
-                .verify_hmac(HmacAlgorithm::Sha1, self.key.as_ref(), &[b], &v);
+        let result = self
+            .provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, self.key.as_ref())
+            .and_then(|mut mac| mac.verify(&[b], &v));
         m.length = length as u32;
         m.write_length(); // writing length back
         match result {
@@ -203,11 +165,5 @@ impl MessageIntegrity {
             }
             Err(error) => Err(crypto_error(error)),
         }
-    }
-}
-
-impl Default for MessageIntegrity {
-    fn default() -> Self {
-        Self::new_raw_integrity(Vec::new())
     }
 }

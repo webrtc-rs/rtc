@@ -36,32 +36,6 @@ pub trait RTCCrypto: Send + Sync {
         )))
     }
 
-    /// Computes a native-length HMAC into `output`.
-    fn hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        _key: &[u8],
-        _input: &[&[u8]],
-        _output: &mut [u8],
-    ) -> Result<(), CryptoError> {
-        Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hmac(
-            algorithm,
-        )))
-    }
-
-    /// Verifies a complete native-length HMAC tag.
-    fn verify_hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        _key: &[u8],
-        _input: &[&[u8]],
-        _expected: &[u8],
-    ) -> Result<(), CryptoError> {
-        Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hmac(
-            algorithm,
-        )))
-    }
-
     /// Encrypts exactly one block in place.
     fn block_encrypt(
         &self,
@@ -72,6 +46,18 @@ pub trait RTCCrypto: Send + Sync {
         Err(CryptoError::UnsupportedAlgorithm(
             CryptoAlgorithm::BlockCipher(algorithm),
         ))
+    }
+
+    /// Creates a keyed MAC.
+    ///
+    /// This is the only HMAC entry point. Deriving the key schedule is the expensive part, so it
+    /// happens here rather than per message; a caller that authenticates many messages with one
+    /// key holds the returned [`Mac`]. One-shot callers simply drop it after a single `sign` or
+    /// `verify`.
+    fn new_hmac(&self, algorithm: HmacAlgorithm, _key: &[u8]) -> Result<Box<dyn Mac>, CryptoError> {
+        Err(CryptoError::UnsupportedAlgorithm(CryptoAlgorithm::Hmac(
+            algorithm,
+        )))
     }
 
     /// Creates a keyed stream cipher.
@@ -150,6 +136,30 @@ pub trait RTCCrypto: Send + Sync {
             CryptoAlgorithm::Signature(scheme),
         ))
     }
+}
+
+/// A keyed message authentication code with a reusable key schedule.
+///
+/// Created once per key by [`RTCCrypto::new_hmac`] and used for every message authenticated with
+/// that key, so the ipad/opad derivation is paid once rather than per packet.
+///
+/// `Send` and mutable, like the keyed cipher traits, and for the same reason: `&mut self` lets an
+/// implementation carry per-message state — a reused streaming context, a hardware session
+/// handle — without interior mutability, and does not impose `Sync` on implementors that cannot
+/// offer it. A caller whose own signature is fixed to `&self`, such as STUN's `Setter::add_to`,
+/// can still create a local `Mac` per message and use it mutably.
+pub trait Mac: Send {
+    /// Returns the untruncated tag length in bytes.
+    fn output_len(&self) -> usize;
+
+    /// Writes the tag over the concatenation of `input` into `output`.
+    ///
+    /// `output` must be exactly [`output_len`](Self::output_len) bytes. Protocols that transmit a
+    /// truncated tag — SRTP sends 80 or 32 bits of an SHA-1 tag — truncate the result themselves.
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError>;
+
+    /// Verifies a complete untruncated tag in constant time.
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError>;
 }
 
 /// A keyed stream cipher with a reusable expanded key.

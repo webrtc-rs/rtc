@@ -2246,21 +2246,9 @@ pub enum Error {
     },
 
     //Third Party Error
-    /// An error from the `sec1` crate while handling EC key encodings.
-    #[error("{0}")]
-    Sec1(#[source] sec1::Error),
-    /// An error from the `p256` crate during NIST P-256 elliptic-curve operations.
-    #[error("{0}")]
-    P256(#[source] P256Error),
-    /// An error from the `rcgen` crate while generating a self-signed certificate.
-    #[error("{0}")]
-    RcGen(#[from] rcgen::Error),
     /// Invalid PEM.
     #[error("invalid PEM: {0}")]
     InvalidPEM(String),
-    /// AES GCM.
-    #[error("aes gcm: {0}")]
-    AesGcm(#[from] aes_gcm::Error),
     /// Parse ip.
     #[error("parse ip: {0}")]
     ParseIp(#[from] net::AddrParseError),
@@ -2279,10 +2267,6 @@ pub enum Error {
     /// An error from the standard library or another boxed source.
     #[error("{0}")]
     Std(#[source] StdError),
-    /// An error from the `aes` crate during block-cipher setup.
-    #[error("{0}")]
-    Aes(#[from] aes::cipher::InvalidLength),
-
     //Other Errors
     /// Other RTCP Err.
     #[error("Other RTCP Err: {0}")]
@@ -2401,34 +2385,6 @@ impl PartialEq for StdError {
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(e: std::sync::PoisonError<T>) -> Self {
         Error::PoisonError(e.to_string())
-    }
-}
-
-impl From<sec1::Error> for Error {
-    fn from(e: sec1::Error) -> Self {
-        Error::Sec1(e)
-    }
-}
-
-/// Wrapper around [`p256::elliptic_curve::Error`] that implements [`PartialEq`].
-///
-/// `p256::elliptic_curve::Error` does not implement `PartialEq`, which is
-/// required by the top-level [`enum@Error`] enum. This newtype always returns
-/// `false` for equality comparisons, which is the safe conservative choice
-/// for opaque cryptographic errors.
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct P256Error(#[source] p256::elliptic_curve::Error);
-
-impl PartialEq for P256Error {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
-
-impl From<p256::elliptic_curve::Error> for Error {
-    fn from(e: p256::elliptic_curve::Error) -> Self {
-        Error::P256(P256Error(e))
     }
 }
 

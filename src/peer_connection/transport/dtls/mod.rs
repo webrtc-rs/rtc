@@ -64,26 +64,6 @@ pub(crate) struct RTCDtlsTransportConfig {
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
 }
 
-impl Default for RTCDtlsTransport {
-    fn default() -> Self {
-        Self {
-            crypto_provider: crypto::default_provider()
-                .expect("a default crypto provider is required for RTCDtlsTransport::default"),
-            dtls_role: RTCDtlsRole::default(),
-            dtls_handshake_config: None,
-            dtls_endpoint: None,
-            state: RTCDtlsTransportState::default(),
-            certificates: Vec::new(),
-            answering_dtls_role: RTCDtlsRole::default(),
-            srtp_protection_profiles: Vec::new(),
-            dtls_cipher_suites: Vec::new(),
-            allow_insecure_verification_algorithm: false,
-            disable_certificate_fingerprint_verification: false,
-            replay_protection: ReplayProtection::default(),
-        }
-    }
-}
-
 impl RTCDtlsTransport {
     pub(crate) fn new(config: RTCDtlsTransportConfig) -> Result<Self> {
         let RTCDtlsTransportConfig {
@@ -423,7 +403,8 @@ mod tests {
         let certificate = RTCCertificate::generate(
             default_provider.clone(),
             crypto::SignatureScheme::EcdsaP256Sha256,
-            CertificateParams::new(vec!["webrtc.rs".to_owned()])?,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
         )?;
         let provider: Arc<dyn RTCCryptoProvider> = Arc::new(ProfileFilteringProvider {
             random_provider: default_provider,

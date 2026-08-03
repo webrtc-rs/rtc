@@ -1,7 +1,7 @@
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, BytesMut};
 use crypto::{
-    HmacAlgorithm, RTCCryptoProvider, SecretVec, StreamCipher, StreamCipherAlgorithm,
+    HmacAlgorithm, Mac, RTCCryptoProvider, SecretVec, StreamCipher, StreamCipherAlgorithm,
     constant_time_eq,
 };
 use rtcp::header::{HEADER_LENGTH, SSRC_LENGTH};
@@ -18,9 +18,11 @@ pub const CIPHER_AES_CM_HMAC_SHA1AUTH_TAG_LEN: usize = 10;
 pub(crate) struct CipherAesCmHmacSha1 {
     profile: ProtectionProfile,
     srtp_session_salt: Vec<u8>,
-    srtp_session_auth: SecretVec,
+    /// Pre-keyed HMAC-SHA1, built once here rather than per packet. Deriving the key schedule on
+    /// every packet measured ~3x slower on the SRTP path; see `benches/README.md`.
+    srtp_session_auth: Box<dyn Mac>,
     srtcp_session_salt: Vec<u8>,
-    srtcp_session_auth: SecretVec,
+    srtcp_session_auth: Box<dyn Mac>,
     provider: Arc<dyn RTCCryptoProvider>,
     srtp_cipher: Box<dyn StreamCipher>,
     srtcp_cipher: Box<dyn StreamCipher>,
@@ -105,6 +107,17 @@ impl CipherAesCmHmacSha1 {
             auth_key_len,
         )?);
 
+        // Key the MACs once per context. Everything above is per-context setup; the auth tag on
+        // each packet then costs only the message pass.
+        let srtp_session_auth = provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, srtp_session_auth.as_ref())
+            .map_err(crypto_error)?;
+        let srtcp_session_auth = provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, srtcp_session_auth.as_ref())
+            .map_err(crypto_error)?;
+
         Ok(Self {
             profile,
             srtp_session_salt,
@@ -118,31 +131,22 @@ impl CipherAesCmHmacSha1 {
     }
 
     /// Generate the SRTP HMAC-SHA1 authentication tag described by RFC 3711, section 4.2.
-    fn generate_srtp_auth_tag(&self, buf: &[u8], roc: u32) -> Result<[u8; 20]> {
+    ///
+    /// Takes `&mut self` so the pre-keyed [`Mac`] can be used directly; the key schedule was
+    /// derived once in [`new`](Self::new).
+    fn generate_srtp_auth_tag(&mut self, buf: &[u8], roc: u32) -> Result<[u8; 20]> {
         let mut tag = [0; 20];
-        self.provider
-            .crypto()
-            .hmac(
-                HmacAlgorithm::Sha1,
-                self.srtp_session_auth.as_ref(),
-                &[buf, &roc.to_be_bytes()],
-                &mut tag,
-            )
+        self.srtp_session_auth
+            .sign(&[buf, &roc.to_be_bytes()], &mut tag)
             .map_err(crypto_error)?;
         Ok(tag)
     }
 
     /// Generate the SRTCP HMAC-SHA1 authentication tag described by RFC 3711, section 4.2.
-    fn generate_srtcp_auth_tag(&self, buf: &[u8]) -> Result<[u8; 20]> {
+    fn generate_srtcp_auth_tag(&mut self, buf: &[u8]) -> Result<[u8; 20]> {
         let mut tag = [0; 20];
-        self.provider
-            .crypto()
-            .hmac(
-                HmacAlgorithm::Sha1,
-                self.srtcp_session_auth.as_ref(),
-                &[buf],
-                &mut tag,
-            )
+        self.srtcp_session_auth
+            .sign(&[buf], &mut tag)
             .map_err(crypto_error)?;
         Ok(tag)
     }

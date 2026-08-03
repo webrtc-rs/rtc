@@ -1,5 +1,10 @@
 use super::*;
 use crate::peer_connection::event::{RTCPeerConnectionEvent, RTCPeerConnectionIceEvent};
+use crate::peer_connection::handler::datachannel::DataChannelHandlerContext;
+use crate::peer_connection::handler::demuxer::DemuxerHandlerContext;
+use crate::peer_connection::handler::endpoint::EndpointHandlerContext;
+use crate::peer_connection::handler::interceptor::InterceptorHandlerContext;
+use crate::peer_connection::handler::srtp::SrtpHandlerContext;
 use crate::peer_connection::sdp::{
     MediaSection, PopulateSdpParams, add_candidates_to_media_descriptions, get_by_mid,
     get_peer_direction, get_rids, have_data_channel, is_ext_map_allow_mixed_set,
@@ -21,6 +26,7 @@ use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 
 impl<I> RTCPeerConnection<I>
 where
@@ -34,8 +40,13 @@ where
     ) -> Result<Self> {
         configuration.validate()?;
 
-        let crypto_provider = match setting_engine.crypto_provider.clone() {
-            Some(provider) => provider,
+        // The one place in the workspace that resolves a default crypto provider. The
+        // application either supplies one through `SettingEngine::set_crypto_provider` or gets
+        // the feature-selected built-in here, once, at construction. Everything downstream —
+        // ICE, DTLS, SRTP, STUN, certificates — receives it explicitly, so no library code
+        // reaches for a default behind the caller's back.
+        let crypto_provider = match setting_engine.crypto_provider.take() {
+            Some(crypto_provider) => crypto_provider,
             None => crypto::default_provider().map_err(|error| {
                 Error::Crypto(format!(
                     "peer connection requires a crypto provider: {error}; configure one with SettingEngine::set_crypto_provider"
@@ -121,12 +132,22 @@ where
         let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
         let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
 
+        // Listed in full rather than filled from `Default`: the ICE and DTLS handler contexts
+        // own a crypto provider, and deriving `Default` for them would mean resolving one
+        // implicitly. The provider is chosen once above and threaded from here.
         let pipeline_context = PipelineContext {
+            demuxer_handler_context: DemuxerHandlerContext::default(),
             ice_handler_context,
             dtls_handler_context,
             sctp_handler_context,
-
-            ..Default::default()
+            datachannel_handler_context: DataChannelHandlerContext::default(),
+            srtp_handler_context: SrtpHandlerContext::default(),
+            interceptor_handler_context: InterceptorHandlerContext::default(),
+            endpoint_handler_context: EndpointHandlerContext::default(),
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
+            stats: RTCStatsAccumulator::default(),
         };
 
         Ok(Self {
@@ -190,7 +211,7 @@ where
         }
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints_with_provider(self.dtls_transport().crypto_provider.clone())?
+            cert.get_fingerprints(self.dtls_transport().crypto_provider.clone())?
         } else {
             return Err(Error::ErrNonCertificate);
         };
@@ -335,7 +356,7 @@ where
         };
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints_with_provider(self.dtls_transport().crypto_provider.clone())?
+            cert.get_fingerprints(self.dtls_transport().crypto_provider.clone())?
         } else {
             return Err(Error::ErrNonCertificate);
         };

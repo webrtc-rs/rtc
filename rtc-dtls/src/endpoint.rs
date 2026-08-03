@@ -355,11 +355,10 @@ mod tests {
                 builder = builder.with_psk_identity_hint(Some(b"rtc-dtls-test".to_vec()));
             }
         } else if !is_client {
-            builder =
-                builder.with_certificates(vec![Certificate::generate_self_signed_with_provider(
-                    vec!["localhost".to_owned()],
-                    provider,
-                )?]);
+            builder = builder.with_certificates(vec![Certificate::generate_self_signed(
+                vec!["localhost".to_owned()],
+                provider,
+            )?]);
         }
         Ok(Arc::new(builder.build(is_client, None)?))
     }

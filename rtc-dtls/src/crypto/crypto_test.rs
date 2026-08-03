@@ -205,7 +205,10 @@ fn test_certificate_verify() -> Result<()> {
     ];
 
     //test ECDSA256
-    let certificate_ecdsa256 = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
+    let certificate_ecdsa256 = Certificate::generate_self_signed(
+        vec!["localhost".to_owned()],
+        crypto::default_provider().map_err(crypto_error)?,
+    )?;
     let ecdsa_algorithm = SignatureHashAlgorithm {
         hash: HashAlgorithm::Sha256,
         signature: SignatureAlgorithm::Ecdsa,
@@ -232,6 +235,7 @@ fn test_certificate_verify() -> Result<()> {
     let certificate_ed25519 = Certificate::generate_self_signed_with_alg(
         vec!["localhost".to_owned()],
         &rcgen::PKCS_ED25519,
+        crypto::default_provider().map_err(crypto_error)?,
     )?;
     let ed25519_algorithm = SignatureHashAlgorithm {
         hash: HashAlgorithm::Sha256,
@@ -265,29 +269,36 @@ struct MockSigner {
     signature: Vec<u8>,
 }
 
-impl CustomSigner for MockSigner {
-    fn sign(&self, message: &[u8]) -> std::result::Result<Vec<u8>, String> {
+impl SigningKey for MockSigner {
+    fn supports(&self, _scheme: CryptoSignatureScheme) -> bool {
+        true
+    }
+
+    fn public_key(&self) -> PublicKey<'_> {
+        PublicKey {
+            encoding: PublicKeyEncoding::SubjectPublicKeyInfoDer,
+            bytes: &[],
+        }
+    }
+
+    fn sign(
+        &self,
+        _scheme: CryptoSignatureScheme,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, crypto::CryptoError> {
         *self.call_count.lock().unwrap() += 1;
         *self.last_message.lock().unwrap() = message.to_vec();
         Ok(self.signature.clone())
     }
-
-    fn clone_box(&self) -> Box<dyn CustomSigner> {
-        Box::new(MockSigner {
-            call_count: std::sync::Arc::clone(&self.call_count),
-            last_message: std::sync::Arc::clone(&self.last_message),
-            signature: self.signature.clone(),
-        })
-    }
 }
 
 #[test]
-fn test_custom_signer_is_invoked_for_signing() -> Result<()> {
+fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
     let expected_signature = vec![0xca, 0xfe, 0xba, 0xbe];
     let call_count = std::sync::Arc::new(std::sync::Mutex::new(0usize));
     let last_message = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
-    let private_key = CryptoPrivateKey::from_custom_signer(Box::new(MockSigner {
+    let private_key = CryptoPrivateKey::from_signing_key(std::sync::Arc::new(MockSigner {
         call_count: std::sync::Arc::clone(&call_count),
         last_message: std::sync::Arc::clone(&last_message),
         signature: expected_signature.clone(),

@@ -31,12 +31,16 @@
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Generate ECDSA certificate (recommended)
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //!
 //! // Use in peer connection
 //! let peer_connection = RTCPeerConnectionBuilder::new()
@@ -54,15 +58,19 @@
 //!
 //! ```
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Ed25519 provides the best security with excellent performance
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::Ed25519,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //!
 //! // Get fingerprint for SDP signaling
-//! let fingerprints = certificate.get_fingerprints();
+//! let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
 //! println!("Fingerprint: {}", fingerprints[0].value);
 //! # Ok(())
 //! # }
@@ -73,18 +81,22 @@
 //! ```no_run
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //! use std::fs;
 //!
 //! // First run: Generate and save certificate
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //! let pem_data = certificate.serialize_pem()?;
 //! fs::write("my_cert.pem", pem_data)?;
 //!
 //! // Later runs: Load existing certificate
 //! let pem_data = fs::read_to_string("my_cert.pem")?;
-//! let certificate = RTCCertificate::from_pem(&pem_data)?;
+//! let certificate = RTCCertificate::from_pem(&pem_data, crypto::default_provider()?)?;
 //! // Same identity maintained across restarts!
 //! # Ok(())
 //! # }
@@ -94,14 +106,18 @@
 //!
 //! ```
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //!
 //! // Get fingerprints for SDP offer/answer
-//! let fingerprints = certificate.get_fingerprints();
+//! let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
 //! for fp in fingerprints {
 //!     // Format for SDP: a=fingerprint:sha-256 XX:XX:XX:...
 //!     println!("a=fingerprint:{} {}", fp.algorithm, fp.value);
@@ -114,20 +130,27 @@
 //!
 //! ```
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //! use std::time::Instant;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // ECDSA P-256: Good balance of speed and security
 //! let start = Instant::now();
-//! let ecdsa_kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let _ecdsa_cert = RTCCertificate::from_key_pair(ecdsa_kp)?;
+//! let _ecdsa_cert = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //! println!("ECDSA generation: {:?}", start.elapsed());
 //!
 //! // Ed25519: Fastest and most secure
 //! let start = Instant::now();
-//! let ed_kp = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-//! let _ed_cert = RTCCertificate::from_key_pair(ed_kp)?;
+//! let _ed_cert = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::Ed25519,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //! println!("Ed25519 generation: {:?}", start.elapsed());
 //! # Ok(())
 //! # }
@@ -183,17 +206,17 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crypto::{HashAlgorithm, PublicKeyEncoding, RTCCryptoProvider, SignatureScheme, SigningKey};
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-use dtls::crypto::CryptoPrivateKey;
-use rcgen::CertificateParams;
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-use rcgen::KeyPair;
+/// X.509 certificate parameters — subject alt names, validity window, distinguished name.
+///
+/// Re-exported from `rcgen` because it appears in [`RTCCertificate::generate`]'s signature and
+/// must therefore be nameable without adding a direct `rcgen` dependency. Certificate *format*
+/// is deliberately not a crypto-provider concern (see `docs/crypto-provider-decisions.md`), so
+/// this type stays an rcgen type rather than being wrapped.
+pub use rcgen::CertificateParams;
 use rustls::pki_types::CertificateDer;
 
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use shared::error::{Error, Result};
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-use shared::util::math_rand_alpha;
 
 /// X.509 certificate used to authenticate WebRTC peer-to-peer communications.
 ///
@@ -218,14 +241,18 @@ use shared::util::math_rand_alpha;
 ///
 /// ```
 /// # use rtc::peer_connection::certificate::RTCCertificate;
-/// # use rcgen::KeyPair;
+/// # use rtc::crypto::{self, SignatureScheme};
+/// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Generate ECDSA P-256 key pair and certificate
-/// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-/// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+/// let certificate = RTCCertificate::generate(
+///     crypto::default_provider()?,
+///     SignatureScheme::EcdsaP256Sha256,
+///     CertificateParams::new(vec!["localhost".to_owned()])?,
+/// )?;
 ///
 /// // Certificate is ready to use
-/// let fingerprints = certificate.get_fingerprints();
+/// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
 /// println!("Certificate has {} fingerprint(s)", fingerprints.len());
 /// # Ok(())
 /// # }
@@ -235,14 +262,18 @@ use shared::util::math_rand_alpha;
 ///
 /// ```
 /// # use rtc::peer_connection::certificate::RTCCertificate;
-/// # use rcgen::KeyPair;
+/// # use rtc::crypto::{self, SignatureScheme};
+/// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Generate Ed25519 key pair and certificate
-/// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-/// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+/// let certificate = RTCCertificate::generate(
+///     crypto::default_provider()?,
+///     SignatureScheme::Ed25519,
+///     CertificateParams::new(vec!["localhost".to_owned()])?,
+/// )?;
 ///
 /// // Get fingerprints for SDP signaling
-/// let fingerprints = certificate.get_fingerprints();
+/// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
 /// for fp in fingerprints {
 ///     println!("Fingerprint ({}):\n{}", fp.algorithm, fp.value);
 /// }
@@ -255,9 +286,14 @@ use shared::util::math_rand_alpha;
 /// ```
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # use rtc::peer_connection::certificate::RTCCertificate;
-/// # use rcgen::KeyPair;
-/// # let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-/// # let certificate = RTCCertificate::from_key_pair(key_pair)?;
+/// # use rtc::crypto::{self, SignatureScheme};
+/// # use rtc::peer_connection::certificate::CertificateParams;
+/// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+/// # let certificate = RTCCertificate::generate(
+/// #     crypto::default_provider()?,
+/// #     SignatureScheme::EcdsaP256Sha256,
+/// #     params,
+/// # )?;
 /// // Serialize certificate to PEM format (includes private key)
 /// let pem_string = certificate.serialize_pem()?;
 ///
@@ -265,7 +301,7 @@ use shared::util::math_rand_alpha;
 /// // std::fs::write("cert.pem", &pem_string)?;
 ///
 /// // Later, load the certificate back
-/// let loaded_cert = RTCCertificate::from_pem(&pem_string)?;
+/// let loaded_cert = RTCCertificate::from_pem(&pem_string, crypto::default_provider()?)?;
 /// assert_eq!(loaded_cert, certificate);
 /// # Ok(())
 /// # }
@@ -277,11 +313,15 @@ use shared::util::math_rand_alpha;
 /// # use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 /// # use rtc::peer_connection::certificate::RTCCertificate;
-/// # use rcgen::KeyPair;
+/// # use rtc::crypto::{self, SignatureScheme};
+/// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Generate certificate
-/// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-/// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+/// let certificate = RTCCertificate::generate(
+///     crypto::default_provider()?,
+///     SignatureScheme::EcdsaP256Sha256,
+///     CertificateParams::new(vec!["localhost".to_owned()])?,
+/// )?;
 ///
 /// // Configure peer connection with custom certificate
 /// let peer_connection = RTCPeerConnectionBuilder::new()
@@ -366,7 +406,15 @@ impl RTCCertificate {
         }
     }
 
-    fn generate_from_signing_key(
+    /// Builds a self-signed certificate around an existing provider-owned signing key.
+    ///
+    /// Use this when the key already exists — imported from PKCS#8 with
+    /// [`RTCCrypto::import_signing_key`](crypto::RTCCrypto::import_signing_key), or held by an
+    /// HSM/KMS — and a fresh self-signed X.509 wrapper is needed. Use
+    /// [`generate`](Self::generate) instead when the provider should create the key too.
+    ///
+    /// This is the provider-neutral replacement for the removed `from_key_pair`.
+    pub fn generate_from_signing_key(
         params: CertificateParams,
         scheme: SignatureScheme,
         signing_key: Arc<dyn SigningKey>,
@@ -382,108 +430,6 @@ impl RTCCertificate {
             signing_key,
             expires,
         ))
-    }
-
-    /// Generates a new certificate from custom parameters.
-    ///
-    /// This is an internal method used to create certificates with specific configuration.
-    /// Most users should use [`from_key_pair`](Self::from_key_pair) instead.
-    ///
-    /// # Parameters
-    ///
-    /// * `params` - Certificate parameters including validity period and subject
-    /// * `key_pair` - The cryptographic key pair to use
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The key pair type is not supported (must be Ed25519, ECDSA P-256, or RSA)
-    /// - Certificate generation fails
-    ///
-    /// # Platform Notes
-    ///
-    /// On ARM architectures, certificate expiration is capped at 48 hours due to
-    /// overflow issues with SystemTime arithmetic.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    fn from_params(
-        params: CertificateParams,
-        key_pair: KeyPair,
-        provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
-        let not_after = params.not_after;
-
-        let x509_cert = params
-            .self_signed(&key_pair)
-            .map_err(|error| Error::Other(error.to_string()))?;
-        let private_key = CryptoPrivateKey::from_key_pair_with_provider(&key_pair, provider)?;
-        let expires = certificate_expiration(not_after);
-
-        Ok(Self {
-            dtls_certificate: dtls::crypto::Certificate {
-                certificate: vec![x509_cert.der().to_owned()],
-                private_key,
-            },
-            expires,
-        })
-    }
-
-    /// Generates a new self-signed certificate with default parameters.
-    ///
-    /// Creates a certificate with a randomly generated common name and default
-    /// validity period. This is the recommended method for generating certificates
-    /// for WebRTC connections.
-    ///
-    /// # Parameters
-    ///
-    /// * `key_pair` - A cryptographic key pair. Must be one of:
-    ///   - `rcgen::PKCS_ED25519` - Ed25519 (recommended for security)
-    ///   - `rcgen::PKCS_ECDSA_P256_SHA256` - ECDSA P-256 (recommended for performance)
-    ///   - `rcgen::PKCS_RSA_SHA256` - RSA (generation not available)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the key pair type is not supported.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use rtc::peer_connection::certificate::RTCCertificate;
-    /// # use rcgen::KeyPair;
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Generate ECDSA certificate
-    /// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-    /// let certificate = RTCCertificate::from_key_pair(key_pair)?;
-    ///
-    /// // Certificate is ready to use in peer connection
-    /// let fingerprints = certificate.get_fingerprints();
-    /// println!("Generated certificate with {} fingerprint(s)", fingerprints.len());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn from_key_pair(key_pair: KeyPair) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::from_key_pair_with_provider(key_pair, provider)
-    }
-
-    /// Imports an `rcgen` key pair through an explicit provider compatibility adapter.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
-    pub fn from_key_pair_with_provider(
-        key_pair: KeyPair,
-        provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
-        if !(key_pair.is_compatible(&rcgen::PKCS_ED25519)
-            || key_pair.is_compatible(&rcgen::PKCS_ECDSA_P256_SHA256)
-            || key_pair.is_compatible(&rcgen::PKCS_RSA_SHA256))
-        {
-            return Err(Error::Other("Unsupported key_pair".to_owned()));
-        }
-
-        RTCCertificate::from_params(
-            CertificateParams::new(vec![math_rand_alpha(16)]).unwrap(),
-            key_pair,
-            provider,
-        )
     }
 
     /// Parses a certificate from PEM format string.
@@ -513,29 +459,25 @@ impl RTCCertificate {
     /// ```
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use rtc::peer_connection::certificate::RTCCertificate;
-    /// # use rcgen::KeyPair;
-    /// # let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-    /// # let original = RTCCertificate::from_key_pair(key_pair)?;
+    /// # use rtc::crypto::{self, SignatureScheme};
+    /// # use rtc::peer_connection::certificate::CertificateParams;
+    /// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+    /// # let original = RTCCertificate::generate(
+    /// #     crypto::default_provider()?,
+    /// #     SignatureScheme::EcdsaP256Sha256,
+    /// #     params,
+    /// # )?;
     /// // Load certificate from PEM string
     /// # let pem_str = original.serialize_pem()?;
-    /// let certificate = RTCCertificate::from_pem(&pem_str)?;
+    /// let certificate = RTCCertificate::from_pem(&pem_str, crypto::default_provider()?)?;
     ///
     /// // Certificate is ready to use
-    /// let fingerprints = certificate.get_fingerprints();
+    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
     /// println!("Loaded certificate with {} fingerprint(s)", fingerprints.len());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_pem(pem_str: &str) -> Result<Self> {
-        let provider = crypto::default_provider().map_err(crypto_error)?;
-        Self::from_pem_with_provider(pem_str, provider)
-    }
-
-    /// Parses PEM and imports its private key through an explicit provider.
-    pub fn from_pem_with_provider(
-        pem_str: &str,
-        provider: Arc<dyn RTCCryptoProvider>,
-    ) -> Result<Self> {
+    pub fn from_pem(pem_str: &str, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
         let mut pem_blocks = pem_str.split("\n\n");
         let first_block = if let Some(b) = pem_blocks.next() {
             b
@@ -559,7 +501,7 @@ impl RTCCertificate {
         } else {
             return Err(Error::InvalidPEM("failed to calculate SystemTime".into()));
         };
-        let dtls_certificate = dtls::crypto::Certificate::from_pem_with_provider(
+        let dtls_certificate = dtls::crypto::Certificate::from_pem(
             &pem_blocks.collect::<Vec<&str>>().join("\n\n"),
             provider,
         )?;
@@ -596,7 +538,7 @@ impl RTCCertificate {
     /// let certificate = RTCCertificate::from_existing(dtls_cert, expires);
     ///
     /// // Certificate is ready to use
-    /// let fingerprints = certificate.get_fingerprints();
+    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
     /// println!("Certificate has {} fingerprint(s)", fingerprints.len());
     /// # Ok(())
     /// # }
@@ -631,9 +573,14 @@ impl RTCCertificate {
     /// ```
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use rtc::peer_connection::certificate::RTCCertificate;
-    /// # use rcgen::KeyPair;
-    /// # let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-    /// # let certificate = RTCCertificate::from_key_pair(key_pair)?;
+    /// # use rtc::crypto::{self, SignatureScheme};
+    /// # use rtc::peer_connection::certificate::CertificateParams;
+    /// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+    /// # let certificate = RTCCertificate::generate(
+    /// #     crypto::default_provider()?,
+    /// #     SignatureScheme::EcdsaP256Sha256,
+    /// #     params,
+    /// # )?;
     /// // Serialize for storage
     /// let pem_string = certificate.serialize_pem()?;
     ///
@@ -641,7 +588,7 @@ impl RTCCertificate {
     /// // std::fs::write("private/cert.pem", &pem_string)?;
     ///
     /// // Later, reload it
-    /// let reloaded = RTCCertificate::from_pem(&pem_string)?;
+    /// let reloaded = RTCCertificate::from_pem(&pem_string, crypto::default_provider()?)?;
     /// assert_eq!(certificate, reloaded);
     /// # Ok(())
     /// # }
@@ -691,27 +638,24 @@ impl RTCCertificate {
     ///
     /// ```
     /// # use rtc::peer_connection::certificate::RTCCertificate;
-    /// # use rcgen::KeyPair;
+    /// # use rtc::crypto::{self, SignatureScheme};
+    /// # use rtc::peer_connection::certificate::CertificateParams;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-    /// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+    /// let certificate = RTCCertificate::generate(
+    ///     crypto::default_provider()?,
+    ///     SignatureScheme::EcdsaP256Sha256,
+    ///     CertificateParams::new(vec!["localhost".to_owned()])?,
+    /// )?;
     ///
     /// // Get fingerprints for SDP
-    /// let fingerprints = certificate.get_fingerprints();
+    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
     /// for fp in fingerprints {
     ///     println!("a=fingerprint:{} {}", fp.algorithm, fp.value);
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_fingerprints(&self) -> Vec<RTCDtlsFingerprint> {
-        let provider = crypto::default_provider().expect("a default crypto provider is required");
-        self.get_fingerprints_with_provider(provider)
-            .expect("the default crypto provider supports SHA-256")
-    }
-
-    /// Returns SHA-256 fingerprints computed by an explicit crypto provider.
-    pub fn get_fingerprints_with_provider(
+    pub fn get_fingerprints(
         &self,
         provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Vec<RTCDtlsFingerprint>> {
@@ -849,50 +793,86 @@ mod test {
         }
     }
 
+    fn default_test_provider() -> Result<Arc<dyn RTCCryptoProvider>> {
+        crypto::default_provider().map_err(crypto_error)
+    }
+
     fn provider_certificate(provider: Arc<dyn RTCCryptoProvider>) -> Result<RTCCertificate> {
         RTCCertificate::generate(
             provider,
             SignatureScheme::EcdsaP256Sha256,
-            CertificateParams::new(vec!["webrtc.rs".to_owned()])?,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
         )
     }
 
     #[test]
     fn test_generate_certificate_rsa() -> Result<()> {
-        match KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256) {
-            Ok(key_pair) => {
-                let _certificate = RTCCertificate::from_key_pair(key_pair)?;
-            }
-            Err(rcgen::Error::KeyGenerationUnavailable) => {}
-            Err(error) => return Err(Error::Other(error.to_string())),
+        let provider = default_test_provider()?;
+
+        // Neither built-in provider generates RSA keys, mirroring rcgen's
+        // `KeyGenerationUnavailable` under `ring`. The certificate path must still work for any
+        // provider that does support it, so this asserts success or an explicit
+        // unsupported-algorithm error, never a silent failure. `tests/dtls_rsa_certificate.rs`
+        // covers RSA end to end using an imported fixture key.
+        if !provider
+            .crypto()
+            .supports(crypto::CryptoAlgorithm::SigningKeyGeneration(
+                SignatureScheme::RsaPkcs1Sha256,
+            ))
+        {
+            return Ok(());
         }
+
+        let _certificate = RTCCertificate::generate(
+            provider,
+            SignatureScheme::RsaPkcs1Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         Ok(())
     }
 
     #[test]
     fn test_generate_certificate_ecdsa() -> Result<()> {
-        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let _cert = RTCCertificate::from_key_pair(kp)?;
+        let _cert = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::EcdsaP256Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         Ok(())
     }
 
     #[test]
     fn test_generate_certificate_eddsa() -> Result<()> {
-        let kp = KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-        let _cert = RTCCertificate::from_key_pair(kp)?;
+        let _cert = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::Ed25519,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         Ok(())
     }
 
     #[test]
     fn test_certificate_equal() -> Result<()> {
-        let kp1 = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let cert1 = RTCCertificate::from_key_pair(kp1)?;
+        let cert1 = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::EcdsaP256Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
-        let kp2 = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let cert2 = RTCCertificate::from_key_pair(kp2)?;
+        let cert2 = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::EcdsaP256Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         assert_ne!(cert1, cert2);
 
@@ -901,8 +881,12 @@ mod test {
 
     #[test]
     fn test_generate_certificate_expires() -> Result<()> {
-        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let cert = RTCCertificate::from_key_pair(kp)?;
+        let cert = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::EcdsaP256Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         let now = SystemTime::now();
         assert!(cert.expires.duration_since(now).is_ok());
@@ -912,11 +896,15 @@ mod test {
 
     #[test]
     fn test_certificate_serialize_pem_and_from_pem() -> Result<()> {
-        let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-        let cert = RTCCertificate::from_key_pair(kp)?;
+        let cert = RTCCertificate::generate(
+            default_test_provider()?,
+            SignatureScheme::EcdsaP256Sha256,
+            CertificateParams::new(vec!["webrtc.rs".to_owned()])
+                .map_err(|e| Error::Other(e.to_string()))?,
+        )?;
 
         let pem = cert.serialize_pem()?;
-        let loaded_cert = RTCCertificate::from_pem(&pem)?;
+        let loaded_cert = RTCCertificate::from_pem(&pem, default_test_provider()?)?;
 
         assert_eq!(loaded_cert, cert);
 
@@ -937,12 +925,12 @@ mod test {
 
     fn provider_certificate_round_trip(provider: Arc<dyn RTCCryptoProvider>) -> Result<()> {
         let certificate = provider_certificate(provider.clone())?;
-        let fingerprints = certificate.get_fingerprints_with_provider(provider.clone())?;
+        let fingerprints = certificate.get_fingerprints(provider.clone())?;
         assert_eq!(fingerprints.len(), 1);
         assert_eq!(fingerprints[0].algorithm, "sha-256");
 
         let pem = certificate.serialize_pem()?;
-        let imported = RTCCertificate::from_pem_with_provider(&pem, provider.clone())?;
+        let imported = RTCCertificate::from_pem(&pem, provider.clone())?;
         assert_eq!(imported, certificate);
 
         let private_key = certificate

@@ -110,8 +110,7 @@ impl DTLSConn {
         is_client: bool,
         initial_state: Option<State>,
     ) -> Self {
-        let provider = Some(handshake_config.crypto_provider.clone());
-        let (mut state, flight, initial_fsm_state) = if let Some(state) = initial_state {
+        let (state, flight, initial_fsm_state) = if let Some(state) = initial_state {
             let flight = if is_client {
                 Box::new(Flight5 {}) as Box<dyn Flight>
             } else {
@@ -127,15 +126,11 @@ impl DTLSConn {
             };
 
             (
-                State {
-                    is_client,
-                    ..Default::default()
-                },
+                State::new(handshake_config.crypto_provider.clone(), is_client),
                 flight,
                 HandshakeState::Preparing,
             )
         };
-        state.crypto_provider = provider;
 
         Self {
             is_client,

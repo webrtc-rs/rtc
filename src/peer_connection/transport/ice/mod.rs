@@ -22,7 +22,6 @@ pub(crate) mod state;
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
-#[derive(Default)]
 pub(crate) struct RTCIceTransport {
     pub(crate) agent: Agent,
 
@@ -36,12 +35,12 @@ impl RTCIceTransport {
         agent_config: AgentConfig,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {
-        let agent = Agent::new_with_provider(Arc::new(agent_config), crypto_provider)?;
+        let agent = Agent::new(Arc::new(agent_config), crypto_provider)?;
 
         Ok(RTCIceTransport {
             agent,
             ice_gathering_state: RTCIceGatheringState::New,
-            ..Default::default()
+            ice_connection_state: RTCIceConnectionState::default(),
         })
     }
 

@@ -32,6 +32,7 @@ log.workspace = true
 pem.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 local-sync.workspace = true
 core_affinity.workspace = true
 chrono.workspace = true
@@ -86,3 +87,7 @@ futures.workspace = true
 #name = "listen_verify"
 #path = "examples/listen/verify/listen_verify.rs"
 #bench = false
+
+[[bench]]
+name = "record_protection"
+harness = false

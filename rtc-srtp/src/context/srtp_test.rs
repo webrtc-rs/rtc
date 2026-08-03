@@ -1,6 +1,12 @@
 use super::*;
 use shared::marshal::*;
 
+/// The built-in provider, for tests only. Library code never resolves a default: every public
+/// constructor takes the provider from its caller.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 use bytes::Bytes;
 use lazy_static::lazy_static;
 
@@ -72,6 +78,7 @@ fn build_test_context() -> Result<Context> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
 }
 
@@ -92,6 +99,7 @@ fn test_rtp_invalid_auth() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )?;
 
     for test_case in &*RTP_TEST_CASES {

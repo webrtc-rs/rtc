@@ -6,7 +6,7 @@
 // Removed in TLS 1.3 year 2018.
 // RFC 3268 year 2002 https://tools.ietf.org/html/rfc3268
 
-use crypto::{CbcAlgorithm, CbcCipher, RTCCryptoProvider, constant_time_eq};
+use crypto::{CbcAlgorithm, CbcCipher, HmacAlgorithm, Mac, RTCCryptoProvider, constant_time_eq};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -21,8 +21,10 @@ pub struct CryptoCbc {
     provider: Arc<dyn RTCCryptoProvider>,
     local_cipher: Box<dyn CbcCipher>,
     remote_cipher: Box<dyn CbcCipher>,
-    write_mac: Vec<u8>,
-    read_mac: Vec<u8>,
+    /// Keyed once per epoch. Re-deriving the HMAC key schedule per record measured ~2x
+    /// slower on this path; see `rtc-srtp/benches/README.md` for the equivalent SRTP data.
+    write_mac: Box<dyn Mac>,
+    read_mac: Box<dyn Mac>,
 }
 
 impl CryptoCbc {
@@ -45,12 +47,21 @@ impl CryptoCbc {
             .crypto()
             .new_cbc(CbcAlgorithm::Aes256Cbc, remote_key)
             .map_err(crypto_error)?;
+        // Key the record MACs once per epoch, alongside the ciphers.
+        let write_mac = provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, local_mac)
+            .map_err(crypto_error)?;
+        let read_mac = provider
+            .crypto()
+            .new_hmac(HmacAlgorithm::Sha1, remote_mac)
+            .map_err(crypto_error)?;
         Ok(CryptoCbc {
             provider,
             local_cipher,
-            write_mac: local_mac.to_vec(),
+            write_mac,
             remote_cipher,
-            read_mac: remote_mac.to_vec(),
+            read_mac,
         })
     }
 
@@ -67,13 +78,12 @@ impl CryptoCbc {
         let h = pkt_rlh;
 
         let mac = prf_mac(
-            self.provider.crypto(),
+            self.write_mac.as_mut(),
             h.epoch,
             h.sequence_number,
             h.content_type,
             h.protocol_version,
             &payload,
-            &self.write_mac,
         )?;
         payload.extend_from_slice(&mac);
 
@@ -146,13 +156,12 @@ impl CryptoCbc {
         let recv_mac = &decrypted[decrypted.len() - Self::MAC_SIZE..];
         let decrypted = &decrypted[0..decrypted.len() - Self::MAC_SIZE];
         let mac = prf_mac(
-            self.provider.crypto(),
+            self.read_mac.as_mut(),
             h.epoch,
             h.sequence_number,
             h.content_type,
             h.protocol_version,
             decrypted,
-            &self.read_mac,
         )?;
 
         if !padding_valid || !constant_time_eq(recv_mac, &mac) {

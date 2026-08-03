@@ -51,6 +51,13 @@
 //! [RFC 7675]: https://datatracker.ietf.org/doc/html/rfc7675
 
 /// The Sans-I/O ICE agent: candidate pairing, connectivity checks, and nomination.
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an
+/// [`Arc<dyn RTCCryptoProvider>`](crypto::RTCCryptoProvider), which a caller must be able to name
+/// without adding — and version-matching — a direct `rtc-crypto` dependency.
+pub use crypto;
+
 pub mod agent;
 /// The ICE-specific STUN attributes carried in connectivity checks.
 pub mod attributes;

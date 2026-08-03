@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-use aws_lc_rs::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::signature::{self, KeyPair};
 use aws_lc_rs::{aead, agreement, digest, hmac};
 
 use crate::common;
 use crate::{
     ActiveKeyExchange, AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher,
-    CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, KeyExchangeAlgorithm, PublicKey,
-    PublicKeyEncoding, RTCCrypto, RTCCryptoProvider, RTCRandom, SecretVec, SignatureScheme,
-    SigningKey, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
+    CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, KeyExchangeAlgorithm, Mac,
+    PublicKey, PublicKeyEncoding, RTCCrypto, RTCCryptoProvider, RTCRandom, SecretVec,
+    SignatureScheme, SigningKey, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
 };
 
 /// The built-in AWS-LC-RS provider bundle.
@@ -55,9 +55,7 @@ pub struct AwsLcRsRandom;
 
 impl RTCRandom for AwsLcRsRandom {
     fn fill(&self, output: &mut [u8]) -> Result<(), CryptoError> {
-        SystemRandom::new()
-            .fill(output)
-            .map_err(|_| CryptoError::RandomnessFailed)
+        common::fill_random(output)
     }
 }
 
@@ -113,38 +111,11 @@ impl RTCCrypto for AwsLcRsCrypto {
         }
     }
 
-    fn hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        output: &mut [u8],
-    ) -> Result<(), CryptoError> {
-        common::check_tag_len(algorithm.output_len(), output.len())?;
-        let key = hmac::Key::new(hmac_algorithm(algorithm), key);
-        let mut context = hmac::Context::with_key(&key);
-        for part in input {
-            context.update(part);
-        }
-        output.copy_from_slice(context.sign().as_ref());
-        Ok(())
-    }
-
-    fn verify_hmac(
-        &self,
-        algorithm: HmacAlgorithm,
-        key: &[u8],
-        input: &[&[u8]],
-        expected: &[u8],
-    ) -> Result<(), CryptoError> {
-        common::check_tag_len(algorithm.output_len(), expected.len())?;
-        let mut actual = vec![0; algorithm.output_len()];
-        self.hmac(algorithm, key, input, &mut actual)?;
-        if constant_time_eq(&actual, expected) {
-            Ok(())
-        } else {
-            Err(CryptoError::AuthenticationFailed)
-        }
+    fn new_hmac(&self, algorithm: HmacAlgorithm, key: &[u8]) -> Result<Box<dyn Mac>, CryptoError> {
+        Ok(Box::new(AwsLcRsHmac {
+            key: hmac::Key::new(hmac_algorithm(algorithm), key),
+            output_len: algorithm.output_len(),
+        }))
     }
 
     fn block_encrypt(
@@ -218,6 +189,42 @@ impl RTCCrypto for AwsLcRsCrypto {
         signature::UnparsedPublicKey::new(verification_algorithm(scheme), public_key.bytes)
             .verify(message, signature)
             .map_err(|_| CryptoError::InvalidSignature)
+    }
+}
+
+/// A keyed HMAC holding an `aws_lc_rs::hmac::Key`.
+///
+/// `Key::new` performs the ipad/opad derivation; `Context::with_key` only clones the resulting
+/// state. Keeping the key here is what moves that derivation off the per-packet path.
+struct AwsLcRsHmac {
+    key: hmac::Key,
+    output_len: usize,
+}
+
+impl Mac for AwsLcRsHmac {
+    fn output_len(&self) -> usize {
+        self.output_len
+    }
+
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError> {
+        common::check_tag_len(self.output_len, output.len())?;
+        let mut context = hmac::Context::with_key(&self.key);
+        for part in input {
+            context.update(part);
+        }
+        output.copy_from_slice(context.sign().as_ref());
+        Ok(())
+    }
+
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
+        common::check_tag_len(self.output_len, expected.len())?;
+        let mut actual = vec![0; self.output_len];
+        self.sign(input, &mut actual)?;
+        if constant_time_eq(&actual, expected) {
+            Ok(())
+        } else {
+            Err(CryptoError::AuthenticationFailed)
+        }
     }
 }
 

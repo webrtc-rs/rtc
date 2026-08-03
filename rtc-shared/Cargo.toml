@@ -22,11 +22,6 @@ thiserror.workspace = true
 substring.workspace = true
 bytes.workspace = true
 url.workspace = true
-rcgen.workspace = true
-sec1.workspace = true
-p256.workspace = true
-aes.workspace = true
-aes-gcm.workspace = true
 rand.workspace = true
 serde.workspace = true
 
