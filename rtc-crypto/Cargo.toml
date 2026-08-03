@@ -1,0 +1,32 @@
+[package]
+name = "rtc-crypto"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Provider-neutral cryptography for the webrtc-rs RTC stack"
+license.workspace = true
+documentation = "https://docs.rs/rtc-crypto"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[features]
+default = ["ring"]
+ring = ["dep:ring", "dep:aes", "dep:ccm", "dep:md-5"]
+aws-lc-rs = ["dep:aws-lc-rs", "dep:aes", "dep:ccm", "dep:md-5"]
+test-support = []
+
+[dependencies]
+aes = { version = "0.8.4", optional = true }
+ccm = { version = "0.5.0", optional = true }
+md-5 = { version = "0.10.6", optional = true }
+subtle = "2.6.1"
+thiserror.workspace = true
+zeroize.workspace = true
+ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+pem = "3.0.3"

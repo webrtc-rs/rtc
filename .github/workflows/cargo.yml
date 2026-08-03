@@ -58,8 +58,39 @@ jobs:
           cargo check --package rtc-srtp --no-default-features --features ${{ matrix.backend }} --verbose
           cargo check --package rtc-stun --no-default-features --features ${{ matrix.backend }} --verbose
 
-  # TODO(P1-09): add a passing ring + aws-lc-rs job after backend features become additive.
-  # TODO(P1-09): add a no-built-in-features job with a downstream-style custom provider.
+  rtc_crypto_provider_matrix:
+    name: rtc-crypto (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            args: --features test-support
+          - name: ring
+            args: --no-default-features --features ring,test-support
+          - name: aws-lc-rs
+            args: --no-default-features --features aws-lc-rs,test-support
+          - name: ring + aws-lc-rs
+            args: --no-default-features --features ring,aws-lc-rs,test-support
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test provider configuration
+        run: cargo test --package rtc-crypto ${{ matrix.args }} --verbose
+
+  rtc_crypto_custom_provider:
+    name: rtc-crypto (no built-in, custom provider)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test downstream-style provider
+        run: cargo test --package rtc-crypto --no-default-features --features test-support --test custom_provider --verbose
+      - name: Verify publishable package
+        run: cargo package --package rtc-crypto --no-default-features
 
   rustfmt_and_clippy:
     name: Check rustfmt style && run clippy

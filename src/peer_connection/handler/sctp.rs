@@ -72,7 +72,7 @@ impl<'a> SctpHandler<'a> {
     /// `flush_dirty` is set, after a burst of inbound packets has been ingested, so
     /// their SACKs coalesce into a single datagram.
     fn flush_transmits(&mut self, now: Instant) {
-        for (_ch, conn) in self.ctx.sctp_transport.sctp_associations.iter_mut() {
+        for conn in self.ctx.sctp_transport.sctp_associations.values_mut() {
             while let Some(x) = conn.poll_transmit(now) {
                 for transmit in split_transmit(x) {
                     if let Payload::RawEncode(raw_data) = transmit.message {
