@@ -2478,7 +2478,13 @@ fn test_handle_incoming_queued_packets_drains_when_cipher_ready() {
     // Now initialize the cipher suite (simulates ChangeCipherSpec having been processed).
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
     // init() with dummy key material — will produce an initialized cipher suite.
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     assert!(cs.is_initialized());
     conn.state.cipher_suite = Some(cs);
 
@@ -2503,7 +2509,13 @@ fn test_handle_incoming_queued_packets_sets_handshake_rx() {
 
     // Initialize cipher suite.
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
     conn.state.remote_epoch = 0;
     conn.handshake_rx = None;
@@ -2575,7 +2587,13 @@ fn test_queued_packets_drained_when_cipher_ready() {
 
     // Initialize cipher suite (simulates ChangeCipherSpec having been processed).
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
     conn.state.remote_epoch = 1; // ChangeCipherSpec has been processed
 
@@ -2602,7 +2620,13 @@ fn test_handshake_rx_set_after_queue_processing() {
 
     // Initialize cipher suite so the queue-drain guard passes.
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
 
     assert!(conn.handshake_rx.is_none());

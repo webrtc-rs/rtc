@@ -2,7 +2,6 @@ use super::*;
 use crate::crypto::crypto_chacha20::*;
 use crate::prf::*;
 
-#[derive(Clone)]
 /// The shared ChaCha20-Poly1305 with SHA-256 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteChaCha20Poly1305Sha256 {
     rsa: bool,
@@ -59,49 +58,55 @@ impl CipherSuite for CipherSuiteChaCha20Poly1305Sha256 {
 
     fn init(
         &mut self,
+        provider: Arc<dyn RTCCryptoProvider>,
         master_secret: &[u8],
         client_random: &[u8],
         server_random: &[u8],
         is_client: bool,
     ) -> Result<()> {
         let keys = prf_encryption_keys(
+            provider.crypto(),
             master_secret,
             client_random,
             server_random,
-            CipherSuiteChaCha20Poly1305Sha256::PRF_MAC_LEN,
-            CipherSuiteChaCha20Poly1305Sha256::PRF_KEY_LEN,
-            CipherSuiteChaCha20Poly1305Sha256::PRF_IV_LEN,
+            EncryptionKeyLengths {
+                mac: CipherSuiteChaCha20Poly1305Sha256::PRF_MAC_LEN,
+                key: CipherSuiteChaCha20Poly1305Sha256::PRF_KEY_LEN,
+                iv: CipherSuiteChaCha20Poly1305Sha256::PRF_IV_LEN,
+            },
             self.hash_func(),
         )?;
 
         if is_client {
             self.cipher = Some(CryptoChaCha20::new(
+                provider,
                 &keys.client_write_key,
                 &keys.client_write_iv,
                 &keys.server_write_key,
                 &keys.server_write_iv,
-            ));
+            )?);
         } else {
             self.cipher = Some(CryptoChaCha20::new(
+                provider,
                 &keys.server_write_key,
                 &keys.server_write_iv,
                 &keys.client_write_key,
                 &keys.client_write_iv,
-            ));
+            )?);
         }
 
         Ok(())
     }
 
-    fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.cipher.as_ref().ok_or(Error::Other(
+    fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
+        let cg = self.cipher.as_mut().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to encrypt".to_owned(),
         ))?;
         cg.encrypt(pkt_rlh, raw)
     }
 
-    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.cipher.as_ref().ok_or(Error::Other(
+    fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>> {
+        let cg = self.cipher.as_mut().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to decrypt".to_owned(),
         ))?;
         cg.decrypt(input)

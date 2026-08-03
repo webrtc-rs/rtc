@@ -11,6 +11,12 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["ring"]
+ring = ["crypto/ring", "stun/ring"]
+aws-lc-rs = ["crypto/aws-lc-rs", "stun/aws-lc-rs"]
+metrics = []
+
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 stun.workspace = true
@@ -28,12 +34,6 @@ clap.workspace = true
 criterion.workspace = true
 crossbeam-channel = "0.5"
 ctrlc.workspace = true
-
-[features]
-default = ["ring"]
-metrics = []
-ring = ["crypto/ring", "stun/ring"]
-aws-lc-rs = ["crypto/aws-lc-rs", "stun/aws-lc-rs"]
 
 [[bench]]
 name = "bench"

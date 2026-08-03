@@ -62,6 +62,7 @@ rand = "0.10.1"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 zeroize = "1.8.2"
+pem = "3.0.3"
 
 # dev dependencies
 env_logger = "0.11.11"
@@ -87,9 +88,8 @@ readme = "README.md"
 
 [features]
 default = ["ring"]
-pem = ["dep:pem", "dtls/pem"]
-ring = ["dep:ring", "dtls/ring", "rustls/ring", "rcgen/ring", "ice/ring", "stun/ring", "srtp/ring", "turn/ring"]
-aws-lc-rs = ["dep:aws-lc-rs", "dtls/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs", "ice/aws-lc-rs", "stun/aws-lc-rs", "srtp/aws-lc-rs", "turn/aws-lc-rs"]
+ring = ["dtls/ring", "rustls/ring", "rcgen/ring", "ice/ring", "stun/ring", "srtp/ring", "turn/ring"]
+aws-lc-rs = ["dtls/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs", "ice/aws-lc-rs", "stun/aws-lc-rs", "srtp/aws-lc-rs", "turn/aws-lc-rs"]
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = ["crypto", "marshal", "replay"] }
@@ -113,13 +113,11 @@ log.workspace = true
 serde = "1"
 serde_json = { version = "1", features = [] }
 rcgen.workspace = true
-ring = { workspace = true, optional = true }
-aws-lc-rs = { workspace = true, optional = true }
 sha2 = "0.10"
 rustls = { version = "0.23.35", default-features = false, features = ["std"] }
 url = { version = "2", features = [] }
 hex = { version = "0.4", features = [] }
-pem = { version = "3", optional = true }
+pem.workspace = true
 unicase = "2.8"
 rand.workspace = true
 

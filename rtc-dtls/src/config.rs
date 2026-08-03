@@ -19,10 +19,12 @@ mod config_test;
 use crate::cipher_suite::*;
 use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use crate::crypto::*;
+use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::signature_hash_algorithm::{
     SignatureHashAlgorithm, SignatureScheme, parse_signature_schemes,
 };
+use crypto::RTCCryptoProvider;
 use log::warn;
 use shared::error::*;
 use std::collections::HashMap;
@@ -46,16 +48,16 @@ use rustls::server::danger::ClientCertVerifier;
 ///
 /// If neither feature is enabled there is no provider to name, so fall back to whatever the
 /// application installed.
-fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
-    #[cfg(feature = "aws-lc-rs")]
+fn rustls_crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
+    #[cfg(feature = "ring")]
+    {
+        Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+    }
+    #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
     {
         Some(std::sync::Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
-    }
-    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
-    {
-        Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
     }
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
     {
@@ -71,7 +73,7 @@ fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
 fn server_cert_verifier(
     roots: std::sync::Arc<rustls::RootCertStore>,
 ) -> Result<std::sync::Arc<rustls::client::WebPkiServerVerifier>> {
-    let builder = match crypto_provider() {
+    let builder = match rustls_crypto_provider() {
         Some(provider) => {
             rustls::client::WebPkiServerVerifier::builder_with_provider(roots, provider)
         }
@@ -86,6 +88,7 @@ fn server_cert_verifier(
 /// After a Config is passed to a DTLS function it must not be modified.
 #[derive(Clone)]
 pub struct ConfigBuilder {
+    crypto_provider: Option<Arc<dyn RTCCryptoProvider>>,
     certificates: Vec<Certificate>,
     cipher_suites: Vec<CipherSuiteId>,
     signature_schemes: Vec<SignatureScheme>,
@@ -109,6 +112,7 @@ pub struct ConfigBuilder {
 impl Default for ConfigBuilder {
     fn default() -> Self {
         Self {
+            crypto_provider: None,
             certificates: vec![],
             cipher_suites: vec![],
             signature_schemes: vec![],
@@ -132,6 +136,15 @@ impl Default for ConfigBuilder {
 }
 
 impl ConfigBuilder {
+    /// Selects the cryptography and CSPRNG implementation for this DTLS association.
+    ///
+    /// The provider is resolved while building the handshake configuration and is reused for the
+    /// entire handshake and record lifetime. No global registration is required.
+    pub fn with_crypto_provider(mut self, provider: Arc<dyn RTCCryptoProvider>) -> Self {
+        self.crypto_provider = Some(provider);
+        self
+    }
+
     /// certificates contains certificate chain to present to the other side of the connection.
     /// Server MUST set this if psk is non-nil
     /// client SHOULD sets this so CertificateRequests can be handled if psk is non-nil
@@ -343,16 +356,6 @@ impl ConfigBuilder {
             return Err(Error::ErrIdentityNoPsk);
         }
 
-        // Gates future private key kinds from being automatically allowed.
-        for cert in &self.certificates {
-            match cert.private_key.kind {
-                CryptoPrivateKeyKind::Ed25519(_) => {}
-                CryptoPrivateKeyKind::Ecdsa256(_) => {}
-                CryptoPrivateKeyKind::Rsa256(_) => {}
-                CryptoPrivateKeyKind::Custom(_) => {}
-            }
-        }
-
         parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?;
 
         Ok(())
@@ -364,16 +367,77 @@ impl ConfigBuilder {
         is_client: bool,
         remote_addr: Option<SocketAddr>,
     ) -> Result<HandshakeConfig> {
+        let crypto_provider = match self.crypto_provider.take() {
+            Some(provider) => provider,
+            None => crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?,
+        };
         self.validate(is_client)?;
 
-        let local_cipher_suites: Vec<CipherSuiteId> =
+        let mut local_cipher_suites: Vec<CipherSuiteId> =
             parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?
                 .iter()
                 .map(|cs| cs.id())
+                .filter(|id| id.supported_by(crypto_provider.crypto()))
                 .collect();
+        if local_cipher_suites.is_empty() {
+            return Err(Error::ErrNoAvailableCipherSuites);
+        }
 
         let sigs: Vec<u16> = self.signature_schemes.iter().map(|x| *x as u16).collect();
-        let local_signature_schemes = parse_signature_schemes(&sigs, self.insecure_hashes)?;
+        let local_signature_schemes: Vec<_> = parse_signature_schemes(&sigs, self.insecure_hashes)?
+            .into_iter()
+            .filter(|algorithm| {
+                algorithm.crypto_scheme().is_ok_and(|scheme| {
+                    crypto_provider
+                        .crypto()
+                        .supports(crypto::CryptoAlgorithm::Signature(scheme))
+                })
+            })
+            .collect();
+        if self.psk.is_none() && local_signature_schemes.is_empty() {
+            return Err(Error::ErrNoAvailableSignatureSchemes);
+        }
+
+        let local_named_curves: Vec<_> = [NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384]
+            .into_iter()
+            .filter(|curve| {
+                curve.crypto_algorithm().is_ok_and(|algorithm| {
+                    crypto_provider
+                        .crypto()
+                        .supports(crypto::CryptoAlgorithm::KeyExchange(algorithm))
+                })
+            })
+            .collect();
+        if self.psk.is_none() && local_named_curves.is_empty() {
+            return Err(Error::ErrNoAvailableCipherSuites);
+        }
+
+        if !is_client && self.psk.is_none() {
+            let signing_key = &self.certificates[0].private_key.signing_key;
+            local_cipher_suites.retain(|id| {
+                local_signature_schemes.iter().any(|algorithm| {
+                    let signature_family_matches = match id {
+                        CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256
+                        | CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha
+                        | CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
+                            algorithm.signature
+                                == crate::signature_hash_algorithm::SignatureAlgorithm::Rsa
+                        }
+                        _ => {
+                            algorithm.signature
+                                == crate::signature_hash_algorithm::SignatureAlgorithm::Ecdsa
+                        }
+                    };
+                    signature_family_matches
+                        && algorithm
+                            .crypto_scheme()
+                            .is_ok_and(|scheme| signing_key.supports(scheme))
+                })
+            });
+            if local_cipher_suites.is_empty() {
+                return Err(Error::ErrNoAvailableCipherSuites);
+            }
+        }
 
         let retransmit_interval = if self.flight_interval != Duration::from_secs(0) {
             self.flight_interval
@@ -404,9 +468,11 @@ impl ConfigBuilder {
         }
 
         Ok(HandshakeConfig {
+            crypto_provider,
             local_psk_callback: self.psk.take(),
             local_psk_identity_hint: self.psk_identity_hint.take(),
             local_cipher_suites,
+            local_named_curves,
             local_signature_schemes,
             extended_master_secret: self.extended_master_secret,
             local_srtp_protection_profiles: self.srtp_protection_profiles,
@@ -453,9 +519,11 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
 #[derive(Clone)]
 /// The resolved configuration a handshake runs with, produced by [`ConfigBuilder::build`].
 pub struct HandshakeConfig {
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) local_psk_callback: Option<PskCallback>,
     pub(crate) local_psk_identity_hint: Option<Vec<u8>>,
     pub(crate) local_cipher_suites: Vec<CipherSuiteId>, // Available CipherSuites
+    pub(crate) local_named_curves: Vec<NamedCurve>,
     pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
     pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
@@ -479,8 +547,10 @@ pub struct HandshakeConfig {
 impl fmt::Debug for HandshakeConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("HandshakeConfig<T>")
+            .field("crypto_provider", &self.crypto_provider.name())
             .field("local_psk_identity_hint", &self.local_psk_identity_hint)
             .field("local_cipher_suites", &self.local_cipher_suites)
+            .field("local_named_curves", &self.local_named_curves)
             .field("local_signature_schemes", &self.local_signature_schemes)
             .field("extended_master_secret", &self.extended_master_secret)
             .field(
@@ -506,9 +576,12 @@ impl fmt::Debug for HandshakeConfig {
 impl Default for HandshakeConfig {
     fn default() -> Self {
         HandshakeConfig {
+            crypto_provider: crypto::default_provider()
+                .expect("rtc-dtls requires an enabled default crypto provider"),
             local_psk_callback: None,
             local_psk_identity_hint: None,
             local_cipher_suites: vec![],
+            local_named_curves: vec![],
             local_signature_schemes: vec![],
             extended_master_secret: ExtendedMasterSecretType::Disable,
             local_srtp_protection_profiles: vec![],
@@ -533,6 +606,10 @@ impl Default for HandshakeConfig {
 }
 
 impl HandshakeConfig {
+    pub(crate) fn provider(&self) -> &Arc<dyn RTCCryptoProvider> {
+        &self.crypto_provider
+    }
+
     pub(crate) fn get_certificate(&self, server_name: &str) -> Result<Certificate> {
         if self.local_certificates.is_empty() {
             return Err(Error::ErrNoCertificates);

@@ -2,7 +2,6 @@ use super::flight2::*;
 use super::*;
 use crate::config::*;
 use crate::conn::*;
-use crate::curve::named_curve::NamedCurve;
 use crate::extension::*;
 use crate::handshake::*;
 use crate::record_layer::record_layer_header::*;
@@ -10,7 +9,6 @@ use crate::*;
 use shared::error::Error;
 
 use log::debug;
-use rand::RngExt;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -106,7 +104,7 @@ impl Flight for Flight0 {
                             ));
                         }
                         for curve in e.elliptic_curves.iter() {
-                            if curve != &NamedCurve::Unsupported {
+                            if cfg.local_named_curves.contains(curve) {
                                 state.named_curve = *curve;
                                 break;
                             }
@@ -153,7 +151,10 @@ impl Flight for Flight0 {
             }
 
             if state.local_keypair.is_none() {
-                state.local_keypair = match state.named_curve.generate_keypair() {
+                state.local_keypair = match state
+                    .named_curve
+                    .generate_keypair_with_crypto(cfg.provider().crypto())
+                {
                     Ok(local_keypar) => Some(local_keypar),
                     Err(err) => {
                         return Err((
@@ -183,17 +184,24 @@ impl Flight for Flight0 {
         &self,
         state: &mut State,
         _cache: &HandshakeCache,
-        _cfg: &HandshakeConfig,
+        cfg: &HandshakeConfig,
     ) -> Result<Vec<Packet>, (Option<Alert>, Option<Error>)> {
         // Initialize
         state.cookie = vec![0; COOKIE_LENGTH];
-        rand::rng().fill(state.cookie.as_mut_slice());
+        if let Err(error) = cfg.provider().random().fill(state.cookie.as_mut_slice()) {
+            return Err((None, Some(Error::Crypto(error.to_string()))));
+        }
 
         state.local_epoch = 0;
         state.remote_epoch = 0;
 
         state.named_curve = DEFAULT_NAMED_CURVE;
-        state.local_random.populate();
+        if cfg.local_psk_callback.is_none() {
+            state.named_curve = cfg.local_named_curves[0];
+        }
+        if let Err(error) = state.local_random.populate(cfg.provider().random()) {
+            return Err((None, Some(error)));
+        }
 
         Ok(vec![])
     }

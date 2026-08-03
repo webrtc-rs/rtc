@@ -6,28 +6,21 @@
 // Removed in TLS 1.3 year 2018.
 // RFC 3268 year 2002 https://tools.ietf.org/html/rfc3268
 
-// https://github.com/RustCrypto/block-ciphers
-
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use p256::elliptic_curve::subtle::ConstantTimeEq;
-use rand::RngExt;
+use crypto::{CbcAlgorithm, CbcCipher, RTCCryptoProvider, constant_time_eq};
 use std::io::Cursor;
-use std::ops::Not;
+use std::sync::Arc;
 
-use super::padding::DtlsPadding;
 use crate::content::*;
+use crate::crypto::{authentication_error, crypto_error};
 use crate::prf::*;
 use crate::record_layer::record_layer_header::*;
 use shared::error::*;
-type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
-// State needed to handle encrypted input/output
-#[derive(Clone)]
 /// AES-CBC encryption with a separate HMAC for DTLS records, holding the per-direction keys.
 pub struct CryptoCbc {
-    local_key: Vec<u8>,
-    remote_key: Vec<u8>,
+    provider: Arc<dyn RTCCryptoProvider>,
+    local_cipher: Box<dyn CbcCipher>,
+    remote_cipher: Box<dyn CbcCipher>,
     write_mac: Vec<u8>,
     read_mac: Vec<u8>,
 }
@@ -38,16 +31,25 @@ impl CryptoCbc {
 
     /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
+        provider: Arc<dyn RTCCryptoProvider>,
         local_key: &[u8],
         local_mac: &[u8],
         remote_key: &[u8],
         remote_mac: &[u8],
     ) -> Result<Self> {
+        let local_cipher = provider
+            .crypto()
+            .new_cbc(CbcAlgorithm::Aes256Cbc, local_key)
+            .map_err(crypto_error)?;
+        let remote_cipher = provider
+            .crypto()
+            .new_cbc(CbcAlgorithm::Aes256Cbc, remote_key)
+            .map_err(crypto_error)?;
         Ok(CryptoCbc {
-            local_key: local_key.to_vec(),
+            provider,
+            local_cipher,
             write_mac: local_mac.to_vec(),
-
-            remote_key: remote_key.to_vec(),
+            remote_cipher,
             read_mac: remote_mac.to_vec(),
         })
     }
@@ -57,7 +59,7 @@ impl CryptoCbc {
     /// # Errors
     ///
     /// Fails if the cipher rejects the input.
-    pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let mut payload = raw[RECORD_LAYER_HEADER_SIZE..].to_vec();
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
 
@@ -65,6 +67,7 @@ impl CryptoCbc {
         let h = pkt_rlh;
 
         let mac = prf_mac(
+            self.provider.crypto(),
             h.epoch,
             h.sequence_number,
             h.content_type,
@@ -74,17 +77,20 @@ impl CryptoCbc {
         )?;
         payload.extend_from_slice(&mac);
 
-        let mut iv: Vec<u8> = vec![0; Self::BLOCK_SIZE];
-        rand::rng().fill(iv.as_mut_slice());
+        let padding_len = Self::BLOCK_SIZE - (payload.len() % Self::BLOCK_SIZE);
+        payload.resize(payload.len() + padding_len, (padding_len - 1) as u8);
 
-        let write_cbc = Aes256CbcEnc::new_from_slices(&self.local_key, &iv)?;
-        let encrypted = write_cbc.encrypt_padded_vec_mut::<DtlsPadding>(&payload);
+        let mut iv = [0; Self::BLOCK_SIZE];
+        self.provider.random().fill(&mut iv).map_err(crypto_error)?;
+        self.local_cipher
+            .encrypt_blocks(&iv, &mut payload)
+            .map_err(crypto_error)?;
 
         // Prepend unencrypte header with encrypted payload
         let mut r = vec![];
         r.extend_from_slice(raw);
         r.extend_from_slice(&iv);
-        r.extend_from_slice(&encrypted);
+        r.extend_from_slice(&payload);
 
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
         r[RECORD_LAYER_HEADER_SIZE - 2..RECORD_LAYER_HEADER_SIZE]
@@ -98,7 +104,7 @@ impl CryptoCbc {
     /// # Errors
     ///
     /// Fails if authentication fails or the record is too short.
-    pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;
         if h.content_type == ContentType::ChangeCipherSpec {
@@ -118,11 +124,20 @@ impl CryptoCbc {
             return Err(Error::ErrInvalidPacketLength);
         }
 
-        let read_cbc = Aes256CbcDec::new_from_slices(&self.remote_key, iv)?;
+        let mut decrypted = body.to_vec();
+        self.remote_cipher
+            .decrypt_blocks(iv, &mut decrypted)
+            .map_err(authentication_error)?;
 
-        let decrypted = read_cbc
-            .decrypt_padded_vec_mut::<DtlsPadding>(body)
-            .map_err(|_| Error::ErrInvalidPacketLength)?;
+        let padding_value = decrypted.last().copied().ok_or(Error::ErrInvalidMac)?;
+        let padding_len = padding_value as usize + 1;
+        if padding_len > decrypted.len() {
+            return Err(Error::ErrInvalidMac);
+        }
+        let padding_start = decrypted.len() - padding_len;
+        let expected_padding = vec![padding_value; padding_len];
+        let padding_valid = constant_time_eq(&decrypted[padding_start..], &expected_padding);
+        decrypted.truncate(padding_start);
 
         if decrypted.len() < Self::MAC_SIZE {
             return Err(Error::ErrInvalidMac);
@@ -131,6 +146,7 @@ impl CryptoCbc {
         let recv_mac = &decrypted[decrypted.len() - Self::MAC_SIZE..];
         let decrypted = &decrypted[0..decrypted.len() - Self::MAC_SIZE];
         let mac = prf_mac(
+            self.provider.crypto(),
             h.epoch,
             h.sequence_number,
             h.content_type,
@@ -139,7 +155,7 @@ impl CryptoCbc {
             &self.read_mac,
         )?;
 
-        if recv_mac.ct_eq(&mac).not().into() {
+        if !padding_valid || !constant_time_eq(recv_mac, &mac) {
             return Err(Error::ErrInvalidMac);
         }
 
@@ -148,5 +164,69 @@ impl CryptoCbc {
         d.extend_from_slice(decrypted);
 
         Ok(d)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cipher_pair() -> (CryptoCbc, CryptoCbc) {
+        let provider = crypto::default_provider().unwrap();
+        let local_key = [0x11; 32];
+        let remote_key = [0x22; 32];
+        let local_mac = [0x33; 20];
+        let remote_mac = [0x44; 20];
+        let sender = CryptoCbc::new(
+            provider.clone(),
+            &local_key,
+            &local_mac,
+            &remote_key,
+            &remote_mac,
+        )
+        .unwrap();
+        let receiver =
+            CryptoCbc::new(provider, &remote_key, &remote_mac, &local_key, &local_mac).unwrap();
+        (sender, receiver)
+    }
+
+    fn record(payload: &[u8]) -> (RecordLayerHeader, Vec<u8>) {
+        let header = RecordLayerHeader {
+            content_type: ContentType::ApplicationData,
+            protocol_version: PROTOCOL_VERSION1_2,
+            epoch: 1,
+            sequence_number: 7,
+            content_len: payload.len() as u16,
+        };
+        let mut raw = Vec::new();
+        header.marshal(&mut raw).unwrap();
+        raw.extend_from_slice(payload);
+        (header, raw)
+    }
+
+    #[test]
+    fn roundtrip_and_authentication_failures() {
+        let (mut sender, mut receiver) = cipher_pair();
+        let (header, raw) = record(b"CBC record payload");
+        let encrypted = sender.encrypt(&header, &raw).unwrap();
+        assert_eq!(
+            receiver.decrypt(&encrypted).unwrap()[RECORD_LAYER_HEADER_SIZE..],
+            raw[RECORD_LAYER_HEADER_SIZE..]
+        );
+
+        let mut wrong_mac = encrypted.clone();
+        wrong_mac[RECORD_LAYER_HEADER_SIZE] ^= 1;
+        assert_eq!(receiver.decrypt(&wrong_mac), Err(Error::ErrInvalidMac));
+
+        let mut bad_padding = encrypted.clone();
+        *bad_padding.last_mut().unwrap() ^= 1;
+        assert_eq!(receiver.decrypt(&bad_padding), Err(Error::ErrInvalidMac));
+
+        let mut truncated = encrypted;
+        truncated.pop();
+        assert_eq!(
+            receiver.decrypt(&truncated),
+            Err(Error::ErrInvalidPacketLength)
+        );
     }
 }

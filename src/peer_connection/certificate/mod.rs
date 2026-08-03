@@ -71,7 +71,6 @@
 //! ## Persist Certificate Across Sessions
 //!
 //! ```no_run
-//! # #[cfg(feature = "pem")]
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use rtc::peer_connection::certificate::RTCCertificate;
 //! use rcgen::KeyPair;
@@ -186,12 +185,8 @@
 use std::ops::Add;
 use std::time::{Duration, SystemTime};
 
-use dtls::crypto::{CryptoPrivateKey, CryptoPrivateKeyKind};
+use dtls::crypto::CryptoPrivateKey;
 use rcgen::{CertificateParams, KeyPair};
-#[cfg(feature = "ring")]
-use ring::rand::SystemRandom;
-use ring::rsa;
-use ring::signature::{EcdsaKeyPair, Ed25519KeyPair};
 use sha2::{Digest, Sha256};
 
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
@@ -256,7 +251,6 @@ use shared::util::math_rand_alpha;
 /// ## Persisting and loading certificates
 ///
 /// ```
-/// # #[cfg(feature = "pem")]
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # use rtc::peer_connection::certificate::RTCCertificate;
 /// # use rcgen::KeyPair;
@@ -342,41 +336,10 @@ impl RTCCertificate {
     fn from_params(params: CertificateParams, key_pair: KeyPair) -> Result<Self> {
         let not_after = params.not_after;
 
-        let x509_cert = params.self_signed(&key_pair).unwrap();
-        let serialized_der = key_pair.serialize_der();
-
-        let private_key = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ed25519(
-                    Ed25519KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_ECDSA_P256_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Ecdsa256(
-                    EcdsaKeyPair::from_pkcs8(
-                        &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-                        &serialized_der,
-                        #[cfg(feature = "ring")]
-                        &SystemRandom::new(),
-                    )
-                    .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else if key_pair.is_compatible(&rcgen::PKCS_RSA_SHA256) {
-            CryptoPrivateKey {
-                kind: CryptoPrivateKeyKind::Rsa256(
-                    rsa::KeyPair::from_pkcs8(&serialized_der)
-                        .map_err(|e| Error::Other(e.to_string()))?,
-                ),
-                serialized_der,
-            }
-        } else {
-            return Err(Error::Other("Unsupported key_pair".to_owned()));
-        };
+        let x509_cert = params
+            .self_signed(&key_pair)
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let private_key = CryptoPrivateKey::from_key_pair(&key_pair)?;
 
         let expires = if cfg!(target_arch = "arm") {
             // Workaround for issue overflow when adding duration to instant on armv7
@@ -467,7 +430,6 @@ impl RTCCertificate {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "pem")]
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use rtc::peer_connection::certificate::RTCCertificate;
     /// # use rcgen::KeyPair;
@@ -483,7 +445,6 @@ impl RTCCertificate {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "pem")]
     pub fn from_pem(pem_str: &str) -> Result<Self> {
         let mut pem_blocks = pem_str.split("\n\n");
         let first_block = if let Some(b) = pem_blocks.next() {
@@ -576,7 +537,6 @@ impl RTCCertificate {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "pem")]
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use rtc::peer_connection::certificate::RTCCertificate;
     /// # use rcgen::KeyPair;
@@ -594,7 +554,6 @@ impl RTCCertificate {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(any(doc, feature = "pem"))]
     pub fn serialize_pem(&self) -> String {
         // Encode `expires` as a PEM block.
         //
@@ -611,7 +570,9 @@ impl RTCCertificate {
         format!(
             "{}\n{}",
             pem::encode(&expires_pem),
-            self.dtls_certificate.serialize_pem()
+            self.dtls_certificate
+                .serialize_pem()
+                .expect("RTCCertificate keys are exportable")
         )
     }
 
@@ -727,7 +688,6 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "pem")]
     #[test]
     fn test_certificate_serialize_pem_and_from_pem() -> Result<()> {
         let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;

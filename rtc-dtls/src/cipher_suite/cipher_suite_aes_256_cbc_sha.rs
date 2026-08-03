@@ -2,7 +2,6 @@ use super::*;
 use crate::crypto::crypto_cbc::*;
 use crate::prf::*;
 
-#[derive(Clone)]
 /// The shared AES-256-CBC with SHA-1 implementation, parameterized over the key exchange and signature.
 pub struct CipherSuiteAes256CbcSha {
     cbc: Option<CryptoCbc>,
@@ -59,23 +58,28 @@ impl CipherSuite for CipherSuiteAes256CbcSha {
 
     fn init(
         &mut self,
+        provider: Arc<dyn RTCCryptoProvider>,
         master_secret: &[u8],
         client_random: &[u8],
         server_random: &[u8],
         is_client: bool,
     ) -> Result<()> {
         let keys = prf_encryption_keys(
+            provider.crypto(),
             master_secret,
             client_random,
             server_random,
-            CipherSuiteAes256CbcSha::PRF_MAC_LEN,
-            CipherSuiteAes256CbcSha::PRF_KEY_LEN,
-            CipherSuiteAes256CbcSha::PRF_IV_LEN,
+            EncryptionKeyLengths {
+                mac: CipherSuiteAes256CbcSha::PRF_MAC_LEN,
+                key: CipherSuiteAes256CbcSha::PRF_KEY_LEN,
+                iv: CipherSuiteAes256CbcSha::PRF_IV_LEN,
+            },
             self.hash_func(),
         )?;
 
         if is_client {
             self.cbc = Some(CryptoCbc::new(
+                provider,
                 &keys.client_write_key,
                 &keys.client_mac_key,
                 &keys.server_write_key,
@@ -83,6 +87,7 @@ impl CipherSuite for CipherSuiteAes256CbcSha {
             )?);
         } else {
             self.cbc = Some(CryptoCbc::new(
+                provider,
                 &keys.server_write_key,
                 &keys.server_mac_key,
                 &keys.client_write_key,
@@ -93,15 +98,15 @@ impl CipherSuite for CipherSuiteAes256CbcSha {
         Ok(())
     }
 
-    fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.cbc.as_ref().ok_or(Error::Other(
+    fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
+        let cg = self.cbc.as_mut().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to encrypt".to_owned(),
         ))?;
         cg.encrypt(pkt_rlh, raw)
     }
 
-    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>> {
-        let cg = self.cbc.as_ref().ok_or(Error::Other(
+    fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>> {
+        let cg = self.cbc.as_mut().ok_or(Error::Other(
             "CipherSuite has not been initialized, unable to decrypt".to_owned(),
         ))?;
         cg.decrypt(input)

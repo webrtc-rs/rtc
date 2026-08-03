@@ -3,7 +3,6 @@ use super::*;
 use crate::compression_methods::*;
 use crate::config::*;
 use crate::content::*;
-use crate::curve::named_curve::*;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -350,7 +349,7 @@ impl Flight for Flight3 {
         if cfg.local_psk_callback.is_none() {
             extensions.extend_from_slice(&[
                 Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: vec![NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384],
+                    elliptic_curves: cfg.local_named_curves.clone(),
                 }),
                 Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
                     point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
@@ -422,7 +421,10 @@ pub(crate) fn handle_server_key_exchange(
         state.identity_hint.clone_from(&h.identity_hint);
         state.pre_master_secret = prf_psk_pre_master_secret(&psk);
     } else {
-        let local_keypair = match h.named_curve.generate_keypair() {
+        let mut local_keypair = match h
+            .named_curve
+            .generate_keypair_with_crypto(cfg.provider().crypto())
+        {
             Ok(local_keypair) => local_keypair,
             Err(err) => {
                 return Err((
@@ -435,22 +437,20 @@ pub(crate) fn handle_server_key_exchange(
             }
         };
 
-        state.pre_master_secret = match prf_pre_master_secret(
-            &h.public_key,
-            &local_keypair.private_key,
-            local_keypair.curve,
-        ) {
-            Ok(pre_master_secret) => pre_master_secret,
-            Err(err) => {
-                return Err((
-                    Some(Alert {
-                        alert_level: AlertLevel::Fatal,
-                        alert_description: AlertDescription::InternalError,
-                    }),
-                    Some(err),
-                ));
-            }
-        };
+        let curve = local_keypair.curve;
+        state.pre_master_secret =
+            match prf_pre_master_secret(&h.public_key, &mut local_keypair, curve) {
+                Ok(pre_master_secret) => pre_master_secret,
+                Err(err) => {
+                    return Err((
+                        Some(Alert {
+                            alert_level: AlertLevel::Fatal,
+                            alert_description: AlertDescription::InternalError,
+                        }),
+                        Some(err),
+                    ));
+                }
+            };
 
         state.local_keypair = Some(local_keypair);
     }

@@ -110,7 +110,8 @@ impl DTLSConn {
         is_client: bool,
         initial_state: Option<State>,
     ) -> Self {
-        let (state, flight, initial_fsm_state) = if let Some(state) = initial_state {
+        let provider = Some(handshake_config.crypto_provider.clone());
+        let (mut state, flight, initial_fsm_state) = if let Some(state) = initial_state {
             let flight = if is_client {
                 Box::new(Flight5 {}) as Box<dyn Flight>
             } else {
@@ -134,6 +135,7 @@ impl DTLSConn {
                 HandshakeState::Preparing,
             )
         };
+        state.crypto_provider = provider;
 
         Self {
             is_client,
@@ -348,7 +350,7 @@ impl DTLSConn {
         p.record.marshal(&mut raw_packet)?;
 
         if p.should_encrypt
-            && let Some(cipher_suite) = &self.state.cipher_suite
+            && let Some(cipher_suite) = &mut self.state.cipher_suite
         {
             raw_packet = cipher_suite.encrypt(&p.record.record_layer_header, &raw_packet)?;
         }
@@ -397,7 +399,7 @@ impl DTLSConn {
             raw_packet.extend_from_slice(&record_layer_header_bytes);
             raw_packet.extend_from_slice(handshake_fragment);
             if p.should_encrypt
-                && let Some(cipher_suite) = &self.state.cipher_suite
+                && let Some(cipher_suite) = &mut self.state.cipher_suite
             {
                 raw_packet = cipher_suite.encrypt(&record_layer_header, &raw_packet)?;
             }
@@ -636,7 +638,7 @@ impl DTLSConn {
                 return (false, None, None);
             }
 
-            if let Some(cipher_suite) = &self.state.cipher_suite {
+            if let Some(cipher_suite) = &mut self.state.cipher_suite {
                 pkt = match cipher_suite.decrypt(&pkt) {
                     Ok(pkt) => pkt,
                     Err(err) => {

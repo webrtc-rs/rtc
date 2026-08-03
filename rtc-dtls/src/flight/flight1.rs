@@ -4,7 +4,6 @@ use crate::compression_methods::*;
 use crate::config::*;
 use crate::conn::*;
 use crate::content::*;
-use crate::curve::named_curve::*;
 use crate::extension::extension_server_name::*;
 use crate::extension::extension_supported_elliptic_curves::*;
 use crate::extension::extension_supported_point_formats::*;
@@ -120,7 +119,9 @@ impl Flight for Flight1 {
 
         state.named_curve = DEFAULT_NAMED_CURVE;
         state.cookie = vec![];
-        state.local_random.populate();
+        if let Err(error) = state.local_random.populate(cfg.provider().random()) {
+            return Err((None, Some(error)));
+        }
 
         let mut extensions = vec![
             Extension::SupportedSignatureAlgorithms(ExtensionSupportedSignatureAlgorithms {
@@ -134,7 +135,7 @@ impl Flight for Flight1 {
         if cfg.local_psk_callback.is_none() {
             extensions.extend_from_slice(&[
                 Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: vec![NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384],
+                    elliptic_curves: cfg.local_named_curves.clone(),
                 }),
                 Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
                     point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],

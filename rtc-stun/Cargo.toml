@@ -13,9 +13,9 @@ categories.workspace = true
 
 [features]
 default = ["ring"]
-bench = []
 ring = ["crypto/ring"]
 aws-lc-rs = ["crypto/aws-lc-rs"]
+bench = []
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }

@@ -8,11 +8,13 @@ use rkyv::{Archive, Deserialize, Serialize};
 use shared::crypto::KeyingMaterialExporter;
 use shared::error::*;
 use std::io::{BufWriter, Cursor};
+use std::sync::Arc;
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 /// The negotiated connection state: keys, sequence numbers, peer identity and the active
 /// cipher suite.
 pub struct State {
+    pub(crate) crypto_provider: Option<Arc<dyn crypto::RTCCryptoProvider>>,
     pub(crate) local_epoch: u16,
     pub(crate) remote_epoch: u16,
     pub(crate) local_sequence_number: Vec<u64>, // uint48
@@ -66,6 +68,7 @@ struct SerializedState {
 impl Default for State {
     fn default() -> Self {
         State {
+            crypto_provider: crypto::default_provider().ok(),
             local_epoch: 0,
             remote_epoch: 0,
             local_sequence_number: vec![],
@@ -203,9 +206,25 @@ impl State {
             }
 
             if self.is_client {
-                cipher_suite.init(&self.master_secret, &local_random, &remote_random, true)
+                cipher_suite.init(
+                    self.crypto_provider.clone().ok_or_else(|| {
+                        Error::Crypto("DTLS crypto provider is not configured".into())
+                    })?,
+                    &self.master_secret,
+                    &local_random,
+                    &remote_random,
+                    true,
+                )
             } else {
-                cipher_suite.init(&self.master_secret, &remote_random, &local_random, false)
+                cipher_suite.init(
+                    self.crypto_provider.clone().ok_or_else(|| {
+                        Error::Crypto("DTLS crypto provider is not configured".into())
+                    })?,
+                    &self.master_secret,
+                    &remote_random,
+                    &local_random,
+                    false,
+                )
             }
         } else {
             Err(Error::ErrCipherSuiteUnset)
@@ -303,7 +322,17 @@ impl KeyingMaterialExporter for State {
         }
 
         if let Some(cipher_suite) = &self.cipher_suite {
-            match prf_p_hash(&self.master_secret, &seed, length, cipher_suite.hash_func()) {
+            let provider = self
+                .crypto_provider
+                .as_ref()
+                .ok_or_else(|| Error::Crypto("DTLS crypto provider is not configured".into()))?;
+            match prf_p_hash(
+                provider.crypto(),
+                &self.master_secret,
+                &seed,
+                length,
+                cipher_suite.hash_func(),
+            ) {
                 Ok(v) => Ok(v),
                 Err(err) => Err(Error::Hash(err.to_string())),
             }
