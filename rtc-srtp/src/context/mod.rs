@@ -6,7 +6,9 @@ mod srtcp_test;
 mod srtp_test;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use crypto::RTCCryptoProvider;
 use shared::replay_detector::*;
 
 use crate::cipher::cipher_aead_aes_gcm::*;
@@ -103,13 +105,36 @@ pub struct Context {
 }
 
 impl Context {
-    /// CreateContext creates a new SRTP Context
+    /// Creates an SRTP context with the built-in default crypto provider.
+    ///
+    /// Applications that select or implement a provider should use [`Self::new_with_provider`].
     pub fn new(
         master_key: &[u8],
         master_salt: &[u8],
         profile: ProtectionProfile,
         srtp_ctx_opt: Option<ContextOption>,
         srtcp_ctx_opt: Option<ContextOption>,
+    ) -> Result<Context> {
+        let provider =
+            crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
+        Self::new_with_provider(
+            master_key,
+            master_salt,
+            profile,
+            srtp_ctx_opt,
+            srtcp_ctx_opt,
+            provider,
+        )
+    }
+
+    /// Creates an SRTP context with an explicit crypto provider.
+    pub fn new_with_provider(
+        master_key: &[u8],
+        master_salt: &[u8],
+        profile: ProtectionProfile,
+        srtp_ctx_opt: Option<ContextOption>,
+        srtcp_ctx_opt: Option<ContextOption>,
+        provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Context> {
         let key_len = profile.key_len();
         let salt_len = profile.salt_len();
@@ -119,19 +144,28 @@ impl Context {
         } else if master_salt.len() != salt_len {
             return Err(Error::SrtpSaltLength(salt_len, master_salt.len()));
         }
+        profile.ensure_crypto_supported(provider.crypto())?;
 
         let cipher: Box<dyn Cipher> = match profile {
             ProtectionProfile::Aes128CmHmacSha1_32
             | ProtectionProfile::Aes128CmHmacSha1_80
             | ProtectionProfile::Aes256CmHmacSha1_80
-            | ProtectionProfile::Aes256CmHmacSha1_32 => {
-                Box::new(CipherAesCmHmacSha1::new(profile, master_key, master_salt)?)
-            }
+            | ProtectionProfile::Aes256CmHmacSha1_32 => Box::new(CipherAesCmHmacSha1::new(
+                profile,
+                master_key,
+                master_salt,
+                provider,
+            )?),
 
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => {
                 // `CipherAeadAesGcm::new` selects AES-128 vs AES-256 from the
                 // profile itself, so both GCM profiles share one arm.
-                Box::new(CipherAeadAesGcm::new(profile, master_key, master_salt)?)
+                Box::new(CipherAeadAesGcm::new(
+                    profile,
+                    master_key,
+                    master_salt,
+                    provider.crypto(),
+                )?)
             }
         };
 

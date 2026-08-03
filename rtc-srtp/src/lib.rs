@@ -37,6 +37,9 @@
 //! Most applications do not depend on this crate directly — the
 //! [`rtc`](https://docs.rs/rtc) crate creates the contexts from the DTLS handshake and
 //! applies them to media as one layer of the peer-connection pipeline.
+//! Applications constructing contexts directly can select cryptography explicitly with
+//! [`context::Context::new_with_provider`]; [`context::Context::new`] retains default-provider
+//! compatibility.
 //!
 //! [RFC 3711]: https://datatracker.ietf.org/doc/html/rfc3711
 //! [RFC 5764]: https://datatracker.ietf.org/doc/html/rfc5764
@@ -51,10 +54,3 @@ mod key_derivation;
 pub mod option;
 /// The DTLS-SRTP protection profiles and their key, salt and tag lengths.
 pub mod protection_profile;
-
-#[cfg(all(feature = "aws-lc-rs", feature = "ring"))]
-compile_error!("At most one of the features \"aws-lc-rs\" and \"ring\" can be enabled.");
-#[cfg(not(any(feature = "aws-lc-rs", feature = "ring")))]
-compile_error!("At least one of the features \"aws-lc-rs\" and \"ring\" must be enabled.");
-#[cfg(feature = "aws-lc-rs")]
-extern crate aws_lc_rs as ring;

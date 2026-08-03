@@ -4,9 +4,9 @@ These decisions freeze the boundaries needed to start G3 implementation. Reopeni
 
 ## SRTP OpenSSL features
 
-The `openssl` and `vendored-openssl` features are partial SRTP implementation choices, not complete RTC crypto providers. They will be deprecated during the migration and removed before 1.0 in P4-04. A future OpenSSL provider is possible only as a complete downstream implementation of the public provider traits that passes the same conformance suite as the built-in providers; it will not preserve these partial features by accident.
+The `openssl` and `vendored-openssl` features were partial SRTP implementation choices, not complete RTC crypto providers, and were removed when SRTP migrated to `rtc-crypto`. A future OpenSSL provider is possible only as a complete downstream implementation of the public provider traits that passes the same conformance suite as the built-in providers; partial protocol-specific backend features will not return.
 
-The deprecation must be called out in the changelog when it begins, and removal must be included in the pre-1.0 migration guide.
+The removal is recorded in the changelog and the crypto-provider migration guide. This pre-1.0 cleanup is intentional: retaining the feature names would falsely imply that OpenSSL provided the complete algorithm surface now required by SRTP and the rest of the RTC stack.
 
 ## Crypto errors and protocol boundaries
 

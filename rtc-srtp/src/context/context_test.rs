@@ -98,6 +98,9 @@ fn test_valid_packet_counter() -> Result<()> {
     ];
 
     let srtp_session_salt = aes_cm_key_derivation(
+        crypto::default_provider()
+            .map_err(|error| Error::Crypto(error.to_string()))?
+            .crypto(),
         LABEL_SRTP_SALT,
         &master_key,
         &master_salt,
