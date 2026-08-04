@@ -3,6 +3,7 @@ use super::*;
 use crate::content::ContentType;
 use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
 use crate::signature_hash_algorithm::HashAlgorithm;
+use crypto::RTCCryptoProvider;
 
 #[test]
 fn test_generate_key_signature() -> Result<()> {
@@ -207,7 +208,7 @@ fn test_certificate_verify() -> Result<()> {
     //test ECDSA256
     let certificate_ecdsa256 = Certificate::generate_self_signed(
         vec!["localhost".to_owned()],
-        crypto::default_provider().map_err(crypto_error)?,
+        crypto::default_provider().map_err(crypto_error)?.crypto(),
     )?;
     let ecdsa_algorithm = SignatureHashAlgorithm {
         hash: HashAlgorithm::Sha256,
@@ -235,7 +236,7 @@ fn test_certificate_verify() -> Result<()> {
     let certificate_ed25519 = Certificate::generate_self_signed_with_alg(
         vec!["localhost".to_owned()],
         &rcgen::PKCS_ED25519,
-        crypto::default_provider().map_err(crypto_error)?,
+        crypto::default_provider().map_err(crypto_error)?.crypto(),
     )?;
     let ed25519_algorithm = SignatureHashAlgorithm {
         hash: HashAlgorithm::Sha256,

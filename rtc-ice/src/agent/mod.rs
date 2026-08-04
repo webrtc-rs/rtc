@@ -21,7 +21,7 @@ pub mod agent_stats;
 
 use agent_config::*;
 use bytes::BytesMut;
-use crypto::RTCCryptoProvider;
+use crypto::{RTCCrypto, RTCCryptoProvider};
 use log::{debug, error, info, trace, warn};
 use mdns::{Mdns, QueryId};
 use sansio::Protocol;
@@ -102,11 +102,9 @@ fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
 fn assert_inbound_message_integrity(
     m: &mut Message,
     key: &[u8],
-    provider: Arc<dyn RTCCryptoProvider>,
+    crypto: &dyn RTCCrypto,
 ) -> Result<()> {
-    let message_integrity_attr =
-        MessageIntegrity::new_raw_integrity_with_provider(key.to_vec(), provider);
-    message_integrity_attr.check(m)
+    MessageIntegrity::check(m, key, crypto)
 }
 
 /// What the agent reports to its caller.
@@ -1003,7 +1001,7 @@ impl Agent {
                 Box::new(XorMappedAddress { ip, port }),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     local_pwd,
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -1047,7 +1045,7 @@ impl Agent {
                 Box::new(CODE_ROLE_CONFLICT),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     local_pwd,
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -1267,7 +1265,7 @@ impl Agent {
             if let Err(err) = assert_inbound_message_integrity(
                 m,
                 remote_credentials.pwd.as_bytes(),
-                self.crypto_provider.clone(),
+                self.crypto_provider.crypto(),
             ) {
                 warn!(
                     "[{}]: discard message from ({}), {}",
@@ -1304,7 +1302,7 @@ impl Agent {
                 } else if let Err(err) = assert_inbound_message_integrity(
                     m,
                     self.ufrag_pwd.local_credentials.pwd.as_bytes(),
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 ) {
                     warn!(
                         "[{}]: discard message from ({}), {}",

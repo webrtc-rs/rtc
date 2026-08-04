@@ -26,7 +26,7 @@ fn benchmark_encrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -70,7 +70,7 @@ fn benchmark_decrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -80,7 +80,7 @@ fn benchmark_decrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -122,7 +122,7 @@ fn benchmark_encrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -140,7 +140,7 @@ fn benchmark_decrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap()
     .encrypt_rtcp(RAW_RTCP)
@@ -152,7 +152,7 @@ fn benchmark_decrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -203,7 +203,7 @@ fn benchmark_context_setup(g: &mut BenchmarkGroup<WallTime>) {
                         profile,
                         None,
                         None,
-                        std::sync::Arc::clone(&provider),
+                        provider.crypto(),
                     )
                     .unwrap()
                 });
@@ -217,24 +217,10 @@ fn benchmark_aead_aes_128_gcm(g: &mut BenchmarkGroup<WallTime>) {
     for (name, provider) in providers() {
         let profile = ProtectionProfile::AeadAes128Gcm;
         let salt = master_salt_for(profile);
-        let mut encrypt_ctx = Context::new(
-            MASTER_KEY,
-            &salt,
-            profile,
-            None,
-            None,
-            std::sync::Arc::clone(&provider),
-        )
-        .unwrap();
-        let mut decrypt_ctx = Context::new(
-            MASTER_KEY,
-            &salt,
-            profile,
-            None,
-            None,
-            std::sync::Arc::clone(&provider),
-        )
-        .unwrap();
+        let mut encrypt_ctx =
+            Context::new(MASTER_KEY, &salt, profile, None, None, provider.crypto()).unwrap();
+        let mut decrypt_ctx =
+            Context::new(MASTER_KEY, &salt, profile, None, None, provider.crypto()).unwrap();
 
         let mut pld = BytesMut::new();
         for i in 0..1200 {

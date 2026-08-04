@@ -144,7 +144,6 @@ pub struct Client {
     username: Username,
     password: String,
     realm: Realm,
-    integrity: MessageIntegrity,
     software: Software,
     tr_map: TransactionMap,
     binding_mgr: BindingManager,
@@ -195,11 +194,6 @@ impl Client {
             } else {
                 DEFAULT_RTO_IN_MS
             },
-            integrity: MessageIntegrity::new_short_term_integrity_with_provider(
-                String::new(),
-                crypto_provider,
-            ),
-
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -406,7 +400,7 @@ impl Client {
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
     pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<TransactionId> {
         let msg = {
-            let attrs: Vec<Box<dyn Setter>> = if !self.software.text.is_empty() {
+            let attrs: Vec<Box<dyn Setter + '_>> = if !self.software.text.is_empty() {
                 vec![
                     Box::new(TransactionId::new()),
                     Box::new(BINDING_REQUEST),
@@ -506,21 +500,20 @@ impl Client {
     /// [RFC 5766 §6.2]: https://datatracker.ietf.org/doc/html/rfc5766#section-6.2
     pub fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
         let username = Username::new(ATTR_USERNAME, username);
-        let integrity = MessageIntegrity::new_long_term_integrity_with_provider(
+        let long_term_integrity_key = MessageIntegrity::long_term_integrity_key(
             username.text.clone(),
             self.realm.text.clone(),
             password.clone(),
-            self.crypto_provider.clone(),
+            self.crypto_provider.crypto(),
         )?;
         self.username = username;
         self.password = password;
-        self.integrity = integrity;
 
         // Each allocation carries the integrity it will sign its own Refresh /
         // CreatePermission / ChannelBind with, so they have to be re-signed too — otherwise
         // the next refresh would still present the retired credential.
         for relay in self.relays.values_mut() {
-            relay.integrity = self.integrity.clone();
+            relay.long_term_integrity_key = long_term_integrity_key.clone();
         }
 
         Ok(())
@@ -595,11 +588,11 @@ impl Client {
                     }
                 };
 
-                self.integrity = MessageIntegrity::new_long_term_integrity_with_provider(
+                let integrity = MessageIntegrity::new_long_term_integrity_with_provider(
                     self.username.text.clone(),
                     self.realm.text.clone(),
                     self.password.clone(),
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )?;
 
                 let mut msg = Message::new();
@@ -623,7 +616,7 @@ impl Client {
                     Box::new(self.username.clone()),
                     Box::new(self.realm.clone()),
                     Box::new(nonce.clone()),
-                    Box::new(self.integrity.clone()),
+                    Box::new(integrity),
                     Box::new(FINGERPRINT),
                 ])?;
 
@@ -658,7 +651,17 @@ impl Client {
 
                 self.relays.insert(
                     relayed_addr,
-                    RelayState::new(relayed_addr, self.integrity.clone(), nonce, lifetime.0),
+                    RelayState::new(
+                        relayed_addr,
+                        MessageIntegrity::long_term_integrity_key(
+                            self.username.text.clone(),
+                            self.realm.text.clone(),
+                            self.password.clone(),
+                            self.crypto_provider.crypto(),
+                        )?,
+                        nonce,
+                        lifetime.0,
+                    ),
                 );
                 self.events.push_back(Event::AllocateResponse(
                     response.transaction_id,

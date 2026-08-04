@@ -122,8 +122,9 @@
 //! ```
 //! use rtc_interceptor::{BoxedInterceptor, NackGeneratorBuilder, Registry, SenderReportBuilder};
 //!
+//! # let nack_enabled = true; // e.g. from configuration, negotiated SDP, …
 //! // Two different chain types, unified by `.boxed()`.
-//! let chain: BoxedInterceptor = if cfg!(feature = "unstable") {
+//! let chain: BoxedInterceptor = if nack_enabled {
 //!     Registry::new()
 //!         .with(SenderReportBuilder::new().build())
 //!         .with(NackGeneratorBuilder::new().build())

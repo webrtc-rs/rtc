@@ -372,6 +372,19 @@ impl SettingEngine {
         self.crypto_provider = Some(provider);
     }
 
+    /// The crypto provider configured on this engine, if any.
+    ///
+    /// `None` means no provider has been set, so building a peer connection will resolve the
+    /// feature-selected built-in.
+    ///
+    /// Callers assembling additional components around a peer connection — an async wrapper's
+    /// TURN client, for instance — read the provider from here and pass it to
+    /// [`set_crypto_provider`](Self::set_crypto_provider) before building, so the whole
+    /// connection provably shares one provider instead of resolving a second.
+    pub fn crypto_provider(&self) -> Option<&Arc<dyn RTCCryptoProvider>> {
+        self.crypto_provider.as_ref()
+    }
+
     /// Returns the configured receive MTU, or the default if not set.
     pub(crate) fn get_receive_mtu(&self) -> usize {
         if self.receive_mtu != 0 {

@@ -3,11 +3,9 @@ mod integrity_test;
 
 use crate::attributes::*;
 use crate::message::*;
-use crypto::{CryptoError, HashAlgorithm, HmacAlgorithm, RTCCryptoProvider, SecretVec};
+use crypto::{CryptoError, HashAlgorithm, HmacAlgorithm, RTCCrypto, SecretVec};
 use shared::error::*;
-
 use std::fmt;
-use std::sync::Arc;
 
 // separator for credentials.
 pub(crate) const CREDENTIALS_SEP: &str = ":";
@@ -22,16 +20,16 @@ pub(crate) const CREDENTIALS_SEP: &str = ":";
 /// The `MESSAGE-INTEGRITY` key: an HMAC-SHA1 is computed over the message with it.
 ///
 /// Built from a short-term password, or from a long-term username/realm/password triple.
-pub struct MessageIntegrity {
+pub struct MessageIntegrity<'a> {
     key: SecretVec,
-    provider: Arc<dyn RTCCryptoProvider>,
+    crypto: &'a dyn RTCCrypto,
 }
 
 fn crypto_error(error: CryptoError) -> Error {
     Error::Crypto(error.to_string())
 }
 
-impl fmt::Display for MessageIntegrity {
+impl<'a> fmt::Display for MessageIntegrity<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -41,7 +39,7 @@ impl fmt::Display for MessageIntegrity {
     }
 }
 
-impl Setter for MessageIntegrity {
+impl<'a> Setter for MessageIntegrity<'a> {
     // add_to adds MESSAGE-INTEGRITY attribute to message.
     //
     // CPU costly, see BenchmarkMessageIntegrity_AddTo.
@@ -64,8 +62,7 @@ impl Setter for MessageIntegrity {
         // A STUN message is authenticated once, so the MAC is keyed here rather than held. On a
         // per-packet path the keyed object belongs in the surrounding state instead.
         let result = self
-            .provider
-            .crypto()
+            .crypto
             .new_hmac(HmacAlgorithm::Sha1, self.key.as_ref())
             .and_then(|mut mac| mac.sign(&[&m.raw], &mut value));
         m.length = length; // changing m.Length back
@@ -80,16 +77,16 @@ impl Setter for MessageIntegrity {
 
 pub(crate) const MESSAGE_INTEGRITY_SIZE: usize = 20;
 
-impl MessageIntegrity {
+impl<'a> MessageIntegrity<'a> {
     /// Creates a raw-key integrity attribute with an explicit crypto provider.
     #[must_use]
     pub fn new_raw_integrity_with_provider(
         key: impl Into<Vec<u8>>,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &'a dyn RTCCrypto,
     ) -> Self {
         Self {
             key: SecretVec::new(key.into()),
-            provider,
+            crypto,
         }
     }
 
@@ -97,9 +94,9 @@ impl MessageIntegrity {
     #[must_use]
     pub fn new_short_term_integrity_with_provider(
         password: String,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &'a dyn RTCCrypto,
     ) -> Self {
-        Self::new_raw_integrity_with_provider(password.into_bytes(), provider)
+        Self::new_raw_integrity_with_provider(password.into_bytes(), crypto)
     }
 
     /// Creates a long-term integrity attribute with an explicit crypto provider.
@@ -107,11 +104,21 @@ impl MessageIntegrity {
         username: String,
         realm: String,
         password: String,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &'a dyn RTCCrypto,
     ) -> Result<Self> {
+        let key = MessageIntegrity::long_term_integrity_key(username, realm, password, crypto)?;
+        Ok(Self::new_raw_integrity_with_provider(key, crypto))
+    }
+
+    /// Creates a long-term integrity key with an explicit crypto provider.
+    pub fn long_term_integrity_key(
+        username: String,
+        realm: String,
+        password: String,
+        crypto: &'a dyn RTCCrypto,
+    ) -> Result<Vec<u8>> {
         let credentials = [username, realm, password].join(CREDENTIALS_SEP);
-        let key = provider
-            .crypto()
+        let key = crypto
             .hash(HashAlgorithm::Md5, credentials.as_bytes())
             .map_err(crypto_error)?;
         if key.len() != 16 {
@@ -120,13 +127,13 @@ impl MessageIntegrity {
                 key.len()
             )));
         }
-        Ok(Self::new_raw_integrity_with_provider(key, provider))
+        Ok(key)
     }
 
     /// Check checks MESSAGE-INTEGRITY attribute.
     ///
     /// CPU costly, see BenchmarkMessageIntegrity_Check.
-    pub fn check(&self, m: &mut Message) -> Result<()> {
+    pub fn check(m: &mut Message, key: &[u8], crypto: &dyn RTCCrypto) -> Result<()> {
         let v = m.get(ATTR_MESSAGE_INTEGRITY)?;
 
         // Adjusting length in header to match m.Raw that was
@@ -151,10 +158,8 @@ impl MessageIntegrity {
         let start_of_hmac = MESSAGE_HEADER_SIZE + m.length as usize
             - (ATTRIBUTE_HEADER_SIZE + MESSAGE_INTEGRITY_SIZE);
         let b = &m.raw[..start_of_hmac]; // data before integrity attribute
-        let result = self
-            .provider
-            .crypto()
-            .new_hmac(HmacAlgorithm::Sha1, self.key.as_ref())
+        let result = crypto
+            .new_hmac(HmacAlgorithm::Sha1, key)
             .and_then(|mut mac| mac.verify(&[b], &v));
         m.length = length as u32;
         m.write_length(); // writing length back

@@ -627,7 +627,9 @@ fn test_message_full_size() -> Result<()> {
             "username".to_owned(),
             "realm".to_owned(),
             "password".to_owned(),
-            crypto::default_provider().expect("a built-in provider is enabled for tests"),
+            crypto::default_provider()
+                .expect("a built-in provider is enabled for tests")
+                .crypto(),
         )?),
         Box::new(FINGERPRINT),
     ])?;
@@ -657,7 +659,9 @@ fn test_message_clone_to() -> Result<()> {
             "username".to_owned(),
             "realm".to_owned(),
             "password".to_owned(),
-            crypto::default_provider().expect("a built-in provider is enabled for tests"),
+            crypto::default_provider()
+                .expect("a built-in provider is enabled for tests")
+                .crypto(),
         )?),
         Box::new(FINGERPRINT),
     ])?;

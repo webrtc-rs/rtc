@@ -40,9 +40,10 @@ where
     ) -> Result<Self> {
         configuration.validate()?;
 
-        // The one place in the workspace that resolves a default crypto provider. The
-        // application either supplies one through `SettingEngine::set_crypto_provider` or gets
-        // the feature-selected built-in here, once, at construction. Everything downstream —
+        // The one place in `rtc` that resolves a default crypto provider. The application
+        // either supplies one through `SettingEngine::set_crypto_provider` — which is also how
+        // a wrapper crate injects a provider it resolved itself — or gets the feature-selected
+        // built-in here, once, at construction. Everything downstream —
         // ICE, DTLS, SRTP, STUN, certificates — receives it explicitly, so no library code
         // reaches for a default behind the caller's back.
         let crypto_provider = match setting_engine.crypto_provider.take() {
@@ -53,6 +54,8 @@ where
                 ))
             })?,
         };
+        // Record the resolution so `SettingEngine::crypto_provider` reports the provider this
+        // connection actually uses, not merely what was requested.
         setting_engine.crypto_provider = Some(crypto_provider.clone());
 
         let mut candidate_types = vec![];
@@ -211,7 +214,7 @@ where
         }
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints(self.dtls_transport().crypto_provider.clone())?
+            cert.get_fingerprints(self.dtls_transport().crypto_provider.crypto())?
         } else {
             return Err(Error::ErrNonCertificate);
         };
@@ -356,7 +359,7 @@ where
         };
 
         let dtls_fingerprints = if let Some(cert) = self.dtls_transport().certificates.first() {
-            cert.get_fingerprints(self.dtls_transport().crypto_provider.clone())?
+            cert.get_fingerprints(self.dtls_transport().crypto_provider.crypto())?
         } else {
             return Err(Error::ErrNonCertificate);
         };

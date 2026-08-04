@@ -311,7 +311,6 @@ use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 /// Builder for creating RTCPeerConnection instances.
@@ -528,18 +527,6 @@ where
     /// ```
     pub fn with_setting_engine(mut self, setting_engine: SettingEngine) -> Self {
         self.setting_engine = setting_engine;
-        self
-    }
-
-    /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes,
-    /// on this builder's [`SettingEngine`].
-    ///
-    /// Convenience for [`SettingEngine::set_sctp_max_receive_buffer_size`]; see it for the
-    /// throughput/memory tradeoff. Applies to whichever `SettingEngine` is currently set,
-    /// so call it after [`with_setting_engine`](Self::with_setting_engine) if you also
-    /// supply a custom engine. Leaving it unset keeps the 1 MiB default.
-    pub fn with_sctp_receive_buffer_size(mut self, size: u32) -> Self {
-        self.setting_engine.set_sctp_max_receive_buffer_size(size);
         self
     }
 
@@ -1770,18 +1757,6 @@ where
         &self.configuration
     }
 
-    /// Returns the crypto provider this peer connection resolved at construction.
-    ///
-    /// Construction is the single place in the workspace that resolves a default provider: it
-    /// uses the one configured through
-    /// [`SettingEngine::set_crypto_provider`](crate::peer_connection::configuration::setting_engine::SettingEngine::set_crypto_provider),
-    /// or the feature-selected built-in. Callers that build additional components around a peer
-    /// connection — an async wrapper's TURN client, for instance — take the provider from here
-    /// so the whole connection shares one, rather than resolving a second.
-    pub fn crypto_provider(&self) -> &Arc<dyn crypto::RTCCryptoProvider> {
-        &self.dtls_transport().crypto_provider
-    }
-
     /// set_configuration updates the configuration of this PeerConnection object.
     pub fn set_configuration(&mut self, configuration: RTCConfiguration) -> Result<()> {
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
@@ -2347,7 +2322,10 @@ mod tests {
 
     #[test]
     fn with_sctp_receive_buffer_size_sets_and_clamps() {
-        let builder = RTCPeerConnectionBuilder::new().with_sctp_receive_buffer_size(200_000);
+        let mut setting_engine = SettingEngine::default();
+        setting_engine.set_sctp_max_receive_buffer_size(200_000);
+
+        let builder = RTCPeerConnectionBuilder::new().with_setting_engine(setting_engine);
         assert_eq!(
             builder.setting_engine.sctp_max_receive_buffer_size,
             Some(200_000)
@@ -2356,7 +2334,9 @@ mod tests {
         // Values below the RFC 4960 §6 floor (1500 bytes), including 0, are clamped up so
         // they cannot break the SCTP handshake.
         for input in [0u32, 500, 1499] {
-            let builder = RTCPeerConnectionBuilder::new().with_sctp_receive_buffer_size(input);
+            let mut setting_engine = SettingEngine::default();
+            setting_engine.set_sctp_max_receive_buffer_size(input);
+            let builder = RTCPeerConnectionBuilder::new().with_setting_engine(setting_engine);
             assert_eq!(
                 builder.setting_engine.sctp_max_receive_buffer_size,
                 Some(1500),

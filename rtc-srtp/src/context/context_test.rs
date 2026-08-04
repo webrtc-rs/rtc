@@ -24,7 +24,7 @@ fn test_context_roc() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let roc = c.get_roc(123);
@@ -52,7 +52,7 @@ fn test_context_index() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let index = c.get_index(123);
@@ -80,7 +80,7 @@ fn test_key_len() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     );
     assert!(result.is_err(), "CreateContext accepted a 0 length key");
 
@@ -90,7 +90,7 @@ fn test_key_len() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     );
     assert!(result.is_err(), "CreateContext accepted a 0 length salt");
 
@@ -100,7 +100,7 @@ fn test_key_len() -> Result<()> {
         CIPHER_CONTEXT_ALGO,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     );
     assert!(
         result.is_ok(),
@@ -366,7 +366,7 @@ fn test_encrypt_aead_aes_128_gcm_rtp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -388,7 +388,7 @@ fn test_decrypt_aead_aes_128_gcm_rtp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -407,7 +407,7 @@ fn test_encrypt_aead_aes_128_gcm_rtcp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -429,7 +429,7 @@ fn test_decrypt_aead_aes_128_gcm_rtcp() {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -448,7 +448,7 @@ fn test_encrypt_aes_256_cm_rtp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -470,7 +470,7 @@ fn test_decrypt_aes_256_cm_rtp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -489,7 +489,7 @@ fn test_encrypt_aes_256_cm_rtcp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 
@@ -511,7 +511,7 @@ fn test_decrypt_aes_256_cm_rtcp() {
         ProtectionProfile::Aes256CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .expect("Error creating srtp context");
 

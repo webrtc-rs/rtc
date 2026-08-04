@@ -6,9 +6,8 @@ mod srtcp_test;
 mod srtp_test;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use crypto::RTCCryptoProvider;
+use crypto::RTCCrypto;
 use shared::replay_detector::*;
 
 use crate::cipher::cipher_aead_aes_gcm::*;
@@ -107,14 +106,16 @@ pub struct Context {
 impl Context {
     /// Creates an SRTP context.
     ///
-    /// The crypto provider is supplied by the caller; this crate never resolves a default.
+    /// The crypto implementation is supplied by the caller; this crate never resolves a default.
+    /// Borrowed, not owned: it is only needed to build the keyed cipher/MAC objects below, which
+    /// are what the context retains.
     pub fn new(
         master_key: &[u8],
         master_salt: &[u8],
         profile: ProtectionProfile,
         srtp_ctx_opt: Option<ContextOption>,
         srtcp_ctx_opt: Option<ContextOption>,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &dyn RTCCrypto,
     ) -> Result<Context> {
         let key_len = profile.key_len();
         let salt_len = profile.salt_len();
@@ -124,7 +125,7 @@ impl Context {
         } else if master_salt.len() != salt_len {
             return Err(Error::SrtpSaltLength(salt_len, master_salt.len()));
         }
-        profile.ensure_crypto_supported(provider.crypto())?;
+        profile.ensure_crypto_supported(crypto)?;
 
         let cipher: Box<dyn Cipher> = match profile {
             ProtectionProfile::Aes128CmHmacSha1_32
@@ -134,7 +135,7 @@ impl Context {
                 profile,
                 master_key,
                 master_salt,
-                provider,
+                crypto,
             )?),
 
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => {
@@ -144,7 +145,7 @@ impl Context {
                     profile,
                     master_key,
                     master_salt,
-                    provider.crypto(),
+                    crypto,
                 )?)
             }
         };

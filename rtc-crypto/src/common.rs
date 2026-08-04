@@ -1,3 +1,7 @@
+use crate::{
+    AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher, CryptoError,
+    SecretVec, StreamCipher, StreamCipherAlgorithm,
+};
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit};
 use aes::{Aes128, Aes256};
@@ -5,14 +9,7 @@ use ccm::Ccm;
 use ccm::aead::AeadInPlace;
 use ccm::consts::{U8, U12, U16};
 use ctr::cipher::StreamCipher as CtrStreamCipher;
-use hmac::{Hmac, Mac as RustCryptoMac};
 use md5::{Digest, Md5};
-use sha1::Sha1;
-
-use crate::{
-    AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher, CryptoError,
-    Mac as StreamMac, SecretVec, StreamCipher, StreamCipherAlgorithm,
-};
 
 const AES_BLOCK_LEN: usize = 16;
 const CCM_NONCE_LEN: usize = 12;
@@ -39,57 +36,6 @@ type Aes256Ctr = ctr::Ctr128BE<Aes256>;
 pub(crate) fn fill_random(output: &mut [u8]) -> Result<(), CryptoError> {
     rand::fill(output);
     Ok(())
-}
-
-type HmacSha1 = Hmac<Sha1>;
-
-/// HMAC-SHA1 backed by RustCrypto, keyed once.
-///
-/// `ring` exposes SHA-1 only as `HMAC_SHA1_FOR_LEGACY_USE_ONLY` and does not use the ARMv8 SHA-1
-/// instructions, measuring 4469 ns against RustCrypto's 1373 ns over a 1212-byte SRTP packet —
-/// 3.3x, and the whole of the SRTP AES-CM/HMAC regression. The built-in providers are already
-/// composite (AES-CTR, CCM, CBC and MD5 come from RustCrypto too), so HMAC-SHA1 is composed the
-/// same way rather than making the slower backend the default. `aws-lc-rs` has fast SHA-1 and
-/// keeps its own.
-pub(crate) struct RustCryptoHmacSha1 {
-    keyed: HmacSha1,
-}
-
-impl RustCryptoHmacSha1 {
-    pub(crate) fn new(key: &[u8]) -> Self {
-        Self {
-            // HMAC accepts any key length: it hashes longer keys and zero-pads shorter ones.
-            keyed: <HmacSha1 as RustCryptoMac>::new_from_slice(key)
-                .expect("HMAC accepts keys of any length"),
-        }
-    }
-}
-
-impl StreamMac for RustCryptoHmacSha1 {
-    fn output_len(&self) -> usize {
-        20
-    }
-
-    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError> {
-        check_tag_len(20, output.len())?;
-        let mut mac = self.keyed.clone();
-        for part in input {
-            mac.update(part);
-        }
-        output.copy_from_slice(&mac.finalize().into_bytes());
-        Ok(())
-    }
-
-    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
-        check_tag_len(20, expected.len())?;
-        let mut actual = [0u8; 20];
-        self.sign(input, &mut actual)?;
-        if crate::constant_time_eq(&actual, expected) {
-            Ok(())
-        } else {
-            Err(CryptoError::AuthenticationFailed)
-        }
-    }
 }
 
 pub(crate) fn md5(data: &[u8]) -> Vec<u8> {

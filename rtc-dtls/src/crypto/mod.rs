@@ -30,8 +30,7 @@ use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::server::danger::ClientCertVerifier;
 
 use crypto::{
-    PublicKey, PublicKeyEncoding, RTCCryptoProvider, SignatureScheme as CryptoSignatureScheme,
-    SigningKey,
+    PublicKey, PublicKeyEncoding, RTCCrypto, SignatureScheme as CryptoSignatureScheme, SigningKey,
 };
 #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
@@ -71,13 +70,13 @@ impl Certificate {
     /// Generates a self-signed certificate, importing its key into `provider`.
     pub fn generate_self_signed(
         subject_alt_names: impl Into<Vec<String>>,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &dyn RTCCrypto,
     ) -> Result<Self> {
         let CertifiedKey { cert, signing_key } = generate_simple_self_signed(subject_alt_names)
             .map_err(|error| Error::Other(error.to_string()))?;
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
-            private_key: CryptoPrivateKey::from_key_pair(&signing_key, provider)?,
+            private_key: CryptoPrivateKey::from_key_pair(&signing_key, crypto)?,
         })
     }
 
@@ -86,7 +85,7 @@ impl Certificate {
     pub fn generate_self_signed_with_alg(
         subject_alt_names: impl Into<Vec<String>>,
         alg: &'static rcgen::SignatureAlgorithm,
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &dyn RTCCrypto,
     ) -> Result<Self> {
         let params = rcgen::CertificateParams::new(subject_alt_names)
             .map_err(|error| Error::Other(error.to_string()))?;
@@ -98,13 +97,12 @@ impl Certificate {
 
         Ok(Certificate {
             certificate: vec![cert.der().to_owned()],
-            private_key: CryptoPrivateKey::from_key_pair(&key_pair, provider)?,
+            private_key: CryptoPrivateKey::from_key_pair(&key_pair, crypto)?,
         })
     }
 
-    /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
-    /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
-    pub fn from_pem(pem_str: &str, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
+    /// Parses a PEM certificate and imports its PKCS#8 key into `crypto`.
+    pub fn from_pem(pem_str: &str, crypto: &dyn RTCCrypto) -> Result<Self> {
         let mut pems = pem::parse_many(pem_str).map_err(|e| Error::InvalidPEM(e.to_string()))?;
         if pems.len() < 2 {
             return Err(Error::InvalidPEM(format!(
@@ -139,17 +137,8 @@ impl Certificate {
         ];
         let signing_key = schemes
             .into_iter()
-            .filter(|scheme| {
-                provider
-                    .crypto()
-                    .supports(crypto::CryptoAlgorithm::SigningKeyImport(*scheme))
-            })
-            .find_map(|scheme| {
-                provider
-                    .crypto()
-                    .import_signing_key(scheme, &private_key_der)
-                    .ok()
-            })
+            .filter(|scheme| crypto.supports(crypto::CryptoAlgorithm::SigningKeyImport(*scheme)))
+            .find_map(|scheme| crypto.import_signing_key(scheme, &private_key_der).ok())
             .ok_or_else(|| Error::InvalidPEM("can't decode PKCS#8 signing key".into()))?;
 
         Ok(Certificate::from_signing_key(rustls_certs, signing_key))
@@ -237,7 +226,7 @@ impl std::fmt::Debug for CryptoPrivateKey {
 impl CryptoPrivateKey {
     /// Imports an rcgen key pair into an explicit provider.
     #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
-    pub fn from_key_pair(key_pair: &KeyPair, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
+    pub fn from_key_pair(key_pair: &KeyPair, crypto: &dyn RTCCrypto) -> Result<Self> {
         let serialized_der = key_pair.serialize_der();
         let scheme = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {
             CryptoSignatureScheme::Ed25519
@@ -248,8 +237,7 @@ impl CryptoPrivateKey {
         } else {
             return Err(Error::Other("Unsupported key_pair".to_owned()));
         };
-        let signing_key = provider
-            .crypto()
+        let signing_key = crypto
             .import_signing_key(scheme, &serialized_der)
             .map_err(crypto_error)?;
         Ok(Self { signing_key })
@@ -472,10 +460,10 @@ mod test {
     fn test_certificate_serialize_pem_and_from_pem() -> Result<()> {
         let provider = crypto::default_provider().map_err(crypto_error)?;
         let cert =
-            Certificate::generate_self_signed(vec!["webrtc.rs".to_owned()], provider.clone())?;
+            Certificate::generate_self_signed(vec!["webrtc.rs".to_owned()], provider.crypto())?;
 
         let pem = cert.serialize_pem()?;
-        let loaded_cert = Certificate::from_pem(&pem, provider)?;
+        let loaded_cert = Certificate::from_pem(&pem, provider.crypto())?;
 
         assert_eq!(loaded_cert, cert);
 

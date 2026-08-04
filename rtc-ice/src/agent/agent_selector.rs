@@ -115,7 +115,7 @@ impl Agent {
                         Box::new(PriorityAttr(pair.local_priority)),
                         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                             remote_credentials.pwd.clone(),
-                            self.crypto_provider.clone(),
+                            self.crypto_provider.crypto(),
                         )),
                         Box::new(FINGERPRINT),
                     ]);
@@ -283,7 +283,7 @@ impl ControllingSelector for Agent {
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     remote_credentials.pwd.clone(),
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -445,7 +445,7 @@ impl ControlledSelector for Agent {
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     remote_credentials.pwd.clone(),
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
