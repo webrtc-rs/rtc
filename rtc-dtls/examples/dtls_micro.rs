@@ -25,8 +25,17 @@ fn main() {
     let remote_iv = [0x44u8; 4];
 
     // Encrypt-side and decrypt-side contexts that mirror each other.
-    let sender = CryptoGcm::new(&local_key, &local_iv, &remote_key, &remote_iv);
-    let receiver = CryptoGcm::new(&remote_key, &remote_iv, &local_key, &local_iv);
+    let provider = crypto::default_provider().expect("a default crypto provider");
+    let mut sender = CryptoGcm::new(
+        provider.clone(),
+        &local_key,
+        &local_iv,
+        &remote_key,
+        &remote_iv,
+    )
+    .expect("create sender cipher");
+    let mut receiver = CryptoGcm::new(provider, &remote_key, &remote_iv, &local_key, &local_iv)
+        .expect("create receiver cipher");
 
     let header = RecordLayerHeader {
         content_type: ContentType::ApplicationData,

@@ -19,10 +19,12 @@ mod config_test;
 use crate::cipher_suite::*;
 use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
 use crate::crypto::*;
+use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
 use crate::signature_hash_algorithm::{
     SignatureHashAlgorithm, SignatureScheme, parse_signature_schemes,
 };
+use crypto::RTCCryptoProvider;
 use log::warn;
 use shared::error::*;
 use std::collections::HashMap;
@@ -35,27 +37,46 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::CertificateDer;
 use rustls::server::danger::ClientCertVerifier;
 
-/// The rustls [`CryptoProvider`](rustls::crypto::CryptoProvider) this crate was built with.
+/// Explicit rustls/webpki backend used only for CA-chain and hostname verification.
 ///
-/// rustls can infer a process-wide default from its own crate features, but only when exactly
-/// one of `ring`/`aws-lc-rs` is enabled — and it panics otherwise. Feature unification makes
-/// that easy to violate: any other crate in the graph that asks rustls for a different provider
-/// enables both, which is what happens as soon as `rtc`'s `webrtc` interop dev-dependency joins
-/// the build. Since our own `ring`/`aws-lc-rs` features already decide the answer, pass it
-/// explicitly and never consult the global default.
-///
-/// If neither feature is enabled there is no provider to name, so fall back to whatever the
-/// application installed.
-fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
-    #[cfg(feature = "aws-lc-rs")]
-    {
-        Some(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
+/// This policy adapter is separate from [`RTCCryptoProvider`]. Applications authenticating with
+/// SDP fingerprints do not need it, while applications enabling WebPKI validation can select its
+/// backend without changing their primitive RTC provider.
+#[derive(Clone)]
+pub struct RustlsVerifierAdapter {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl RustlsVerifierAdapter {
+    /// Wraps a rustls crypto provider for WebPKI verification.
+    #[must_use]
+    pub fn new(provider: Arc<rustls::crypto::CryptoProvider>) -> Self {
+        Self { provider }
     }
-    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+
+    /// Uses rustls's ring verification backend.
+    #[cfg(feature = "ring")]
+    #[must_use]
+    pub fn ring() -> Self {
+        Self::new(Arc::new(rustls::crypto::ring::default_provider()))
+    }
+
+    /// Uses rustls's AWS-LC-RS verification backend.
+    #[cfg(feature = "aws-lc-rs")]
+    #[must_use]
+    pub fn aws_lc_rs() -> Self {
+        Self::new(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+    }
+}
+
+fn default_verifier_adapter() -> Option<RustlsVerifierAdapter> {
+    #[cfg(feature = "ring")]
     {
-        Some(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        Some(RustlsVerifierAdapter::ring())
+    }
+    #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
+    {
+        Some(RustlsVerifierAdapter::aws_lc_rs())
     }
     #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
     {
@@ -70,22 +91,22 @@ fn crypto_provider() -> Option<std::sync::Arc<rustls::crypto::CryptoProvider>> {
 /// Fails if the root store holds no usable trust anchors.
 fn server_cert_verifier(
     roots: std::sync::Arc<rustls::RootCertStore>,
-) -> Result<std::sync::Arc<rustls::client::WebPkiServerVerifier>> {
-    let builder = match crypto_provider() {
-        Some(provider) => {
-            rustls::client::WebPkiServerVerifier::builder_with_provider(roots, provider)
-        }
-        None => rustls::client::WebPkiServerVerifier::builder(roots),
-    };
-    builder
-        .build()
-        .map_err(|err| Error::Other(format!("rustls server cert verifier: {err}")))
+    adapter: &RustlsVerifierAdapter,
+) -> Result<std::sync::Arc<dyn ServerCertVerifier>> {
+    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+        roots,
+        adapter.provider.clone(),
+    )
+    .build()
+    .map_err(|err| Error::Other(format!("rustls server cert verifier: {err}")))?;
+    Ok(verifier)
 }
 
 /// Config is used to configure a DTLS client or server.
 /// After a Config is passed to a DTLS function it must not be modified.
 #[derive(Clone)]
 pub struct ConfigBuilder {
+    crypto_provider: Option<Arc<dyn RTCCryptoProvider>>,
     certificates: Vec<Certificate>,
     cipher_suites: Vec<CipherSuiteId>,
     signature_schemes: Vec<SignatureScheme>,
@@ -101,6 +122,7 @@ pub struct ConfigBuilder {
     verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     roots_cas: rustls::RootCertStore,
     client_cas: rustls::RootCertStore,
+    verifier_adapter: Option<RustlsVerifierAdapter>,
     server_name: String,
     mtu: usize,
     replay_protection_window: usize,
@@ -109,6 +131,7 @@ pub struct ConfigBuilder {
 impl Default for ConfigBuilder {
     fn default() -> Self {
         Self {
+            crypto_provider: None,
             certificates: vec![],
             cipher_suites: vec![],
             signature_schemes: vec![],
@@ -124,6 +147,7 @@ impl Default for ConfigBuilder {
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
             client_cas: rustls::RootCertStore::empty(),
+            verifier_adapter: default_verifier_adapter(),
             server_name: String::default(),
             mtu: 0,
             replay_protection_window: 0,
@@ -132,6 +156,15 @@ impl Default for ConfigBuilder {
 }
 
 impl ConfigBuilder {
+    /// Selects the cryptography and CSPRNG implementation for this DTLS association.
+    ///
+    /// The provider is resolved while building the handshake configuration and is reused for the
+    /// entire handshake and record lifetime. No global registration is required.
+    pub fn with_crypto_provider(mut self, provider: Arc<dyn RTCCryptoProvider>) -> Self {
+        self.crypto_provider = Some(provider);
+        self
+    }
+
     /// certificates contains certificate chain to present to the other side of the connection.
     /// Server MUST set this if psk is non-nil
     /// client SHOULD sets this so CertificateRequests can be handled if psk is non-nil
@@ -263,6 +296,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Selects the rustls/webpki adapter used for optional CA-chain and hostname verification.
+    pub fn with_rustls_verifier_adapter(mut self, adapter: RustlsVerifierAdapter) -> Self {
+        self.verifier_adapter = Some(adapter);
+        self
+    }
+
     /// server_name is used to verify the hostname on the returned
     /// certificates unless insecure_skip_verify is given.
     pub fn with_server_name(mut self, server_name: String) -> Self {
@@ -343,16 +382,6 @@ impl ConfigBuilder {
             return Err(Error::ErrIdentityNoPsk);
         }
 
-        // Gates future private key kinds from being automatically allowed.
-        for cert in &self.certificates {
-            match cert.private_key.kind {
-                CryptoPrivateKeyKind::Ed25519(_) => {}
-                CryptoPrivateKeyKind::Ecdsa256(_) => {}
-                CryptoPrivateKeyKind::Rsa256(_) => {}
-                CryptoPrivateKeyKind::Custom(_) => {}
-            }
-        }
-
         parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?;
 
         Ok(())
@@ -364,16 +393,81 @@ impl ConfigBuilder {
         is_client: bool,
         remote_addr: Option<SocketAddr>,
     ) -> Result<HandshakeConfig> {
+        // The caller supplies the provider; this crate never resolves a default. An application
+        // that wants the feature-selected built-in passes `crypto::default_provider()?`.
+        let crypto_provider = self.crypto_provider.take().ok_or_else(|| {
+            Error::Crypto(
+                "no crypto provider configured: call ConfigBuilder::with_crypto_provider"
+                    .to_owned(),
+            )
+        })?;
         self.validate(is_client)?;
 
-        let local_cipher_suites: Vec<CipherSuiteId> =
+        let mut local_cipher_suites: Vec<CipherSuiteId> =
             parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?
                 .iter()
                 .map(|cs| cs.id())
+                .filter(|id| id.supported_by(crypto_provider.crypto()))
                 .collect();
+        if local_cipher_suites.is_empty() {
+            return Err(Error::ErrNoAvailableCipherSuites);
+        }
 
         let sigs: Vec<u16> = self.signature_schemes.iter().map(|x| *x as u16).collect();
-        let local_signature_schemes = parse_signature_schemes(&sigs, self.insecure_hashes)?;
+        let local_signature_schemes: Vec<_> = parse_signature_schemes(&sigs, self.insecure_hashes)?
+            .into_iter()
+            .filter(|algorithm| {
+                algorithm.crypto_scheme().is_ok_and(|scheme| {
+                    crypto_provider
+                        .crypto()
+                        .supports(crypto::CryptoAlgorithm::Signature(scheme))
+                })
+            })
+            .collect();
+        if self.psk.is_none() && local_signature_schemes.is_empty() {
+            return Err(Error::ErrNoAvailableSignatureSchemes);
+        }
+
+        let local_named_curves: Vec<_> = [NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384]
+            .into_iter()
+            .filter(|curve| {
+                curve.crypto_algorithm().is_ok_and(|algorithm| {
+                    crypto_provider
+                        .crypto()
+                        .supports(crypto::CryptoAlgorithm::KeyExchange(algorithm))
+                })
+            })
+            .collect();
+        if self.psk.is_none() && local_named_curves.is_empty() {
+            return Err(Error::ErrNoAvailableCipherSuites);
+        }
+
+        if !is_client && self.psk.is_none() {
+            let signing_key = &self.certificates[0].private_key.signing_key;
+            local_cipher_suites.retain(|id| {
+                local_signature_schemes.iter().any(|algorithm| {
+                    let signature_family_matches = match id {
+                        CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256
+                        | CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha
+                        | CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
+                            algorithm.signature
+                                == crate::signature_hash_algorithm::SignatureAlgorithm::Rsa
+                        }
+                        _ => {
+                            algorithm.signature
+                                == crate::signature_hash_algorithm::SignatureAlgorithm::Ecdsa
+                        }
+                    };
+                    signature_family_matches
+                        && algorithm
+                            .crypto_scheme()
+                            .is_ok_and(|scheme| signing_key.supports(scheme))
+                })
+            });
+            if local_cipher_suites.is_empty() {
+                return Err(Error::ErrNoAvailableCipherSuites);
+            }
+        }
 
         let retransmit_interval = if self.flight_interval != Duration::from_secs(0) {
             self.flight_interval
@@ -403,27 +497,67 @@ impl ConfigBuilder {
             }
         }
 
+        let server_cert_verifier = if self.insecure_skip_verify {
+            None
+        } else {
+            let adapter = self.verifier_adapter.as_ref().ok_or_else(|| {
+                Error::Crypto("CA-chain verification requires a RustlsVerifierAdapter".to_owned())
+            })?;
+            let roots = if self.roots_cas.is_empty() {
+                gen_self_signed_root_cert()
+            } else {
+                self.roots_cas.clone()
+            };
+            Some(server_cert_verifier(Arc::new(roots), adapter)?)
+        };
+
+        let client_cert_verifier = if self.client_auth as u8
+            >= ClientAuthType::VerifyClientCertIfGiven as u8
+        {
+            let adapter = self.verifier_adapter.as_ref().ok_or_else(|| {
+                Error::Crypto(
+                    "client-certificate verification requires a RustlsVerifierAdapter".to_owned(),
+                )
+            })?;
+            Some(
+                rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(self.client_cas.clone()),
+                    adapter.provider.clone(),
+                )
+                .build()
+                .map_err(|err| Error::Other(format!("rustls client cert verifier: {err}")))?
+                    as Arc<dyn ClientCertVerifier>,
+            )
+        } else {
+            None
+        };
+
+        // Fields not derived from the builder come from `HandshakeConfig::new`, which also
+        // supplies `crypto_provider`.
         Ok(HandshakeConfig {
+            crypto_provider,
             local_psk_callback: self.psk.take(),
             local_psk_identity_hint: self.psk_identity_hint.take(),
             local_cipher_suites,
+            local_named_curves,
             local_signature_schemes,
             extended_master_secret: self.extended_master_secret,
             local_srtp_protection_profiles: self.srtp_protection_profiles,
             server_name,
             client_auth: self.client_auth,
             local_certificates: self.certificates,
+            name_to_certificate: Default::default(),
             insecure_skip_verify: self.insecure_skip_verify,
             insecure_verification: self.insecure_verification,
             verify_peer_certificate: self.verify_peer_certificate.take(),
             roots_cas: self.roots_cas,
-            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))?,
-            client_cert_verifier: None,
+            server_cert_verifier,
+            client_cert_verifier,
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
+            maximum_retransmit_number: 0,
             replay_protection_window,
-            ..Default::default()
         })
     }
 }
@@ -437,25 +571,34 @@ pub type VerifyPeerCertificateFn =
 
 /// Generates a self-signed certificate, as WebRTC endpoints use.
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
-    let mut certs = rustls::RootCertStore::empty();
-    certs
-        .add(
-            rcgen::generate_simple_self_signed(vec![])
-                .unwrap()
-                .cert
-                .der()
-                .to_owned(),
-        )
-        .unwrap();
-    certs
+    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    {
+        let mut certs = rustls::RootCertStore::empty();
+        certs
+            .add(
+                rcgen::generate_simple_self_signed(vec![])
+                    .unwrap()
+                    .cert
+                    .der()
+                    .to_owned(),
+            )
+            .unwrap();
+        certs
+    }
+    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    {
+        rustls::RootCertStore::empty()
+    }
 }
 
 #[derive(Clone)]
 /// The resolved configuration a handshake runs with, produced by [`ConfigBuilder::build`].
 pub struct HandshakeConfig {
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) local_psk_callback: Option<PskCallback>,
     pub(crate) local_psk_identity_hint: Option<Vec<u8>>,
     pub(crate) local_cipher_suites: Vec<CipherSuiteId>, // Available CipherSuites
+    pub(crate) local_named_curves: Vec<NamedCurve>,
     pub(crate) local_signature_schemes: Vec<SignatureHashAlgorithm>, // Available signature schemes
     pub(crate) extended_master_secret: ExtendedMasterSecretType, // Policy for the Extended Master Support extension
     pub(crate) local_srtp_protection_profiles: Vec<SrtpProtectionProfile>, // Available SRTPProtectionProfiles, if empty no SRTP support
@@ -467,9 +610,9 @@ pub struct HandshakeConfig {
     pub(crate) insecure_verification: bool,
     pub(crate) verify_peer_certificate: Option<VerifyPeerCertificateFn>,
     pub(crate) roots_cas: rustls::RootCertStore,
-    pub(crate) server_cert_verifier: Arc<dyn ServerCertVerifier>,
+    pub(crate) server_cert_verifier: Option<Arc<dyn ServerCertVerifier>>,
     pub(crate) client_cert_verifier: Option<Arc<dyn ClientCertVerifier>>,
-    pub(crate) retransmit_interval: std::time::Duration,
+    pub(crate) retransmit_interval: Duration,
     pub(crate) initial_epoch: u16,
     pub(crate) maximum_transmission_unit: usize,
     pub(crate) maximum_retransmit_number: usize,
@@ -479,8 +622,10 @@ pub struct HandshakeConfig {
 impl fmt::Debug for HandshakeConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("HandshakeConfig<T>")
+            .field("crypto_provider", &self.crypto_provider.name())
             .field("local_psk_identity_hint", &self.local_psk_identity_hint)
             .field("local_cipher_suites", &self.local_cipher_suites)
+            .field("local_named_curves", &self.local_named_curves)
             .field("local_signature_schemes", &self.local_signature_schemes)
             .field("extended_master_secret", &self.extended_master_secret)
             .field(
@@ -503,12 +648,14 @@ impl fmt::Debug for HandshakeConfig {
     }
 }
 
-impl Default for HandshakeConfig {
-    fn default() -> Self {
-        HandshakeConfig {
+impl HandshakeConfig {
+    pub(crate) fn new(crypto_provider: Arc<dyn RTCCryptoProvider>) -> Self {
+        Self {
+            crypto_provider,
             local_psk_callback: None,
             local_psk_identity_hint: None,
             local_cipher_suites: vec![],
+            local_named_curves: vec![],
             local_signature_schemes: vec![],
             extended_master_secret: ExtendedMasterSecretType::Disable,
             local_srtp_protection_profiles: vec![],
@@ -520,8 +667,9 @@ impl Default for HandshakeConfig {
             insecure_verification: false,
             verify_peer_certificate: None,
             roots_cas: rustls::RootCertStore::empty(),
-            server_cert_verifier: server_cert_verifier(Arc::new(gen_self_signed_root_cert()))
-                .expect("the built-in self-signed root is always a valid trust anchor"),
+            server_cert_verifier: default_verifier_adapter().and_then(|adapter| {
+                server_cert_verifier(Arc::new(gen_self_signed_root_cert()), &adapter).ok()
+            }),
             client_cert_verifier: None,
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
@@ -530,9 +678,11 @@ impl Default for HandshakeConfig {
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
     }
-}
 
-impl HandshakeConfig {
+    pub(crate) fn provider(&self) -> &Arc<dyn RTCCryptoProvider> {
+        &self.crypto_provider
+    }
+
     pub(crate) fn get_certificate(&self, server_name: &str) -> Result<Certificate> {
         if self.local_certificates.is_empty() {
             return Err(Error::ErrNoCertificates);

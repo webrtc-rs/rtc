@@ -1,8 +1,8 @@
 use byteorder::{BigEndian, ByteOrder};
 use bytes::BytesMut;
-use ring::aead::{AES_128_GCM, AES_256_GCM, Aad, Algorithm, LessSafeKey, Nonce, UnboundKey};
+use crypto::{AeadAlgorithm, AeadCipher, RTCCrypto, SecretVec};
 
-use super::{Cipher, Kdf};
+use super::{Cipher, Kdf, crypto_error};
 use crate::key_derivation::*;
 use crate::protection_profile::ProtectionProfile;
 use shared::{
@@ -14,19 +14,11 @@ pub const CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN: usize = 16;
 
 const RTCP_ENCRYPTION_FLAG: u8 = 0x80;
 
-/// AEAD Cipher based on AES.
-///
-/// The AES-GCM AEAD (both the AES block cipher and the GHASH universal hash) is
-/// provided by `ring`, which ships hardware-accelerated single-pass assembly for
-/// x86_64 (AES-NI + CLMUL) and aarch64 (ARMv8 AES + PMULL) with runtime feature
-/// detection. That is materially faster than the pure-Rust RustCrypto `aes-gcm`,
-/// whose two-pass (encrypt-then-GHASH) design and cfg-gated intrinsics leave it
-/// on a software fallback in a default build. `ring` is already a workspace
-/// dependency (DTLS handshake signatures, STUN integrity).
+/// Provider-backed AEAD cipher based on AES-GCM.
 pub(crate) struct CipherAeadAesGcm {
     profile: ProtectionProfile,
-    srtp_cipher: LessSafeKey,
-    srtcp_cipher: LessSafeKey,
+    srtp_cipher: Box<dyn AeadCipher>,
+    srtcp_cipher: Box<dyn AeadCipher>,
     srtp_session_salt: Vec<u8>,
     srtcp_session_salt: Vec<u8>,
 }
@@ -56,16 +48,12 @@ impl Cipher for CipherAeadAesGcm {
         writer.extend_from_slice(payload);
 
         let (aad, plaintext) = writer.split_at_mut(header_len);
-        let tag = self
-            .srtp_cipher
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&aad[..]),
-                plaintext,
-            )
-            .map_err(|_| Error::Other("SRTP AES-GCM seal failed".to_string()))?;
+        let mut tag = [0; CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN];
+        self.srtp_cipher
+            .seal_in_place(&nonce, aad, plaintext, &mut tag)
+            .map_err(crypto_error)?;
 
-        writer.extend_from_slice(tag.as_ref());
+        writer.extend_from_slice(&tag);
         Ok(writer)
     }
 
@@ -89,23 +77,15 @@ impl Cipher for CipherAeadAesGcm {
 
         let nonce = self.rtp_initialization_vector(header, roc);
 
-        // ring's `open_in_place` decrypts a contiguous ciphertext||tag region in
-        // place and returns the plaintext slice; the header stays as AAD. Copy
-        // the wire packet once, decrypt, then drop the trailing tag.
-        let mut writer = BytesMut::with_capacity(ciphertext.len());
-        writer.extend_from_slice(ciphertext);
-        let final_len = writer.len() - tag_len;
+        let tag_offset = ciphertext.len() - tag_len;
+        let tag = &ciphertext[tag_offset..];
+        let mut writer = BytesMut::with_capacity(tag_offset);
+        writer.extend_from_slice(&ciphertext[..tag_offset]);
 
-        let (aad, ct_and_tag) = writer.split_at_mut(payload_offset);
+        let (aad, encrypted_payload) = writer.split_at_mut(payload_offset);
         self.srtp_cipher
-            .open_in_place(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&aad[..]),
-                ct_and_tag,
-            )
+            .open_in_place(&nonce, aad, encrypted_payload, tag)
             .map_err(|_| Error::ErrFailedToVerifyAuthTag)?;
-
-        writer.truncate(final_len);
         Ok(writer)
     }
 
@@ -122,16 +102,12 @@ impl Cipher for CipherAeadAesGcm {
             BytesMut::with_capacity(decrypted.len() + self.aead_auth_tag_len() + SRTCP_INDEX_SIZE);
         writer.extend_from_slice(decrypted);
 
-        let tag = self
-            .srtcp_cipher
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(iv),
-                Aad::from(&aad[..]),
-                &mut writer[8..],
-            )
-            .map_err(|_| Error::Other("SRTCP AES-GCM seal failed".to_string()))?;
+        let mut tag = [0; CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN];
+        self.srtcp_cipher
+            .seal_in_place(&iv, &aad, &mut writer[8..], &mut tag)
+            .map_err(crypto_error)?;
 
-        writer.extend_from_slice(tag.as_ref());
+        writer.extend_from_slice(&tag);
         writer.extend_from_slice(&aad[8..]);
 
         Ok(writer)
@@ -157,23 +133,16 @@ impl Cipher for CipherAeadAesGcm {
             return Err(Error::ErrFailedToVerifyAuthTag);
         }
 
-        // Copy header(8) || ciphertext || tag (dropping the trailing ESRTCP index
-        // word), decrypt the ciphertext+tag region in place, then drop the tag.
-        let mut writer = BytesMut::with_capacity(tag_start + tag_len);
-        writer.extend_from_slice(&encrypted[..tag_start + tag_len]);
+        let tag = &encrypted[tag_start..tag_start + tag_len];
+        let mut writer = BytesMut::with_capacity(tag_start);
+        writer.extend_from_slice(&encrypted[..tag_start]);
 
         {
-            let (_, ct_and_tag) = writer.split_at_mut(8);
+            let (_, encrypted_payload) = writer.split_at_mut(8);
             self.srtcp_cipher
-                .open_in_place(
-                    Nonce::assume_unique_for_key(nonce),
-                    Aad::from(&aad[..]),
-                    ct_and_tag,
-                )
+                .open_in_place(&nonce, &aad, encrypted_payload, tag)
                 .map_err(|_| Error::ErrFailedToVerifyAuthTag)?;
         }
-
-        writer.truncate(tag_start);
         Ok(writer)
     }
 
@@ -191,11 +160,14 @@ impl CipherAeadAesGcm {
         profile: ProtectionProfile,
         master_key: &[u8],
         master_salt: &[u8],
+        crypto: &dyn RTCCrypto,
     ) -> Result<CipherAeadAesGcm> {
-        let (algorithm, kdf): (&'static Algorithm, Kdf) = match profile {
-            ProtectionProfile::AeadAes128Gcm => (&AES_128_GCM, aes_cm_key_derivation),
+        let (algorithm, kdf): (AeadAlgorithm, Kdf) = match profile {
+            ProtectionProfile::AeadAes128Gcm => (AeadAlgorithm::Aes128Gcm, aes_cm_key_derivation),
             // AES_256_GCM must use AES_256_CM_PRF as per https://datatracker.ietf.org/doc/html/rfc7714#section-11
-            ProtectionProfile::AeadAes256Gcm => (&AES_256_GCM, aes_256_cm_key_derivation),
+            ProtectionProfile::AeadAes256Gcm => {
+                (AeadAlgorithm::Aes256Gcm, aes_256_cm_key_derivation)
+            }
             _ => unreachable!(),
         };
 
@@ -205,17 +177,33 @@ impl CipherAeadAesGcm {
         );
         assert_eq!(profile.salt_len(), master_salt.len());
 
-        let build_cipher = |label: u8| -> Result<LessSafeKey> {
-            let session_key = kdf(label, master_key, master_salt, 0, master_key.len())?;
-            let unbound = UnboundKey::new(algorithm, &session_key)
-                .map_err(|_| Error::Other("invalid SRTP AES-GCM session key".to_string()))?;
-            Ok(LessSafeKey::new(unbound))
+        let build_cipher = |label: u8| -> Result<Box<dyn AeadCipher>> {
+            let session_key = SecretVec::new(kdf(
+                crypto,
+                label,
+                master_key,
+                master_salt,
+                0,
+                master_key.len(),
+            )?);
+            let cipher = crypto
+                .new_aead(algorithm, session_key.as_ref())
+                .map_err(crypto_error)?;
+            if cipher.tag_len() != CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN {
+                return Err(Error::Crypto(format!(
+                    "SRTP AES-GCM requires a {}-byte tag, provider returned {}",
+                    CIPHER_AEAD_AES_GCM_AUTH_TAG_LEN,
+                    cipher.tag_len()
+                )));
+            }
+            Ok(cipher)
         };
 
         let srtp_cipher = build_cipher(LABEL_SRTP_ENCRYPTION)?;
         let srtcp_cipher = build_cipher(LABEL_SRTCP_ENCRYPTION)?;
 
         let srtp_session_salt = kdf(
+            crypto,
             LABEL_SRTP_SALT,
             master_key,
             master_salt,
@@ -224,6 +212,7 @@ impl CipherAeadAesGcm {
         )?;
 
         let srtcp_session_salt = kdf(
+            crypto,
             LABEL_SRTCP_SALT,
             master_key,
             master_salt,
@@ -310,7 +299,9 @@ mod tests {
         let master_key = vec![0u8; profile.key_len()];
         let master_salt = vec![0u8; 12];
 
-        let mut cipher = CipherAeadAesGcm::new(profile, &master_key, &master_salt).unwrap();
+        let provider = crypto::default_provider().unwrap();
+        let mut cipher =
+            CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
         let header = rtp::Header {
             ssrc: 0x12345678,
@@ -332,7 +323,9 @@ mod tests {
         let master_key = vec![0u8; profile.key_len()];
         let master_salt = vec![0u8; 12];
 
-        let mut cipher = CipherAeadAesGcm::new(profile, &master_key, &master_salt).unwrap();
+        let provider = crypto::default_provider().unwrap();
+        let mut cipher =
+            CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
         let header = rtp::Header {
             ssrc: 0x12345678,
@@ -353,7 +346,9 @@ mod tests {
         let master_key = vec![0u8; profile.key_len()];
         let master_salt = vec![0u8; 12];
 
-        let mut cipher = CipherAeadAesGcm::new(profile, &master_key, &master_salt).unwrap();
+        let provider = crypto::default_provider().unwrap();
+        let mut cipher =
+            CipherAeadAesGcm::new(profile, &master_key, &master_salt, provider.crypto()).unwrap();
 
         let header = rtp::Header {
             ssrc: 0x12345678,

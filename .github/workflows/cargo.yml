@@ -2,9 +2,9 @@ name: cargo
 
 on:
   push:
-    branches: [ master, v0.20.x ]
+    branches: [ master, v0.20.x, v0.21.x ]
   pull_request:
-    branches: [ master, v0.20.x ]
+    branches: [ master, v0.20.x, v0.21.x ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +26,7 @@ jobs:
         run: cargo build --verbose
 
   test:
-    name: Test
+    name: Test (default backend)
     strategy:
       matrix:
         os: [ 'ubuntu-latest' ] #, 'macos-latest', 'windows-latest' ]
@@ -35,6 +35,184 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run tests
         run: cargo test --verbose
+
+  crypto_backend_baseline:
+    name: Crypto baseline (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [ ring, aws-lc-rs ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test workspace
+        run: cargo test --workspace --no-fail-fast --lib --bins --examples --tests --no-default-features --features rtc/${{ matrix.backend }} --verbose
+      - name: Test workspace documentation
+        run: cargo test --workspace --doc --no-default-features --features rtc/${{ matrix.backend }} --verbose
+      - name: Build standalone crypto consumers
+        shell: bash
+        run: |
+          cargo check --package rtc-dtls --no-default-features --features ${{ matrix.backend }} --verbose
+          cargo check --package rtc-srtp --no-default-features --features ${{ matrix.backend }} --verbose
+          cargo check --package rtc-stun --no-default-features --features ${{ matrix.backend }} --verbose
+
+  rtc_crypto_provider_matrix:
+    name: rtc-crypto (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            args: --features test-support
+          - name: ring
+            args: --no-default-features --features ring,test-support
+          - name: aws-lc-rs
+            args: --no-default-features --features aws-lc-rs,test-support
+          - name: ring + aws-lc-rs
+            args: --no-default-features --features ring,aws-lc-rs,test-support
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test provider configuration
+        run: cargo test --package rtc-crypto ${{ matrix.args }} --verbose
+
+  rtc_crypto_custom_provider:
+    name: rtc-crypto (no built-in, custom provider)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test downstream-style provider
+        run: cargo test --package rtc-crypto --no-default-features --features test-support --test custom_provider --verbose
+      - name: Verify publishable package
+        run: cargo package --package rtc-crypto --no-default-features
+
+  workspace_provider_matrix:
+    name: Workspace (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            args: ""
+          - name: ring only
+            args: --no-default-features --features ring
+          - name: aws-lc-rs only
+            args: --no-default-features --features aws-lc-rs
+          # Both backends in one graph. This was a `compile_error!` before G3; it is now the
+          # regression guard for Cargo feature additivity, since feature unification can enable
+          # both from unrelated dependencies.
+          - name: ring + aws-lc-rs
+            args: --features ring,aws-lc-rs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Compiles the `assert_dyn_compatible` guard in rtc-crypto/src/lib.rs under this feature
+      # set. `Arc<dyn RTCCryptoProvider>` is load-bearing for the whole design, and object
+      # safety is lost silently by adding one generic method — possibly behind a feature flag.
+      - name: Build workspace and dyn-compatibility guard
+        run: cargo build --workspace --all-targets ${{ matrix.args }} --verbose
+      - name: Test workspace
+        run: cargo test --workspace --no-fail-fast ${{ matrix.args }} --verbose
+      - name: Doctests
+        run: cargo test --workspace --doc ${{ matrix.args }} --verbose
+
+  standalone_crate_checks:
+    name: Standalone crates (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [ ring, aws-lc-rs ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Crates that forward provider features must build on their own, not only as part of the
+      # workspace, since standalone protocol users are a supported audience.
+      - name: Check provider-forwarding crates
+        run: |
+          cargo check --package rtc-crypto --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+          cargo check --package rtc-dtls   --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+          cargo check --package rtc-srtp   --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+          cargo check --package rtc-stun   --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+          cargo check --package rtc-ice    --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+          cargo check --package rtc-turn   --no-default-features --features ${{ matrix.backend }} --all-targets --verbose
+      # These perform no cryptography and must not have acquired a provider dependency.
+      - name: Check crates that must stay crypto-free
+        run: |
+          cargo check --package rtc-shared --all-targets --verbose
+          cargo check --package rtc-sctp   --all-targets --verbose
+          cargo check --package rtc-rtp    --all-targets --verbose
+          cargo check --package rtc-rtcp   --all-targets --verbose
+          cargo check --package rtc-sdp    --all-targets --verbose
+          cargo check --package rtc-media  --all-targets --verbose
+
+  crypto_dependency_audit:
+    name: Crypto dependency boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Enforces the G3 invariant: rtc-crypto is the only crate naming a crypto implementation.
+      # The script parses dependency sections so that provider-feature forwarding
+      # (`ring = ["crypto/ring"]`) and the root `[workspace.dependencies]` table are not
+      # mistaken for real dependencies.
+      - name: No crypto implementation outside rtc-crypto
+        run: python3 scripts/check-crypto-boundary.py
+      - name: No mutually exclusive backend guards
+        run: |
+          if grep -rn 'At most one of the features' --include='*.rs' . ; then
+            echo "A mutually exclusive backend compile_error! guard is still present."
+            exit 1
+          fi
+      - name: No backend-name aliasing
+        run: |
+          if grep -rn 'extern crate aws_lc_rs as ring' --include='*.rs' . ; then
+            echo "The aws-lc-rs-as-ring alias is still present."
+            exit 1
+          fi
+
+  package_publication_order:
+    name: cargo package (publication order)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # rtc-crypto is new in this release and has no intra-workspace dependencies, so it is the
+      # first crate in publication order and the only one whose packaging can be verified from
+      # a clean checkout today.
+      - name: Package rtc-crypto first
+        run: cargo package --package rtc-crypto --allow-dirty
+      - name: Package crates with no rtc-crypto dependency
+        run: cargo package --package rtc-shared --allow-dirty
+      # Crates depending on rtc-crypto cannot be packaged until rtc-crypto 0.21.0 exists on
+      # crates.io: `cargo package` resolves the dependency graph against the registry and the
+      # path dependency is stripped from the published manifest. This is expected for a newly
+      # introduced crate, not a regression. This step asserts the failure is exactly that
+      # missing-version resolution error and nothing else, so a different packaging break is
+      # still caught.
+      - name: Confirm dependents block only on rtc-crypto publication
+        run: |
+          if cargo package --package rtc-stun --allow-dirty 2>package.log; then
+            echo "rtc-stun packaged; rtc-crypto appears to be published."
+            echo "Replace this step with a normal packaging check."
+            exit 0
+          fi
+          if grep -q 'failed to select a version for the requirement `rtc-crypto' package.log; then
+            echo "Expected: rtc-stun awaits the first rtc-crypto publish."
+            exit 0
+          fi
+          echo "rtc-stun packaging failed for an unexpected reason:"
+          cat package.log
+          exit 1
 
   rustfmt_and_clippy:
     name: Check rustfmt style && run clippy

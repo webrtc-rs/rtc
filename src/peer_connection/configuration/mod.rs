@@ -97,12 +97,16 @@
 //! ```
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Generate custom certificate for peer identity
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //!
 //! let config = RTCConfigurationBuilder::new()
 //!     .with_certificates(vec![certificate])
@@ -150,11 +154,15 @@
 //! };
 //! use rtc::peer_connection::configuration::RTCIceServer;
 //! use rtc::peer_connection::certificate::RTCCertificate;
-//! use rcgen::KeyPair;
+//! use rtc::crypto::{self, SignatureScheme};
+//! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-//! let certificate = RTCCertificate::from_key_pair(key_pair)?;
+//! let certificate = RTCCertificate::generate(
+//!     crypto::default_provider()?,
+//!     SignatureScheme::EcdsaP256Sha256,
+//!     CertificateParams::new(vec!["localhost".to_owned()])?,
+//! )?;
 //!
 //! let config = RTCConfigurationBuilder::new()
 //!     .with_ice_servers(vec![
@@ -205,7 +213,6 @@
 
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
-use rcgen::KeyPair;
 use shared::error::{Error, Result};
 use std::time::SystemTime;
 
@@ -389,11 +396,7 @@ impl RTCConfiguration {
                     .duration_since(now)
                     .map_err(|_| Error::ErrCertificateExpired)?;
             }
-        } else {
-            let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-            let cert = RTCCertificate::from_key_pair(kp)?;
-            self.certificates = vec![cert];
-        };
+        }
 
         Ok(())
     }
@@ -478,11 +481,15 @@ impl RTCConfiguration {
 /// ```
 /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 /// use rtc::peer_connection::certificate::RTCCertificate;
-/// use rcgen::KeyPair;
+/// use rtc::crypto::{self, SignatureScheme};
+/// use rtc::peer_connection::certificate::CertificateParams;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-/// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+/// let certificate = RTCCertificate::generate(
+///     crypto::default_provider()?,
+///     SignatureScheme::EcdsaP256Sha256,
+///     CertificateParams::new(vec!["localhost".to_owned()])?,
+/// )?;
 ///
 /// let config = RTCConfigurationBuilder::new()
 ///     .with_certificates(vec![certificate])
@@ -677,11 +684,15 @@ impl RTCConfigurationBuilder {
     /// ```
     /// use rtc::peer_connection::configuration::RTCConfigurationBuilder;
     /// use rtc::peer_connection::certificate::RTCCertificate;
-    /// use rcgen::KeyPair;
+    /// use rtc::crypto::{self, SignatureScheme};
+    /// use rtc::peer_connection::certificate::CertificateParams;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
-    /// let certificate = RTCCertificate::from_key_pair(key_pair)?;
+    /// let certificate = RTCCertificate::generate(
+    ///     crypto::default_provider()?,
+    ///     SignatureScheme::EcdsaP256Sha256,
+    ///     CertificateParams::new(vec!["localhost".to_owned()])?,
+    /// )?;
     ///
     /// let config = RTCConfigurationBuilder::new()
     ///     .with_certificates(vec![certificate])

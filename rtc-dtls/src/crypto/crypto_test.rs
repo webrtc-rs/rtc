@@ -1,50 +1,18 @@
-use std::io::Cursor;
-
-use x509_parser::pem::Pem;
-
 use super::crypto_ccm::*;
 use super::*;
 use crate::content::ContentType;
 use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
-
-const RAW_PRIVATE_KEY: &str = "
------BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEAxIA2BrrnR2sIlATsp7aRBD/3krwZ7vt9dNeoDQAee0s6SuYP
-6MBx/HPnAkwNvPS90R05a7pwRkoT6Ur4PfPhCVlUe8lV+0Eto3ZSEeHz3HdsqlM3
-bso67L7Dqrc7MdVstlKcgJi8yeAoGOIL9/igOv0XBFCeznm9nznx6mnsR5cugw+1
-ypXelaHmBCLV7r5SeVSh57+KhvZGbQ2fFpUaTPegRpJZXBNS8lSeWvtOv9d6N5UB
-ROTAJodMZT5AfX0jB0QB9IT/0I96H6BSENH08NXOeXApMuLKvnAf361rS7cRAfRL
-rWZqERMP4u6Cnk0Cnckc3WcW27kGGIbtwbqUIQIDAQABAoIBAGF7OVIdZp8Hejn0
-N3L8HvT8xtUEe9kS6ioM0lGgvX5s035Uo4/T6LhUx0VcdXRH9eLHnLTUyN4V4cra
-ZkxVsE3zAvZl60G6E+oDyLMWZOP6Wu4kWlub9597A5atT7BpMIVCdmFVZFLB4SJ3
-AXkC3nplFAYP+Lh1rJxRIrIn2g+pEeBboWbYA++oDNuMQffDZaokTkJ8Bn1JZYh0
-xEXKY8Bi2Egd5NMeZa1UFO6y8tUbZfwgVs6Enq5uOgtfayq79vZwyjj1kd29MBUD
-8g8byV053ZKxbUOiOuUts97eb+fN3DIDRTcT2c+lXt/4C54M1FclJAbtYRK/qwsl
-pYWKQAECgYEA4ZUbqQnTo1ICvj81ifGrz+H4LKQqe92Hbf/W51D/Umk2kP702W22
-HP4CvrJRtALThJIG9m2TwUjl/WAuZIBrhSAbIvc3Fcoa2HjdRp+sO5U1ueDq7d/S
-Z+PxRI8cbLbRpEdIaoR46qr/2uWZ943PHMv9h4VHPYn1w8b94hwD6vkCgYEA3v87
-mFLzyM9ercnEv9zHMRlMZFQhlcUGQZvfb8BuJYl/WogyT6vRrUuM0QXULNEPlrin
-mBQTqc1nCYbgkFFsD2VVt1qIyiAJsB9MD1LNV6YuvE7T2KOSadmsA4fa9PUqbr71
-hf3lTTq+LeR09LebO7WgSGYY+5YKVOEGpYMR1GkCgYEAxPVQmk3HKHEhjgRYdaG5
-lp9A9ZE8uruYVJWtiHgzBTxx9TV2iST+fd/We7PsHFTfY3+wbpcMDBXfIVRKDVwH
-BMwchXH9+Ztlxx34bYJaegd0SmA0Hw9ugWEHNgoSEmWpM1s9wir5/ELjc7dGsFtz
-uzvsl9fpdLSxDYgAAdzeGtkCgYBAzKIgrVox7DBzB8KojhtD5ToRnXD0+H/M6OKQ
-srZPKhlb0V/tTtxrIx0UUEFLlKSXA6mPw6XDHfDnD86JoV9pSeUSlrhRI+Ysy6tq
-eIE7CwthpPZiaYXORHZ7wCqcK/HcpJjsCs9rFbrV0yE5S3FMdIbTAvgXg44VBB7O
-UbwIoQKBgDuY8gSrA5/A747wjjmsdRWK4DMTMEV4eCW1BEP7Tg7Cxd5n3xPJiYhr
-nhLGN+mMnVIcv2zEMS0/eNZr1j/0BtEdx+3IC6Eq+ONY0anZ4Irt57/5QeKgKn/L
-JPhfPySIPG4UmwE4gW8t79vfOKxnUu2fDD1ZXUYopan6EckACNH/
------END RSA PRIVATE KEY-----
-";
+use crate::signature_hash_algorithm::HashAlgorithm;
 
 #[test]
 fn test_generate_key_signature() -> Result<()> {
-    let reader = Cursor::new(RAW_PRIVATE_KEY.as_bytes());
-    let pem = match Pem::read(reader) {
-        Ok((pem, _)) => pem,
-        Err(_) => return Err(Error::Other("Pem::read error".to_owned())),
-    };
-    //let private_key = rsa::RSAPrivateKey::from_pkcs1(&pem.contents)?;
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+    let scheme = crypto::SignatureScheme::EcdsaP256Sha256;
+    let signing_key = provider
+        .crypto()
+        .generate_signing_key(scheme)
+        .map_err(crypto_error)?;
+    let private_key = CryptoPrivateKey::from_signing_key(signing_key.clone());
 
     let client_random = vec![
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -61,45 +29,97 @@ fn test_generate_key_signature() -> Result<()> {
         0xf9, 0x10, 0xa0, 0x53, 0x5b, 0x14, 0x88, 0xd7, 0xf8, 0xfa, 0xbb, 0x34, 0x9a, 0x98, 0x28,
         0x80, 0xb6, 0x15,
     ];
-    let expected_signature = vec![
-        0x6f, 0x47, 0x97, 0x85, 0xcc, 0x76, 0x50, 0x93, 0xbd, 0xe2, 0x6a, 0x69, 0x0b, 0xc3, 0x03,
-        0xd1, 0xb7, 0xe4, 0xab, 0x88, 0x7b, 0xa6, 0x52, 0x80, 0xdf, 0xaa, 0x25, 0x7a, 0xdb, 0x29,
-        0x32, 0xe4, 0xd8, 0x28, 0x28, 0xb3, 0xe8, 0x04, 0x3c, 0x38, 0x16, 0xfc, 0x78, 0xe9, 0x15,
-        0x7b, 0xc5, 0xbd, 0x7d, 0xfc, 0xcd, 0x83, 0x00, 0x57, 0x4a, 0x3c, 0x23, 0x85, 0x75, 0x6b,
-        0x37, 0xd5, 0x89, 0x72, 0x73, 0xf0, 0x44, 0x8c, 0x00, 0x70, 0x1f, 0x6e, 0xa2, 0x81, 0xd0,
-        0x09, 0xc5, 0x20, 0x36, 0xab, 0x23, 0x09, 0x40, 0x1f, 0x4d, 0x45, 0x96, 0x62, 0xbb, 0x81,
-        0xb0, 0x30, 0x72, 0xad, 0x3a, 0x0a, 0xac, 0x31, 0x63, 0x40, 0x52, 0x0a, 0x27, 0xf3, 0x34,
-        0xde, 0x27, 0x7d, 0xb7, 0x54, 0xff, 0x0f, 0x9f, 0x5a, 0xfe, 0x07, 0x0f, 0x4e, 0x9f, 0x53,
-        0x04, 0x34, 0x62, 0xf4, 0x30, 0x74, 0x83, 0x35, 0xfc, 0xe4, 0x7e, 0xbf, 0x5a, 0xc4, 0x52,
-        0xd0, 0xea, 0xf9, 0x61, 0x4e, 0xf5, 0x1c, 0x0e, 0x58, 0x02, 0x71, 0xfb, 0x1f, 0x34, 0x55,
-        0xe8, 0x36, 0x70, 0x3c, 0xc1, 0xcb, 0xc9, 0xb7, 0xbb, 0xb5, 0x1c, 0x44, 0x9a, 0x6d, 0x88,
-        0x78, 0x98, 0xd4, 0x91, 0x2e, 0xeb, 0x98, 0x81, 0x23, 0x30, 0x73, 0x39, 0x43, 0xd5, 0xbb,
-        0x70, 0x39, 0xba, 0x1f, 0xdb, 0x70, 0x9f, 0x91, 0x83, 0x56, 0xc2, 0xde, 0xed, 0x17, 0x6d,
-        0x2c, 0x3e, 0x21, 0xea, 0x36, 0xb4, 0x91, 0xd8, 0x31, 0x05, 0x60, 0x90, 0xfd, 0xc6, 0x74,
-        0xa9, 0x7b, 0x18, 0xfc, 0x1c, 0x6a, 0x1c, 0x6e, 0xec, 0xd3, 0xc1, 0xc0, 0x0d, 0x11, 0x25,
-        0x48, 0x37, 0x3d, 0x45, 0x11, 0xa2, 0x31, 0x14, 0x0a, 0x66, 0x9f, 0xd8, 0xac, 0x74, 0xa2,
-        0xcd, 0xc8, 0x79, 0xb3, 0x9e, 0xc6, 0x66, 0x25, 0xcf, 0x2c, 0x87, 0x5e, 0x5c, 0x36, 0x75,
-        0x86,
-    ];
-
     let signature = generate_key_signature(
         &client_random,
         &server_random,
         &public_key,
         NamedCurve::X25519,
-        &CryptoPrivateKey {
-            kind: CryptoPrivateKeyKind::Rsa256(
-                ring::rsa::KeyPair::from_der(&pem.contents)
-                    .map_err(|e| Error::Other(e.to_string()))?,
-            ),
-            serialized_der: pem.contents.clone(),
-        }, //hashAlgorithmSHA256,
+        &SignatureHashAlgorithm {
+            hash: HashAlgorithm::Sha256,
+            signature: SignatureAlgorithm::Ecdsa,
+        },
+        &private_key,
     )?;
 
-    assert_eq!(
-        signature, expected_signature,
-        "Signature generation failed \nexp {expected_signature:?} \nactual {signature:?} "
-    );
+    provider
+        .crypto()
+        .verify_signature(
+            scheme,
+            signing_key.public_key(),
+            &value_key_message(
+                &client_random,
+                &server_random,
+                &public_key,
+                NamedCurve::X25519,
+            ),
+            &signature,
+        )
+        .map_err(crypto_error)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_exported_signing_key_can_be_imported() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
+    let scheme = crypto::SignatureScheme::EcdsaP256Sha256;
+    let generated = provider
+        .crypto()
+        .generate_signing_key(scheme)
+        .map_err(crypto_error)?;
+    let pkcs8 = generated
+        .to_pkcs8_der()
+        .map_err(crypto_error)?
+        .expect("built-in generated keys are exportable");
+    let imported = provider
+        .crypto()
+        .import_signing_key(scheme, pkcs8.as_ref())
+        .map_err(crypto_error)?;
+    let signature = imported
+        .sign(scheme, b"imported DTLS key")
+        .map_err(crypto_error)?;
+
+    provider
+        .crypto()
+        .verify_signature(
+            scheme,
+            imported.public_key(),
+            b"imported DTLS key",
+            &signature,
+        )
+        .map_err(crypto_error)
+}
+
+#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[test]
+fn test_cross_provider_signature_verification() -> Result<()> {
+    let ring = crypto::providers::RingProvider::new();
+    let aws = crypto::providers::AwsLcRsProvider::new();
+    let scheme = crypto::SignatureScheme::EcdsaP256Sha256;
+
+    for (signer, verifier) in [
+        (
+            ring.crypto() as &dyn crypto::RTCCrypto,
+            aws.crypto() as &dyn crypto::RTCCrypto,
+        ),
+        (
+            aws.crypto() as &dyn crypto::RTCCrypto,
+            ring.crypto() as &dyn crypto::RTCCrypto,
+        ),
+    ] {
+        let key = signer.generate_signing_key(scheme).map_err(crypto_error)?;
+        let signature = key
+            .sign(scheme, b"cross-provider DTLS signature")
+            .map_err(crypto_error)?;
+        verifier
+            .verify_signature(
+                scheme,
+                key.public_key(),
+                b"cross-provider DTLS signature",
+                &signature,
+            )
+            .map_err(crypto_error)?;
+    }
 
     Ok(())
 }
@@ -112,7 +132,14 @@ fn test_ccm_encryption_and_decryption() -> Result<()> {
     ];
     let iv = vec![0x0e, 0xb2, 0x09, 0x06];
 
-    let ccm = CryptoCcm::new(&CryptoCcmTagLen::CryptoCcmTagLength, &key, &iv, &key, &iv);
+    let mut ccm = CryptoCcm::new(
+        crypto::default_provider().map_err(crypto_error)?,
+        &CryptoCcmTagLen::CryptoCcmTagLength,
+        &key,
+        &iv,
+        &key,
+        &iv,
+    )?;
 
     let rlh = RecordLayerHeader {
         content_type: ContentType::ApplicationData,
@@ -155,6 +182,7 @@ fn test_ccm_encryption_and_decryption() -> Result<()> {
 
 #[test]
 fn test_certificate_verify() -> Result<()> {
+    let provider = crypto::default_provider().map_err(crypto_error)?;
     let plain_text: Vec<u8> = vec![
         0x6f, 0x47, 0x97, 0x85, 0xcc, 0x76, 0x50, 0x93, 0xbd, 0xe2, 0x6a, 0x69, 0x0b, 0xc3, 0x03,
         0xd1, 0xb7, 0xe4, 0xab, 0x88, 0x7b, 0xa6, 0x52, 0x80, 0xdf, 0xaa, 0x25, 0x7a, 0xdb, 0x29,
@@ -177,15 +205,23 @@ fn test_certificate_verify() -> Result<()> {
     ];
 
     //test ECDSA256
-    let certificate_ecdsa256 = Certificate::generate_self_signed(vec!["localhost".to_owned()])?;
-    let cert_verify_ecdsa256 =
-        generate_certificate_verify(&plain_text, &certificate_ecdsa256.private_key)?;
-    verify_certificate_verify(
+    let certificate_ecdsa256 = Certificate::generate_self_signed(
+        vec!["localhost".to_owned()],
+        crypto::default_provider().map_err(crypto_error)?,
+    )?;
+    let ecdsa_algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+    };
+    let cert_verify_ecdsa256 = generate_certificate_verify(
         &plain_text,
-        &SignatureHashAlgorithm {
-            hash: HashAlgorithm::Sha256,
-            signature: SignatureAlgorithm::Ecdsa,
-        },
+        &ecdsa_algorithm,
+        &certificate_ecdsa256.private_key,
+    )?;
+    verify_certificate_verify(
+        provider.crypto(),
+        &plain_text,
+        &ecdsa_algorithm,
         &cert_verify_ecdsa256,
         &certificate_ecdsa256
             .certificate
@@ -199,15 +235,21 @@ fn test_certificate_verify() -> Result<()> {
     let certificate_ed25519 = Certificate::generate_self_signed_with_alg(
         vec!["localhost".to_owned()],
         &rcgen::PKCS_ED25519,
+        crypto::default_provider().map_err(crypto_error)?,
     )?;
-    let cert_verify_ed25519 =
-        generate_certificate_verify(&plain_text, &certificate_ed25519.private_key)?;
-    verify_certificate_verify(
+    let ed25519_algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ed25519,
+    };
+    let cert_verify_ed25519 = generate_certificate_verify(
         &plain_text,
-        &SignatureHashAlgorithm {
-            hash: HashAlgorithm::Sha256,
-            signature: SignatureAlgorithm::Ed25519,
-        },
+        &ed25519_algorithm,
+        &certificate_ed25519.private_key,
+    )?;
+    verify_certificate_verify(
+        provider.crypto(),
+        &plain_text,
+        &ed25519_algorithm,
         &cert_verify_ed25519,
         &certificate_ed25519
             .certificate
@@ -227,36 +269,47 @@ struct MockSigner {
     signature: Vec<u8>,
 }
 
-impl CustomSigner for MockSigner {
-    fn sign(&self, message: &[u8]) -> std::result::Result<Vec<u8>, String> {
+impl SigningKey for MockSigner {
+    fn supports(&self, _scheme: CryptoSignatureScheme) -> bool {
+        true
+    }
+
+    fn public_key(&self) -> PublicKey<'_> {
+        PublicKey {
+            encoding: PublicKeyEncoding::SubjectPublicKeyInfoDer,
+            bytes: &[],
+        }
+    }
+
+    fn sign(
+        &self,
+        _scheme: CryptoSignatureScheme,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, crypto::CryptoError> {
         *self.call_count.lock().unwrap() += 1;
         *self.last_message.lock().unwrap() = message.to_vec();
         Ok(self.signature.clone())
     }
-
-    fn clone_box(&self) -> Box<dyn CustomSigner> {
-        Box::new(MockSigner {
-            call_count: std::sync::Arc::clone(&self.call_count),
-            last_message: std::sync::Arc::clone(&self.last_message),
-            signature: self.signature.clone(),
-        })
-    }
 }
 
 #[test]
-fn test_custom_signer_is_invoked_for_signing() -> Result<()> {
+fn test_external_signing_key_is_invoked_for_signing() -> Result<()> {
     let expected_signature = vec![0xca, 0xfe, 0xba, 0xbe];
     let call_count = std::sync::Arc::new(std::sync::Mutex::new(0usize));
     let last_message = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
-    let private_key = CryptoPrivateKey {
-        kind: CryptoPrivateKeyKind::Custom(Box::new(MockSigner {
-            call_count: std::sync::Arc::clone(&call_count),
-            last_message: std::sync::Arc::clone(&last_message),
-            signature: expected_signature.clone(),
-        })),
-        serialized_der: vec![],
-    };
+    let private_key = CryptoPrivateKey::from_signing_key(std::sync::Arc::new(MockSigner {
+        call_count: std::sync::Arc::clone(&call_count),
+        last_message: std::sync::Arc::clone(&last_message),
+        signature: expected_signature.clone(),
+    }));
+    assert!(
+        private_key
+            .signing_key
+            .to_pkcs8_der()
+            .map_err(crypto_error)?
+            .is_none()
+    );
 
     let client_random = [0x01u8, 0x02, 0x03, 0x04];
     let server_random = [0x05u8, 0x06, 0x07, 0x08];
@@ -264,12 +317,17 @@ fn test_custom_signer_is_invoked_for_signing() -> Result<()> {
     let named_curve = NamedCurve::X25519;
     let expected_key_message =
         value_key_message(&client_random, &server_random, &public_key, named_curve);
+    let algorithm = SignatureHashAlgorithm {
+        hash: HashAlgorithm::Sha256,
+        signature: SignatureAlgorithm::Ecdsa,
+    };
 
     let key_signature = generate_key_signature(
         &client_random,
         &server_random,
         &public_key,
         named_curve,
+        &algorithm,
         &private_key,
     )?;
 
@@ -278,7 +336,7 @@ fn test_custom_signer_is_invoked_for_signing() -> Result<()> {
     assert_eq!(key_signature, expected_signature);
 
     let handshake_bodies = b"certificate-verify-handshake-bodies";
-    let cert_verify = generate_certificate_verify(handshake_bodies, &private_key)?;
+    let cert_verify = generate_certificate_verify(handshake_bodies, &algorithm, &private_key)?;
 
     assert_eq!(*call_count.lock().unwrap(), 2);
     assert_eq!(&*last_message.lock().unwrap(), handshake_bodies);

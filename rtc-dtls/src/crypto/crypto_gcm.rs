@@ -4,11 +4,9 @@
 // RFC 5288 year 2008 https://tools.ietf.org/html/rfc5288
 
 use std::io::Cursor;
-#[cfg(feature = "aws-lc-rs")]
 use std::sync::Arc;
 
-use rand::RngExt;
-use ring::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use crypto::{AeadAlgorithm, AeadCipher, RTCCryptoProvider};
 
 use super::*;
 use crate::content::*;
@@ -18,26 +16,11 @@ use shared::error::*;
 const CRYPTO_GCM_TAG_LENGTH: usize = 16;
 const CRYPTO_GCM_NONCE_LENGTH: usize = 12;
 
-// State needed to handle encrypted input/output.
-//
-// The AES-128-GCM AEAD runs on ring's hardware-accelerated single-pass assembly
-// (AES-NI + CLMUL on x86_64, ARMv8 AES + PMULL on aarch64) instead of the
-// pure-Rust RustCrypto `aes-gcm`. ring is already a dependency of this crate
-// (handshake signatures / key generation). `LessSafeKey` is `Clone`, so
-// `CryptoGcm` stays cloneable for the cipher-suite state that embeds it.
-#[derive(Clone)]
 /// AES-GCM authenticated encryption for DTLS records, holding the per-direction keys.
 pub struct CryptoGcm {
-    #[cfg(feature = "ring")]
-    local_gcm: LessSafeKey,
-    #[cfg(feature = "ring")]
-    remote_gcm: LessSafeKey,
-    // Arc is needed until `Clone` is implemented
-    // https://github.com/aws/aws-lc-rs/issues/1165
-    #[cfg(feature = "aws-lc-rs")]
-    local_gcm: Arc<LessSafeKey>,
-    #[cfg(feature = "aws-lc-rs")]
-    remote_gcm: Arc<LessSafeKey>,
+    provider: Arc<dyn RTCCryptoProvider>,
+    local_gcm: Box<dyn AeadCipher>,
+    remote_gcm: Box<dyn AeadCipher>,
     local_write_iv: Vec<u8>,
     remote_write_iv: Vec<u8>,
 }
@@ -45,31 +28,27 @@ pub struct CryptoGcm {
 impl CryptoGcm {
     /// Builds the cipher from the local and remote keys and salts.
     pub fn new(
+        provider: Arc<dyn RTCCryptoProvider>,
         local_key: &[u8],
         local_write_iv: &[u8],
         remote_key: &[u8],
         remote_write_iv: &[u8],
-    ) -> Self {
-        // Keys are exactly AES_128_GCM.key_len() (16) bytes as derived by the
-        // handshake; a wrong length here is a programming error.
-        let local_gcm = LessSafeKey::new(
-            UnboundKey::new(&AES_128_GCM, local_key).expect("valid AES-128-GCM local key"),
-        );
-        let remote_gcm = LessSafeKey::new(
-            UnboundKey::new(&AES_128_GCM, remote_key).expect("valid AES-128-GCM remote key"),
-        );
-
-        #[cfg(feature = "aws-lc-rs")]
-        let local_gcm = Arc::new(local_gcm);
-        #[cfg(feature = "aws-lc-rs")]
-        let remote_gcm = Arc::new(remote_gcm);
-
-        CryptoGcm {
+    ) -> Result<Self> {
+        let local_gcm = provider
+            .crypto()
+            .new_aead(AeadAlgorithm::Aes128Gcm, local_key)
+            .map_err(crypto_error)?;
+        let remote_gcm = provider
+            .crypto()
+            .new_aead(AeadAlgorithm::Aes128Gcm, remote_key)
+            .map_err(crypto_error)?;
+        Ok(CryptoGcm {
+            provider,
             local_gcm,
             local_write_iv: local_write_iv.to_vec(),
             remote_gcm,
             remote_write_iv: remote_write_iv.to_vec(),
-        }
+        })
     }
 
     /// Protects one record, returning header plus ciphertext.
@@ -77,13 +56,16 @@ impl CryptoGcm {
     /// # Errors
     ///
     /// Fails if the cipher rejects the input.
-    pub fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>> {
         let payload = &raw[RECORD_LAYER_HEADER_SIZE..];
         let raw = &raw[..RECORD_LAYER_HEADER_SIZE];
 
         let mut nonce = [0u8; CRYPTO_GCM_NONCE_LENGTH];
         nonce[..4].copy_from_slice(&self.local_write_iv[..4]);
-        rand::rng().fill(&mut nonce[4..]);
+        self.provider
+            .random()
+            .fill(&mut nonce[4..])
+            .map_err(crypto_error)?;
 
         let additional_data = generate_aead_additional_data(pkt_rlh, payload.len());
 
@@ -97,15 +79,16 @@ impl CryptoGcm {
         r.extend_from_slice(&nonce[4..]);
         r.extend_from_slice(payload);
 
-        let tag = self
-            .local_gcm
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&additional_data),
+        let mut tag = [0; CRYPTO_GCM_TAG_LENGTH];
+        self.local_gcm
+            .seal_in_place(
+                &nonce,
+                &additional_data,
                 &mut r[RECORD_LAYER_HEADER_SIZE + 8..],
+                &mut tag,
             )
-            .map_err(|e| Error::Other(format!("DTLS AES-GCM seal failed: {e}")))?;
-        r.extend_from_slice(tag.as_ref());
+            .map_err(crypto_error)?;
+        r.extend_from_slice(&tag);
 
         // Update recordLayer size to include explicit nonce
         let r_len = (r.len() - RECORD_LAYER_HEADER_SIZE) as u16;
@@ -120,7 +103,7 @@ impl CryptoGcm {
     /// # Errors
     ///
     /// Fails if authentication fails or the record is too short.
-    pub fn decrypt(&self, r: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(&mut self, r: &[u8]) -> Result<Vec<u8>> {
         let mut reader = Cursor::new(r);
         let h = RecordLayerHeader::unmarshal(&mut reader)?;
         if h.content_type == ContentType::ChangeCipherSpec {
@@ -147,24 +130,17 @@ impl CryptoGcm {
 
         let additional_data = generate_aead_additional_data(&h, tag_start);
 
-        // Copy header + ciphertext||tag once and decrypt the ciphertext+tag
-        // region in place. ring's `open_in_place` wants ciphertext and tag
-        // contiguous (they already are on the wire) and returns the plaintext
-        // slice; drop the trailing tag afterwards.
-        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + out.len());
+        let mut d = Vec::with_capacity(RECORD_LAYER_HEADER_SIZE + tag_start);
         d.extend_from_slice(&r[..RECORD_LAYER_HEADER_SIZE]);
-        d.extend_from_slice(out);
-
-        let plaintext_len = self
-            .remote_gcm
+        d.extend_from_slice(&out[..tag_start]);
+        self.remote_gcm
             .open_in_place(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&additional_data),
+                &nonce,
+                &additional_data,
                 &mut d[RECORD_LAYER_HEADER_SIZE..],
+                &out[tag_start..],
             )
-            .map_err(|e| Error::Other(format!("DTLS AES-GCM open failed: {e}")))?
-            .len();
-        d.truncate(RECORD_LAYER_HEADER_SIZE + plaintext_len);
+            .map_err(authentication_error)?;
 
         Ok(d)
     }
@@ -195,8 +171,17 @@ mod tests {
         let local_iv = [0x22u8; 4];
         let remote_key = [0x33u8; 16];
         let remote_iv = [0x44u8; 4];
-        let sender = CryptoGcm::new(&local_key, &local_iv, &remote_key, &remote_iv);
-        let receiver = CryptoGcm::new(&remote_key, &remote_iv, &local_key, &local_iv);
+        let provider = crypto::default_provider().unwrap();
+        let mut sender = CryptoGcm::new(
+            provider.clone(),
+            &local_key,
+            &local_iv,
+            &remote_key,
+            &remote_iv,
+        )
+        .unwrap();
+        let mut receiver =
+            CryptoGcm::new(provider, &remote_key, &remote_iv, &local_key, &local_iv).unwrap();
 
         let payload = b"application data!";
         let (header, raw) = make_record(payload);
@@ -229,7 +214,8 @@ mod tests {
     fn test_crypto_gcm_decrypt_too_short_for_tag() {
         let key = [0x11u8; 16];
         let iv = [0x22u8; 4];
-        let cg = CryptoGcm::new(&key, &iv, &key, &iv);
+        let mut cg =
+            CryptoGcm::new(crypto::default_provider().unwrap(), &key, &iv, &key, &iv).unwrap();
 
         let (_, mut raw) = make_record(&[0u8; 0]);
         // 8-byte explicit nonce plus 10 bytes: less than the 16-byte tag.
@@ -243,7 +229,8 @@ mod tests {
     fn test_crypto_gcm_decrypt_rejects_tampering() {
         let key = [0x11u8; 16];
         let iv = [0x22u8; 4];
-        let cg = CryptoGcm::new(&key, &iv, &key, &iv);
+        let mut cg =
+            CryptoGcm::new(crypto::default_provider().unwrap(), &key, &iv, &key, &iv).unwrap();
 
         let (header, raw) = make_record(b"payload");
         let mut encrypted = cg.encrypt(&header, &raw).unwrap();

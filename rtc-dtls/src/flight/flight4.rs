@@ -30,6 +30,8 @@ use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 use log::*;
 use std::fmt;
 use std::io::BufWriter;
+#[cfg(test)]
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Flight4;
@@ -204,6 +206,7 @@ impl Flight for Flight4 {
             }
 
             if let Err(err) = verify_certificate_verify(
+                cfg.provider().crypto(),
                 &plain_text,
                 &h.algorithm,
                 &h.signature,
@@ -305,11 +308,12 @@ impl Flight for Flight4 {
                         .identity_hint
                         .clone_from(&client_key_exchange.identity_hint);
                     pre_master_secret = prf_psk_pre_master_secret(&psk);
-                } else if let Some(local_keypair) = &state.local_keypair {
+                } else if let Some(local_keypair) = &mut state.local_keypair {
+                    let curve = local_keypair.curve;
                     pre_master_secret = match prf_pre_master_secret(
                         &client_key_exchange.public_key,
-                        &local_keypair.private_key,
-                        local_keypair.curve,
+                        local_keypair,
+                        curve,
                     ) {
                         Ok(pre_master_secret) => pre_master_secret,
                         Err(err) => {
@@ -326,7 +330,12 @@ impl Flight for Flight4 {
 
                 if state.extended_master_secret {
                     let hf = cipher_suite_hash_func;
-                    let session_hash = match cache.session_hash(hf, cfg.initial_epoch, &[]) {
+                    let session_hash = match cache.session_hash(
+                        cfg.provider().crypto(),
+                        hf,
+                        cfg.initial_epoch,
+                        &[],
+                    ) {
                         Ok(s) => s,
                         Err(err) => {
                             return Err((
@@ -340,6 +349,7 @@ impl Flight for Flight4 {
                     };
 
                     state.master_secret = match prf_extended_master_secret(
+                        cfg.provider().crypto(),
                         &pre_master_secret,
                         &session_hash,
                         cipher_suite_hash_func,
@@ -357,6 +367,7 @@ impl Flight for Flight4 {
                     };
                 } else {
                     state.master_secret = match prf_master_secret(
+                        cfg.provider().crypto(),
                         &pre_master_secret,
                         &client_random,
                         &server_random,
@@ -377,6 +388,7 @@ impl Flight for Flight4 {
 
                 if let Some(cipher_suite) = &mut state.cipher_suite
                     && let Err(err) = cipher_suite.init(
+                        cfg.provider().clone(),
                         &state.master_secret,
                         &client_random,
                         &server_random,
@@ -520,7 +532,7 @@ impl Flight for Flight4 {
         if cfg.local_psk_callback.is_none() {
             extensions.extend_from_slice(&[
                 Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
-                    elliptic_curves: vec![NamedCurve::P256, NamedCurve::X25519, NamedCurve::P384],
+                    elliptic_curves: cfg.local_named_curves.clone(),
                 }),
                 Extension::SupportedPointFormats(ExtensionSupportedPointFormats {
                     point_formats: vec![ELLIPTIC_CURVE_POINT_FORMAT_UNCOMPRESSED],
@@ -618,7 +630,8 @@ impl Flight for Flight4 {
                     &server_random,
                     &local_keypair.public_key,
                     state.named_curve,
-                    &certificate.private_key, /*, signature_hash_algo.hash*/
+                    &signature_hash_algo,
+                    &certificate.private_key,
                 ) {
                     Ok(s) => s,
                     Err(err) => {
@@ -751,6 +764,7 @@ mod tests {
         // Generate the internal encryption state
         fn init(
             &mut self,
+            _provider: Arc<dyn crypto::RTCCryptoProvider>,
             _master_secret: &[u8],
             _client_random: &[u8],
             _server_random: &[u8],
@@ -759,10 +773,10 @@ mod tests {
             unimplemented!();
         }
 
-        fn encrypt(&self, _pkt_rlh: &RecordLayerHeader, _raw: &[u8]) -> Result<Vec<u8>> {
+        fn encrypt(&mut self, _pkt_rlh: &RecordLayerHeader, _raw: &[u8]) -> Result<Vec<u8>> {
             unimplemented!();
         }
-        fn decrypt(&self, _input: &[u8]) -> Result<Vec<u8>> {
+        fn decrypt(&mut self, _input: &[u8]) -> Result<Vec<u8>> {
             unimplemented!();
         }
     }
@@ -772,9 +786,11 @@ mod tests {
     // is missing.
     #[test]
     fn test_flight4_process_certificateverify() {
+        let provider =
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
         let mut state = State {
             cipher_suite: Some(Box::new(MockCipherSuite {})),
-            ..Default::default()
+            ..State::new(provider, false)
         };
 
         let raw_certificate = vec![
@@ -828,7 +844,9 @@ mod tests {
             true,
         );
 
-        let cfg = HandshakeConfig::default();
+        let cfg = HandshakeConfig::new(
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+        );
 
         let f = Flight4 {};
         let res = f.parse(&mut state, &cache, &cfg);

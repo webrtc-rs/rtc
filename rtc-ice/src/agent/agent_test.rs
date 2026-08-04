@@ -12,10 +12,16 @@ use crate::candidate::candidate_relay::CandidateRelayConfig;
 use crate::candidate::candidate_server_reflexive::*;
 use crate::candidate::*;
 
+/// Explicit provider for tests. The default-resolving STUN constructors were removed before 1.0,
+/// so every `MessageIntegrity` now names its provider.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 #[test]
 fn test_pair_search() -> Result<()> {
     let config = Arc::new(AgentConfig::default());
-    let mut a = Agent::new(config)?;
+    let mut a = Agent::new(config, test_crypto_provider())?;
 
     assert!(
         a.candidate_pairs.is_empty(),
@@ -32,7 +38,7 @@ fn test_pair_search() -> Result<()> {
 
 #[test]
 fn test_pair_priority() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -154,7 +160,7 @@ fn pipe(
     };
     cfg0.urls = vec![];
 
-    let a_agent = Agent::new(Arc::new(cfg0))?;
+    let a_agent = Agent::new(Arc::new(cfg0), test_crypto_provider())?;
 
     let mut cfg1 = if let Some(cfg) = default_config1 {
         cfg
@@ -163,14 +169,14 @@ fn pipe(
     };
     cfg1.urls = vec![];
 
-    let b_agent = Agent::new(Arc::new(cfg1))?;
+    let b_agent = Agent::new(Arc::new(cfg1), test_crypto_provider())?;
 
     Ok((a_agent, b_agent))
 }
 
 #[test]
 fn test_on_selected_candidate_pair_change() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -221,7 +227,7 @@ fn test_on_selected_candidate_pair_change() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -262,7 +268,10 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
         Box::new(UseCandidateAttr::new()),
         Box::new(AttrControlling(tie_breaker)),
         Box::new(PriorityAttr(local_priority)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -304,7 +313,7 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let mut tid = TransactionId::default();
     tid.0[..3].copy_from_slice("ABC".as_bytes());
@@ -343,7 +352,10 @@ fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
     msg.build(&[
         Box::new(BINDING_SUCCESS),
         Box::new(tid),
-        Box::new(MessageIntegrity::new_short_term_integrity(remote_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            remote_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -422,7 +434,7 @@ fn test_connectivity_on_startup() -> Result<()> {
         ..Default::default()
     };
 
-    let mut a_agent = Agent::new(cfg0)?;
+    let mut a_agent = Agent::new(cfg0, test_crypto_provider())?;
 
     let cfg1 = AgentConfig {
         keepalive_interval,
@@ -430,7 +442,7 @@ fn test_connectivity_on_startup() -> Result<()> {
         ..Default::default()
     };
 
-    let mut b_agent = Agent::new(cfg1)?;
+    let mut b_agent = Agent::new(cfg1, test_crypto_provider())?;
 
     // Manual signaling
     let (a_ufrag, a_pwd) = a_agent.get_local_user_credentials();
@@ -493,7 +505,7 @@ fn test_connectivity_lite() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
     a_agent.on_connection_state_change(a_notifier);
 
     let cfg1 = AgentConfig {
@@ -505,7 +517,7 @@ fn test_connectivity_lite() -> Result<()> {
         ..Default::default()
     };
 
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
     b_agent.on_connection_state_change(b_notifier);
 
     let _ = connect_with_vnet(&a_agent, &b_agent)?;
@@ -563,7 +575,7 @@ fn build_msg(c: MessageClass, username: String, key: String) -> Result<Message> 
         Box::new(MessageType::new(METHOD_BINDING, c)),
         Box::new(TransactionId::new()),
         Box::new(Username::new(ATTR_USERNAME, username)),
-        Box::new(MessageIntegrity::new_short_term_integrity(key)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(key, test_crypto_provider())),
         Box::new(FINGERPRINT),
     ])?;
     Ok(msg)
@@ -745,7 +757,7 @@ fn test_inbound_validity() -> Result<()> {
                 Box::new(BINDING_REQUEST),
                 Box::new(TransactionId::new()),
                 Box::new(Username::new(ATTR_USERNAME, username)),
-                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(local_pwd, test_crypto_provider())),
             ])?;
 
             a.internal.handle_inbound(&mut msg, &local, remote);
@@ -779,7 +791,7 @@ fn test_inbound_validity() -> Result<()> {
             msg.build(&[
                 Box::new(BINDING_SUCCESS),
                 Box::new(t_id),
-                Box::new(MessageIntegrity::new_short_term_integrity(remote_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(remote_pwd, test_crypto_provider())),
                 Box::new(FINGERPRINT),
             ])?;
 
@@ -885,8 +897,8 @@ fn test_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let (is_checking_tx, mut is_checking_rx) = mpsc::channel::<()>(1);
     let (is_connected_tx, mut is_connected_rx) = mpsc::channel::<()>(1);
@@ -1478,8 +1490,8 @@ fn test_connection_state_failed_delete_all_candidates() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let (is_failed_tx, mut is_failed_rx) = mpsc::channel::<()>(1);
     let is_failed_tx = Arc::new(Mutex::new(Some(is_failed_tx)));
@@ -1532,8 +1544,8 @@ fn test_connection_state_connecting_to_failed() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let is_failed = WaitGroup::new();
     let is_checking = WaitGroup::new();
@@ -1792,8 +1804,8 @@ fn test_close_in_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let (is_closed_tx, mut is_closed_rx) = mpsc::channel::<()>(1);
     let (is_connected_tx, mut is_connected_rx) = mpsc::channel::<()>(1);
@@ -1849,8 +1861,8 @@ fn test_run_task_in_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let (is_complete_tx, mut is_complete_rx) = mpsc::channel::<()>(1);
     let is_complete_tx = Arc::new(Mutex::new(Some(is_complete_tx)));
@@ -1901,8 +1913,8 @@ fn test_run_task_in_selected_candidate_pair_change_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0)?);
-    let b_agent = Arc::new(Agent::new(cfg1)?);
+    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
 
     let (is_tested_tx, mut is_tested_rx) = mpsc::channel::<()>(1);
     let is_tested_tx = Arc::new(Mutex::new(Some(is_tested_tx)));
@@ -2016,7 +2028,7 @@ fn test_role_conflict_both_controlling_smaller_tiebreaker_switches() -> Result<(
     // Create agent with controlling role
     let mut config = AgentConfig::default();
     config.is_controlling = true;
-    let mut agent = Agent::new(Arc::new(config))?;
+    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
 
     // Set a specific tiebreaker value
     agent.tie_breaker = 100;
@@ -2069,7 +2081,10 @@ fn test_role_conflict_both_controlling_smaller_tiebreaker_switches() -> Result<(
         Box::new(Username::new(ATTR_USERNAME, username)),
         Box::new(AttrControlling(remote_tiebreaker)), // Remote is also controlling
         Box::new(PriorityAttr(1000)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -2134,7 +2149,7 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
     // Create agent with controlling role
     let mut config = AgentConfig::default();
     config.is_controlling = true;
-    let mut agent = Agent::new(Arc::new(config))?;
+    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
 
     // Set a larger tiebreaker value
     agent.tie_breaker = 500;
@@ -2187,7 +2202,10 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
         Box::new(Username::new(ATTR_USERNAME, username)),
         Box::new(AttrControlling(remote_tiebreaker)), // Remote is also controlling
         Box::new(PriorityAttr(1000)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -2227,7 +2245,7 @@ fn test_role_conflict_both_controlled_larger_tiebreaker_switches() -> Result<()>
     // Create agent with controlled role
     let mut config = AgentConfig::default();
     config.is_controlling = false; // Controlled
-    let mut agent = Agent::new(Arc::new(config))?;
+    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
 
     // Set a larger tiebreaker value
     agent.tie_breaker = 500;
@@ -2280,7 +2298,10 @@ fn test_role_conflict_both_controlled_larger_tiebreaker_switches() -> Result<()>
         Box::new(Username::new(ATTR_USERNAME, username)),
         Box::new(AttrControlled(remote_tiebreaker)), // Remote is also controlled
         Box::new(PriorityAttr(1000)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -2326,7 +2347,7 @@ fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
     // Create agent with controlled role
     let mut config = AgentConfig::default();
     config.is_controlling = false; // Controlled
-    let mut agent = Agent::new(Arc::new(config))?;
+    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
 
     // Set a smaller tiebreaker value
     agent.tie_breaker = 100;
@@ -2379,7 +2400,10 @@ fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
         Box::new(Username::new(ATTR_USERNAME, username)),
         Box::new(AttrControlled(remote_tiebreaker)), // Remote is also controlled
         Box::new(PriorityAttr(1000)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -2417,7 +2441,7 @@ fn test_candidate_type_filtering() -> Result<()> {
         candidate_types: vec![CandidateType::Relay],
         ..Default::default()
     });
-    let mut agent = Agent::new(config)?;
+    let mut agent = Agent::new(config, test_crypto_provider())?;
 
     // Host local candidate should be rejected
     let host_local = CandidateHostConfig {
@@ -2491,7 +2515,7 @@ fn test_candidate_type_filtering() -> Result<()> {
 // recently updated the candidate timestamps (RFC 7675).
 #[test]
 fn test_keepalive_sent_during_media_flow() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     // Set up a selected pair
     let host_local = CandidateHostConfig {
@@ -2562,7 +2586,7 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
 
 #[test]
 fn test_pair_network_type_mismatch() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     // UDP: IPv4 local should not pair with IPv6 remote.
     let local_v4 = CandidateHostConfig {
@@ -2684,7 +2708,7 @@ fn test_pair_network_type_mismatch() -> Result<()> {
 //     thread '...' panicked at 'index out of bounds: the len is 0 but the index is 0'
 #[test]
 fn test_transition_to_failed_clears_stale_candidate_pairs() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let local = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -2758,7 +2782,7 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
         failed_timeout: Some(Duration::from_secs(0)),
         ..Default::default()
     };
-    let mut a = Agent::new(Arc::new(cfg))?;
+    let mut a = Agent::new(Arc::new(cfg), test_crypto_provider())?;
 
     let local_candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -2800,7 +2824,10 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
         Box::new(UseCandidateAttr::new()),
         Box::new(AttrControlling(tie_breaker)),
         Box::new(PriorityAttr(local_priority)),
-        Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+            local_pwd,
+            test_crypto_provider(),
+        )),
         Box::new(FINGERPRINT),
     ])?;
 
@@ -2848,10 +2875,13 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
         "1114572465 1 udp 2113939711 61b445d2-6503-41ac-96ce-ee3edac00e9f.local 61163 typ host";
 
     // QueryOnly: adding the candidate issues an mDNS query (not a drop).
-    let mut agent = Agent::new(Arc::new(AgentConfig {
-        multicast_dns_mode: crate::mdns::MulticastDnsMode::QueryOnly,
-        ..Default::default()
-    }))?;
+    let mut agent = Agent::new(
+        Arc::new(AgentConfig {
+            multicast_dns_mode: crate::mdns::MulticastDnsMode::QueryOnly,
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
     let added = agent.add_remote_candidate(unmarshal_candidate(cand_line)?)?;
     assert!(
         !added,
@@ -2867,10 +2897,13 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
     );
 
     // Disabled: the same candidate is silently dropped -- no mDNS query.
-    let mut agent = Agent::new(Arc::new(AgentConfig {
-        multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
-        ..Default::default()
-    }))?;
+    let mut agent = Agent::new(
+        Arc::new(AgentConfig {
+            multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
     agent.add_remote_candidate(unmarshal_candidate(cand_line)?)?;
     assert!(
         agent.poll_write().is_none(),
@@ -2887,7 +2920,7 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
 /// and drop the packet.
 #[test]
 fn test_send_stun_from_srflx_uses_base_addr() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()))?;
+    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
 
     let srflx_local = CandidateServerReflexiveConfig {
         base_config: CandidateConfig {

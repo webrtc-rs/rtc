@@ -23,14 +23,14 @@ shared = { workspace = true, default-features = false, features = [] }
 bytes.workspace = true
 rand.workspace = true
 thiserror.workspace = true
-slab = "0.4.9"
+slab.workspace = true
 log.workspace = true
-crc32c = "0.6"
-rustc-hash = "2"
+crc32c.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
-assert_matches = "1.5.0"
-lazy_static = "1.4.0"
+assert_matches.workspace = true
+lazy_static.workspace = true
 
 [[example]]
 name = "sctp_micro"

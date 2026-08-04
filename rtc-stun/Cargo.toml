@@ -13,24 +13,21 @@ categories.workspace = true
 
 [features]
 default = ["ring"]
+ring = ["crypto/ring"]
+aws-lc-rs = ["crypto/aws-lc-rs"]
 bench = []
-ring = ["dep:ring"]
-aws-lc-rs = ["dep:aws-lc-rs"]
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 sansio.workspace = true
+crypto.workspace = true
 
 bytes.workspace = true
-lazy_static = "1.4.0"
-url = "2.5.0"
+lazy_static.workspace = true
+url.workspace = true
 rand.workspace = true
-base64 = "0.22.1"
-subtle = "2.5.0"
-crc = "3.0.1"
-ring = { workspace = true, optional = true }
-aws-lc-rs = { workspace = true, optional = true }
-md-5 = "0.10"
+base64.workspace = true
+crc.workspace = true
 
 [dev-dependencies]
 clap.workspace = true

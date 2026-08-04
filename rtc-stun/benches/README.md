@@ -785,3 +785,39 @@ Found 13 outliers among 100 measurements (13.00%)
   2 (2.00%) high mild
   11 (11.00%) high severe
 ```
+
+---
+
+## G3 crypto-provider migration: measured impact
+
+`MESSAGE-INTEGRITY` is the only cryptographic operation on the STUN path, so these two benchmarks
+cover it. One machine (Apple M1 Max, macOS 26.5.2), identical criterion settings, comparing a
+worktree at `b8bb313` (P1 — the last commit before STUN moved to `rtc-crypto`) against the current
+tree. The historical results above were taken on a different machine and are not comparable.
+
+| Benchmark | Pre-migration | Current | Change |
+|---|---|---|---|
+| `BenchmarkMessageIntegrity_AddTo` | 934.5 ns | 937.5 ns | none |
+| `BenchmarkMessageIntegrity_Check` | 944.5 ns | 956.6 ns | none (within noise) |
+
+**No regression.** This is the expected result, and it corroborates the diagnosis in
+`rtc-srtp/benches/README.md`: STUN already computed HMAC-SHA1 through `ring::hmac` before the
+migration, so routing it through `RTCCrypto` did not change the underlying implementation. SRTP
+regressed because it moved from the RustCrypto `sha1` crate — which uses ARMv8 SHA-1 instructions
+— onto `ring`'s software SHA-1.
+
+`MessageIntegrity` keys its MAC per message rather than holding a keyed `Mac`, because
+`Setter::add_to` and `check` take `&self`. That is deliberate: a STUN message is authenticated
+once, and ICE exchanges them at connectivity-check rates rather than per media packet. The figures
+above show the cost is not material at that rate. The keyed-object pattern is used where it does
+matter, on the SRTP and DTLS record paths.
+
+Reproduce:
+
+```bash
+cargo bench --package rtc-stun --bench bench -- --warm-up-time 2 --measurement-time 4 MessageIntegrity
+git worktree add /tmp/rtc-stun-base b8bb313   # same command in the worktree
+```
+
+The methodology, including why cross-machine numbers must not be compared, is in
+`docs/benchmarking-crypto-migration.md`.

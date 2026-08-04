@@ -10,6 +10,12 @@
 
 use std::hint::black_box;
 
+/// The built-in provider, for tests only. Library code never resolves a default: every public
+/// constructor takes the provider from its caller.
+fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
+    crypto::default_provider().expect("a built-in crypto provider must be enabled for tests")
+}
+
 use bytes::BytesMut;
 use rtc_srtp::option::srtp_replay_protection;
 use rtc_srtp::{context::Context, protection_profile::ProtectionProfile};
@@ -27,6 +33,7 @@ fn new_ctx() -> Context {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        test_crypto_provider(),
     )
     .unwrap()
 }
@@ -41,6 +48,7 @@ fn new_gcm_ctx() -> Context {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
+        test_crypto_provider(),
     )
     .unwrap()
 }
@@ -54,6 +62,7 @@ fn new_ctx_replay() -> Context {
         ProtectionProfile::Aes128CmHmacSha1_80,
         Some(srtp_replay_protection(128)),
         None,
+        test_crypto_provider(),
     )
     .unwrap()
 }

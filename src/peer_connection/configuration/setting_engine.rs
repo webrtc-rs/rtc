@@ -108,6 +108,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use crypto::RTCCryptoProvider;
 use dtls::cipher_suite::CipherSuiteId;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 //TODO: use ice::agent::agent_config::{InterfaceFilterFn, IpFilterFn};
@@ -332,6 +333,7 @@ impl Default for SctpMaxMessageSize {
 /// - [RFC 8445 - ICE](https://datatracker.ietf.org/doc/html/rfc8445)
 #[derive(Default, Clone)]
 pub struct SettingEngine {
+    pub(crate) crypto_provider: Option<Arc<dyn RTCCryptoProvider>>,
     pub(crate) timeout: Timeout,
     pub(crate) candidates: Candidates,
     pub(crate) multicast_dns: MulticastDNS,
@@ -361,6 +363,15 @@ pub struct SettingEngine {
 }
 
 impl SettingEngine {
+    /// Selects the cryptographic provider used by peer connections built with this setting engine.
+    ///
+    /// The provider is resolved once at peer-connection construction and shared with ICE, DTLS,
+    /// SRTP, certificate, and fingerprint operations. Different peer connections may select
+    /// different providers in the same process.
+    pub fn set_crypto_provider(&mut self, provider: Arc<dyn RTCCryptoProvider>) {
+        self.crypto_provider = Some(provider);
+    }
+
     /// Returns the configured receive MTU, or the default if not set.
     pub(crate) fn get_receive_mtu(&self) -> usize {
         if self.receive_mtu != 0 {

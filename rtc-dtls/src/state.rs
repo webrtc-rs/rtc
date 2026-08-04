@@ -4,15 +4,18 @@ use super::curve::named_curve::*;
 use super::extension::extension_use_srtp::SrtpProtectionProfile;
 use super::handshake::handshake_random::*;
 use super::prf::*;
+use crypto::RTCCryptoProvider;
+use crypto::SecretVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use shared::crypto::KeyingMaterialExporter;
 use shared::error::*;
 use std::io::{BufWriter, Cursor};
+use std::sync::Arc;
 
 // State holds the dtls connection state and implements both encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 /// The negotiated connection state: keys, sequence numbers, peer identity and the active
 /// cipher suite.
 pub struct State {
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) local_epoch: u16,
     pub(crate) remote_epoch: u16,
     pub(crate) local_sequence_number: Vec<u64>, // uint48
@@ -63,22 +66,28 @@ struct SerializedState {
     is_client: bool,
 }
 
-impl Default for State {
-    fn default() -> Self {
+impl State {
+    /// Creates the initial handshake state for a connection.
+    ///
+    /// The crypto provider comes from the caller — `rtc-dtls` never resolves a default. This
+    /// replaces the former `Default` impl, which resolved one implicitly only for `DTLSConn::new`
+    /// to overwrite it a few lines later.
+    pub fn new(crypto_provider: Arc<dyn RTCCryptoProvider>, is_client: bool) -> Self {
         State {
+            crypto_provider,
             local_epoch: 0,
             remote_epoch: 0,
             local_sequence_number: vec![],
             local_random: HandshakeRandom::default(),
             remote_random: HandshakeRandom::default(),
             master_secret: vec![],
-            cipher_suite: None, // nil if a cipher_suite hasn't been chosen
+            cipher_suite: None,
 
-            srtp_protection_profile: SrtpProtectionProfile::Unsupported, // Negotiated srtp_protection_profile
+            srtp_protection_profile: SrtpProtectionProfile::Unsupported,
             peer_certificates: vec![],
             identity_hint: vec![],
 
-            is_client: false,
+            is_client,
 
             pre_master_secret: vec![],
             extended_master_secret: false,
@@ -89,12 +98,11 @@ impl Default for State {
             handshake_send_sequence: 0,
             handshake_recv_sequence: 0,
             server_name: "".to_string(),
-            remote_requested_certificate: false, // Did we get a CertificateRequest
-            local_certificates_verify: vec![],   // cache CertificateVerify
-            local_verify_data: vec![],           // cached VerifyData
-            local_key_signature: vec![],         // cached keySignature
+            remote_requested_certificate: false,
+            local_certificates_verify: vec![],
+            local_verify_data: vec![],
+            local_key_signature: vec![],
             peer_certificates_verified: false,
-            //replay_detector: vec![],
         }
     }
 }
@@ -203,9 +211,21 @@ impl State {
             }
 
             if self.is_client {
-                cipher_suite.init(&self.master_secret, &local_random, &remote_random, true)
+                cipher_suite.init(
+                    self.crypto_provider.clone(),
+                    &self.master_secret,
+                    &local_random,
+                    &remote_random,
+                    true,
+                )
             } else {
-                cipher_suite.init(&self.master_secret, &remote_random, &local_random, false)
+                cipher_suite.init(
+                    self.crypto_provider.clone(),
+                    &self.master_secret,
+                    &remote_random,
+                    &local_random,
+                    false,
+                )
             }
         } else {
             Err(Error::ErrCipherSuiteUnset)
@@ -261,19 +281,25 @@ impl State {
     pub fn cipher_suite(&self) -> Option<&dyn CipherSuite> {
         self.cipher_suite.as_deref()
     }
-}
 
-impl KeyingMaterialExporter for State {
-    /// export_keying_material returns length bytes of exported key material in a new
-    /// slice as defined in RFC 5705.
-    /// This allows protocols to use DTLS for key establishment, but
-    /// then use some of the keying material for their own purposes
-    fn export_keying_material(
+    /// Returns the provider selected for this DTLS session.
+    pub fn crypto_provider(&self) -> Arc<dyn crypto::RTCCryptoProvider> {
+        self.crypto_provider.clone()
+    }
+
+    /// Exports `length` bytes of keying material from an established session, as defined in
+    /// RFC 5705.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before the handshake completes, when `context` is non-empty, when the
+    /// label is reserved by TLS, or when the negotiated cipher suite is unavailable.
+    pub fn export_keying_material(
         &self,
         label: &str,
         context: &[u8],
         length: usize,
-    ) -> shared::error::Result<Vec<u8>> {
+    ) -> Result<SecretVec> {
         if self.local_epoch == 0 {
             return Err(Error::HandshakeInProgress);
         } else if !context.is_empty() {
@@ -303,8 +329,15 @@ impl KeyingMaterialExporter for State {
         }
 
         if let Some(cipher_suite) = &self.cipher_suite {
-            match prf_p_hash(&self.master_secret, &seed, length, cipher_suite.hash_func()) {
-                Ok(v) => Ok(v),
+            let provider = self.crypto_provider.as_ref();
+            match prf_p_hash(
+                provider.crypto(),
+                &self.master_secret,
+                &seed,
+                length,
+                cipher_suite.hash_func(),
+            ) {
+                Ok(v) => Ok(SecretVec::new(v)),
                 Err(err) => Err(Error::Hash(err.to_string())),
             }
         } else {

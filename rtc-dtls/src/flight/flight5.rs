@@ -134,6 +134,7 @@ impl Flight for Flight5 {
         {
             if let Some(cipher_suite) = &state.cipher_suite {
                 let expected_verify_data = match prf_verify_data_server(
+                    cfg.provider().crypto(),
                     &state.master_secret,
                     &plain_text,
                     cipher_suite.hash_func(),
@@ -414,7 +415,8 @@ impl Flight for Flight5 {
 
             let cert_verify = match generate_certificate_verify(
                 &plain_text,
-                &certificate.as_ref().unwrap().private_key, /*, signature_hash_algo.hash*/
+                &signature_hash_algo,
+                &certificate.as_ref().unwrap().private_key,
             ) {
                 Ok(cert) => cert,
                 Err(err) => {
@@ -556,6 +558,7 @@ impl Flight for Flight5 {
 
             if let Some(cipher_suite) = &state.cipher_suite {
                 state.local_verify_data = match prf_verify_data_client(
+                    cfg.provider().crypto(),
                     &state.master_secret,
                     &plain_text,
                     cipher_suite.hash_func(),
@@ -624,6 +627,7 @@ fn initalize_cipher_suite(
     if let Some((_, cipher_suite_hash_func)) = cipher_suite {
         if state.extended_master_secret {
             let session_hash = match cache.session_hash(
+                cfg.provider().crypto(),
                 cipher_suite_hash_func,
                 cfg.initial_epoch,
                 sending_plain_text,
@@ -641,6 +645,7 @@ fn initalize_cipher_suite(
             };
 
             state.master_secret = match prf_extended_master_secret(
+                cfg.provider().crypto(),
                 &state.pre_master_secret,
                 &session_hash,
                 cipher_suite_hash_func,
@@ -658,6 +663,7 @@ fn initalize_cipher_suite(
             };
         } else {
             state.master_secret = match prf_master_secret(
+                cfg.provider().crypto(),
                 &state.pre_master_secret,
                 &client_random,
                 &server_random,
@@ -699,6 +705,7 @@ fn initalize_cipher_suite(
         let expected_msg =
             value_key_message(&client_random, &server_random, &h.public_key, h.named_curve);
         if let Err(err) = verify_key_signature(
+            cfg.provider().crypto(),
             &expected_msg,
             &h.algorithm,
             &h.signature,
@@ -716,22 +723,31 @@ fn initalize_cipher_suite(
 
         let mut chains = vec![];
         if !cfg.insecure_skip_verify {
-            chains = match verify_server_cert(
-                &state.peer_certificates,
-                &cfg.server_cert_verifier,
-                &cfg.server_name,
-            ) {
-                Ok(chains) => chains,
-                Err(err) => {
-                    return Err((
-                        Some(Alert {
-                            alert_level: AlertLevel::Fatal,
-                            alert_description: AlertDescription::BadCertificate,
-                        }),
-                        Some(err),
-                    ));
+            let cert_verifier = cfg.server_cert_verifier.as_ref().ok_or_else(|| {
+                (
+                    Some(Alert {
+                        alert_level: AlertLevel::Fatal,
+                        alert_description: AlertDescription::BadCertificate,
+                    }),
+                    Some(Error::Crypto(
+                        "CA-chain verification has no configured verifier adapter".to_owned(),
+                    )),
+                )
+            })?;
+            chains =
+                match verify_server_cert(&state.peer_certificates, cert_verifier, &cfg.server_name)
+                {
+                    Ok(chains) => chains,
+                    Err(err) => {
+                        return Err((
+                            Some(Alert {
+                                alert_level: AlertLevel::Fatal,
+                                alert_description: AlertDescription::BadCertificate,
+                            }),
+                            Some(err),
+                        ));
+                    }
                 }
-            }
         }
         if let Some(verify_peer_certificate) = &cfg.verify_peer_certificate
             && let Err(err) = verify_peer_certificate(&state.peer_certificates, &chains)
@@ -747,8 +763,13 @@ fn initalize_cipher_suite(
     }
 
     if let Some(cipher_suite) = &mut state.cipher_suite
-        && let Err(err) =
-            cipher_suite.init(&state.master_secret, &client_random, &server_random, true)
+        && let Err(err) = cipher_suite.init(
+            cfg.provider().clone(),
+            &state.master_secret,
+            &client_random,
+            &server_random,
+            true,
+        )
     {
         return Err((
             Some(Alert {

@@ -21,6 +21,7 @@ pub mod agent_stats;
 
 use agent_config::*;
 use bytes::BytesMut;
+use crypto::RTCCryptoProvider;
 use log::{debug, error, info, trace, warn};
 use mdns::{Mdns, QueryId};
 use sansio::Protocol;
@@ -98,8 +99,13 @@ fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
     Ok(())
 }
 
-fn assert_inbound_message_integrity(m: &mut Message, key: &[u8]) -> Result<()> {
-    let message_integrity_attr = MessageIntegrity(key.to_vec());
+fn assert_inbound_message_integrity(
+    m: &mut Message,
+    key: &[u8],
+    provider: Arc<dyn RTCCryptoProvider>,
+) -> Result<()> {
+    let message_integrity_attr =
+        MessageIntegrity::new_raw_integrity_with_provider(key.to_vec(), provider);
     message_integrity_attr.check(m)
 }
 
@@ -119,6 +125,7 @@ pub enum Event {
 
 /// Represents the ICE agent.
 pub struct Agent {
+    pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) tie_breaker: u64,
     pub(crate) is_controlling: bool,
     pub(crate) lite: bool,
@@ -184,53 +191,16 @@ pub struct Agent {
     pub(crate) event_outs: VecDeque<Event>,
 }
 
-impl Default for Agent {
-    fn default() -> Self {
-        Self {
-            tie_breaker: 0,
-            is_controlling: false,
-            lite: false,
-            start_time: Instant::now(),
-            connection_state: Default::default(),
-            last_connection_state: Default::default(),
-            ufrag_pwd: Default::default(),
-            local_candidates: vec![],
-            remote_candidates: vec![],
-            candidate_pairs: vec![],
-            nominated_pair: None,
-            selected_pair: None,
-            pending_binding_requests: vec![],
-            insecure_skip_verify: false,
-            max_binding_requests: 0,
-            host_acceptance_min_wait: Default::default(),
-            srflx_acceptance_min_wait: Default::default(),
-            prflx_acceptance_min_wait: Default::default(),
-            relay_acceptance_min_wait: Default::default(),
-            disconnected_timeout: Default::default(),
-            failed_timeout: Default::default(),
-            keepalive_interval: Default::default(),
-            last_consent_sent: Instant::now(),
-            check_interval: Default::default(),
-            checking_duration: Instant::now(),
-            last_checking_time: Instant::now(),
-            force_candidate_contact: false,
-            mdns_mode: MulticastDnsMode::Disabled,
-            mdns_local_name: "".to_owned(),
-            mdns_local_ip: None,
-            mdns_queries: HashMap::new(),
-            mdns: None,
-            candidate_types: vec![],
-            network_types: vec![],
-            urls: vec![],
-            write_outs: Default::default(),
-            event_outs: Default::default(),
-        }
-    }
-}
-
 impl Agent {
     /// Creates a new Agent.
-    pub fn new(config: Arc<AgentConfig>) -> Result<Self> {
+    ///
+    /// The crypto provider is supplied by the caller; this crate never resolves a default.
+    pub fn new(
+        config: Arc<AgentConfig>,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
+    ) -> Result<Self> {
+        let tie_breaker = generate_tie_breaker(crypto_provider.random())?;
+
         let mut mdns_local_name = config.multicast_dns_local_name.clone();
         if mdns_local_name.is_empty() {
             mdns_local_name = generate_multicast_dns_name();
@@ -273,7 +243,8 @@ impl Agent {
         }
 
         let mut agent = Self {
-            tie_breaker: rand::random::<u64>(),
+            crypto_provider,
+            tie_breaker,
             is_controlling: config.is_controlling,
             lite: config.lite,
 
@@ -668,10 +639,10 @@ impl Agent {
         keep_local_candidates: bool,
     ) -> Result<()> {
         if ufrag.is_empty() {
-            ufrag = generate_ufrag();
+            ufrag = generate_ufrag_with_random(self.crypto_provider.random())?;
         }
         if pwd.is_empty() {
-            pwd = generate_pwd();
+            pwd = generate_pwd_with_random(self.crypto_provider.random())?;
         }
 
         if ufrag.len() * 8 < 24 {
@@ -1030,7 +1001,10 @@ impl Agent {
                 Box::new(m.clone()),
                 Box::new(BINDING_SUCCESS),
                 Box::new(XorMappedAddress { ip, port }),
-                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    local_pwd,
+                    self.crypto_provider.clone(),
+                )),
                 Box::new(FINGERPRINT),
             ]);
             (out, result)
@@ -1071,7 +1045,10 @@ impl Agent {
                 Box::new(m.clone()),
                 Box::new(stun::message::BINDING_ERROR),
                 Box::new(CODE_ROLE_CONFLICT),
-                Box::new(MessageIntegrity::new_short_term_integrity(local_pwd)),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    local_pwd,
+                    self.crypto_provider.clone(),
+                )),
                 Box::new(FINGERPRINT),
             ]);
             (out, result)
@@ -1287,8 +1264,11 @@ impl Agent {
 
         let mut remote_candidate_index = self.find_remote_candidate(remote_addr);
         if m.typ.class == CLASS_SUCCESS_RESPONSE {
-            if let Err(err) = assert_inbound_message_integrity(m, remote_credentials.pwd.as_bytes())
-            {
+            if let Err(err) = assert_inbound_message_integrity(
+                m,
+                remote_credentials.pwd.as_bytes(),
+                self.crypto_provider.clone(),
+            ) {
                 warn!(
                     "[{}]: discard message from ({}), {}",
                     self.get_name(),
@@ -1324,6 +1304,7 @@ impl Agent {
                 } else if let Err(err) = assert_inbound_message_integrity(
                     m,
                     self.ufrag_pwd.local_credentials.pwd.as_bytes(),
+                    self.crypto_provider.clone(),
                 ) {
                     warn!(
                         "[{}]: discard message from ({}), {}",

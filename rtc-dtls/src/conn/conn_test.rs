@@ -20,7 +20,6 @@ use shared::error::*;*/
 
 //use crate::extension::renegotiation_info::ExtensionRenegotiationInfo;
 //use rand::Rng;
-//use shared::crypto::KeyingMaterialExporter;
 
 const ERR_TEST_PSK_INVALID_IDENTITY: &str = "TestPSK: Server got invalid identity";
 const ERR_PSK_REJECTED: &str = "PSK Rejected";
@@ -309,7 +308,9 @@ async fn test_export_keying_material() -> shared::error::Result<()> {
         closed: AtomicBool::new(false),
         current_flight: Box::new(Flight0 {}) as Box<dyn Flight>,
         flights: None,
-        cfg: HandshakeConfig::default(),
+        cfg: HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ),
         retransmit: false,
         handshake_rx: None,
 
@@ -2384,7 +2385,9 @@ async fn test_renegotation_info() -> Result<()> {
 /// is completed (RFC 6347: buffer only until Finished is received).
 #[test]
 fn test_read_does_not_enqueue_after_handshake_completed() {
-    let config = Arc::new(HandshakeConfig::default());
+    let config = Arc::new(HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ));
     let mut conn = DTLSConn::new(config, false, None);
 
     // Mark handshake as completed.
@@ -2415,7 +2418,9 @@ fn test_read_does_not_enqueue_after_handshake_completed() {
 /// is in progress (needed to handle Finished arriving before ChangeCipherSpec).
 #[test]
 fn test_read_enqueues_during_handshake() {
-    let config = Arc::new(HandshakeConfig::default());
+    let config = Arc::new(HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ));
     let mut conn = DTLSConn::new(config, false, None);
 
     assert!(!conn.is_handshake_completed());
@@ -2448,7 +2453,9 @@ fn test_handle_incoming_queued_packets_drains_when_cipher_ready() {
     use crate::cipher_suite::CipherSuite;
     use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
 
-    let config = Arc::new(HandshakeConfig::default());
+    let config = Arc::new(HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ));
     let mut conn = DTLSConn::new(config, false, None);
 
     assert!(!conn.is_handshake_completed());
@@ -2478,7 +2485,13 @@ fn test_handle_incoming_queued_packets_drains_when_cipher_ready() {
     // Now initialize the cipher suite (simulates ChangeCipherSpec having been processed).
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
     // init() with dummy key material — will produce an initialized cipher suite.
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     assert!(cs.is_initialized());
     conn.state.cipher_suite = Some(cs);
 
@@ -2498,12 +2511,20 @@ fn test_handle_incoming_queued_packets_sets_handshake_rx() {
     use crate::cipher_suite::CipherSuite;
     use crate::cipher_suite::cipher_suite_aes_128_gcm_sha256::CipherSuiteAes128GcmSha256;
 
-    let config = Arc::new(HandshakeConfig::default());
+    let config = Arc::new(HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ));
     let mut conn = DTLSConn::new(config, false, None);
 
     // Initialize cipher suite.
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
     conn.state.remote_epoch = 0;
     conn.handshake_rx = None;
@@ -2537,7 +2558,9 @@ fn test_handle_incoming_queued_packets_sets_handshake_rx() {
 }
 
 fn setup_dtls_conn_server_handshake_in_progress() -> DTLSConn {
-    let handshake_config = Arc::new(HandshakeConfig::default());
+    let handshake_config = Arc::new(HandshakeConfig::new(
+        crypto::default_provider().expect("a built-in crypto provider is enabled for tests"),
+    ));
     // is_client=false (server), no initial_state → handshake not completed
     DTLSConn::new(handshake_config, false, None)
 }
@@ -2575,7 +2598,13 @@ fn test_queued_packets_drained_when_cipher_ready() {
 
     // Initialize cipher suite (simulates ChangeCipherSpec having been processed).
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
     conn.state.remote_epoch = 1; // ChangeCipherSpec has been processed
 
@@ -2602,7 +2631,13 @@ fn test_handshake_rx_set_after_queue_processing() {
 
     // Initialize cipher suite so the queue-drain guard passes.
     let mut cs = Box::new(CipherSuiteAes128GcmSha256::new(false));
-    let _ = cs.init(&[0u8; 48], &[0u8; 32], &[0u8; 32], false);
+    let _ = cs.init(
+        crypto::default_provider().unwrap(),
+        &[0u8; 48],
+        &[0u8; 32],
+        &[0u8; 32],
+        false,
+    );
     conn.state.cipher_suite = Some(cs);
 
     assert!(conn.handshake_rx.is_none());

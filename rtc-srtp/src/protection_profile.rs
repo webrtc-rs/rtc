@@ -1,3 +1,28 @@
+use crypto::{
+    AeadAlgorithm, BlockCipherAlgorithm, CryptoAlgorithm, HmacAlgorithm, RTCCrypto,
+    StreamCipherAlgorithm,
+};
+use shared::error::{Error, Result};
+
+const AES_128_CM_REQUIREMENTS: &[CryptoAlgorithm] = &[
+    CryptoAlgorithm::BlockCipher(BlockCipherAlgorithm::Aes128),
+    CryptoAlgorithm::StreamCipher(StreamCipherAlgorithm::Aes128Ctr),
+    CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1),
+];
+const AES_256_CM_REQUIREMENTS: &[CryptoAlgorithm] = &[
+    CryptoAlgorithm::BlockCipher(BlockCipherAlgorithm::Aes256),
+    CryptoAlgorithm::StreamCipher(StreamCipherAlgorithm::Aes256Ctr),
+    CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1),
+];
+const AEAD_AES_128_GCM_REQUIREMENTS: &[CryptoAlgorithm] = &[
+    CryptoAlgorithm::BlockCipher(BlockCipherAlgorithm::Aes128),
+    CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Gcm),
+];
+const AEAD_AES_256_GCM_REQUIREMENTS: &[CryptoAlgorithm] = &[
+    CryptoAlgorithm::BlockCipher(BlockCipherAlgorithm::Aes256),
+    CryptoAlgorithm::Aead(AeadAlgorithm::Aes256Gcm),
+];
+
 /// ProtectionProfile specifies Cipher and AuthTag details, similar to TLS cipher suite
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(u8)]
@@ -23,6 +48,29 @@ pub enum ProtectionProfile {
 }
 
 impl ProtectionProfile {
+    /// Returns the provider operations required to construct this protection profile.
+    #[must_use]
+    pub const fn required_crypto_algorithms(self) -> &'static [CryptoAlgorithm] {
+        match self {
+            Self::Aes128CmHmacSha1_32 | Self::Aes128CmHmacSha1_80 => AES_128_CM_REQUIREMENTS,
+            Self::Aes256CmHmacSha1_32 | Self::Aes256CmHmacSha1_80 => AES_256_CM_REQUIREMENTS,
+            Self::AeadAes128Gcm => AEAD_AES_128_GCM_REQUIREMENTS,
+            Self::AeadAes256Gcm => AEAD_AES_256_GCM_REQUIREMENTS,
+        }
+    }
+
+    /// Validates that `crypto` implements every operation required by this profile.
+    pub fn ensure_crypto_supported(self, crypto: &dyn RTCCrypto) -> Result<()> {
+        for algorithm in self.required_crypto_algorithms() {
+            if !crypto.supports(*algorithm) {
+                return Err(Error::Crypto(format!(
+                    "SRTP protection profile {self:?} requires unsupported algorithm {algorithm:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// The master key length in bytes for this profile.
     pub fn key_len(&self) -> usize {
         match *self {
@@ -85,6 +133,53 @@ impl ProtectionProfile {
             | ProtectionProfile::Aes256CmHmacSha1_80
             | ProtectionProfile::Aes256CmHmacSha1_32 => 20,
             ProtectionProfile::AeadAes128Gcm | ProtectionProfile::AeadAes256Gcm => 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CapabilityCrypto {
+        missing: Option<CryptoAlgorithm>,
+    }
+
+    impl RTCCrypto for CapabilityCrypto {
+        fn supports(&self, algorithm: CryptoAlgorithm) -> bool {
+            self.missing != Some(algorithm)
+        }
+    }
+
+    const PROFILES: [ProtectionProfile; 6] = [
+        ProtectionProfile::Aes128CmHmacSha1_80,
+        ProtectionProfile::Aes128CmHmacSha1_32,
+        ProtectionProfile::Aes256CmHmacSha1_80,
+        ProtectionProfile::Aes256CmHmacSha1_32,
+        ProtectionProfile::AeadAes128Gcm,
+        ProtectionProfile::AeadAes256Gcm,
+    ];
+
+    #[test]
+    fn complete_provider_supports_every_profile() {
+        let crypto = CapabilityCrypto { missing: None };
+        for profile in PROFILES {
+            profile.ensure_crypto_supported(&crypto).unwrap();
+        }
+    }
+
+    #[test]
+    fn every_required_capability_is_enforced() {
+        for profile in PROFILES {
+            for algorithm in profile.required_crypto_algorithms() {
+                let crypto = CapabilityCrypto {
+                    missing: Some(*algorithm),
+                };
+                let error = profile.ensure_crypto_supported(&crypto).unwrap_err();
+                let message = error.to_string();
+                assert!(message.contains(&format!("{profile:?}")));
+                assert!(message.contains(&format!("{algorithm:?}")));
+            }
         }
     }
 }

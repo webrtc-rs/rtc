@@ -2,10 +2,15 @@ pub mod cipher_aead_aes_gcm;
 pub mod cipher_aes_cm_hmac_sha1;
 
 use bytes::BytesMut;
+use crypto::{CryptoError, RTCCrypto};
 
-use shared::error::Result;
+use shared::error::{Error, Result};
 
-type Kdf = fn(u8, &[u8], &[u8], usize, usize) -> Result<Vec<u8>>;
+type Kdf = fn(&dyn RTCCrypto, u8, &[u8], &[u8], usize, usize) -> Result<Vec<u8>>;
+
+pub(crate) fn crypto_error(error: CryptoError) -> Error {
+    Error::Crypto(error.to_string())
+}
 
 ///NOTE: Auth tag and AEAD auth tag are placed at the different position in SRTCP
 ///
@@ -32,7 +37,7 @@ type Kdf = fn(u8, &[u8], &[u8], usize, usize) -> Result<Vec<u8>>;
 ///
 /// Cipher represents a implementation of one
 /// of the SRTP Specific ciphers.
-pub(crate) trait Cipher: Send + Sync {
+pub(crate) trait Cipher: Send {
     /// Get RTP authenticated tag length.
     fn rtp_auth_tag_len(&self) -> usize;
 

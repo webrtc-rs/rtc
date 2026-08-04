@@ -61,6 +61,13 @@
 #[macro_use]
 extern crate lazy_static;
 
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an
+/// [`Arc<dyn RTCCryptoProvider>`](crypto::RTCCryptoProvider), which a caller must be able to name
+/// without adding — and version-matching — a direct `rtc-crypto` dependency.
+pub use crypto;
+
 /// Socket-address helpers shared by the address attributes.
 pub mod addr;
 /// Transaction tracking: which requests are outstanding and when they time out.
@@ -92,10 +99,3 @@ pub mod xoraddr;
 pub const DEFAULT_PORT: u16 = 3478;
 /// The default port for `stuns:` (STUN over TLS/DTLS).
 pub const DEFAULT_TLS_PORT: u16 = 5349;
-
-#[cfg(all(feature = "aws-lc-rs", feature = "ring"))]
-compile_error!("At most one of the features \"aws-lc-rs\" and \"ring\" can be enabled.");
-#[cfg(not(any(feature = "aws-lc-rs", feature = "ring")))]
-compile_error!("At least one of the features \"aws-lc-rs\" and \"ring\" must be enabled.");
-#[cfg(feature = "aws-lc-rs")]
-extern crate aws_lc_rs as ring;

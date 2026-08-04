@@ -8,8 +8,8 @@
 //! under the `ring` backend.
 
 use anyhow::Result;
-use rcgen::KeyPair;
-use rtc::peer_connection::certificate::RTCCertificate;
+use rtc::crypto::{self, SignatureScheme};
+use rtc::peer_connection::certificate::{CertificateParams, RTCCertificate};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
@@ -34,14 +34,27 @@ enum KeyType {
 
 impl KeyType {
     fn certificate(self) -> Result<RTCCertificate> {
-        let key_pair = match self {
-            KeyType::Rsa2048(pem) => {
-                KeyPair::from_pkcs8_pem_and_sign_algo(pem, &rcgen::PKCS_RSA_SHA256)?
-            }
-            KeyType::EcdsaP256 => KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?,
-        };
+        let provider = crypto::default_provider()?;
+        let params = CertificateParams::new(vec!["webrtc.rs".to_owned()])?;
 
-        Ok(RTCCertificate::from_key_pair(key_pair)?)
+        Ok(match self {
+            // The RSA key is a fixture, so it is imported rather than generated and then
+            // wrapped in a fresh self-signed certificate.
+            KeyType::Rsa2048(pem) => {
+                let der = pem::parse(pem)?.into_contents();
+                let signing_key = provider
+                    .crypto()
+                    .import_signing_key(SignatureScheme::RsaPkcs1Sha256, &der)?;
+                RTCCertificate::generate_from_signing_key(
+                    params,
+                    SignatureScheme::RsaPkcs1Sha256,
+                    signing_key,
+                )?
+            }
+            KeyType::EcdsaP256 => {
+                RTCCertificate::generate(provider, SignatureScheme::EcdsaP256Sha256, params)?
+            }
+        })
     }
 }
 

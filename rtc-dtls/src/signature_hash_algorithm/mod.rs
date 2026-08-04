@@ -114,14 +114,35 @@ pub struct SignatureHashAlgorithm {
 }
 
 impl SignatureHashAlgorithm {
+    pub(crate) fn crypto_scheme(&self) -> Result<crypto::SignatureScheme> {
+        match (self.signature, self.hash) {
+            (SignatureAlgorithm::Ed25519, _) => Ok(crypto::SignatureScheme::Ed25519),
+            (SignatureAlgorithm::Ecdsa, HashAlgorithm::Sha256) => {
+                Ok(crypto::SignatureScheme::EcdsaP256Sha256)
+            }
+            (SignatureAlgorithm::Ecdsa, HashAlgorithm::Sha384) => {
+                Ok(crypto::SignatureScheme::EcdsaP384Sha384)
+            }
+            (SignatureAlgorithm::Rsa, HashAlgorithm::Sha1) => {
+                Ok(crypto::SignatureScheme::RsaPkcs1Sha1)
+            }
+            (SignatureAlgorithm::Rsa, HashAlgorithm::Sha256) => {
+                Ok(crypto::SignatureScheme::RsaPkcs1Sha256)
+            }
+            (SignatureAlgorithm::Rsa, HashAlgorithm::Sha384) => {
+                Ok(crypto::SignatureScheme::RsaPkcs1Sha384)
+            }
+            (SignatureAlgorithm::Rsa, HashAlgorithm::Sha512) => {
+                Ok(crypto::SignatureScheme::RsaPkcs1Sha512)
+            }
+            _ => Err(Error::ErrKeySignatureVerifyUnimplemented),
+        }
+    }
+
     // is_compatible checks that given private key is compatible with the signature scheme.
     pub(crate) fn is_compatible(&self, private_key: &CryptoPrivateKey) -> bool {
-        match &private_key.kind {
-            CryptoPrivateKeyKind::Ed25519(_) => self.signature == SignatureAlgorithm::Ed25519,
-            CryptoPrivateKeyKind::Ecdsa256(_) => self.signature == SignatureAlgorithm::Ecdsa,
-            CryptoPrivateKeyKind::Rsa256(_) => self.signature == SignatureAlgorithm::Rsa,
-            CryptoPrivateKeyKind::Custom(_) => true,
-        }
+        self.crypto_scheme()
+            .is_ok_and(|scheme| private_key.signing_key.supports(scheme))
     }
 }
 

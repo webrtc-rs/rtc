@@ -14,7 +14,7 @@ categories.workspace = true
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 
-url = "2.5.0"
+url.workspace = true
 rand.workspace = true
 
 [dev-dependencies]

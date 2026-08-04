@@ -94,7 +94,9 @@ fn main() -> Result<()> {
         rto_in_ms: 0,
     };
 
-    let mut client = Client::new(cfg)?;
+    // An application selects the crypto provider; library code never resolves a default.
+    let provider = crypto::default_provider().map_err(|e| Error::Other(e.to_string()))?;
+    let mut client = Client::new(cfg, provider)?;
 
     // Allocate a relay socket on the TURN server.
     let allocate_tid = client.allocate()?;

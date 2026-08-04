@@ -18,7 +18,12 @@ pub mod cipher_suite_tls_psk_with_aes_128_ccm8;
 /// `TLS_PSK_WITH_AES_128_GCM_SHA256`, for pre-shared-key handshakes.
 pub mod cipher_suite_tls_psk_with_aes_128_gcm_sha256;
 
+use crypto::RTCCryptoProvider;
+use crypto::{
+    AeadAlgorithm, CbcAlgorithm, CryptoAlgorithm, HashAlgorithm, HmacAlgorithm, RTCCrypto,
+};
 use std::fmt;
+use std::sync::Arc;
 
 use super::client_certificate_type::*;
 use super::record_layer::record_layer_header::*;
@@ -174,6 +179,38 @@ impl From<&str> for CipherSuiteId {
     }
 }
 
+impl CipherSuiteId {
+    pub(crate) fn supported_by(self, crypto: &dyn RTCCrypto) -> bool {
+        let record_algorithm = match self {
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm | Self::Tls_Psk_With_Aes_128_Ccm => {
+                CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Ccm)
+            }
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm_8 | Self::Tls_Psk_With_Aes_128_Ccm_8 => {
+                CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Ccm8)
+            }
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256
+            | Self::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256
+            | Self::Tls_Psk_With_Aes_128_Gcm_Sha256 => {
+                CryptoAlgorithm::Aead(AeadAlgorithm::Aes128Gcm)
+            }
+            Self::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha
+            | Self::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha => {
+                CryptoAlgorithm::Cbc(CbcAlgorithm::Aes256Cbc)
+            }
+            Self::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256
+            | Self::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256 => {
+                CryptoAlgorithm::Aead(AeadAlgorithm::ChaCha20Poly1305)
+            }
+            Self::Unsupported => return false,
+        };
+        crypto.supports(CryptoAlgorithm::Hash(HashAlgorithm::Sha256))
+            && crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha256))
+            && crypto.supports(record_algorithm)
+            && (!matches!(record_algorithm, CryptoAlgorithm::Cbc(_))
+                || crypto.supports(CryptoAlgorithm::Hmac(HmacAlgorithm::Sha1)))
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 /// The hash a suite uses in its PRF and `Finished` computation.
 #[non_exhaustive]
@@ -192,7 +229,7 @@ impl CipherSuiteHash {
 
 /// A negotiated cipher suite: its identity, and the record encryption it performs once keys
 /// are installed.
-pub trait CipherSuite: Send + Sync {
+pub trait CipherSuite: Send {
     /// The suite's IANA name.
     fn to_string(&self) -> String;
     /// The suite's code point.
@@ -214,6 +251,7 @@ pub trait CipherSuite: Send + Sync {
     /// Fails if the key or salt lengths do not match what this suite expects.
     fn init(
         &mut self,
+        provider: Arc<dyn RTCCryptoProvider>,
         master_secret: &[u8],
         client_random: &[u8],
         server_random: &[u8],
@@ -225,13 +263,13 @@ pub trait CipherSuite: Send + Sync {
     /// # Errors
     ///
     /// Fails if keys are not installed, or the cipher rejects the input.
-    fn encrypt(&self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>>;
+    fn encrypt(&mut self, pkt_rlh: &RecordLayerHeader, raw: &[u8]) -> Result<Vec<u8>>;
     /// Unprotects one record.
     ///
     /// # Errors
     ///
     /// Fails if authentication fails, or the record is malformed.
-    fn decrypt(&self, input: &[u8]) -> Result<Vec<u8>>;
+    fn decrypt(&mut self, input: &[u8]) -> Result<Vec<u8>>;
 }
 
 // Taken from https://www.iana.org/assignments/tls-parameters/tls-parameters.xml

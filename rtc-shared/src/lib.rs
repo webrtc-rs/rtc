@@ -57,10 +57,6 @@
 #[macro_use]
 extern crate bitflags;
 
-#[cfg(feature = "crypto")]
-/// Cryptographic primitives shared by DTLS and SRTP, including DTLS-SRTP keying-material export.
-pub mod crypto;
-
 #[cfg(feature = "ifaces")]
 /// Local network interface enumeration, used to gather ICE host candidates.
 pub mod ifaces;

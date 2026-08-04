@@ -11,10 +11,17 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["ring"]
+ring = ["crypto/ring", "stun/ring"]
+aws-lc-rs = ["crypto/aws-lc-rs", "stun/aws-lc-rs"]
+metrics = []
+
 [dependencies]
 shared = { workspace = true, default-features = false, features = [] }
 stun.workspace = true
 sansio.workspace = true
+crypto.workspace = true
 
 bytes.workspace = true
 log.workspace = true
@@ -22,17 +29,11 @@ log.workspace = true
 [dev-dependencies]
 env_logger.workspace = true
 chrono.workspace = true
-hex = "0.4.3"
+hex.workspace = true
 clap.workspace = true
 criterion.workspace = true
-crossbeam-channel = "0.5"
+crossbeam-channel.workspace = true
 ctrlc.workspace = true
-
-[features]
-default = ["ring"]
-metrics = []
-ring = ["stun/ring"]
-aws-lc-rs = ["stun/aws-lc-rs"]
 
 [[bench]]
 name = "bench"

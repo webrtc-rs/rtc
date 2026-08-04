@@ -52,6 +52,14 @@
 //! [RFC 4492]: https://datatracker.ietf.org/doc/html/rfc4492
 //! [RFC 5289]: https://datatracker.ietf.org/doc/html/rfc5289
 
+/// The crypto provider API.
+///
+/// Re-exported because this crate's public constructors take an `Arc<dyn RTCCryptoProvider>`,
+/// which a caller must be able to name without adding — and version-matching — a direct
+/// `rtc-crypto` dependency. Named `crypto_provider` here because this crate already has its own
+/// [`crypto`] module for DTLS record ciphers and certificates.
+pub use ::crypto as crypto_provider;
+
 /// Alert records: fatal errors and the orderly `close_notify`.
 pub mod alert;
 /// Application data records — the payload DTLS carries once the handshake completes.
@@ -98,13 +106,6 @@ pub mod state;
 
 use cipher_suite::*;
 use extension::extension_use_srtp::SrtpProtectionProfile;
-
-#[cfg(all(feature = "aws-lc-rs", feature = "ring"))]
-compile_error!("At most one of the features \"aws-lc-rs\" and \"ring\" can be enabled.");
-#[cfg(not(any(feature = "aws-lc-rs", feature = "ring")))]
-compile_error!("At least one of the features \"aws-lc-rs\" and \"ring\" must be enabled.");
-#[cfg(feature = "aws-lc-rs")]
-extern crate aws_lc_rs as ring;
 
 pub(crate) fn find_matching_srtp_profile(
     a: &[SrtpProtectionProfile],

@@ -1,8 +1,6 @@
-use aes::Aes256;
-use aes::cipher::BlockEncrypt;
-use aes::cipher::KeyInit;
-use aes::{Aes128, cipher::generic_array::GenericArray};
+use crypto::{BlockCipherAlgorithm, RTCCrypto};
 
+use crate::cipher::crypto_error;
 use shared::error::{Error, Result};
 
 pub const LABEL_SRTP_ENCRYPTION: u8 = 0x00;
@@ -15,6 +13,7 @@ pub const LABEL_SRTCP_SALT: u8 = 0x05;
 pub(crate) const SRTCP_INDEX_SIZE: usize = 4;
 
 pub(crate) fn aes_cm_key_derivation(
+    crypto: &dyn RTCCrypto,
     label: u8,
     master_key: &[u8],
     master_salt: &[u8],
@@ -40,9 +39,6 @@ pub(crate) fn aes_cm_key_derivation(
     prf_in[7] ^= label;
 
     //The resulting value is then AES encrypted using the master key to get the cipher key.
-    let key = GenericArray::from_slice(master_key);
-    let block = Aes128::new(key);
-
     let mut out = vec![0u8; ((out_len + n_master_key) / n_master_key) * n_master_key];
     for (i, n) in (0..out_len).step_by(n_master_key).enumerate() {
         //BigEndian.PutUint16(prfIn[nMasterKey-2:], i)
@@ -50,8 +46,13 @@ pub(crate) fn aes_cm_key_derivation(
         prf_in[n_master_key - 1] = (i & 0xFF) as u8;
 
         out[n..n + n_master_key].copy_from_slice(&prf_in);
-        let out_key = GenericArray::from_mut_slice(&mut out[n..n + 16]);
-        block.encrypt_block(out_key);
+        crypto
+            .block_encrypt(
+                BlockCipherAlgorithm::Aes128,
+                master_key,
+                &mut out[n..n + 16],
+            )
+            .map_err(crypto_error)?;
     }
 
     Ok(out[..out_len].to_vec())
@@ -61,6 +62,7 @@ pub(crate) fn aes_cm_key_derivation(
 // The key derivation rate is zero as per https://datatracker.ietf.org/doc/html/rfc5764 hence index_over-kdr is 0
 const AES_256_BS: usize = 16;
 pub(crate) fn aes_256_cm_key_derivation(
+    crypto: &dyn RTCCrypto,
     label: u8,
     master_key: &[u8],
     master_salt: &[u8],
@@ -93,16 +95,18 @@ pub(crate) fn aes_256_cm_key_derivation(
     }
 
     //The resulting value is then AES encrypted using the master key to get the cipher key.
-    let key = GenericArray::from_slice(master_key);
-    let block = Aes256::new(key);
-
     let mut out = vec![0u8; ((out_len + AES_256_BS) / AES_256_BS) * AES_256_BS];
     for (i, n) in (0..out_len).step_by(AES_256_BS).enumerate() {
         prf_in[AES_256_BS - 2..].copy_from_slice(&((i as u16).to_be_bytes()));
 
         out[n..n + AES_256_BS].copy_from_slice(&prf_in);
-        let out_key = GenericArray::from_mut_slice(&mut out[n..n + 16]);
-        block.encrypt_block(out_key);
+        crypto
+            .block_encrypt(
+                BlockCipherAlgorithm::Aes256,
+                master_key,
+                &mut out[n..n + AES_256_BS],
+            )
+            .map_err(crypto_error)?;
     }
 
     Ok(out[..out_len].to_vec())
@@ -150,6 +154,7 @@ mod test {
 
     #[test]
     fn test_valid_session_keys() -> Result<()> {
+        let provider = crypto::default_provider().map_err(crypto_error)?;
         // Key Derivation Test Vectors from https://tools.ietf.org/html/rfc3711#appendix-B.3
         let master_key = vec![
             0xE1, 0xF9, 0x7A, 0x0D, 0x3E, 0x01, 0x8B, 0xE0, 0xD6, 0x4F, 0xA3, 0x2C, 0x06, 0xDE,
@@ -172,6 +177,7 @@ mod test {
         ];
 
         let session_key = aes_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_ENCRYPTION,
             &master_key,
             &master_salt,
@@ -184,6 +190,7 @@ mod test {
         );
 
         let session_salt = aes_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_SALT,
             &master_key,
             &master_salt,
@@ -198,6 +205,7 @@ mod test {
         let auth_key_len = ProtectionProfile::Aes128CmHmacSha1_80.auth_key_len();
 
         let session_auth_tag = aes_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_AUTHENTICATION_TAG,
             &master_key,
             &master_salt,
@@ -216,7 +224,15 @@ mod test {
     // Currently this isn't supported, but the API makes sure we can add this in the future
     #[test]
     fn test_index_over_kdr() -> Result<()> {
-        let result = aes_cm_key_derivation(LABEL_SRTP_AUTHENTICATION_TAG, &[], &[], 1, 0);
+        let provider = crypto::default_provider().map_err(crypto_error)?;
+        let result = aes_cm_key_derivation(
+            provider.crypto(),
+            LABEL_SRTP_AUTHENTICATION_TAG,
+            &[],
+            &[],
+            1,
+            0,
+        );
         assert!(result.is_err());
 
         Ok(())
@@ -224,6 +240,7 @@ mod test {
 
     #[test]
     fn test_aes_256_cm_key_derivation() -> Result<()> {
+        let provider = crypto::default_provider().map_err(crypto_error)?;
         // Key Derivation Test Vectors from https://datatracker.ietf.org/doc/html/rfc6188#section-7.2
         let master_key = vec![
             0xF0, 0xF0, 0x49, 0x14, 0xB5, 0x13, 0xF2, 0x76, 0x3A, 0x1B, 0x1F, 0xA1, 0x30, 0xF1,
@@ -248,6 +265,7 @@ mod test {
         ];
 
         let session_key = aes_256_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_ENCRYPTION,
             &master_key,
             &master_salt,
@@ -260,6 +278,7 @@ mod test {
         );
 
         let session_salt = aes_256_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_SALT,
             &master_key,
             &master_salt,
@@ -274,6 +293,7 @@ mod test {
         let auth_key_len = ProtectionProfile::Aes128CmHmacSha1_80.auth_key_len();
 
         let session_auth_tag = aes_256_cm_key_derivation(
+            provider.crypto(),
             LABEL_SRTP_AUTHENTICATION_TAG,
             &master_key,
             &master_salt,

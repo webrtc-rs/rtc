@@ -113,8 +113,9 @@ impl Agent {
                         Box::<UseCandidateAttr>::default(),
                         Box::new(AttrControlling(self.tie_breaker)),
                         Box::new(PriorityAttr(pair.local_priority)),
-                        Box::new(MessageIntegrity::new_short_term_integrity(
+                        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                             remote_credentials.pwd.clone(),
+                            self.crypto_provider.clone(),
                         )),
                         Box::new(FINGERPRINT),
                     ]);
@@ -280,8 +281,9 @@ impl ControllingSelector for Agent {
                 Box::new(Username::new(ATTR_USERNAME, username)),
                 Box::new(AttrControlling(self.tie_breaker)),
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
-                Box::new(MessageIntegrity::new_short_term_integrity(
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     remote_credentials.pwd.clone(),
+                    self.crypto_provider.clone(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -441,8 +443,9 @@ impl ControlledSelector for Agent {
                 Box::new(Username::new(ATTR_USERNAME, username)),
                 Box::new(AttrControlled(self.tie_breaker)),
                 Box::new(PriorityAttr(self.local_candidates[local_index].priority())),
-                Box::new(MessageIntegrity::new_short_term_integrity(
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     remote_credentials.pwd.clone(),
+                    self.crypto_provider.clone(),
                 )),
                 Box::new(FINGERPRINT),
             ]);

@@ -4,6 +4,7 @@ use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
 use crate::peer_connection::transport::ice::state::RTCIceTransportState;
+use crypto::RTCCryptoProvider;
 use ice::candidate::Candidate;
 use ice::tcp_type::TcpType;
 use ice::{Agent, AgentConfig};
@@ -21,7 +22,6 @@ pub(crate) mod state;
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
-#[derive(Default)]
 pub(crate) struct RTCIceTransport {
     pub(crate) agent: Agent,
 
@@ -31,13 +31,16 @@ pub(crate) struct RTCIceTransport {
 
 impl RTCIceTransport {
     /// creates a new RTCIceTransport
-    pub(crate) fn new(agent_config: AgentConfig) -> Result<Self> {
-        let agent = Agent::new(Arc::new(agent_config))?;
+    pub(crate) fn new(
+        agent_config: AgentConfig,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
+    ) -> Result<Self> {
+        let agent = Agent::new(Arc::new(agent_config), crypto_provider)?;
 
         Ok(RTCIceTransport {
             agent,
             ice_gathering_state: RTCIceGatheringState::New,
-            ..Default::default()
+            ice_connection_state: RTCIceConnectionState::default(),
         })
     }
 

@@ -101,7 +101,6 @@ macro_rules! for_each_handler {
     };
 }
 
-#[derive(Default)]
 pub(crate) struct PipelineContext {
     // Handler contexts
     pub(crate) demuxer_handler_context: DemuxerHandlerContext,

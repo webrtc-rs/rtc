@@ -1,33 +1,44 @@
 use super::*;
 use crate::cipher_suite::CipherSuiteHash;
+#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+use crypto::RTCCryptoProvider;
 
 #[test]
 fn test_pre_master_secret() -> Result<()> {
-    let private_key: [u8; 32] = [
-        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e,
-        0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d,
-        0x3e, 0x3f,
-    ];
-    let private_key =
-        NamedCurvePrivateKey::StaticSecretX25519(x25519_dalek::StaticSecret::from(private_key));
-    let public_key = [
-        0x9f, 0xd7, 0xad, 0x6d, 0xcf, 0xf4, 0x29, 0x8d, 0xd3, 0xf9, 0x6d, 0x5b, 0x1b, 0x2a, 0xf9,
-        0x10, 0xa0, 0x53, 0x5b, 0x14, 0x88, 0xd7, 0xf8, 0xfa, 0xbb, 0x34, 0x9a, 0x98, 0x28, 0x80,
-        0xb6, 0x15,
-    ];
+    let provider = crypto::default_provider().unwrap();
+    for curve in [NamedCurve::P256, NamedCurve::P384, NamedCurve::X25519] {
+        let mut left = curve.generate_keypair_with_crypto(provider.crypto())?;
+        let mut right = curve.generate_keypair_with_crypto(provider.crypto())?;
+        let left_public = left.public_key.clone();
+        let right_public = right.public_key.clone();
+        let left_secret = prf_pre_master_secret(&right_public, &mut left, curve)?;
+        let right_secret = prf_pre_master_secret(&left_public, &mut right, curve)?;
+        assert_eq!(left_secret, right_secret);
+        assert!(!left_secret.is_empty());
+        assert!(matches!(
+            left.complete(&right_public),
+            Err(Error::ErrNamedCurveAndPrivateKeyMismatch)
+        ));
+    }
 
-    let expected_pre_master_secret = vec![
-        0xdf, 0x4a, 0x29, 0x1b, 0xaa, 0x1e, 0xb7, 0xcf, 0xa6, 0x93, 0x4b, 0x29, 0xb4, 0x74, 0xba,
-        0xad, 0x26, 0x97, 0xe2, 0x9f, 0x1f, 0x92, 0x0d, 0xcc, 0x77, 0xc8, 0xa0, 0xa0, 0x88, 0x44,
-        0x76, 0x24,
-    ];
+    Ok(())
+}
 
-    let pre_master_secret = prf_pre_master_secret(&public_key, &private_key, NamedCurve::X25519)?;
+#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[test]
+fn test_cross_provider_pre_master_secret() -> Result<()> {
+    let ring = crypto::providers::RingProvider::new();
+    let aws = crypto::providers::AwsLcRsProvider::new();
 
-    assert_eq!(
-        expected_pre_master_secret, pre_master_secret,
-        "PremasterSecret exp: {expected_pre_master_secret:?} actual: {pre_master_secret:?}"
-    );
+    for curve in [NamedCurve::P256, NamedCurve::P384, NamedCurve::X25519] {
+        let mut left = curve.generate_keypair_with_crypto(ring.crypto())?;
+        let mut right = curve.generate_keypair_with_crypto(aws.crypto())?;
+        let left_public = left.public_key.clone();
+        let right_public = right.public_key.clone();
+        let left_secret = prf_pre_master_secret(&right_public, &mut left, curve)?;
+        let right_secret = prf_pre_master_secret(&left_public, &mut right, curve)?;
+        assert_eq!(left_secret, right_secret);
+    }
 
     Ok(())
 }
@@ -57,6 +68,7 @@ fn test_master_secret() -> Result<()> {
     ];
 
     let master_secret = prf_master_secret(
+        crypto::default_provider().unwrap().crypto(),
         &pre_master_secret,
         &client_random,
         &server_random,
@@ -107,12 +119,15 @@ fn test_encryption_keys() -> Result<()> {
     };
 
     let keys = prf_encryption_keys(
+        crypto::default_provider().unwrap().crypto(),
         &master_secret,
         &client_random,
         &server_random,
-        0,
-        16,
-        4,
+        EncryptionKeyLengths {
+            mac: 0,
+            key: 16,
+            iv: 4,
+        },
         CipherSuiteHash::Sha256,
     )?;
 
@@ -250,7 +265,12 @@ fn test_verify_data() -> Result<()> {
         0xcf, 0x91, 0x96, 0x26, 0xf1, 0x36, 0x0c, 0x53, 0x6a, 0xaa, 0xd7, 0x3a,
     ];
 
-    let verify_data = prf_verify_data_client(&master_secret, &final_msg, CipherSuiteHash::Sha256)?;
+    let verify_data = prf_verify_data_client(
+        crypto::default_provider().unwrap().crypto(),
+        &master_secret,
+        &final_msg,
+        CipherSuiteHash::Sha256,
+    )?;
 
     assert_eq!(
         expected_verify_data, verify_data,

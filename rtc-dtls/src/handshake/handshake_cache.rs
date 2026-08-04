@@ -7,8 +7,6 @@ use crate::handshake::*;
 use std::collections::HashMap;
 use std::io::BufReader;
 
-use sha2::{Digest, Sha256};
-
 #[derive(Clone, Debug)]
 pub(crate) struct HandshakeCacheItem {
     typ: HandshakeType,
@@ -154,6 +152,7 @@ impl HandshakeCache {
     // https://tools.ietf.org/html/draft-ietf-tls-session-hash-06#section-4
     pub(crate) fn session_hash(
         &self,
+        crypto: &dyn crypto::RTCCrypto,
         hf: CipherSuiteHash,
         epoch: u16,
         additional: &[u8],
@@ -218,12 +217,10 @@ impl HandshakeCache {
 
         merged.extend_from_slice(additional);
 
-        let mut hasher = match hf {
-            CipherSuiteHash::Sha256 => Sha256::new(),
-        };
-        hasher.update(&merged);
-        let result = hasher.finalize();
-
-        Ok(result.as_slice().to_vec())
+        match hf {
+            CipherSuiteHash::Sha256 => crypto
+                .hash(crypto::HashAlgorithm::Sha256, &merged)
+                .map_err(|error| Error::Crypto(error.to_string())),
+        }
     }
 }
