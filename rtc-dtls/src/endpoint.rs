@@ -317,7 +317,7 @@ mod tests {
     }
 
     struct FailingRandomProvider {
-        crypto: Arc<dyn RTCCryptoProvider>,
+        provider: Arc<dyn RTCCryptoProvider>,
     }
 
     impl RTCCryptoProvider for FailingRandomProvider {
@@ -326,7 +326,7 @@ mod tests {
         }
 
         fn crypto(&self) -> &dyn RTCCrypto {
-            self.crypto.crypto()
+            self.provider.crypto()
         }
 
         fn random(&self) -> &dyn RTCRandom {
@@ -357,7 +357,7 @@ mod tests {
         } else if !is_client {
             builder = builder.with_certificates(vec![Certificate::generate_self_signed(
                 vec!["localhost".to_owned()],
-                provider,
+                provider.crypto(),
             )?]);
         }
         Ok(Arc::new(builder.build(is_client, None)?))
@@ -479,7 +479,8 @@ mod tests {
     #[test]
     fn failing_random_provider_aborts_client_hello_cleanly() -> Result<()> {
         let base = crypto::default_provider().map_err(|error| Error::Crypto(error.to_string()))?;
-        let provider: Arc<dyn RTCCryptoProvider> = Arc::new(FailingRandomProvider { crypto: base });
+        let provider: Arc<dyn RTCCryptoProvider> =
+            Arc::new(FailingRandomProvider { provider: base });
         let config = config(
             provider,
             true,

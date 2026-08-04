@@ -145,16 +145,17 @@ fn builtin_provider() -> Arc<dyn RTCCryptoProvider> {
 
 #[test]
 fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<()> {
+    let provider = test_provider();
     let integrity = MessageIntegrity::new_long_term_integrity_with_provider(
         "user".to_owned(),
         "realm".to_owned(),
         "password".to_owned(),
-        test_provider(),
+        provider.clone(),
     )?;
     let mut message = Message::new();
     message.write_header();
     integrity.add_to(&mut message)?;
-    integrity.check(&mut message)?;
+    MessageIntegrity::check(&mut message, integrity.key.as_ref(), provider.crypto())?;
 
     let attribute = message
         .attributes
@@ -165,7 +166,7 @@ fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<(
     attribute.value.pop();
     attribute.length -= 1;
     assert_eq!(
-        integrity.check(&mut message),
+        MessageIntegrity::check(&mut message, integrity.key.as_ref(), provider.crypto()),
         Err(Error::ErrIntegrityMismatch)
     );
 

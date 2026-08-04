@@ -51,9 +51,11 @@ impl KeyType {
                     signing_key,
                 )?
             }
-            KeyType::EcdsaP256 => {
-                RTCCertificate::generate(provider, SignatureScheme::EcdsaP256Sha256, params)?
-            }
+            KeyType::EcdsaP256 => RTCCertificate::generate(
+                provider.crypto(),
+                SignatureScheme::EcdsaP256Sha256,
+                params,
+            )?,
         })
     }
 }

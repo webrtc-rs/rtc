@@ -282,11 +282,6 @@ impl State {
         self.cipher_suite.as_deref()
     }
 
-    /// Returns the provider selected for this DTLS session.
-    pub fn crypto_provider(&self) -> Arc<dyn crypto::RTCCryptoProvider> {
-        self.crypto_provider.clone()
-    }
-
     /// Exports `length` bytes of keying material from an established session, as defined in
     /// RFC 5705.
     ///

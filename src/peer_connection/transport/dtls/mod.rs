@@ -87,7 +87,7 @@ impl RTCDtlsTransport {
             let params = CertificateParams::new(vec![shared::util::math_rand_alpha(16)])
                 .map_err(|error| Error::Other(error.to_string()))?;
             let cert = RTCCertificate::generate(
-                crypto_provider.clone(),
+                crypto_provider.crypto(),
                 crypto::SignatureScheme::EcdsaP256Sha256,
                 params,
             )?;
@@ -160,9 +160,9 @@ impl RTCDtlsTransport {
         // need this. libp2p's WebRTC-Direct is the canonical case: the server synthesizes the
         // client's offer locally with a placeholder fingerprint and authenticates the peer
         // afterwards with a Noise handshake over the data channel.
-        let fingerprint_crypto = self.crypto_provider.clone();
         let verify_peer_certificate: Option<VerifyPeerCertificateFn> =
             if !self.disable_certificate_fingerprint_verification {
+                let fingerprint_crypto = self.crypto_provider.clone();
                 Some(Arc::new(
                     move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| -> Result<()> {
                         if certs.is_empty() {
@@ -401,7 +401,7 @@ mod tests {
     fn filters_srtp_profiles_by_provider_capabilities() -> Result<()> {
         let default_provider = crypto::default_provider().expect("test crypto provider");
         let certificate = RTCCertificate::generate(
-            default_provider.clone(),
+            default_provider.crypto(),
             crypto::SignatureScheme::EcdsaP256Sha256,
             CertificateParams::new(vec!["webrtc.rs".to_owned()])
                 .map_err(|e| Error::Other(e.to_string()))?,

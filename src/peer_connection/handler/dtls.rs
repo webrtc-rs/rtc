@@ -8,6 +8,7 @@ use crate::peer_connection::transport::dtls::RTCDtlsTransport;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::statistics::accumulator::{CertificateStatsAccumulator, RTCStatsAccumulator};
+use crypto::RTCCryptoProvider;
 use dtls::endpoint::EndpointEvent;
 use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use dtls::state::State;
@@ -18,6 +19,7 @@ use srtp::option::{srtcp_replay_protection, srtp_replay_protection};
 use srtp::protection_profile::ProtectionProfile;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub(crate) struct DtlsHandlerContext {
@@ -90,7 +92,7 @@ impl<'a> DtlsHandler<'a> {
         // Register local certificate and set local_certificate_id
         if let Some(local_cert) = self.ctx.dtls_transport.certificates.first() {
             let fingerprints =
-                local_cert.get_fingerprints(self.ctx.dtls_transport.crypto_provider.clone())?;
+                local_cert.get_fingerprints(self.ctx.dtls_transport.crypto_provider.crypto())?;
             if let Some(fp) = fingerprints.first() {
                 // Register certificate in accumulator
                 // Use hex encoding for certificate (base64 would need additional dependency)
@@ -199,6 +201,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                 DtlsHandler::update_srtp_contexts(
                                     state,
                                     &self.ctx.dtls_transport.replay_protection,
+                                    &self.ctx.dtls_transport.crypto_provider,
                                 )?;
                             srtp_contexts = Some((local_srtp_context, remote_srtp_context));
                         } else {
@@ -374,6 +377,7 @@ impl<'a> DtlsHandler<'a> {
     pub(crate) fn update_srtp_contexts(
         state: &State,
         replay_protection: &ReplayProtection,
+        crypto_provider: &Arc<dyn RTCCryptoProvider>,
     ) -> Result<(srtp::context::Context, srtp::context::Context)> {
         let profile = match state.srtp_protection_profile() {
             SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm => ProtectionProfile::AeadAes128Gcm,
@@ -409,7 +413,6 @@ impl<'a> DtlsHandler<'a> {
         )?;
         srtp_config
             .set_session_keys_from_keying_material(keying_material.as_ref(), state.is_client())?;
-        let crypto_provider = state.crypto_provider();
 
         let local_context = srtp::context::Context::new(
             &srtp_config.keys.local_master_key,
@@ -438,7 +441,7 @@ impl<'a> DtlsHandler<'a> {
             } else {
                 srtp_config.remote_rtcp_options
             },
-            crypto_provider,
+            crypto_provider.clone(),
         )?;
 
         Ok((local_context, remote_context))

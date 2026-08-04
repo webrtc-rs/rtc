@@ -3,7 +3,7 @@ mod integrity_test;
 
 use crate::attributes::*;
 use crate::message::*;
-use crypto::{CryptoError, HashAlgorithm, HmacAlgorithm, RTCCryptoProvider, SecretVec};
+use crypto::{CryptoError, HashAlgorithm, HmacAlgorithm, RTCCrypto, RTCCryptoProvider, SecretVec};
 use shared::error::*;
 
 use std::fmt;
@@ -126,7 +126,7 @@ impl MessageIntegrity {
     /// Check checks MESSAGE-INTEGRITY attribute.
     ///
     /// CPU costly, see BenchmarkMessageIntegrity_Check.
-    pub fn check(&self, m: &mut Message) -> Result<()> {
+    pub fn check(m: &mut Message, key: &[u8], crypto: &dyn RTCCrypto) -> Result<()> {
         let v = m.get(ATTR_MESSAGE_INTEGRITY)?;
 
         // Adjusting length in header to match m.Raw that was
@@ -151,10 +151,8 @@ impl MessageIntegrity {
         let start_of_hmac = MESSAGE_HEADER_SIZE + m.length as usize
             - (ATTRIBUTE_HEADER_SIZE + MESSAGE_INTEGRITY_SIZE);
         let b = &m.raw[..start_of_hmac]; // data before integrity attribute
-        let result = self
-            .provider
-            .crypto()
-            .new_hmac(HmacAlgorithm::Sha1, self.key.as_ref())
+        let result = crypto
+            .new_hmac(HmacAlgorithm::Sha1, key)
             .and_then(|mut mac| mac.verify(&[b], &v));
         m.length = length as u32;
         m.write_length(); // writing length back
