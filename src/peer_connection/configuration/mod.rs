@@ -101,9 +101,10 @@
 //! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! // Generate custom certificate for peer identity
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -158,8 +159,9 @@
 //! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -485,8 +487,9 @@ impl RTCConfiguration {
 /// use rtc::peer_connection::certificate::CertificateParams;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let provider = crypto::default_provider()?;
 /// let certificate = RTCCertificate::generate(
-///     crypto::default_provider()?,
+///     provider.crypto(),
 ///     SignatureScheme::EcdsaP256Sha256,
 ///     CertificateParams::new(vec!["localhost".to_owned()])?,
 /// )?;
@@ -688,8 +691,9 @@ impl RTCConfigurationBuilder {
     /// use rtc::peer_connection::certificate::CertificateParams;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let provider = crypto::default_provider()?;
     /// let certificate = RTCCertificate::generate(
-    ///     crypto::default_provider()?,
+    ///     provider.crypto(),
     ///     SignatureScheme::EcdsaP256Sha256,
     ///     CertificateParams::new(vec!["localhost".to_owned()])?,
     /// )?;

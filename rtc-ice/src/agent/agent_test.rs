@@ -270,7 +270,7 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
         Box::new(PriorityAttr(local_priority)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -354,7 +354,7 @@ fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
         Box::new(tid),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             remote_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -575,7 +575,7 @@ fn build_msg(c: MessageClass, username: String, key: String) -> Result<Message> 
         Box::new(MessageType::new(METHOD_BINDING, c)),
         Box::new(TransactionId::new()),
         Box::new(Username::new(ATTR_USERNAME, username)),
-        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(key, test_crypto_provider())),
+        Box::new(MessageIntegrity::new_short_term_integrity_with_provider(key, test_crypto_provider().crypto())),
         Box::new(FINGERPRINT),
     ])?;
     Ok(msg)
@@ -2083,7 +2083,7 @@ fn test_role_conflict_both_controlling_smaller_tiebreaker_switches() -> Result<(
         Box::new(PriorityAttr(1000)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -2204,7 +2204,7 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
         Box::new(PriorityAttr(1000)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -2300,7 +2300,7 @@ fn test_role_conflict_both_controlled_larger_tiebreaker_switches() -> Result<()>
         Box::new(PriorityAttr(1000)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -2402,7 +2402,7 @@ fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
         Box::new(PriorityAttr(1000)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;
@@ -2826,7 +2826,7 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
         Box::new(PriorityAttr(local_priority)),
         Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
             local_pwd,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )),
         Box::new(FINGERPRINT),
     ])?;

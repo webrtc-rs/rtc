@@ -35,9 +35,10 @@
 //! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! // Generate ECDSA certificate (recommended)
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -62,15 +63,16 @@
 //! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! // Ed25519 provides the best security with excellent performance
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::Ed25519,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
 //!
 //! // Get fingerprint for SDP signaling
-//! let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+//! let fingerprints = certificate.get_fingerprints(provider.crypto())?;
 //! println!("Fingerprint: {}", fingerprints[0].value);
 //! # Ok(())
 //! # }
@@ -80,6 +82,7 @@
 //!
 //! ```no_run
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! use rtc::peer_connection::certificate::RTCCertificate;
 //! use rtc::crypto::{self, SignatureScheme};
 //! use rtc::peer_connection::certificate::CertificateParams;
@@ -87,7 +90,7 @@
 //!
 //! // First run: Generate and save certificate
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -96,7 +99,7 @@
 //!
 //! // Later runs: Load existing certificate
 //! let pem_data = fs::read_to_string("my_cert.pem")?;
-//! let certificate = RTCCertificate::from_pem(&pem_data, crypto::default_provider()?)?;
+//! let certificate = RTCCertificate::from_pem(&pem_data, provider.crypto())?;
 //! // Same identity maintained across restarts!
 //! # Ok(())
 //! # }
@@ -110,14 +113,15 @@
 //! use rtc::peer_connection::certificate::CertificateParams;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! let certificate = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
 //!
 //! // Get fingerprints for SDP offer/answer
-//! let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+//! let fingerprints = certificate.get_fingerprints(provider.crypto())?;
 //! for fp in fingerprints {
 //!     // Format for SDP: a=fingerprint:sha-256 XX:XX:XX:...
 //!     println!("a=fingerprint:{} {}", fp.algorithm, fp.value);
@@ -135,10 +139,11 @@
 //! use std::time::Instant;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let provider = crypto::default_provider()?;
 //! // ECDSA P-256: Good balance of speed and security
 //! let start = Instant::now();
 //! let _ecdsa_cert = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::EcdsaP256Sha256,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -147,7 +152,7 @@
 //! // Ed25519: Fastest and most secure
 //! let start = Instant::now();
 //! let _ed_cert = RTCCertificate::generate(
-//!     crypto::default_provider()?,
+//!     provider.crypto(),
 //!     SignatureScheme::Ed25519,
 //!     CertificateParams::new(vec!["localhost".to_owned()])?,
 //! )?;
@@ -244,15 +249,16 @@ use shared::error::{Error, Result};
 /// # use rtc::crypto::{self, SignatureScheme};
 /// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let provider = crypto::default_provider()?;
 /// // Generate ECDSA P-256 key pair and certificate
 /// let certificate = RTCCertificate::generate(
-///     crypto::default_provider()?,
+///     provider.crypto(),
 ///     SignatureScheme::EcdsaP256Sha256,
 ///     CertificateParams::new(vec!["localhost".to_owned()])?,
 /// )?;
 ///
 /// // Certificate is ready to use
-/// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+/// let fingerprints = certificate.get_fingerprints(provider.crypto())?;
 /// println!("Certificate has {} fingerprint(s)", fingerprints.len());
 /// # Ok(())
 /// # }
@@ -265,15 +271,16 @@ use shared::error::{Error, Result};
 /// # use rtc::crypto::{self, SignatureScheme};
 /// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let provider = crypto::default_provider()?;
 /// // Generate Ed25519 key pair and certificate
 /// let certificate = RTCCertificate::generate(
-///     crypto::default_provider()?,
+///     provider.crypto(),
 ///     SignatureScheme::Ed25519,
 ///     CertificateParams::new(vec!["localhost".to_owned()])?,
 /// )?;
 ///
 /// // Get fingerprints for SDP signaling
-/// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+/// let fingerprints = certificate.get_fingerprints(provider.crypto())?;
 /// for fp in fingerprints {
 ///     println!("Fingerprint ({}):\n{}", fp.algorithm, fp.value);
 /// }
@@ -289,8 +296,9 @@ use shared::error::{Error, Result};
 /// # use rtc::crypto::{self, SignatureScheme};
 /// # use rtc::peer_connection::certificate::CertificateParams;
 /// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+/// # let provider = crypto::default_provider()?;
 /// # let certificate = RTCCertificate::generate(
-/// #     crypto::default_provider()?,
+/// #     provider.crypto(),
 /// #     SignatureScheme::EcdsaP256Sha256,
 /// #     params,
 /// # )?;
@@ -301,7 +309,7 @@ use shared::error::{Error, Result};
 /// // std::fs::write("cert.pem", &pem_string)?;
 ///
 /// // Later, load the certificate back
-/// let loaded_cert = RTCCertificate::from_pem(&pem_string, crypto::default_provider()?)?;
+/// let loaded_cert = RTCCertificate::from_pem(&pem_string, provider.crypto())?;
 /// assert_eq!(loaded_cert, certificate);
 /// # Ok(())
 /// # }
@@ -316,9 +324,10 @@ use shared::error::{Error, Result};
 /// # use rtc::crypto::{self, SignatureScheme};
 /// # use rtc::peer_connection::certificate::CertificateParams;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let provider = crypto::default_provider()?;
 /// // Generate certificate
 /// let certificate = RTCCertificate::generate(
-///     crypto::default_provider()?,
+///     provider.crypto(),
 ///     SignatureScheme::EcdsaP256Sha256,
 ///     CertificateParams::new(vec!["localhost".to_owned()])?,
 /// )?;
@@ -458,17 +467,18 @@ impl RTCCertificate {
     /// # use rtc::crypto::{self, SignatureScheme};
     /// # use rtc::peer_connection::certificate::CertificateParams;
     /// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+    /// # let provider = crypto::default_provider()?;
     /// # let original = RTCCertificate::generate(
-    /// #     crypto::default_provider()?,
+    /// #     provider.crypto(),
     /// #     SignatureScheme::EcdsaP256Sha256,
     /// #     params,
     /// # )?;
     /// // Load certificate from PEM string
     /// # let pem_str = original.serialize_pem()?;
-    /// let certificate = RTCCertificate::from_pem(&pem_str, crypto::default_provider()?)?;
+    /// let certificate = RTCCertificate::from_pem(&pem_str, provider.crypto())?;
     ///
     /// // Certificate is ready to use
-    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+    /// let fingerprints = certificate.get_fingerprints(provider.crypto())?;
     /// println!("Loaded certificate with {} fingerprint(s)", fingerprints.len());
     /// # Ok(())
     /// # }
@@ -525,16 +535,19 @@ impl RTCCertificate {
     ///
     /// ```no_run
     /// # use rtc::peer_connection::certificate::RTCCertificate;
+    /// # use rtc::crypto;
+    /// # use rtc::dtls;
     /// # use std::time::{SystemTime, Duration};
     /// # fn example(
     /// #     dtls_cert: dtls::crypto::Certificate
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
+    /// # let provider = crypto::default_provider()?;
     /// // Use an externally managed certificate
     /// let expires = SystemTime::now() + Duration::from_secs(86400 * 30); // 30 days
     /// let certificate = RTCCertificate::from_existing(dtls_cert, expires);
     ///
     /// // Certificate is ready to use
-    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+    /// let fingerprints = certificate.get_fingerprints(provider.crypto())?;
     /// println!("Certificate has {} fingerprint(s)", fingerprints.len());
     /// # Ok(())
     /// # }
@@ -572,8 +585,9 @@ impl RTCCertificate {
     /// # use rtc::crypto::{self, SignatureScheme};
     /// # use rtc::peer_connection::certificate::CertificateParams;
     /// # let params = CertificateParams::new(vec!["localhost".to_owned()])?;
+    /// # let provider = crypto::default_provider()?;
     /// # let certificate = RTCCertificate::generate(
-    /// #     crypto::default_provider()?,
+    /// #     provider.crypto(),
     /// #     SignatureScheme::EcdsaP256Sha256,
     /// #     params,
     /// # )?;
@@ -584,7 +598,7 @@ impl RTCCertificate {
     /// // std::fs::write("private/cert.pem", &pem_string)?;
     ///
     /// // Later, reload it
-    /// let reloaded = RTCCertificate::from_pem(&pem_string, crypto::default_provider()?)?;
+    /// let reloaded = RTCCertificate::from_pem(&pem_string, provider.crypto())?;
     /// assert_eq!(certificate, reloaded);
     /// # Ok(())
     /// # }
@@ -637,14 +651,15 @@ impl RTCCertificate {
     /// # use rtc::crypto::{self, SignatureScheme};
     /// # use rtc::peer_connection::certificate::CertificateParams;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let provider = crypto::default_provider()?;
     /// let certificate = RTCCertificate::generate(
-    ///     crypto::default_provider()?,
+    ///     provider.crypto(),
     ///     SignatureScheme::EcdsaP256Sha256,
     ///     CertificateParams::new(vec!["localhost".to_owned()])?,
     /// )?;
     ///
     /// // Get fingerprints for SDP
-    /// let fingerprints = certificate.get_fingerprints(crypto::default_provider()?)?;
+    /// let fingerprints = certificate.get_fingerprints(provider.crypto())?;
     /// for fp in fingerprints {
     ///     println!("a=fingerprint:{} {}", fp.algorithm, fp.value);
     /// }

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::{Duration, Instant};
-
 use stun::attributes::*;
 use stun::error_code::*;
 use stun::fingerprint::*;
@@ -28,7 +27,7 @@ const MAX_RETRY_ATTEMPTS: u16 = 3;
 // RelayState is a set of params use by Relay
 pub(crate) struct RelayState {
     pub(crate) relayed_addr: RelayedAddr,
-    pub(crate) integrity: MessageIntegrity,
+    pub(crate) long_term_integrity_key: Vec<u8>,
     pub(crate) nonce: Nonce,
     pub(crate) lifetime: Duration,
     perm_map: HashMap<SocketAddr, Permission>,
@@ -39,7 +38,7 @@ pub(crate) struct RelayState {
 impl RelayState {
     pub(super) fn new(
         relayed_addr: RelayedAddr,
-        integrity: MessageIntegrity,
+        long_term_integrity_key: Vec<u8>,
         nonce: Nonce,
         lifetime: Duration,
     ) -> Self {
@@ -47,7 +46,7 @@ impl RelayState {
 
         Self {
             relayed_addr,
-            integrity,
+            long_term_integrity_key,
             nonce,
             lifetime,
             perm_map: HashMap::new(),
@@ -163,7 +162,7 @@ impl Relay<'_> {
                 if perm.state() != PermState::Permitted {
                     Err(Error::ErrNoPermission)
                 } else {
-                    Ok((relay.integrity.clone(), relay.nonce.clone()))
+                    Ok((relay.long_term_integrity_key.clone(), relay.nonce.clone()))
                 }
             } else {
                 Err(Error::ErrNoPermission)
@@ -172,16 +171,16 @@ impl Relay<'_> {
             Err(Error::ErrConnClosed)
         };
 
-        let (integrity, nonce) = result?;
+        let (long_term_integrity_key, nonce) = result?;
 
-        self.send(p, peer_addr, integrity, nonce)
+        self.send(p, peer_addr, long_term_integrity_key, nonce)
     }
 
     fn send(
         &mut self,
         p: &[u8],
         peer_addr: SocketAddr,
-        integrity: MessageIntegrity,
+        long_term_integrity_key: Vec<u8>,
         nonce: Nonce,
     ) -> Result<()> {
         let channel_number = {
@@ -208,7 +207,13 @@ impl Relay<'_> {
                     if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
                         b.set_state(BindingState::Request);
                     }
-                    self.channel_bind(self.relayed_addr, bind_addr, bind_number, nonce, integrity)?;
+                    self.channel_bind(
+                        self.relayed_addr,
+                        bind_addr,
+                        bind_number,
+                        nonce,
+                        long_term_integrity_key,
+                    )?;
                 }
 
                 // send data using SendIndication
@@ -241,7 +246,13 @@ impl Relay<'_> {
                 if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
                     b.set_state(BindingState::Refresh);
                 }
-                self.channel_bind(self.relayed_addr, bind_addr, bind_number, nonce, integrity)?;
+                self.channel_bind(
+                    self.relayed_addr,
+                    bind_addr,
+                    bind_number,
+                    nonce,
+                    long_term_integrity_key,
+                )?;
             }
 
             bind_number
@@ -270,7 +281,7 @@ impl Relay<'_> {
         let (username, realm) = (self.client.username(), self.client.realm());
         if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             let msg = {
-                let mut setters: Vec<Box<dyn Setter>> = vec![
+                let mut setters: Vec<Box<dyn Setter + '_>> = vec![
                     Box::new(TransactionId::new()),
                     Box::new(MessageType::new(METHOD_CREATE_PERMISSION, CLASS_REQUEST)),
                 ];
@@ -285,7 +296,10 @@ impl Relay<'_> {
                 setters.push(Box::new(username));
                 setters.push(Box::new(realm));
                 setters.push(Box::new(relay.nonce.clone()));
-                setters.push(Box::new(relay.integrity.clone()));
+                setters.push(Box::new(MessageIntegrity::new_raw_integrity_with_provider(
+                    relay.long_term_integrity_key.clone(),
+                    self.client.crypto_provider.crypto(),
+                )));
                 setters.push(Box::new(FINGERPRINT));
 
                 let mut msg = Message::new();
@@ -355,7 +369,10 @@ impl Relay<'_> {
                 Box::new(username),
                 Box::new(realm),
                 Box::new(relay.nonce.clone()),
-                Box::new(relay.integrity.clone()),
+                Box::new(MessageIntegrity::new_raw_integrity_with_provider(
+                    relay.long_term_integrity_key.clone(),
+                    self.client.crypto_provider.crypto(),
+                )),
                 Box::new(FINGERPRINT),
             ])?;
 
@@ -421,10 +438,10 @@ impl Relay<'_> {
         bind_addr: SocketAddr,
         bind_number: u16,
         nonce: Nonce,
-        integrity: MessageIntegrity,
+        long_term_integrity_key: Vec<u8>,
     ) -> Result<()> {
         let (msg, turn_server_addr) = {
-            let setters: Vec<Box<dyn Setter>> = vec![
+            let setters: Vec<Box<dyn Setter + '_>> = vec![
                 Box::new(TransactionId::new()),
                 Box::new(MessageType::new(METHOD_CHANNEL_BIND, CLASS_REQUEST)),
                 Box::new(proto::peeraddr::PeerAddress {
@@ -435,7 +452,12 @@ impl Relay<'_> {
                 Box::new(self.client.username()),
                 Box::new(self.client.realm()),
                 Box::new(nonce),
-                Box::new(integrity),
+                // Built here rather than by the caller: it borrows `crypto_provider`, and that
+                // borrow must end with `setters` so the `&mut self` transaction below is free.
+                Box::new(MessageIntegrity::new_raw_integrity_with_provider(
+                    long_term_integrity_key,
+                    self.client.crypto_provider.crypto(),
+                )),
                 Box::new(FINGERPRINT),
             ];
 

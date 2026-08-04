@@ -493,7 +493,7 @@ impl Message {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(&mut self, setters: &[Box<dyn Setter>]) -> Result<()> {
+    pub fn build(&mut self, setters: &[Box<dyn Setter + '_>]) -> Result<()> {
         self.reset();
         self.write_header();
         for s in setters {

@@ -150,7 +150,7 @@ fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<(
         "user".to_owned(),
         "realm".to_owned(),
         "password".to_owned(),
-        provider.clone(),
+        provider.crypto(),
     )?;
     let mut message = Message::new();
     message.write_header();
@@ -176,11 +176,12 @@ fn explicit_custom_provider_round_trip_and_truncated_tag_rejection() -> Result<(
 #[test]
 fn test_message_integrity_add_to_simple() -> Result<()> {
     {
+        let provider = builtin_provider();
         let i = MessageIntegrity::new_long_term_integrity_with_provider(
             "user".to_owned(),
             "realm".to_owned(),
             "passsss".to_owned(),
-            builtin_provider(),
+            provider.crypto(),
         )?;
         let expected = vec![
             104, 228, 91, 113, 61, 154, 222, 34, 101, 61, 181, 146, 177, 90, 4, 29,
@@ -188,11 +189,12 @@ fn test_message_integrity_add_to_simple() -> Result<()> {
         assert_eq!(i.key.as_ref(), expected, "{}", Error::ErrIntegrityMismatch);
     }
 
+    let provider = builtin_provider();
     let i = MessageIntegrity::new_long_term_integrity_with_provider(
         "user".to_owned(),
         "realm".to_owned(),
         "pass".to_owned(),
-        builtin_provider(),
+        provider.crypto(),
     )?;
     let expected = vec![
         0x84, 0x93, 0xfb, 0xc5, 0x3b, 0xa5, 0x82, 0xfb, 0x4c, 0x04, 0x4c, 0x45, 0x6b, 0xdc, 0x40,
@@ -215,11 +217,11 @@ fn test_message_integrity_add_to_simple() -> Result<()> {
         let mut d_m = Message::new();
         d_m.raw = m.raw.clone();
         d_m.decode()?;
-        i.check(&mut d_m)?;
+        MessageIntegrity::check(&mut d_m, i.key.as_ref(), provider.crypto())?;
 
         d_m.raw[24] += 12; // HMAC now invalid
         d_m.decode()?;
-        let result = i.check(&mut d_m);
+        let result = MessageIntegrity::check(&mut d_m, i.key.as_ref(), provider.crypto());
         assert!(result.is_err(), "should be invalid");
     }
 
@@ -237,24 +239,25 @@ fn test_message_integrity_with_fingerprint() -> Result<()> {
     };
     a.add_to(&mut m)?;
 
+    let provider = builtin_provider();
     let i = MessageIntegrity::new_short_term_integrity_with_provider(
         "pwd".to_owned(),
-        builtin_provider(),
+        provider.crypto(),
     );
     assert_eq!(
         i.to_string(),
         "MESSAGE-INTEGRITY key: [REDACTED; 3 bytes]",
         "bad string {i}"
     );
-    let result = i.check(&mut m);
+    let result = MessageIntegrity::check(&mut m, i.key.as_ref(), provider.crypto());
     assert!(result.is_err(), "should error");
 
     i.add_to(&mut m)?;
     FINGERPRINT.add_to(&mut m)?;
-    i.check(&mut m)?;
+    MessageIntegrity::check(&mut m, i.key.as_ref(), provider.crypto())?;
     m.raw[24] = 33;
     m.decode()?;
-    let result = i.check(&mut m);
+    let result = MessageIntegrity::check(&mut m, i.key.as_ref(), provider.crypto());
     assert!(result.is_err(), "mismatch expected");
 
     Ok(())
@@ -263,9 +266,10 @@ fn test_message_integrity_with_fingerprint() -> Result<()> {
 #[test]
 fn test_message_integrity() -> Result<()> {
     let mut m = Message::new();
+    let provider = builtin_provider();
     let i = MessageIntegrity::new_short_term_integrity_with_provider(
         "password".to_owned(),
-        builtin_provider(),
+        provider.crypto(),
     );
     m.write_header();
     i.add_to(&mut m)?;
@@ -278,9 +282,10 @@ fn test_message_integrity_before_fingerprint() -> Result<()> {
     let mut m = Message::new();
     m.write_header();
     FINGERPRINT.add_to(&mut m)?;
+    let provider = builtin_provider();
     let i = MessageIntegrity::new_short_term_integrity_with_provider(
         "password".to_owned(),
-        builtin_provider(),
+        provider.crypto(),
     );
     let result = i.add_to(&mut m);
     assert!(result.is_err(), "should error");

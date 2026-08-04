@@ -1001,7 +1001,7 @@ impl Agent {
                 Box::new(XorMappedAddress { ip, port }),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     local_pwd,
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
@@ -1045,7 +1045,7 @@ impl Agent {
                 Box::new(CODE_ROLE_CONFLICT),
                 Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                     local_pwd,
-                    self.crypto_provider.clone(),
+                    self.crypto_provider.crypto(),
                 )),
                 Box::new(FINGERPRINT),
             ]);
