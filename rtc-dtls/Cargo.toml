@@ -12,9 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["ring"]
-ring = ["crypto/ring", "rustls/ring", "rcgen/ring"]
-aws-lc-rs = ["crypto/aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs"]
+default = ["crypto-ring"]
+crypto-ring = ["crypto/crypto-ring", "rustls/ring", "rcgen/ring"]
+crypto-aws-lc-rs = ["crypto/crypto-aws-lc-rs", "rustls/aws-lc-rs", "rcgen/aws_lc_rs"]
 
 [dependencies]
 shared = { workspace = true, default-features = false, features = ["replay"] }

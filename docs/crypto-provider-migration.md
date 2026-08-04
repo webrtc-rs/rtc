@@ -90,13 +90,13 @@ fix available to the person hitting it.
 
 | Build | Result |
 |---|---|
-| `--features ring` | ring only |
-| `--features aws-lc-rs` | aws-lc-rs only |
-| `--features ring,aws-lc-rs` | both compiled; `default_provider()` returns ring |
+| `--features crypto-ring` | ring only |
+| `--features crypto-aws-lc-rs` | aws-lc-rs only |
+| `--features crypto-ring,crypto-aws-lc-rs` | both compiled; `default_provider()` returns ring |
 | `--no-default-features` | no built-in provider; supply your own |
 
 `default_provider()` prefers ring when both are enabled, matching the previous precedence.
-Enabling `aws-lc-rs` alongside the default never silently switches the default.
+Enabling `crypto-aws-lc-rs` alongside the default never silently switches the default.
 
 ## Removed and changed public items
 

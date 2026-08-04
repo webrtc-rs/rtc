@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each protocol crate re-exports the crypto API (`rtc_srtp::crypto`, `rtc_stun::crypto`,
   `rtc_ice::crypto`, `rtc_turn::crypto`, `rtc_dtls::crypto_provider`) so standalone users can name
   `Arc<dyn RTCCryptoProvider>` without a direct `rtc-crypto` dependency.
-- **`ring` and `aws-lc-rs` Cargo features are now additive.** Enabling both builds successfully
+- **`crypto-ring` and `crypto-aws-lc-rs` Cargo features are now additive.** Enabling both builds successfully
   and is covered in CI. Previously each of `rtc`, `rtc-dtls`, `rtc-srtp`, and `rtc-stun` carried a
   `compile_error!` rejecting the combination, which made an otherwise valid build fail whenever
   Cargo feature unification pulled in both. `rtc_crypto::default_provider()` still prefers `ring`

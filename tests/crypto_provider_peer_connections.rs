@@ -1,4 +1,4 @@
-#![cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#![cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 
 use std::net::SocketAddr;
 use std::sync::Arc;

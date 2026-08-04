@@ -1,6 +1,6 @@
 use rtc_crypto::{CryptoAlgorithm, CryptoError, RTCCrypto, RTCCryptoProvider, RTCRandom};
 
-#[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
 use rtc_crypto::default_provider;
 
 struct CustomProvider {
@@ -66,7 +66,7 @@ fn downstream_provider_requires_no_registration_or_backend_types() {
     }
 }
 
-#[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
 #[test]
 fn no_builtin_provider_is_a_normal_error() {
     assert!(matches!(

@@ -311,6 +311,7 @@ use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Builder for creating RTCPeerConnection instances.
@@ -1767,6 +1768,18 @@ where
     /// See [getConfiguration](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getconfiguration)
     pub fn get_configuration(&self) -> &RTCConfiguration {
         &self.configuration
+    }
+
+    /// Returns the crypto provider this peer connection resolved at construction.
+    ///
+    /// Construction is the single place in the workspace that resolves a default provider: it
+    /// uses the one configured through
+    /// [`SettingEngine::set_crypto_provider`](crate::peer_connection::configuration::setting_engine::SettingEngine::set_crypto_provider),
+    /// or the feature-selected built-in. Callers that build additional components around a peer
+    /// connection — an async wrapper's TURN client, for instance — take the provider from here
+    /// so the whole connection shares one, rather than resolving a second.
+    pub fn crypto_provider(&self) -> &Arc<dyn crypto::RTCCryptoProvider> {
+        &self.dtls_transport().crypto_provider
     }
 
     /// set_configuration updates the configuration of this PeerConnection object.

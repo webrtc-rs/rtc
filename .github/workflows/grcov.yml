@@ -26,13 +26,9 @@ jobs:
           - nightly
         crypto:
           - name: ring
-            features: rtc/ring
-            packages: --workspace
-            test_args: ""
+            features: crypto-ring
           - name: aws-lc-rs
-            features: aws-lc-rs
-            packages: --workspace
-            test_args: ""
+            features: crypto-aws-lc-rs
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -49,7 +45,7 @@ jobs:
           tool: grcov
 
       - name: Test
-        run: cargo test ${{ matrix.crypto.packages }} --no-fail-fast --no-default-features --features ${{ matrix.crypto.features }} ${{ matrix.crypto.test_args }}
+        run: cargo test --workspace --no-fail-fast --no-default-features --features ${{ matrix.crypto.features }}
         env:
           CARGO_INCREMENTAL: "0"
           RUSTFLAGS: "-Cinstrument-coverage"

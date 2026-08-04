@@ -1,14 +1,14 @@
-#![cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#![cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 
 use rtc_crypto::{RTCCryptoProvider, SignatureScheme};
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 #[test]
 fn ring_imports_and_uses_rsa_pkcs8() {
     assert_rsa_import(&rtc_crypto::providers::RingProvider::new());
 }
 
-#[cfg(feature = "aws-lc-rs")]
+#[cfg(feature = "crypto-aws-lc-rs")]
 #[test]
 fn aws_lc_rs_imports_and_uses_rsa_pkcs8() {
     assert_rsa_import(&rtc_crypto::providers::AwsLcRsProvider::new());

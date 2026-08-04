@@ -215,7 +215,7 @@ objects are built once. A `Setup/*` figure rising while `Encrypt/*` falls is the
 not a regression. Reporting only a combined number hides both directions.
 
 **Measure every enabled provider under identical inputs.** The benchmarks loop over the built-in
-providers, so `--features ring,aws-lc-rs` reports both side by side. This is what showed that
+providers, so `--features crypto-ring,crypto-aws-lc-rs` reports both side by side. This is what showed that
 `aws-lc-rs` was *worse* on DTLS encrypt while faster everywhere else, which localised the cause to
 the encrypt-only RNG call.
 
@@ -240,7 +240,7 @@ file and derive every count from that file.
 **zsh eats `:r` in a revision string.** `git show "$c:rtc-srtp/Cargo.toml"` parses `$c:r` as a
 history modifier and looks up `425494ctc-srtp/Cargo.toml`. Use `"${c}:path"`.
 
-**zsh does not word-split unquoted variables.** `F="--no-default-features --features ring"; cargo build $F` passes one bogus argument. This produced four false "failures" in a feature-matrix loop.
+**zsh does not word-split unquoted variables.** `F="--no-default-features --features crypto-ring"; cargo build $F` passes one bogus argument. This produced four false "failures" in a feature-matrix loop.
 Write the invocations out, or use an array.
 
 **Bisecting can misattribute.** An early bisect blamed the AES-CTR rewrite for a set of DTLS test

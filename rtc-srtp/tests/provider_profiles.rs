@@ -1,8 +1,8 @@
 use std::sync::Arc;
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 use crypto::{
     AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, HmacAlgorithm, StreamCipher,
     StreamCipherAlgorithm,
@@ -24,16 +24,16 @@ const PROFILES: [ProtectionProfile; 6] = [
 ];
 
 fn providers() -> Vec<Arc<dyn RTCCryptoProvider>> {
-    #[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     return vec![
         Arc::new(crypto::providers::RingProvider::new()),
         Arc::new(crypto::providers::AwsLcRsProvider::new()),
     ];
-    #[cfg(all(feature = "ring", not(feature = "aws-lc-rs")))]
+    #[cfg(all(feature = "crypto-ring", not(feature = "crypto-aws-lc-rs")))]
     return vec![Arc::new(crypto::providers::RingProvider::new())];
-    #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
+    #[cfg(all(not(feature = "crypto-ring"), feature = "crypto-aws-lc-rs"))]
     return vec![Arc::new(crypto::providers::AwsLcRsProvider::new())];
-    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
     Vec::new()
 }
 
@@ -244,7 +244,7 @@ fn aead_profiles_reject_wrong_aad_tag_rollover_and_replay() -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 #[test]
 fn providers_produce_identical_packets_and_interoperate() -> Result<()> {
     let ring: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
@@ -266,7 +266,7 @@ fn providers_produce_identical_packets_and_interoperate() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 struct CountingCrypto {
     inner: crypto::providers::RingCrypto,
     stream_constructions: AtomicUsize,
@@ -274,7 +274,7 @@ struct CountingCrypto {
     mac_constructions: AtomicUsize,
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 impl RTCCrypto for CountingCrypto {
     fn supports(&self, algorithm: CryptoAlgorithm) -> bool {
         self.inner.supports(algorithm)
@@ -317,13 +317,13 @@ impl RTCCrypto for CountingCrypto {
     }
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 struct CountingProvider {
     crypto: CountingCrypto,
     random: crypto::providers::RingRandom,
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 impl CountingProvider {
     fn new() -> Self {
         Self {
@@ -338,7 +338,7 @@ impl CountingProvider {
     }
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 impl RTCCryptoProvider for CountingProvider {
     fn name(&self) -> &'static str {
         "counting-ring"
@@ -353,7 +353,7 @@ impl RTCCryptoProvider for CountingProvider {
     }
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 #[test]
 fn keyed_ciphers_are_constructed_once_per_context_not_per_packet() -> Result<()> {
     let stream_provider = Arc::new(CountingProvider::new());

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#![cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 
 use rtc_crypto::providers::{AwsLcRsProvider, RingProvider};
 use rtc_crypto::{

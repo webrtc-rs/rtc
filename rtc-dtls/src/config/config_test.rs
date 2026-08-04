@@ -84,7 +84,7 @@ fn test_config_rejects_incomplete_provider() {
     assert!(matches!(result, Err(Error::ErrNoAvailableCipherSuites)));
 }
 
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 #[test]
 fn test_config_accepts_ring_provider() -> Result<()> {
     let handshake = ConfigBuilder::default()
@@ -95,7 +95,7 @@ fn test_config_accepts_ring_provider() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "aws-lc-rs")]
+#[cfg(feature = "crypto-aws-lc-rs")]
 #[test]
 fn test_config_accepts_aws_lc_rs_provider() -> Result<()> {
     let handshake = ConfigBuilder::default()

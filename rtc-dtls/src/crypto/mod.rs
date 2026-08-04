@@ -33,7 +33,7 @@ use crypto::{
     PublicKey, PublicKeyEncoding, RTCCryptoProvider, SignatureScheme as CryptoSignatureScheme,
     SigningKey,
 };
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 use rcgen::{CertifiedKey, KeyPair, generate_simple_self_signed};
 
 use crate::curve::named_curve::*;
@@ -67,7 +67,7 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     /// Generates a self-signed certificate, importing its key into `provider`.
     pub fn generate_self_signed(
         subject_alt_names: impl Into<Vec<String>>,
@@ -81,7 +81,7 @@ impl Certificate {
         })
     }
 
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     /// Generates a self-signed certificate with `alg`, importing its key into `provider`.
     pub fn generate_self_signed_with_alg(
         subject_alt_names: impl Into<Vec<String>>,
@@ -236,7 +236,7 @@ impl std::fmt::Debug for CryptoPrivateKey {
 
 impl CryptoPrivateKey {
     /// Imports an rcgen key pair into an explicit provider.
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     pub fn from_key_pair(key_pair: &KeyPair, provider: Arc<dyn RTCCryptoProvider>) -> Result<Self> {
         let serialized_der = key_pair.serialize_der();
         let scheme = if key_pair.is_compatible(&rcgen::PKCS_ED25519) {

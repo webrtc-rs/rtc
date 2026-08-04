@@ -12,9 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["ring"]
-ring = ["crypto/ring", "stun/ring"]
-aws-lc-rs = ["crypto/aws-lc-rs", "stun/aws-lc-rs"]
+default = ["crypto-ring"]
+crypto-ring = ["crypto/crypto-ring", "stun/crypto-ring"]
+crypto-aws-lc-rs = ["crypto/crypto-aws-lc-rs", "stun/crypto-aws-lc-rs"]
 metrics = []
 
 [dependencies]

@@ -769,7 +769,7 @@ impl rcgen::SigningKey for RcgenSigningKey {
     }
 }
 
-#[cfg(all(test, any(feature = "ring", feature = "aws-lc-rs")))]
+#[cfg(all(test, any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
 mod test {
     use super::*;
 
@@ -911,13 +911,13 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "crypto-ring")]
     #[test]
     fn ring_provider_generates_imports_and_fingerprints_certificates() -> Result<()> {
         provider_certificate_round_trip(Arc::new(crypto::providers::RingProvider::new()))
     }
 
-    #[cfg(feature = "aws-lc-rs")]
+    #[cfg(feature = "crypto-aws-lc-rs")]
     #[test]
     fn aws_provider_generates_imports_and_fingerprints_certificates() -> Result<()> {
         provider_certificate_round_trip(Arc::new(crypto::providers::AwsLcRsProvider::new()))

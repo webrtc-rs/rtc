@@ -13,9 +13,9 @@ categories.workspace = true
 readme = "README.md"
 
 [features]
-default = ["ring"]
-ring = ["dep:ring", "dep:aes", "dep:ctr", "dep:ccm", "dep:md-5", "dep:hmac", "dep:sha1"]
-aws-lc-rs = ["dep:aws-lc-rs", "dep:aes", "dep:ctr", "dep:ccm", "dep:md-5", "dep:hmac", "dep:sha1"]
+default = ["crypto-ring"]
+crypto-ring = ["dep:ring", "dep:aes", "dep:ctr", "dep:ccm", "dep:md-5", "dep:hmac", "dep:sha1"]
+crypto-aws-lc-rs = ["dep:aws-lc-rs", "dep:aes", "dep:ctr", "dep:ccm", "dep:md-5", "dep:hmac", "dep:sha1"]
 test-support = []
 
 [dependencies]
