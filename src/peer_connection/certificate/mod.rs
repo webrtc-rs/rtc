@@ -928,7 +928,9 @@ mod test {
     #[cfg(feature = "crypto-aws-lc-rs")]
     #[test]
     fn aws_provider_generates_imports_and_fingerprints_certificates() -> Result<()> {
-        provider_certificate_round_trip(Arc::new(crypto::providers::AwsLcRsProvider::new()))
+        provider_certificate_round_trip(
+            Arc::new(crypto::providers::AwsLcRsProvider::new()).crypto(),
+        )
     }
 
     fn provider_certificate_round_trip(crypto: &dyn RTCCrypto) -> Result<()> {

@@ -1,19 +1,20 @@
-use std::sync::Arc;
-
-use ring::aead;
-use ring::agreement;
-use ring::digest;
-use ring::hmac;
-use ring::rand::SystemRandom;
-use ring::signature::{self, KeyPair};
-
 use crate::common;
+use crate::common::check_tag_len;
 use crate::{
     ActiveKeyExchange, AeadAlgorithm, AeadCipher, BlockCipherAlgorithm, CbcAlgorithm, CbcCipher,
     CryptoAlgorithm, CryptoError, HashAlgorithm, HmacAlgorithm, KeyExchangeAlgorithm, Mac,
     PublicKey, PublicKeyEncoding, RTCCrypto, RTCCryptoProvider, RTCRandom, SecretVec,
     SignatureScheme, SigningKey, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
 };
+use ::hmac::Mac as RustCryptoMac;
+use ring::aead;
+use ring::agreement;
+use ring::digest;
+use ring::hmac;
+use ring::rand::SystemRandom;
+use ring::signature::{self, KeyPair};
+use sha1::Sha1;
+use std::sync::Arc;
 
 /// The built-in Ring provider bundle.
 #[derive(Default)]
@@ -119,7 +120,7 @@ impl RTCCrypto for RingCrypto {
             // ring's SHA-1 is a software implementation and measures 3.3x slower than
             // RustCrypto's; see common::RustCryptoHmacSha1. SHA-256 stays on ring, which uses
             // the hardware instructions.
-            HmacAlgorithm::Sha1 => Ok(Box::new(common::RustCryptoHmacSha1::new(key))),
+            HmacAlgorithm::Sha1 => Ok(Box::new(RustCryptoHmacSha1::new(key))),
             HmacAlgorithm::Sha256 => Ok(Box::new(RingHmac {
                 key: hmac::Key::new(hmac_algorithm(algorithm), key),
                 output_len: algorithm.output_len(),
@@ -547,5 +548,56 @@ fn verify_public_key_encoding(
         Ok(())
     } else {
         Err(CryptoError::InvalidPublicKey)
+    }
+}
+
+type HmacSha1 = ::hmac::Hmac<Sha1>;
+
+/// HMAC-SHA1 backed by RustCrypto, keyed once.
+///
+/// `ring` exposes SHA-1 only as `HMAC_SHA1_FOR_LEGACY_USE_ONLY` and does not use the ARMv8 SHA-1
+/// instructions, measuring 4469 ns against RustCrypto's 1373 ns over a 1212-byte SRTP packet —
+/// 3.3x, and the whole of the SRTP AES-CM/HMAC regression. The built-in providers are already
+/// composite (AES-CTR, CCM, CBC and MD5 come from RustCrypto too), so HMAC-SHA1 is composed the
+/// same way rather than making the slower backend the default. `aws-lc-rs` has fast SHA-1 and
+/// keeps its own.
+pub(crate) struct RustCryptoHmacSha1 {
+    keyed: HmacSha1,
+}
+
+impl RustCryptoHmacSha1 {
+    pub(crate) fn new(key: &[u8]) -> Self {
+        Self {
+            // HMAC accepts any key length: it hashes longer keys and zero-pads shorter ones.
+            keyed: <HmacSha1 as RustCryptoMac>::new_from_slice(key)
+                .expect("HMAC accepts keys of any length"),
+        }
+    }
+}
+
+impl Mac for RustCryptoHmacSha1 {
+    fn output_len(&self) -> usize {
+        20
+    }
+
+    fn sign(&mut self, input: &[&[u8]], output: &mut [u8]) -> Result<(), CryptoError> {
+        check_tag_len(20, output.len())?;
+        let mut mac = self.keyed.clone();
+        for part in input {
+            mac.update(part);
+        }
+        output.copy_from_slice(&mac.finalize().into_bytes());
+        Ok(())
+    }
+
+    fn verify(&mut self, input: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
+        check_tag_len(20, expected.len())?;
+        let mut actual = [0u8; 20];
+        self.sign(input, &mut actual)?;
+        if crate::constant_time_eq(&actual, expected) {
+            Ok(())
+        } else {
+            Err(CryptoError::AuthenticationFailed)
+        }
     }
 }
