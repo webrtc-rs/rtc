@@ -9,7 +9,7 @@ mod provider;
 mod secret;
 mod traits;
 
-#[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 mod common;
 pub mod providers;
 

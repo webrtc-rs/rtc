@@ -2,7 +2,7 @@
 
 ```bash
 cargo bench --package rtc-dtls --bench record_protection
-cargo bench --package rtc-dtls --bench record_protection --no-default-features --features aws-lc-rs
+cargo bench --package rtc-dtls --bench record_protection --no-default-features --features crypto-aws-lc-rs
 ```
 
 `Setup/*` constructs a cipher — provider dispatch, key import, key schedule, and (after G3) keying

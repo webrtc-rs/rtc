@@ -55,14 +55,14 @@ impl RustlsVerifierAdapter {
     }
 
     /// Uses rustls's ring verification backend.
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "crypto-ring")]
     #[must_use]
     pub fn ring() -> Self {
         Self::new(Arc::new(rustls::crypto::ring::default_provider()))
     }
 
     /// Uses rustls's AWS-LC-RS verification backend.
-    #[cfg(feature = "aws-lc-rs")]
+    #[cfg(feature = "crypto-aws-lc-rs")]
     #[must_use]
     pub fn aws_lc_rs() -> Self {
         Self::new(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
@@ -70,15 +70,15 @@ impl RustlsVerifierAdapter {
 }
 
 fn default_verifier_adapter() -> Option<RustlsVerifierAdapter> {
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "crypto-ring")]
     {
         Some(RustlsVerifierAdapter::ring())
     }
-    #[cfg(all(not(feature = "ring"), feature = "aws-lc-rs"))]
+    #[cfg(all(not(feature = "crypto-ring"), feature = "crypto-aws-lc-rs"))]
     {
         Some(RustlsVerifierAdapter::aws_lc_rs())
     }
-    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
     {
         None
     }
@@ -571,7 +571,7 @@ pub type VerifyPeerCertificateFn =
 
 /// Generates a self-signed certificate, as WebRTC endpoints use.
 pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
-    #[cfg(any(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     {
         let mut certs = rustls::RootCertStore::empty();
         certs
@@ -585,7 +585,7 @@ pub fn gen_self_signed_root_cert() -> rustls::RootCertStore {
             .unwrap();
         certs
     }
-    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    #[cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
     {
         rustls::RootCertStore::empty()
     }

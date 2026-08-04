@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [ ring, aws-lc-rs ]
+        backend: [ crypto-ring, crypto-aws-lc-rs ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -68,11 +68,11 @@ jobs:
           - name: default
             args: --features test-support
           - name: ring
-            args: --no-default-features --features ring,test-support
+            args: --no-default-features --features crypto-ring,test-support
           - name: aws-lc-rs
-            args: --no-default-features --features aws-lc-rs,test-support
+            args: --no-default-features --features crypto-aws-lc-rs,test-support
           - name: ring + aws-lc-rs
-            args: --no-default-features --features ring,aws-lc-rs,test-support
+            args: --no-default-features --features crypto-ring,crypto-aws-lc-rs,test-support
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -102,14 +102,14 @@ jobs:
           - name: default
             args: ""
           - name: ring only
-            args: --no-default-features --features ring
+            args: --no-default-features --features crypto-ring
           - name: aws-lc-rs only
-            args: --no-default-features --features aws-lc-rs
+            args: --no-default-features --features crypto-aws-lc-rs
           # Both backends in one graph. This was a `compile_error!` before G3; it is now the
           # regression guard for Cargo feature additivity, since feature unification can enable
           # both from unrelated dependencies.
           - name: ring + aws-lc-rs
-            args: --features ring,aws-lc-rs
+            args: --features crypto-ring,crypto-aws-lc-rs
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -130,7 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [ ring, aws-lc-rs ]
+        backend: [ crypto-ring, crypto-aws-lc-rs ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -166,12 +166,12 @@ fn benchmark_decrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
 fn providers() -> Vec<(&'static str, std::sync::Arc<dyn crypto::RTCCryptoProvider>)> {
     let mut providers: Vec<(&'static str, std::sync::Arc<dyn crypto::RTCCryptoProvider>)> =
         Vec::new();
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "crypto-ring")]
     providers.push((
         "ring",
         std::sync::Arc::new(crypto::providers::RingProvider::default()),
     ));
-    #[cfg(feature = "aws-lc-rs")]
+    #[cfg(feature = "crypto-aws-lc-rs")]
     providers.push((
         "aws-lc-rs",
         std::sync::Arc::new(crypto::providers::AwsLcRsProvider::default()),

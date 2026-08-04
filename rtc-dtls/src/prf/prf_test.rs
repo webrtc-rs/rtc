@@ -1,6 +1,6 @@
 use super::*;
 use crate::cipher_suite::CipherSuiteHash;
-#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 use crypto::RTCCryptoProvider;
 
 #[test]
@@ -24,7 +24,7 @@ fn test_pre_master_secret() -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 #[test]
 fn test_cross_provider_pre_master_secret() -> Result<()> {
     let ring = crypto::providers::RingProvider::new();

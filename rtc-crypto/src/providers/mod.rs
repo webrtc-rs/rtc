@@ -1,9 +1,9 @@
-#[cfg(feature = "aws-lc-rs")]
+#[cfg(feature = "crypto-aws-lc-rs")]
 mod aws_lc_rs;
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 mod ring;
 
-#[cfg(feature = "aws-lc-rs")]
+#[cfg(feature = "crypto-aws-lc-rs")]
 pub use aws_lc_rs::{AwsLcRsCrypto, AwsLcRsProvider, AwsLcRsRandom};
-#[cfg(feature = "ring")]
+#[cfg(feature = "crypto-ring")]
 pub use ring::{RingCrypto, RingProvider, RingRandom};

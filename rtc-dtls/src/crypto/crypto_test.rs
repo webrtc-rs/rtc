@@ -90,7 +90,7 @@ fn test_exported_signing_key_can_be_imported() -> Result<()> {
         .map_err(crypto_error)
 }
 
-#[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+#[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 #[test]
 fn test_cross_provider_signature_verification() -> Result<()> {
     let ring = crypto::providers::RingProvider::new();

@@ -432,7 +432,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "crypto-ring")]
     #[test]
     fn ring_provider_completes_handshake_and_record_exchange() -> Result<()> {
         let provider: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());
@@ -443,7 +443,7 @@ mod tests {
         )
     }
 
-    #[cfg(feature = "aws-lc-rs")]
+    #[cfg(feature = "crypto-aws-lc-rs")]
     #[test]
     fn aws_lc_rs_provider_completes_handshake_and_record_exchange() -> Result<()> {
         let provider: Arc<dyn RTCCryptoProvider> =
@@ -455,7 +455,7 @@ mod tests {
         )
     }
 
-    #[cfg(all(feature = "ring", feature = "aws-lc-rs"))]
+    #[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
     #[test]
     fn ring_and_aws_lc_rs_complete_cross_provider_handshakes() -> Result<()> {
         let ring: Arc<dyn RTCCryptoProvider> = Arc::new(crypto::providers::RingProvider::new());

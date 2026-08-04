@@ -4,7 +4,7 @@
 cargo bench --package rtc-srtp --bench bench
 ```
 
-Benchmarks run against every enabled built-in provider, so `--features ring,aws-lc-rs` reports
+Benchmarks run against every enabled built-in provider, so `--features crypto-ring,crypto-aws-lc-rs` reports
 both backends side by side under identical inputs.
 
 The groups are:
@@ -143,7 +143,7 @@ cd /tmp/rtc-baseline
 cargo bench --package rtc-srtp --bench bench -- --warm-up-time 2 --measurement-time 5
 
 # Both backends, identical inputs
-cargo bench --package rtc-srtp --bench bench --features ring,aws-lc-rs
+cargo bench --package rtc-srtp --bench bench --features crypto-ring,crypto-aws-lc-rs
 ```
 
 Cross-machine comparison is not meaningful. Earlier revisions of this file recorded results from a

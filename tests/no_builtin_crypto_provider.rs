@@ -1,4 +1,4 @@
-#![cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+#![cfg(not(any(feature = "crypto-ring", feature = "crypto-aws-lc-rs")))]
 
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 
