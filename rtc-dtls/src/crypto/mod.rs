@@ -101,8 +101,7 @@ impl Certificate {
         })
     }
 
-    /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
-    /// Parses a PEM certificate and imports its PKCS#8 key into `provider`.
+    /// Parses a PEM certificate and imports its PKCS#8 key into `crypto`.
     pub fn from_pem(pem_str: &str, crypto: &dyn RTCCrypto) -> Result<Self> {
         let mut pems = pem::parse_many(pem_str).map_err(|e| Error::InvalidPEM(e.to_string()))?;
         if pems.len() < 2 {

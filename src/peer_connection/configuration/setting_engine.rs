@@ -375,10 +375,7 @@ impl SettingEngine {
     /// The crypto provider configured on this engine, if any.
     ///
     /// `None` means no provider has been set, so building a peer connection will resolve the
-    /// feature-selected built-in. After
-    /// [`RTCPeerConnectionBuilder::build`](crate::peer_connection::RTCPeerConnectionBuilder::build)
-    /// this returns whichever provider that connection resolved, since construction records it
-    /// here.
+    /// feature-selected built-in.
     ///
     /// Callers assembling additional components around a peer connection — an async wrapper's
     /// TURN client, for instance — read the provider from here and pass it to

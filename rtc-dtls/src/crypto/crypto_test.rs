@@ -3,6 +3,7 @@ use super::*;
 use crate::content::ContentType;
 use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
 use crate::signature_hash_algorithm::HashAlgorithm;
+use crypto::RTCCryptoProvider;
 
 #[test]
 fn test_generate_key_signature() -> Result<()> {
