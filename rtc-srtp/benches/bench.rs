@@ -26,7 +26,7 @@ fn benchmark_encrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -70,7 +70,7 @@ fn benchmark_decrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -80,7 +80,7 @@ fn benchmark_decrypt_rtp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>) 
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -122,7 +122,7 @@ fn benchmark_encrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 
@@ -140,7 +140,7 @@ fn benchmark_decrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap()
     .encrypt_rtcp(RAW_RTCP)
@@ -152,7 +152,7 @@ fn benchmark_decrypt_rtcp_aes_128_cm_hmac_sha1(g: &mut BenchmarkGroup<WallTime>)
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap();
 

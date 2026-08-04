@@ -33,7 +33,7 @@ fn new_ctx() -> Context {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap()
 }
@@ -48,7 +48,7 @@ fn new_gcm_ctx() -> Context {
         ProtectionProfile::AeadAes128Gcm,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap()
 }
@@ -62,7 +62,7 @@ fn new_ctx_replay() -> Context {
         ProtectionProfile::Aes128CmHmacSha1_80,
         Some(srtp_replay_protection(128)),
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
     .unwrap()
 }

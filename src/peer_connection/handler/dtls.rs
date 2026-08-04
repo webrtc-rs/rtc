@@ -420,7 +420,7 @@ impl<'a> DtlsHandler<'a> {
             srtp_config.profile,
             srtp_config.local_rtp_options,
             srtp_config.local_rtcp_options,
-            crypto_provider.clone(),
+            crypto_provider.crypto(),
         )?;
 
         let remote_context = srtp::context::Context::new(
@@ -441,7 +441,7 @@ impl<'a> DtlsHandler<'a> {
             } else {
                 srtp_config.remote_rtcp_options
             },
-            crypto_provider.clone(),
+            crypto_provider.crypto(),
         )?;
 
         Ok((local_context, remote_context))

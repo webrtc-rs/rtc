@@ -76,19 +76,13 @@ impl RTCCryptoProvider for IncompleteProvider {
 fn explicit_incomplete_provider_returns_actionable_capability_error() {
     let profile = ProtectionProfile::Aes128CmHmacSha1_80;
     let (key, salt) = key_material(profile);
-    let error = Context::new(
-        &key,
-        &salt,
-        profile,
-        None,
-        None,
-        Arc::new(IncompleteProvider {
-            crypto: IncompleteCrypto,
-            random: IncompleteRandom,
-        }),
-    )
-    .err()
-    .expect("an incomplete provider must be rejected");
+    let provider = IncompleteProvider {
+        crypto: IncompleteCrypto,
+        random: IncompleteRandom,
+    };
+    let error = Context::new(&key, &salt, profile, None, None, provider.crypto())
+        .err()
+        .expect("an incomplete provider must be rejected");
     let message = error.to_string();
     assert!(message.contains("Aes128CmHmacSha1_80"));
     assert!(message.contains("BlockCipher(Aes128)"));
@@ -115,7 +109,7 @@ fn context(
         profile,
         replay.then(|| srtp_replay_protection(64)),
         replay.then(|| srtcp_replay_protection(64)),
-        provider,
+        provider.crypto(),
     )
 }
 

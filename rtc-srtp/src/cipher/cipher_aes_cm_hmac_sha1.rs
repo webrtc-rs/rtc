@@ -1,12 +1,10 @@
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, BytesMut};
 use crypto::{
-    HmacAlgorithm, Mac, RTCCryptoProvider, SecretVec, StreamCipher, StreamCipherAlgorithm,
-    constant_time_eq,
+    HmacAlgorithm, Mac, RTCCrypto, SecretVec, StreamCipher, StreamCipherAlgorithm, constant_time_eq,
 };
 use rtcp::header::{HEADER_LENGTH, SSRC_LENGTH};
 use shared::marshal::*;
-use std::sync::Arc;
 
 use super::{Cipher, Kdf, crypto_error};
 use crate::key_derivation::*;
@@ -23,7 +21,6 @@ pub(crate) struct CipherAesCmHmacSha1 {
     srtp_session_auth: Box<dyn Mac>,
     srtcp_session_salt: Vec<u8>,
     srtcp_session_auth: Box<dyn Mac>,
-    provider: Arc<dyn RTCCryptoProvider>,
     srtp_cipher: Box<dyn StreamCipher>,
     srtcp_cipher: Box<dyn StreamCipher>,
 }
@@ -33,7 +30,7 @@ impl CipherAesCmHmacSha1 {
         profile: ProtectionProfile,
         master_key: &[u8],
         master_salt: &[u8],
-        provider: Arc<dyn RTCCryptoProvider>,
+        crypto: &dyn RTCCrypto,
     ) -> Result<Self> {
         let (kdf, algorithm): (Kdf, StreamCipherAlgorithm) = match profile {
             ProtectionProfile::Aes128CmHmacSha1_32 | ProtectionProfile::Aes128CmHmacSha1_80 => {
@@ -49,7 +46,7 @@ impl CipherAesCmHmacSha1 {
             }
         };
         let srtp_session_key = SecretVec::new(kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTP_ENCRYPTION,
             master_key,
             master_salt,
@@ -57,7 +54,7 @@ impl CipherAesCmHmacSha1 {
             master_key.len(),
         )?);
         let srtcp_session_key = SecretVec::new(kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTCP_ENCRYPTION,
             master_key,
             master_salt,
@@ -65,16 +62,14 @@ impl CipherAesCmHmacSha1 {
             master_key.len(),
         )?);
 
-        let srtp_cipher = provider
-            .crypto()
+        let srtp_cipher = crypto
             .new_stream_cipher(algorithm, srtp_session_key.as_ref())
             .map_err(crypto_error)?;
-        let srtcp_cipher = provider
-            .crypto()
+        let srtcp_cipher = crypto
             .new_stream_cipher(algorithm, srtcp_session_key.as_ref())
             .map_err(crypto_error)?;
         let srtp_session_salt = kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTP_SALT,
             master_key,
             master_salt,
@@ -82,7 +77,7 @@ impl CipherAesCmHmacSha1 {
             master_salt.len(),
         )?;
         let srtcp_session_salt = kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTCP_SALT,
             master_key,
             master_salt,
@@ -91,7 +86,7 @@ impl CipherAesCmHmacSha1 {
         )?;
         let auth_key_len = profile.auth_key_len();
         let srtp_session_auth = SecretVec::new(kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTP_AUTHENTICATION_TAG,
             master_key,
             master_salt,
@@ -99,7 +94,7 @@ impl CipherAesCmHmacSha1 {
             auth_key_len,
         )?);
         let srtcp_session_auth = SecretVec::new(kdf(
-            provider.crypto(),
+            crypto,
             LABEL_SRTCP_AUTHENTICATION_TAG,
             master_key,
             master_salt,
@@ -109,12 +104,10 @@ impl CipherAesCmHmacSha1 {
 
         // Key the MACs once per context. Everything above is per-context setup; the auth tag on
         // each packet then costs only the message pass.
-        let srtp_session_auth = provider
-            .crypto()
+        let srtp_session_auth = crypto
             .new_hmac(HmacAlgorithm::Sha1, srtp_session_auth.as_ref())
             .map_err(crypto_error)?;
-        let srtcp_session_auth = provider
-            .crypto()
+        let srtcp_session_auth = crypto
             .new_hmac(HmacAlgorithm::Sha1, srtcp_session_auth.as_ref())
             .map_err(crypto_error)?;
 
@@ -124,7 +117,6 @@ impl CipherAesCmHmacSha1 {
             srtp_session_auth,
             srtcp_session_salt,
             srtcp_session_auth,
-            provider,
             srtp_cipher,
             srtcp_cipher,
         })

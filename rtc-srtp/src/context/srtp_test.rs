@@ -78,7 +78,7 @@ fn build_test_context() -> Result<Context> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )
 }
 
@@ -99,7 +99,7 @@ fn test_rtp_invalid_auth() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     for test_case in &*RTP_TEST_CASES {

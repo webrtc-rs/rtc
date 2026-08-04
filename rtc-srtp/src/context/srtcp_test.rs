@@ -107,7 +107,7 @@ fn test_rtcp_lifecycle() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
     let mut decrypt_context = Context::new(
         &RTCP_TEST_MASTER_KEY,
@@ -115,7 +115,7 @@ fn test_rtcp_lifecycle() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     for test_case in &*RTCP_TEST_CASES {
@@ -146,7 +146,7 @@ fn test_rtcp_invalid_auth_tag() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let decrypt_result = decrypt_context.decrypt_rtcp(&RTCP_TEST_CASES[0].encrypted)?;
@@ -178,7 +178,7 @@ fn test_rtcp_replay_detector_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         Some(srtcp_replay_protection(10)),
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let rtcp_packet1 = RTCP_TEST_CASES[0].encrypted.clone();
@@ -225,7 +225,7 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let auth_tag_len = ProtectionProfile::Aes128CmHmacSha1_80.rtcp_auth_tag_len();
@@ -236,7 +236,7 @@ fn test_encrypt_rtcp_separation() -> Result<()> {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         Some(srtcp_replay_protection(10)),
-        test_crypto_provider(),
+        test_crypto_provider().crypto(),
     )?;
 
     let inputs = vec![
@@ -295,7 +295,7 @@ fn test_rtcp_short_packet_errors() -> Result<()> {
             profile,
             None,
             None,
-            test_crypto_provider(),
+            test_crypto_provider().crypto(),
         )?;
 
         // Slices of a real packet (its first 4 bytes are a valid RTCP header, so
