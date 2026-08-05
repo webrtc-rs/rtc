@@ -1,6 +1,5 @@
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
 use crate::peer_connection::event::RTCEventInternal;
-use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -352,15 +351,16 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
     fn poll_timeout(&mut self) -> Option<Instant> {
         if let Some(dtls_endpoint) = self.ctx.dtls_transport.dtls_endpoint.as_ref() {
-            let max_eto = Instant::now() + DEFAULT_TIMEOUT_DURATION;
-            let mut eto = max_eto;
+            let mut eto = None;
 
             let remotes = dtls_endpoint.get_connections_keys();
             for remote in remotes {
-                let _ = dtls_endpoint.poll_timeout(*remote, &mut eto);
+                if let Some(timeout) = dtls_endpoint.poll_timeout(remote) {
+                    eto = Some(eto.map_or(timeout, |e: Instant| e.min(timeout)));
+                }
             }
 
-            if eto != max_eto { Some(eto) } else { None }
+            eto
         } else {
             None
         }
