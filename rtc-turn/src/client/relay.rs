@@ -479,6 +479,7 @@ impl Relay<'_> {
 
     pub(super) fn handle_channel_bind_response(
         &mut self,
+        now: Instant,
         res: Message,
         bind_addr: SocketAddr,
     ) -> Result<()> {
@@ -510,7 +511,7 @@ impl Relay<'_> {
                 // keep going...
                 warn!("bind() failed: {}", err);
             } else if let Some(b) = self.client.binding_mgr.get_by_addr(&bind_addr) {
-                b.set_refreshed_at(Instant::now());
+                b.set_refreshed_at(now);
                 b.set_state(BindingState::Ready);
                 debug!("channel binding successful: {}", bind_addr);
             }

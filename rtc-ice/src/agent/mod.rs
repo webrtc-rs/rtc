@@ -707,7 +707,7 @@ impl Agent {
             }
         }
 
-        self.contact_candidates();
+        self.contact_candidates(now);
 
         self.last_connection_state = self.connection_state;
         self.last_checking_time = now;
@@ -757,7 +757,7 @@ impl Agent {
         }
     }
 
-    pub(crate) fn ping_all_candidates(&mut self) {
+    pub(crate) fn ping_all_candidates(&mut self, now: Instant) {
         let mut pairs: Vec<(usize, usize)> = vec![];
 
         let name = self.get_name().to_string();
@@ -800,7 +800,7 @@ impl Agent {
         }
 
         for (local, remote) in pairs {
-            self.ping_candidate(local, remote);
+            self.ping_candidate(now, local, remote);
         }
     }
 
@@ -826,15 +826,20 @@ impl Agent {
 
     /// Checks if the selected pair is (still) valid.
     /// Note: the caller should hold the agent lock.
-    pub(crate) fn validate_selected_pair(&mut self) -> bool {
+    /// Re-evaluates the selected pair's liveness as of `now`.
+    ///
+    /// `now` comes from the caller so that this decision and the keepalive decision below are
+    /// made against the same instant as the `contact(now)` that reached them.
+    pub(crate) fn validate_selected_pair(&mut self, now: Instant) -> bool {
         let (valid, disconnected_time) = {
             self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |&pair_index| {
                     let remote_index = self.candidate_pairs[pair_index].remote_index;
 
-                    let disconnected_time = Instant::now()
-                        .duration_since(self.remote_candidates[remote_index].last_received());
+                    let disconnected_time = now.saturating_duration_since(
+                        self.remote_candidates[remote_index].last_received(),
+                    );
                     (true, disconnected_time)
                 },
             )
@@ -865,7 +870,7 @@ impl Agent {
 
     /// Sends STUN Binding Requests to the selected pair at `keepalive_interval` to
     /// maintain consent freshness (RFC 7675).
-    pub(crate) fn check_keepalive(&mut self) {
+    pub(crate) fn check_keepalive(&mut self, now: Instant) {
         let (local_index, remote_index, pair_index) = {
             self.selected_pair
                 .as_ref()
@@ -878,11 +883,11 @@ impl Agent {
         if let (Some(local_index), Some(remote_index), Some(pair_index)) =
             (local_index, remote_index, pair_index)
             && self.keepalive_interval != Duration::from_secs(0)
-            && self.last_consent_sent.elapsed() >= self.keepalive_interval
+            && now.saturating_duration_since(self.last_consent_sent) >= self.keepalive_interval
         {
-            self.last_consent_sent = Instant::now();
+            self.last_consent_sent = now;
             self.candidate_pairs[pair_index].on_consent_request_sent();
-            self.ping_candidate(local_index, remote_index);
+            self.ping_candidate(now, local_index, remote_index);
         }
     }
 
@@ -955,6 +960,7 @@ impl Agent {
 
     pub(crate) fn send_binding_request(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -966,10 +972,10 @@ impl Agent {
             self.remote_candidates[remote_index],
         );
 
-        self.invalidate_pending_binding_requests(Instant::now());
+        self.invalidate_pending_binding_requests(now);
 
         self.pending_binding_requests.push(BindingRequest {
-            timestamp: Instant::now(),
+            timestamp: now,
             transaction_id: m.transaction_id,
             destination: self.remote_candidates[remote_index].addr(),
             is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
@@ -1131,9 +1137,10 @@ impl Agent {
     /// destination, If the bindingRequest was valid remove it from our pending cache.
     pub(crate) fn handle_inbound_binding_success(
         &mut self,
+        now: Instant,
         id: TransactionId,
     ) -> Option<BindingRequest> {
-        self.invalidate_pending_binding_requests(Instant::now());
+        self.invalidate_pending_binding_requests(now);
 
         let pending_binding_requests = &mut self.pending_binding_requests;
         for i in 0..pending_binding_requests.len() {
@@ -1368,7 +1375,7 @@ impl Agent {
             );
 
             if let Some(remote_index) = &remote_candidate_index {
-                self.handle_binding_request(m, local_index, *remote_index);
+                self.handle_binding_request(now, m, local_index, *remote_index);
             }
         }
 

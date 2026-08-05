@@ -207,7 +207,7 @@ impl Client {
     // Caller should check if the packet was handled by this client or not.
     // If not handled, it is assumed that the packet is application data.
     // If an error is returned, the caller should discard the packet regardless.
-    fn handle_inbound(&mut self, data: &[u8], from: SocketAddr) -> Result<()> {
+    fn handle_inbound(&mut self, now: Instant, data: &[u8], from: SocketAddr) -> Result<()> {
         // +-------------------+-------------------------------+
         // |   Return Values   |                               |
         // +-------------------+       Meaning / Action        |
@@ -227,7 +227,7 @@ impl Client {
         //  - Non-STUN message from the STUN server
 
         if is_stun_message(data) {
-            self.handle_stun_message(data)
+            self.handle_stun_message(now, data)
         } else if ChannelData::is_channel_data(data) {
             self.handle_channel_data(data)
         } else if self.stun_serv_addr.is_some() && &from == self.stun_serv_addr.as_ref().unwrap() {
@@ -240,7 +240,7 @@ impl Client {
         }
     }
 
-    fn handle_stun_message(&mut self, data: &[u8]) -> Result<()> {
+    fn handle_stun_message(&mut self, now: Instant, data: &[u8]) -> Result<()> {
         let mut msg = Message::new();
         msg.raw = data.to_vec();
         msg.decode()?;
@@ -344,7 +344,7 @@ impl Client {
                             relayed_addr,
                             client: self,
                         };
-                        relay.handle_channel_bind_response(msg, bind_addr)?;
+                        relay.handle_channel_bind_response(now, msg, bind_addr)?;
                     }
                 }
                 _ => {}

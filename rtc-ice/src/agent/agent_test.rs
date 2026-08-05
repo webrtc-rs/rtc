@@ -2559,25 +2559,37 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
     a.local_candidates[0].seen(true);
     a.remote_candidates[0].seen(false);
 
+    // Virtual time: the agent is told the instant, so nothing here sleeps or samples a clock.
+    let base = Instant::now();
+    let keepalive_interval = a.keepalive_interval;
+
     // Pretend the last consent ping was long ago such that the interval has elapsed
-    a.last_consent_sent = Instant::now() - Duration::from_secs(10);
+    a.last_consent_sent = base - Duration::from_secs(10);
 
     // Drain any events/writes from setup
     a.write_outs.clear();
 
     // First call should send a consent ping immediately
-    a.check_keepalive();
+    a.check_keepalive(base);
     assert!(
         !a.write_outs.is_empty(),
         "check_keepalive must send a STUN ping even when media timestamps are fresh"
     );
 
-    // Drain and call again; interval hasn't elapsed, so no second ping
+    // Drain and call again at the *same* instant; the interval has not elapsed, so no second ping.
+    // Before clock injection this relied on the wall clock not advancing between two calls.
     a.write_outs.clear();
-    a.check_keepalive();
+    a.check_keepalive(base);
     assert!(
         a.write_outs.is_empty(),
         "check_keepalive must not send again before keepalive_interval elapses"
+    );
+
+    // Advance virtual time past the interval: the next ping goes out, instantly and reproducibly.
+    a.check_keepalive(base + keepalive_interval + Duration::from_millis(1));
+    assert!(
+        !a.write_outs.is_empty(),
+        "check_keepalive must send again once keepalive_interval has elapsed"
     );
 
     a.close()?;

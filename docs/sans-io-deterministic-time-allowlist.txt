@@ -34,10 +34,10 @@ rtc-rtp/src/packetizer/mod.rs:2:1 permanent (NTP/RTP wall-clock baseline) + 1 aw
 # Target end state: this section is empty.
 
 rtc-dtls/src/endpoint.rs:4:awaiting clock injection
-rtc-dtls/src/handshaker.rs:2:awaiting clock injection
-rtc-ice/src/agent/agent_selector.rs:5:awaiting clock injection
+rtc-dtls/src/handshaker.rs:1:awaiting clock injection
+rtc-ice/src/agent/agent_selector.rs:1:awaiting clock injection
 rtc-ice/src/agent/agent_stats.rs:11:awaiting clock injection
-rtc-ice/src/agent/mod.rs:12:awaiting clock injection
+rtc-ice/src/agent/mod.rs:6:awaiting clock injection
 rtc-ice/src/candidate/mod.rs:3:awaiting clock injection
 rtc-interceptor/src/nack/generator.rs:1:awaiting clock injection
 rtc-interceptor/src/report/receiver.rs:1:awaiting clock injection
@@ -49,7 +49,7 @@ rtc-sctp/src/queue/reassembly_queue.rs:1:awaiting clock injection
 rtc-stun/src/client.rs:4:awaiting clock injection
 rtc-turn/src/client/binding.rs:1:awaiting clock injection
 rtc-turn/src/client/mod.rs:1:awaiting clock injection
-rtc-turn/src/client/relay.rs:4:awaiting clock injection
+rtc-turn/src/client/relay.rs:3:awaiting clock injection
 rtc-turn/src/client/transaction.rs:1:awaiting clock injection
 src/peer_connection/handler/datachannel.rs:5:awaiting clock injection
 src/peer_connection/handler/mod.rs:1:awaiting clock injection

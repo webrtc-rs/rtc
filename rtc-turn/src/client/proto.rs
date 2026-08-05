@@ -13,7 +13,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedBytesMut, ()> for Client {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        self.handle_inbound(&msg.message[..], msg.transport.peer_addr)
+        self.handle_inbound(msg.now, &msg.message[..], msg.transport.peer_addr)
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {

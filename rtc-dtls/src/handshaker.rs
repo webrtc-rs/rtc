@@ -248,7 +248,7 @@ impl DTLSConn {
         Ok(HandshakeState::Finished)
     }
 
-    pub(crate) fn handshake_timeout(&mut self, _now: Instant) -> Result<()> {
+    pub(crate) fn handshake_timeout(&mut self, now: Instant) -> Result<()> {
         let next_handshake_state = if self.current_handshake_state == HandshakeState::Waiting {
             debug!(
                 "[handshake:{}] {} retransmit_timer",
@@ -271,7 +271,7 @@ impl DTLSConn {
                 }
             } else {
                 self.current_retransmit_timer =
-                    Some(Instant::now() + self.handshake_config.retransmit_interval);
+                    Some(now + self.handshake_config.retransmit_interval);
                 Some(HandshakeState::Waiting)
             }
         } else if self.current_handshake_state == HandshakeState::Finished {
