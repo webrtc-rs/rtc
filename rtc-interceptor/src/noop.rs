@@ -1,7 +1,7 @@
 //! NoOp Interceptor - A pass-through terminal for interceptor chains.
 
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::{Interceptor, TaggedPacket};
 use shared::error::Error;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -57,11 +57,7 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(_) = &msg.message {
-            self.read_queue.push_back(msg);
-        }
-        // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-        // just add a new interceptor to forward it by using self.interceptor.poll_read()
+        self.read_queue.push_back(msg);
         Ok(())
     }
 
@@ -137,9 +133,11 @@ mod tests {
         let pkt1 = dummy_rtp_packet();
         let pkt1_message = pkt1.message.clone();
         let pkt2 = dummy_rtcp_packet();
+        let pkt2_message = pkt2.message.clone();
         noop.handle_read(pkt1).unwrap();
         noop.handle_read(pkt2).unwrap();
         assert_eq!(noop.poll_read().unwrap().message, pkt1_message);
+        assert_eq!(noop.poll_read().unwrap().message, pkt2_message);
         assert!(noop.poll_read().is_none());
 
         // Test write
@@ -152,6 +150,40 @@ mod tests {
         assert_eq!(noop.poll_write().unwrap().message, pkt3_message);
         assert_eq!(noop.poll_write().unwrap().message, pkt4_message);
         assert!(noop.poll_write().is_none());
+    }
+
+    /// RTCP feedback about a stream we are *sending* — PLI, FIR, Receiver Reports —
+    /// arrives on the read path and has to survive the whole chain, or a sender never
+    /// learns that the remote peer wants a keyframe.
+    #[test]
+    fn test_inbound_rtcp_survives_a_full_chain() {
+        let mut chain = crate::Registry::new()
+            .with(crate::NackGeneratorBuilder::new().build())
+            .with(crate::NackResponderBuilder::new().build())
+            .with(crate::SenderReportBuilder::new().build())
+            .with(crate::ReceiverReportBuilder::new().build())
+            .build();
+
+        let pli = TaggedPacket {
+            now: Instant::now(),
+            transport: Default::default(),
+            message: crate::Packet::Rtcp(vec![Box::new(
+                rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
+                    sender_ssrc: 1,
+                    media_ssrc: 0xDEAD_BEEF,
+                },
+            )]),
+        };
+
+        chain.handle_read(pli).unwrap();
+
+        assert!(
+            matches!(
+                chain.poll_read().map(|p| p.message),
+                Some(crate::Packet::Rtcp(_))
+            ),
+            "inbound PLI must reach the application"
+        );
     }
 
     #[test]
