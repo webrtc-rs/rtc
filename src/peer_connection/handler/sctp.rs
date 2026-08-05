@@ -1,7 +1,6 @@
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -544,18 +543,15 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn poll_timeout(&mut self) -> Option<Instant> {
-        let max_eto = Instant::now() + DEFAULT_TIMEOUT_DURATION;
-        let mut eto = max_eto;
+        let mut eto = None;
 
         for conn in self.ctx.sctp_transport.sctp_associations.values() {
-            if let Some(timeout) = conn.poll_timeout()
-                && timeout < eto
-            {
-                eto = timeout;
+            if let Some(timeout) = conn.poll_timeout() {
+                eto = Some(eto.map_or(timeout, |e: Instant| e.min(timeout)));
             }
         }
 
-        if eto != max_eto { Some(eto) } else { None }
+        eto
     }
 
     fn close(&mut self) -> Result<()> {

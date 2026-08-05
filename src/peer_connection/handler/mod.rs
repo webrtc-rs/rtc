@@ -34,9 +34,7 @@ use log::warn;
 use shared::TaggedBytesMut;
 use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-
-pub(crate) const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day duration
+use std::time::Instant;
 
 /// Forward handler list - invokes callback with handler list
 macro_rules! forward_handlers {

@@ -278,16 +278,11 @@ impl Endpoint {
     }
 
     /// When `remote`'s association next needs [`Self::handle_timeout`].
-    pub fn poll_timeout(&self, remote: SocketAddr, eto: &mut Instant) -> Result<()> {
-        if let Some(conn) = self.connections.get(&remote) {
-            if let Some(current_retransmit_timer) = &conn.current_retransmit_timer
-                && *current_retransmit_timer < *eto
-            {
-                *eto = *current_retransmit_timer;
-            }
-            Ok(())
+    pub fn poll_timeout(&self, remote: &SocketAddr) -> Option<Instant> {
+        if let Some(conn) = self.connections.get(remote) {
+            conn.current_retransmit_timer
         } else {
-            Err(Error::InvalidRemoteAddress(remote))
+            None
         }
     }
 }
