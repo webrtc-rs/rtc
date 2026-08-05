@@ -801,7 +801,7 @@ fn deencapsulate_rtx(
 }
 
 #[cfg(test)]
-mod rtx_tests {
+mod rtx_test {
     use super::{
         EndpointHandler, EndpointHandlerContext, Instant, Packet, RTCMessageInternal,
         RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpTransceiverInternal, RTPMessage,

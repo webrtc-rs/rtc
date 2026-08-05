@@ -454,7 +454,7 @@ impl<P: Interceptor + ?Sized> Interceptor for &mut P {
 }
 
 #[cfg(test)]
-mod derive_tests {
+mod derive_test {
     use super::*;
     #[allow(unused_imports)]
     use shared::error::Error;

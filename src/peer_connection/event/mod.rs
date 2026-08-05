@@ -149,6 +149,7 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use srtp::context::Context;
+use std::time::Instant;
 
 pub(crate) mod data_channel_event;
 pub(crate) mod ice_error_event;
@@ -574,4 +575,9 @@ pub(crate) enum RTCEventInternal {
         u16,   /*StreamID*/
         usize, /*n_bytes*/
     ),
+}
+
+pub(crate) struct TaggedRTCEventInternal {
+    pub(crate) now: Instant,
+    pub(crate) event: RTCEventInternal,
 }

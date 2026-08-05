@@ -1155,7 +1155,7 @@ impl MediaEngine {
 }
 
 #[cfg(test)]
-mod default_fec_codec_tests {
+mod default_fec_codec_test {
     use super::*;
 
     // Issue #837: the default media engine must not offer ULPFEC. The receive path does
@@ -1210,7 +1210,7 @@ mod default_fec_codec_tests {
 }
 
 #[cfg(test)]
-mod default_rtx_codec_tests {
+mod default_rtx_codec_test {
     use super::*;
     use crate::rtp_transceiver::rtp_sender::rtp_codec::{find_rtx_payload_type, parse_rtx_apt};
 
