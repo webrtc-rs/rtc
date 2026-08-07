@@ -45,6 +45,13 @@ pub(crate) const DEFAULT_NAMED_CURVE: NamedCurve = NamedCurve::X25519;
 pub(crate) const INBOUND_BUFFER_SIZE: usize = 8192;
 // Default replay protection window is specified by RFC 6347 Section 4.1.2.6
 pub(crate) const DEFAULT_REPLAY_PROTECTION_WINDOW: usize = 64;
+/// How many times a handshake flight may be retransmitted before the handshake fails.
+///
+/// Zero means "no retries at all": the first firing of the retransmit timer ends the handshake,
+/// so any reply slower than one `retransmit_interval` is fatal. That is almost never what a
+/// caller wants, and it is what `ConfigBuilder::build` accidentally used between P7 and this
+/// constant being introduced.
+pub(crate) const DEFAULT_MAXIMUM_RETRANSMIT_NUMBER: usize = 7;
 
 pub(crate) static INVALID_KEYING_LABELS: &[&str] = &[
     "client finished",

@@ -17,7 +17,9 @@
 mod config_test;
 
 use crate::cipher_suite::*;
-use crate::conn::{DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL};
+use crate::conn::{
+    DEFAULT_MAXIMUM_RETRANSMIT_NUMBER, DEFAULT_REPLAY_PROTECTION_WINDOW, INITIAL_TICKER_INTERVAL,
+};
 use crate::crypto::*;
 use crate::curve::named_curve::NamedCurve;
 use crate::extension::extension_use_srtp::SrtpProtectionProfile;
@@ -477,6 +479,17 @@ impl ConfigBuilder {
 
         let maximum_transmission_unit = if self.mtu == 0 { DEFAULT_MTU } else { self.mtu };
 
+        // `..Default::default()` used to supply this; when P7 replaced that with an explicit
+        // field list it wrote `0`, which means *no retransmits are permitted at all*. The very
+        // first firing of the retransmit timer then takes the handshake straight to `Errored`
+        // (see `handshaker::handshake_timeout`), so a single reply arriving later than one
+        // `retransmit_interval` kills the handshake instead of being retried.
+        //
+        // That is exactly what a loaded CI machine produces: under `-Cinstrument-coverage` on a
+        // two-vCPU runner, a round trip between two in-process peers can easily exceed the 1 s
+        // interval, and the connection dies with the misleading `ErrInvalidFsmTransition`.
+        let maximum_retransmit_number = DEFAULT_MAXIMUM_RETRANSMIT_NUMBER;
+
         let replay_protection_window = if self.replay_protection_window == 0 {
             DEFAULT_REPLAY_PROTECTION_WINDOW
         } else {
@@ -556,7 +569,7 @@ impl ConfigBuilder {
             retransmit_interval,
             initial_epoch: 0,
             maximum_transmission_unit,
-            maximum_retransmit_number: 0,
+            maximum_retransmit_number,
             replay_protection_window,
         })
     }
@@ -674,7 +687,7 @@ impl HandshakeConfig {
             retransmit_interval: std::time::Duration::from_secs(0),
             initial_epoch: 0,
             maximum_transmission_unit: DEFAULT_MTU,
-            maximum_retransmit_number: 7,
+            maximum_retransmit_number: DEFAULT_MAXIMUM_RETRANSMIT_NUMBER,
             replay_protection_window: DEFAULT_REPLAY_PROTECTION_WINDOW,
         }
     }

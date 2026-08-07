@@ -264,6 +264,13 @@ impl DTLSConn {
             if self.retransmit {
                 self.current_retransmit_count += 1;
                 if self.current_retransmit_count > self.maximum_retransmit_number {
+                    warn!(
+                        "[handshake:{}] {} current_retransmit_count {} > maximum_retransmit_number {}, HandshakeState::Errored",
+                        srv_cli_str(self.state.is_client),
+                        self.current_flight,
+                        self.current_retransmit_count,
+                        self.maximum_retransmit_number,
+                    );
                     Some(HandshakeState::Errored)
                 } else {
                     Some(HandshakeState::Sending)

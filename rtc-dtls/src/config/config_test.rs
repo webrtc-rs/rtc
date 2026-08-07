@@ -105,3 +105,31 @@ fn test_config_accepts_aws_lc_rs_provider() -> Result<()> {
     assert_eq!(handshake.provider().name(), "aws-lc-rs");
     Ok(())
 }
+
+/// A built handshake config must permit retransmissions.
+///
+/// `maximum_retransmit_number: 0` means the *first* firing of the retransmit timer takes the
+/// handshake straight to `HandshakeState::Errored`, which surfaces as the thoroughly misleading
+/// `ErrInvalidFsmTransition` — so a single reply slower than one `retransmit_interval` kills the
+/// connection instead of being retried. `ConfigBuilder::build` shipped exactly that between P7
+/// (which replaced `..Default::default()` with an explicit field list) and the fix, and it only
+/// showed up as flaky DTLS failures on loaded CI machines.
+#[test]
+fn test_config_build_permits_retransmissions() -> Result<()> {
+    let handshake = ConfigBuilder::default()
+        .with_crypto_provider(crypto::default_provider().map_err(crypto_error)?)
+        .build(true, None)?;
+
+    assert!(
+        handshake.maximum_retransmit_number > 0,
+        "a handshake that cannot retransmit fails on the first slow reply"
+    );
+    assert_eq!(
+        handshake.maximum_retransmit_number,
+        HandshakeConfig::new(crypto::default_provider().map_err(crypto_error)?)
+            .maximum_retransmit_number,
+        "the builder must agree with `HandshakeConfig::new`, which it silently diverged from"
+    );
+
+    Ok(())
+}
