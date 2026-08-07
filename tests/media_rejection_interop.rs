@@ -113,7 +113,7 @@ fn create_rtc_peer_config_video_only()
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     Ok(pc)
 }
@@ -178,12 +178,12 @@ async fn test_video_only_webrtc_offerer_rtc_answerer() -> Result<()> {
     // Set remote description (offer) on RTC - use offer without candidates (trickle ICE)
     let offer_sdp = offer.sdp.clone();
     let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_sdp)?;
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
     log::info!("RTC set remote description (offer with video)");
 
     // Create and set answer
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("RTC created answer");
 
     // Set answer on webrtc
@@ -466,7 +466,7 @@ a=ssrc:22222 cname:test
 
     // Set remote description (offer with video + audio)
     let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_sdp.to_string())?;
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add a dummy local candidate
     let socket = UdpSocket::bind("127.0.0.1:0").await?;

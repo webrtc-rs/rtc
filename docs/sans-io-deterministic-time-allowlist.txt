@@ -15,41 +15,24 @@
 # category is a real-world observation rather than a protocol decision.
 
 rtc-dtls/src/handshake/handshake_random.rs:1:gmt_unix_time, RFC 5246 s7.4.1.2
-rtc-media/src/io/sample_builder/mod.rs:1:NTP/RTP wall-clock baseline
-rtc-media/src/lib.rs:1:NTP/RTP wall-clock baseline
 rtc-sdp/src/description/session.rs:1:SDP session version, RFC 4566 s5.2
 rtc-shared/src/serde.rs:4:Instant <-> epoch conversion anchor
-rtc-shared/src/time.rs:2:SystemInstant's own construction
+rtc-shared/src/time.rs:1:SystemInstant's own construction
 src/peer_connection/certificate/mod.rs:1:X.509 validity window
 src/peer_connection/configuration/mod.rs:1:X.509 expiry check, W3C constructor step 3
 src/peer_connection/transport/dtls/mod.rs:1:X.509 validity window
 
 # --- Mixed: a permanent read sharing a file with one that migrates -----------------
 
-rtc-interceptor/src/report/sender_stream.rs:2:1 permanent (NTP/RTP wall-clock baseline) + 1 awaiting injection
-rtc-rtp/src/packetizer/mod.rs:2:1 permanent (NTP/RTP wall-clock baseline) + 1 awaiting injection
 
 # --- Temporary: awaiting migration -------------------------------------------------
 # Each phase deletes lines from here. See sans-io-deterministic-time-work-plan.md.
 # Target end state: this section is empty.
 
-rtc-dtls/src/endpoint.rs:4:awaiting clock injection
+rtc-dtls/src/endpoint.rs:3:awaiting clock injection
 rtc-dtls/src/handshaker.rs:1:awaiting clock injection
-rtc-ice/src/agent/agent_selector.rs:1:awaiting clock injection
 rtc-ice/src/agent/agent_stats.rs:11:awaiting clock injection
-rtc-ice/src/agent/mod.rs:6:awaiting clock injection
-rtc-ice/src/candidate/mod.rs:3:awaiting clock injection
-rtc-interceptor/src/nack/generator.rs:1:awaiting clock injection
-rtc-interceptor/src/report/receiver.rs:1:awaiting clock injection
-rtc-interceptor/src/report/receiver_stream.rs:1:awaiting clock injection
-rtc-interceptor/src/report/sender.rs:1:awaiting clock injection
-rtc-mdns/src/proto/mod.rs:1:awaiting clock injection
 rtc-sctp/src/endpoint/mod.rs:1:awaiting clock injection
-rtc-sctp/src/queue/reassembly_queue.rs:1:awaiting clock injection
 rtc-stun/src/client.rs:4:awaiting clock injection
-rtc-turn/src/client/binding.rs:1:awaiting clock injection
-rtc-turn/src/client/mod.rs:1:awaiting clock injection
-rtc-turn/src/client/relay.rs:3:awaiting clock injection
-rtc-turn/src/client/transaction.rs:1:awaiting clock injection
 src/peer_connection/handler/datachannel.rs:5:awaiting clock injection
 src/peer_connection/handler/mod.rs:1:awaiting clock injection

@@ -86,11 +86,12 @@
 //! ## Creating a Peer Connection
 //!
 //! ```
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create with default configuration
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -98,10 +99,11 @@
 //! ## Creating an Offer (Initiating Peer)
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Add media track or data channel first
 //! // pc.add_track(audio_track)?;
@@ -110,7 +112,7 @@
 //! let offer = pc.create_offer(None)?;
 //!
 //! // Set as local description
-//! pc.set_local_description(offer.clone())?;
+//! pc.set_local_description(Instant::now(), offer.clone())?;
 //!
 //! // Send offer.sdp to remote peer via signaling channel
 //! // signaling_channel.send(offer.sdp)?;
@@ -121,23 +123,24 @@
 //! ## Answering an Offer (Responding Peer)
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::sdp::RTCSessionDescription;
 //!
 //! # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Receive offer from remote peer
 //! let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
 //!
 //! // Set as remote description
-//! pc.set_remote_description(offer)?;
+//! pc.set_remote_description(Instant::now(), offer)?;
 //!
 //! // Create answer
 //! let answer = pc.create_answer(None)?;
 //!
 //! // Set as local description
-//! pc.set_local_description(answer.clone())?;
+//! pc.set_local_description(Instant::now(), answer.clone())?;
 //!
 //! // Send answer.sdp to remote peer via signaling channel
 //! // signaling_channel.send(answer.sdp)?;
@@ -148,12 +151,13 @@
 //! ## Adding Media Tracks
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::media_stream::MediaStreamTrack;
 //! use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //!
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Add an audio track
 //! let sender_id = pc.add_track(audio_track)?;
@@ -167,11 +171,12 @@
 //! ## Creating Data Channels
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Create a reliable, ordered data channel
 //! let init = RTCDataChannelInit {
@@ -326,10 +331,11 @@ use std::time::Instant;
 /// ## Basic peer connection
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let pc = RTCPeerConnectionBuilder::new().build()?;
+/// let pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -337,6 +343,7 @@ use std::time::Instant;
 /// ## With ICE servers
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
 ///
@@ -350,7 +357,7 @@ use std::time::Instant;
 ///             }])
 ///             .build()
 ///     )
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -358,6 +365,7 @@ use std::time::Instant;
 /// ## With custom media engine
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
@@ -367,7 +375,7 @@ use std::time::Instant;
 ///
 /// let pc = RTCPeerConnectionBuilder::new()
 ///     .with_media_engine(media_engine)
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -375,6 +383,7 @@ use std::time::Instant;
 /// ## With interceptors
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -388,7 +397,7 @@ use std::time::Instant;
 /// let pc = RTCPeerConnectionBuilder::new()
 ///     .with_media_engine(media_engine)
 ///     .with_interceptor_registry(registry)
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -428,10 +437,11 @@ impl RTCPeerConnectionBuilder<NoopInterceptor> {
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -452,6 +462,7 @@ where
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
     ///
@@ -465,7 +476,7 @@ where
     ///
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_configuration(config)
-    ///     .build()?;
+    ///     .build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -481,6 +492,7 @@ where
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
     ///
@@ -490,7 +502,7 @@ where
     ///
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_media_engine(media_engine)
-    ///     .build()?;
+    ///     .build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -507,6 +519,7 @@ where
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
     /// use std::time::Duration;
@@ -521,7 +534,7 @@ where
     ///
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_setting_engine(setting_engine)
-    ///     .build()?;
+    ///     .build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -551,6 +564,7 @@ where
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
     /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -564,7 +578,7 @@ where
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_media_engine(media_engine)
     ///     .with_interceptor_registry(registry)
-    ///     .build()?;
+    ///     .build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -580,6 +594,7 @@ where
     /// share a collection:
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::interceptor::{BoxedInterceptor, Registry};
     /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -597,7 +612,7 @@ where
     ///     peer_connection: RTCPeerConnectionBuilder::new()
     ///         .with_media_engine(media_engine)
     ///         .with_interceptor_registry(registry.boxed())
-    ///         .build()?,
+    ///         .build(Instant::now())?,
     /// };
     /// # Ok(())
     /// # }
@@ -640,15 +655,17 @@ where
     /// # Examples
     ///
     /// ```
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self) -> Result<RTCPeerConnection<I>> {
+    pub fn build(self, now: Instant) -> Result<RTCPeerConnection<I>> {
         RTCPeerConnection::new(
+            now,
             self.configuration,
             self.media_engine,
             self.setting_engine,
@@ -666,10 +683,11 @@ where
 /// # Examples
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+/// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -748,6 +766,9 @@ where
             return Err(Error::ErrConnectionClosed);
         }
 
+        // Staging, not restarting: the offer must advertise fresh ICE credentials, but JSEP
+        // requires `createOffer` to be free of side effects, and inbound STUN is still being
+        // validated against the current ufrag/pwd. `set_local_description` applies the restart.
         let is_ice_restart_requested = self
             .ice_restart_requested
             .take()
@@ -755,7 +776,7 @@ where
             || options.take().is_some_and(|options| options.ice_restart);
 
         if is_ice_restart_requested {
-            self.ice_restart()?;
+            self.stage_ice_restart()?;
         }
 
         // include unmatched local transceivers
@@ -876,21 +897,22 @@ where
     /// ## Basic Answer Flow
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     ///
     /// // 1. Receive and set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
-    /// pc.set_remote_description(offer)?;
+    /// pc.set_remote_description(Instant::now(), offer)?;
     ///
     /// // 2. Create answer
     /// let answer = pc.create_answer(None)?;
     ///
     /// // 3. Set as local description
-    /// pc.set_local_description(answer.clone())?;
+    /// pc.set_local_description(Instant::now(), answer.clone())?;
     ///
     /// // 4. Send answer to remote peer
     /// // signaling_channel.send(answer.sdp)?;
@@ -901,6 +923,7 @@ where
     /// ## With Media Tracks
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     /// use rtc::media_stream::MediaStreamTrack;
@@ -909,18 +932,18 @@ where
     /// #     remote_offer_sdp: String,
     /// #     audio_track: MediaStreamTrack,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     ///
     /// // Set remote offer
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
-    /// pc.set_remote_description(offer)?;
+    /// pc.set_remote_description(Instant::now(), offer)?;
     ///
     /// // Add local track before creating answer
     /// pc.add_track(audio_track)?;
     ///
     /// // Create answer (will include the track)
     /// let answer = pc.create_answer(None)?;
-    /// pc.set_local_description(answer)?;
+    /// pc.set_local_description(Instant::now(), answer)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1046,16 +1069,17 @@ where
     /// ## Setting Local Offer
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     ///
     /// // Create offer
     /// let offer = pc.create_offer(None)?;
     ///
     /// // Set as local description
-    /// pc.set_local_description(offer.clone())?;
+    /// pc.set_local_description(Instant::now(), offer.clone())?;
     ///
     /// // Now send offer.sdp to remote peer via signaling
     /// // signaling_channel.send(offer.sdp)?;
@@ -1066,19 +1090,20 @@ where
     /// ## Setting Local Answer
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::sdp::RTCSessionDescription;
     ///
     /// # fn example(remote_offer_sdp: String) -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     ///
     /// // Set remote offer first
     /// let offer = RTCSessionDescription::offer(remote_offer_sdp)?;
-    /// pc.set_remote_description(offer)?;
+    /// pc.set_remote_description(Instant::now(), offer)?;
     ///
     /// // Create and set local answer
     /// let answer = pc.create_answer(None)?;
-    /// pc.set_local_description(answer.clone())?;
+    /// pc.set_local_description(Instant::now(), answer.clone())?;
     ///
     /// // Send answer to remote peer
     /// // signaling_channel.send(answer.sdp)?;
@@ -1110,10 +1135,17 @@ where
     /// [RFC 8829 Section 5.4]: https://datatracker.ietf.org/doc/html/rfc8829#section-5.4
     pub fn set_local_description(
         &mut self,
+        now: Instant,
         mut local_description: RTCSessionDescription,
     ) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
+        }
+
+        // Apply an ICE restart staged by `create_offer`. A no-op if none was staged, so an offer
+        // that was created and then discarded leaves the existing session untouched.
+        if self.ice_transport().has_pending_restart() {
+            self.apply_ice_restart(now)?;
         }
 
         // JSEP 5.4
@@ -1304,6 +1336,7 @@ where
     /// See [setRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setremotedescription)
     pub fn set_remote_description(
         &mut self,
+        now: Instant,
         mut remote_description: RTCSessionDescription,
     ) -> Result<()> {
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
@@ -1519,8 +1552,10 @@ where
                 // An ICE Restart only happens implicitly for a set_remote_description of type offer
 
                 if !we_offer {
-                    // Update stats with new ICE credentials after restart (may have been generated)
-                    self.ice_restart()?;
+                    // The answerer restarts in one step: it has `now`, and the answer it generates
+                    // next must already carry the new local credentials.
+                    self.stage_ice_restart()?;
+                    self.apply_ice_restart(now)?;
                 }
 
                 self.ice_transport_mut()
@@ -1555,6 +1590,7 @@ where
                 );
 
                 self.start_transports(
+                    now,
                     local_ice_role,
                     RTCIceParameters {
                         username_fragment: remote_ufrag,
@@ -2281,7 +2317,7 @@ where
     /// use rtc::statistics::StatsSelector;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     ///
     /// // Get all stats
     /// let report = pc.get_stats(Instant::now(), StatsSelector::None);
@@ -2347,7 +2383,9 @@ mod tests {
 
     #[test]
     fn create_data_channel_dials_immediately_when_sctp_association_present() {
-        let mut pc = RTCPeerConnectionBuilder::new().build().unwrap();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
 
         // Simulate an SCTP association so create_data_channel sees a transport
         // that is ready to open streams.
@@ -2376,7 +2414,7 @@ mod tests {
         me.register_default_codecs().unwrap();
         RTCPeerConnectionBuilder::new()
             .with_media_engine(me)
-            .build()
+            .build(Instant::now())
             .unwrap()
     }
 
@@ -2419,7 +2457,7 @@ mod tests {
         let offer = audio_video_offer();
 
         let mut pc = media_pc();
-        pc.set_remote_description(offer).unwrap();
+        pc.set_remote_description(Instant::now(), offer).unwrap();
 
         // Applying the remote offer implicitly creates two transceivers, each associated
         // with an "m=" section.
@@ -2428,7 +2466,8 @@ mod tests {
         assert!(pc.rtp_transceivers.iter().all(|t| t.mid().is_some()));
 
         // Rolling back the offer must stop and remove those transceivers and return to stable.
-        pc.set_remote_description(rollback()).unwrap();
+        pc.set_remote_description(Instant::now(), rollback())
+            .unwrap();
 
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         assert!(
@@ -2455,12 +2494,13 @@ mod tests {
         .unwrap();
 
         let offer = pc.create_offer(None).unwrap();
-        pc.set_local_description(offer).unwrap();
+        pc.set_local_description(Instant::now(), offer).unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::HaveLocalOffer);
         assert_eq!(pc.rtp_transceivers.len(), 1);
         assert!(pc.rtp_transceivers[0].mid().is_some());
 
-        pc.set_local_description(rollback()).unwrap();
+        pc.set_local_description(Instant::now(), rollback())
+            .unwrap();
 
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         assert_eq!(
@@ -2479,7 +2519,7 @@ mod tests {
         let offer = audio_video_offer();
 
         let mut pc = media_pc();
-        pc.set_remote_description(offer).unwrap();
+        pc.set_remote_description(Instant::now(), offer).unwrap();
         assert_eq!(pc.rtp_transceivers.len(), 2);
 
         // Attach a local track. add_track reuses the sender-less audio transceiver that was
@@ -2493,7 +2533,8 @@ mod tests {
         );
         pc.add_track(track).unwrap();
 
-        pc.set_remote_description(rollback()).unwrap();
+        pc.set_remote_description(Instant::now(), rollback())
+            .unwrap();
 
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         // The video transceiver (no track) is removed; the audio transceiver with the attached
@@ -2518,10 +2559,10 @@ mod tests {
         // stable state (its mid is recorded in the current remote description).
         let offer = audio_video_offer();
         let mut pc = media_pc();
-        pc.set_remote_description(offer).unwrap();
+        pc.set_remote_description(Instant::now(), offer).unwrap();
         assert_eq!(pc.rtp_transceivers.len(), 2);
         let answer = pc.create_answer(None).unwrap();
-        pc.set_local_description(answer).unwrap();
+        pc.set_local_description(Instant::now(), answer).unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         let negotiated_mids: Vec<_> = pc
             .rtp_transceivers
@@ -2534,10 +2575,11 @@ mod tests {
         // FIRST exchange must survive with their mids intact — rollback only undoes the pending
         // (second) transaction, not committed state.
         let reoffer = audio_video_offer();
-        pc.set_remote_description(reoffer).unwrap();
+        pc.set_remote_description(Instant::now(), reoffer).unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
 
-        pc.set_remote_description(rollback()).unwrap();
+        pc.set_remote_description(Instant::now(), rollback())
+            .unwrap();
 
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         assert_eq!(
@@ -2588,7 +2630,8 @@ mod tests {
             )
             .unwrap();
         let remote_offer = video_offerer.create_offer(None).unwrap();
-        pc.set_remote_description(remote_offer).unwrap();
+        pc.set_remote_description(Instant::now(), remote_offer)
+            .unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
         // The audio transceiver (with our track) got associated with the offer's m= section.
         assert!(
@@ -2598,7 +2641,8 @@ mod tests {
         );
 
         // 3. Roll back that offer.
-        pc.set_remote_description(rollback()).unwrap();
+        pc.set_remote_description(Instant::now(), rollback())
+            .unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
 
         // The audio transceiver with the attached track must survive (disassociated), while the
@@ -2645,7 +2689,8 @@ mod tests {
 
         // 2. set_local_description(our offer) — enters have-local-offer, audio gets a mid.
         let local_offer = pc.create_offer(None).unwrap();
-        pc.set_local_description(local_offer).unwrap();
+        pc.set_local_description(Instant::now(), local_offer)
+            .unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::HaveLocalOffer);
         assert!(pc.rtp_transceivers[0].mid().is_some());
 
@@ -2664,7 +2709,8 @@ mod tests {
         let remote_offer = video_offerer.create_offer(None).unwrap();
 
         // 4. Roll back our local offer (via set_local_description, the polite-peer path).
-        pc.set_local_description(rollback()).unwrap();
+        pc.set_local_description(Instant::now(), rollback())
+            .unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
         // Our audio transceiver survives (has a track/sender) but is disassociated.
         assert_eq!(pc.rtp_transceivers.len(), 1);
@@ -2673,14 +2719,15 @@ mod tests {
         assert!(pc.rtp_transceivers[0].mid().is_none());
 
         // 5. Apply the remote offer, then answer it.
-        pc.set_remote_description(remote_offer).unwrap();
+        pc.set_remote_description(Instant::now(), remote_offer)
+            .unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::HaveRemoteOffer);
         let answer = pc.create_answer(None).unwrap();
         // The answer only covers the remote's video m= section; our audio track is not yet
         // negotiated, so it must NOT appear in the answer.
         assert_eq!(answer.sdp.matches("m=video").count(), 1);
         assert_eq!(answer.sdp.matches("m=audio").count(), 0);
-        pc.set_local_description(answer).unwrap();
+        pc.set_local_description(Instant::now(), answer).unwrap();
         assert_eq!(pc.signaling_state, RTCSignalingState::Stable);
 
         // 6. The locally-added track was never negotiated, so a follow-up offer must include an

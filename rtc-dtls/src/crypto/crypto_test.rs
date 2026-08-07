@@ -3,7 +3,6 @@ use super::*;
 use crate::content::ContentType;
 use crate::record_layer::record_layer_header::{ProtocolVersion, RECORD_LAYER_HEADER_SIZE};
 use crate::signature_hash_algorithm::HashAlgorithm;
-use crypto::RTCCryptoProvider;
 
 #[test]
 fn test_generate_key_signature() -> Result<()> {
@@ -94,6 +93,11 @@ fn test_exported_signing_key_can_be_imported() -> Result<()> {
 #[cfg(all(feature = "crypto-ring", feature = "crypto-aws-lc-rs"))]
 #[test]
 fn test_cross_provider_signature_verification() -> Result<()> {
+    // The providers are concrete types here, not `dyn RTCCryptoProvider`, so the trait has to
+    // be in scope for `.crypto()`. Scoped to this test because it is the only one that needs it
+    // and the test only exists when both provider features are on.
+    use crypto::RTCCryptoProvider;
+
     let ring = crypto::providers::RingProvider::new();
     let aws = crypto::providers::AwsLcRsProvider::new();
     let scheme = crypto::SignatureScheme::EcdsaP256Sha256;

@@ -48,10 +48,10 @@
 //! // Create an mDNS connection
 //! let config = MdnsConfig::default()
 //!     .with_query_interval(Duration::from_secs(1));
-//! let mut conn = Mdns::new(config);
+//! let mut conn = Mdns::new(Instant::now(), config);
 //!
 //! // Start a query - returns a unique ID to track this query
-//! let query_id = conn.query("mydevice.local");
+//! let query_id = conn.query_now(Instant::now(), "mydevice.local");
 //! assert!(conn.is_query_pending(query_id));
 //!
 //! // Get the packet to send (would be sent via UDP to 224.0.0.251:5353)
@@ -67,6 +67,7 @@
 //! ```rust
 //! use rtc_mdns::{MdnsConfig, Mdns};
 //! use std::net::{IpAddr, Ipv4Addr};
+//! use std::time::Instant;
 //!
 //! // MdnsConfigure with local names to respond to
 //! let config = MdnsConfig::default()
@@ -75,7 +76,7 @@
 //!         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
 //!     );
 //!
-//! let conn = Mdns::new(config);
+//! let conn = Mdns::new(Instant::now(), config);
 //!
 //! // When queries for "myhost.local" arrive via handle_read(),
 //! // the connection will automatically queue response packets
@@ -99,8 +100,8 @@
 //!     let bind_addr: SocketAddr = "0.0.0.0:5353".parse().unwrap();
 //!     let socket = UdpSocket::bind(bind_addr).await.unwrap();
 //!
-//!     let mut conn = Mdns::new(MdnsConfig::default());
-//!     let query_id = conn.query(name);
+//!     let mut conn = Mdns::new(Instant::now(), MdnsConfig::default());
+//!     let query_id = conn.query_now(Instant::now(), name);
 //!
 //!     let timeout = Instant::now() + Duration::from_secs(5);
 //!     let mut buf = vec![0u8; 1500];

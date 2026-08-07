@@ -175,13 +175,13 @@ async fn run_peer_connection(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add transceivers for receiving audio and video
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Audio, None)?;
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
 
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -198,7 +198,7 @@ async fn run_peer_connection(
     peer_connection.add_local_candidate(local_candidate_init)?;
 
     let answer = peer_connection.create_answer(None)?;
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     println!("RTP forwarder listening on {}...", socket.local_addr()?);
 

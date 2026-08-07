@@ -15,6 +15,7 @@
 use anyhow::Result;
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
+use std::time::Instant;
 
 #[test]
 fn default_init_is_ordered() {
@@ -27,7 +28,7 @@ fn default_init_is_ordered() {
 /// The default reaches the channel: passing `None` must not quietly opt out of ordering.
 #[test]
 fn channel_created_without_options_is_ordered() -> Result<()> {
-    let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let dc = pc.create_data_channel("plain", None)?;
 
@@ -42,7 +43,7 @@ fn channel_created_without_options_is_ordered() -> Result<()> {
 /// Opting out still works — this is a default, not a policy.
 #[test]
 fn unordered_can_still_be_requested() -> Result<()> {
-    let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let dc = pc.create_data_channel(
         "unordered",

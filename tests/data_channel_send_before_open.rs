@@ -17,10 +17,11 @@ use bytes::BytesMut;
 use rtc::data_channel::{RTCDataChannelInit, RTCDataChannelState};
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::shared::error::Error;
+use std::time::Instant;
 
 #[test]
 fn send_before_the_stream_exists_is_rejected() -> Result<()> {
-    let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let mut dc = pc.create_data_channel("probe", Some(RTCDataChannelInit::default()))?;
     assert_eq!(
@@ -48,7 +49,7 @@ fn send_before_the_stream_exists_is_rejected() -> Result<()> {
 /// permanently shrink the channel's send window.
 #[test]
 fn rejected_send_does_not_charge_outstanding_bytes() -> Result<()> {
-    let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let mut dc = pc.create_data_channel("probe", Some(RTCDataChannelInit::default()))?;
 
@@ -67,7 +68,7 @@ fn rejected_send_does_not_charge_outstanding_bytes() -> Result<()> {
 /// and the two should stay distinguishable — a caller can retry the second but not the first.
 #[test]
 fn send_on_a_closed_channel_reports_closed() -> Result<()> {
-    let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let mut dc = pc.create_data_channel("probe", Some(RTCDataChannelInit::default()))?;
     let id = dc.id();

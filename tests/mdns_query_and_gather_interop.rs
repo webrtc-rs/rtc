@@ -117,7 +117,7 @@ fn create_rtc_peer_with_mdns(
     Ok(RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?)
+        .build(Instant::now())?)
 }
 
 /// Run the RTC event loop with mDNS support
@@ -362,7 +362,7 @@ async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
     log::info!("Created RTC peer with QueryOnly mDNS mode");
 
     // Set remote description
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -382,7 +382,7 @@ async fn test_mdns_query_only_webrtc_offerer_rtc_answerer() -> Result<()> {
 
     // Create answer
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
 
     // Set answer on webrtc
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;
@@ -522,7 +522,7 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
         MDNS_LOCAL_NAME
     );
 
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate (in QueryAndGather mode, the IP will be hidden behind mDNS name)
     let candidate = CandidateHostConfig {
@@ -541,7 +541,7 @@ async fn test_mdns_query_and_gather_webrtc_offerer_rtc_answerer() -> Result<()> 
     rtc_pc.add_local_candidate(local_candidate_init)?;
 
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
 
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;
     webrtc_pc.set_remote_description(webrtc_answer).await?;
@@ -649,7 +649,7 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
 
     // Create offer
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     // Create webrtc peer (answerer)
     let webrtc_pc = create_webrtc_peer().await?;
@@ -718,7 +718,7 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     let mut rtc_connected = false;
     let mut webrtc_connected = false;
@@ -827,7 +827,7 @@ async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> 
 
     // Create offer
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     // Create webrtc peer (answerer)
     let webrtc_pc = create_webrtc_peer().await?;
@@ -892,7 +892,7 @@ async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> 
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     let mut rtc_connected = false;
     let mut webrtc_connected = false;

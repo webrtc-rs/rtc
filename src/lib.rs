@@ -18,6 +18,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
@@ -35,11 +36,11 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 2. Create an offer
 //! let offer = pc.create_offer(None)?;
-//! pc.set_local_description(offer.clone())?;
+//! pc.set_local_description(Instant::now(), offer.clone())?;
 //!
 //! // Send offer to remote peer via your signaling channel
 //! // signaling.send(offer.sdp)?;
@@ -48,7 +49,7 @@
 //! // let answer_sdp = signaling.receive()?;
 //! # let answer_sdp = String::new();
 //! let answer = RTCSessionDescription::answer(answer_sdp)?;
-//! pc.set_remote_description(answer)?;
+//! pc.set_remote_description(Instant::now(), answer)?;
 //!
 //! // 4. Add local ICE candidate
 //! # use std::net::{IpAddr, Ipv4Addr};
@@ -104,7 +105,7 @@
 //!             .build()
 //!     )
 //!     .with_media_engine(media_engine)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // Bind UDP socket for network I/O
 //! let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -247,6 +248,7 @@
 //! candidates. This example shows the complete offer/answer flow:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
@@ -266,13 +268,13 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 1. Create offer
 //! let offer = offerer.create_offer(None)?;
 //!
 //! // 2. Set local description
-//! offerer.set_local_description(offer.clone())?;
+//! offerer.set_local_description(Instant::now(), offer.clone())?;
 //!
 //! // 3. Add local ICE candidate
 //! let candidate = CandidateHostConfig {
@@ -301,18 +303,18 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 5. Receive and set remote description
 //! let offer_json = receive_from_remote_peer();
 //! let remote_offer: RTCSessionDescription = serde_json::from_str(&offer_json)?;
-//! answerer.set_remote_description(remote_offer)?;
+//! answerer.set_remote_description(Instant::now(), remote_offer)?;
 //!
 //! // 6. Create answer
 //! let answer = answerer.create_answer(None)?;
 //!
 //! // 7. Set local description
-//! answerer.set_local_description(answer.clone())?;
+//! answerer.set_local_description(Instant::now(), answer.clone())?;
 //!
 //! // 8. Send answer back to offerer
 //! send_to_remote_peer(&serde_json::to_string(&answer)?);
@@ -321,7 +323,7 @@
 //! // 9. Receive and set remote description
 //! let answer_json = receive_from_remote_peer();
 //! let remote_answer: RTCSessionDescription = serde_json::from_str(&answer_json)?;
-//! offerer.set_remote_description(remote_answer)?;
+//! offerer.set_remote_description(Instant::now(), remote_answer)?;
 //!
 //! // Now both peers are connected!
 //! # Ok(())
@@ -402,6 +404,7 @@
 //! to configure packet loss recovery, congestion control, and quality monitoring:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -423,7 +426,7 @@
 //! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -431,6 +434,7 @@
 //! For custom interceptor configuration:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -453,7 +457,7 @@
 //! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -471,6 +475,7 @@
 //! concrete type no matter how it was built:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::interceptor::{BoxedInterceptor, Registry};
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -490,7 +495,7 @@
 //!     peer_connection: RTCPeerConnectionBuilder::new()
 //!         .with_media_engine(media_engine)
 //!         .with_interceptor_registry(registry.boxed())
-//!         .build()?,
+//!         .build(Instant::now())?,
 //! });
 //! # Ok(())
 //! # }

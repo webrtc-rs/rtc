@@ -148,7 +148,7 @@ async fn run(
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;
@@ -172,7 +172,7 @@ async fn run(
     let offer = peer_connection.create_offer(None)?;
 
     // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(offer)?;
+    peer_connection.set_local_description(Instant::now(), offer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
@@ -196,7 +196,7 @@ async fn run(
     println!("answer received: {}", answer);
 
     // Apply the answer as the remote description
-    peer_connection.set_remote_description(answer)?;
+    peer_connection.set_remote_description(Instant::now(), answer)?;
 
     println!("listening {}...", socket.local_addr()?);
 

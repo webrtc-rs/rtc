@@ -394,12 +394,12 @@ async fn main() -> Result<()> {
                             let config = RTCConfigurationBuilder::new()
                                 .build();
 
-                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config) .with_setting_engine(setting_engine).build()?;
+                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config) .with_setting_engine(setting_engine).build(Instant::now())?;
                             println!("[Answer] Created peer connection");
 
                             // Set remote description
                             println!("[Answer] set_remote_description {}", offer);
-                            pc.set_remote_description(offer)?;
+                            pc.set_remote_description(Instant::now(), offer)?;
 
                             // Create TCP passive candidate
                             let candidate = CandidateHostConfig {
@@ -421,7 +421,7 @@ async fn main() -> Result<()> {
 
                             // Create and set answer
                             let answer = pc.create_answer(None)?;
-                            pc.set_local_description(answer.clone())?;
+                            pc.set_local_description(Instant::now(), answer.clone())?;
                             println!("[Answer] set_local_description {}", answer);
 
                             // Send answer back

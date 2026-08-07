@@ -19,6 +19,7 @@
 //! # Quick Start
 //!
 //! ```
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
 //!
@@ -35,7 +36,7 @@
 //!             ])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```

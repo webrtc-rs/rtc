@@ -195,7 +195,7 @@ fn build_peer_connection(
         .with_configuration(config)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     Ok(peer_connection)
 }
@@ -272,7 +272,8 @@ impl RtcpSession {
 
     /// Apply the browser's offer and produce our answer.
     fn answer(&mut self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
-        self.peer_connection.set_remote_description(offer)?;
+        self.peer_connection
+            .set_remote_description(Instant::now(), offer)?;
 
         let candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -289,7 +290,8 @@ impl RtcpSession {
             .add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
 
         let answer = self.peer_connection.create_answer(None)?;
-        self.peer_connection.set_local_description(answer.clone())?;
+        self.peer_connection
+            .set_local_description(Instant::now(), answer.clone())?;
         Ok(answer)
     }
 

@@ -16,6 +16,7 @@ use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::UdpSocket;
 
 use crate::dtls_common::TestPeer;
@@ -91,7 +92,7 @@ impl Peer {
                     .with_certificates(vec![key_type.certificate()?])
                     .build(),
             )
-            .build()?;
+            .build(Instant::now())?;
 
         // Host candidate only: the peers talk over loopback, so no STUN is needed.
         let candidate = CandidateHostConfig {
@@ -124,12 +125,20 @@ async fn handshake_between(offer_key: KeyType, answer_key: KeyType) -> Result<bo
     offer.pc.create_data_channel("test", None)?;
 
     let local_offer = offer.pc.create_offer(None)?;
-    offer.pc.set_local_description(local_offer.clone())?;
-    answer.pc.set_remote_description(local_offer)?;
+    offer
+        .pc
+        .set_local_description(Instant::now(), local_offer.clone())?;
+    answer
+        .pc
+        .set_remote_description(Instant::now(), local_offer)?;
 
     let local_answer = answer.pc.create_answer(None)?;
-    offer.pc.set_remote_description(local_answer.clone())?;
-    answer.pc.set_local_description(local_answer)?;
+    offer
+        .pc
+        .set_remote_description(Instant::now(), local_answer.clone())?;
+    answer
+        .pc
+        .set_local_description(Instant::now(), local_answer)?;
 
     let connected = offer.connect(&mut answer).await?;
 

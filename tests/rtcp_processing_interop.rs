@@ -199,7 +199,7 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     Ok(pc)
 }
 
@@ -281,11 +281,11 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
     // Set remote description (offer)
     let rtc_offer =
         rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_with_candidates.sdp.clone())?;
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Create and set answer
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
 
     // Set answer on webrtc
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;
@@ -518,7 +518,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
 
     // Create offer
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     // Create webrtc peer (answerer)
     let webrtc_pc = create_webrtc_peer().await?;
@@ -561,7 +561,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Run event loop
     let mut buf = vec![0u8; 2000];
@@ -811,7 +811,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
 
     // Offer/answer with the webrtc peer (answerer, which receives the video).
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     let webrtc_pc = create_webrtc_peer().await?;
     let webrtc_offer = WebrtcRTCSessionDescription::offer(offer.sdp.clone())?;
@@ -827,7 +827,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Event loop: stream RTP once connected, watch for inbound RTCP about our sent stream.
     let mut buf = vec![0u8; 2000];

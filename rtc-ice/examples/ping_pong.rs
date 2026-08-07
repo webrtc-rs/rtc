@@ -165,6 +165,7 @@ async fn main() -> Result<(), Error> {
     let port = if cli.controlling { 4000 } else { 4001 };
     let udp_socket = UdpSocket::bind(("0.0.0.0", port)).await?;
     let mut ice_agent = Agent::new(
+        Instant::now(),
         Arc::new(AgentConfig {
             disconnected_timeout: Some(Duration::from_secs(5)),
             failed_timeout: Some(Duration::from_secs(5)),
@@ -267,7 +268,12 @@ async fn main() -> Result<(), Error> {
     let peer_addr = remote_candidate.addr();
     ice_agent.add_remote_candidate(remote_candidate)?;
 
-    ice_agent.start_connectivity_checks(cli.controlling, remote_ufrag, remote_pwd)?;
+    ice_agent.start_connectivity_checks(
+        Instant::now(),
+        cli.controlling,
+        remote_ufrag,
+        remote_pwd,
+    )?;
 
     println!("Enter bye to stop");
     let (mut tx, mut rx) = futures::channel::mpsc::channel(8);

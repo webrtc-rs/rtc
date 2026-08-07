@@ -118,7 +118,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Create output track on rtc for sending
@@ -160,7 +160,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
     log::info!("RTC created offer {}", offer);
 
     // Set local description on rtc
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("RTC set local description");
 
     // Create webrtc peer (will be the answerer and reflector)
@@ -245,7 +245,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
 
     // Set remote description on rtc
     log::info!("RTC set remote description {}", rtc_answer);
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Run event loops
     let rtc_socket = Arc::new(socket);

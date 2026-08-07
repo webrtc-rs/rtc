@@ -137,7 +137,7 @@ async fn run_requester(
     // Create requester (sender) peer connection
     let mut requester = RTCPeerConnectionBuilder::new()
         .with_configuration(requester_config)
-        .build()?;
+        .build(Instant::now())?;
     let options = Some(RTCDataChannelInit {
         ordered: false,
         max_retransmits: Some(0u16),
@@ -171,12 +171,12 @@ async fn run_requester(
 
     // Create offer
     let offer = requester.create_offer(None)?;
-    requester.set_local_description(offer.clone())?;
+    requester.set_local_description(Instant::now(), offer.clone())?;
     offer_tx.send(offer).await?;
 
     let answer = answer_rx.recv().await.unwrap();
     // set answer
-    requester.set_remote_description(answer)?;
+    requester.set_remote_description(Instant::now(), answer)?;
 
     // Track state for requester (sender)
     let mut req_data_channel_opened = None;
@@ -302,7 +302,7 @@ async fn run_responder(
     // Create responder (receiver) peer connection
     let mut responder = RTCPeerConnectionBuilder::new()
         .with_configuration(responder_config)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create sockets first
     let resp_socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -328,11 +328,11 @@ async fn run_responder(
 
     let offer = offer_rx.recv().await.unwrap();
     // set offer
-    responder.set_remote_description(offer)?;
+    responder.set_remote_description(Instant::now(), offer)?;
 
     // Create answer
     let answer = responder.create_answer(None)?;
-    responder.set_local_description(answer.clone())?;
+    responder.set_local_description(Instant::now(), answer.clone())?;
     answer_tx.send(answer).await?;
 
     // Track state for responder (receiver)

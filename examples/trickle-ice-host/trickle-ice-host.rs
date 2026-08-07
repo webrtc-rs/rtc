@@ -373,16 +373,16 @@ async fn run_main_loop() -> Result<()> {
                                             .build();
 
                                         let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)
-                                           .with_setting_engine(setting_engine).build()?;
+                                           .with_setting_engine(setting_engine).build(Instant::now())?;
                                         println!("Created peer connection");
 
                                         // Set remote description
                                         println!("Setting remote description {}", offer);
-                                        pc.set_remote_description(offer)?;
+                                        pc.set_remote_description(Instant::now(), offer)?;
 
                                         // Create answer
                                         let answer = pc.create_answer(None)?;
-                                        pc.set_local_description(answer.clone())?;
+                                        pc.set_local_description(Instant::now(), answer.clone())?;
                                         println!("Created and set answer {}", answer);
 
                                         // Now that both local and remote descriptions are set,

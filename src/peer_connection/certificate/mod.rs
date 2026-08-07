@@ -28,6 +28,7 @@
 //! ## Quick Start - Generate and Use Certificate
 //!
 //! ```
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::certificate::RTCCertificate;
@@ -50,7 +51,7 @@
 //!             .with_certificates(vec![certificate])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -318,6 +319,7 @@ use shared::error::{Error, Result};
 /// ## Using with RTCConfiguration
 ///
 /// ```no_run
+/// # use std::time::Instant;
 /// # use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 /// # use rtc::peer_connection::certificate::RTCCertificate;
@@ -339,7 +341,7 @@ use shared::error::{Error, Result};
 ///             .with_certificates(vec![certificate])
 ///             .build()
 ///     )
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```

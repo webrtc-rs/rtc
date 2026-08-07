@@ -17,11 +17,12 @@
 //! ## Adding a transceiver from a track
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::media_stream::MediaStreamTrack;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # fn example(audio_track: MediaStreamTrack) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Add a transceiver for sending audio
 //! let init = RTCRtpTransceiverInit {
@@ -40,11 +41,12 @@
 //! ## Adding a transceiver by media kind
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //! # use rtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiverDirection};
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Add a video transceiver for receiving only
 //! let init = RTCRtpTransceiverInit {
@@ -63,10 +65,11 @@
 //! ## Controlling transceiver direction
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Iterate through transceivers and change direction
 //! for transceiver_id in peer_connection.get_transceivers() {
@@ -81,10 +84,11 @@
 //! ## Setting codec preferences
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 //! # fn example(preferred_codecs: Vec<RTCRtpCodecParameters>) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Codec preferences would be set through peer connection methods
 //! // The exact API depends on your implementation
@@ -363,6 +367,7 @@ where
 #[cfg(test)]
 mod tests {
     use sansio::Protocol;
+    use std::time::Instant;
 
     use crate::peer_connection::configuration::media_engine::MediaEngine;
     use crate::peer_connection::event::RTCPeerConnectionEvent;
@@ -377,7 +382,7 @@ mod tests {
             .expect("register default codecs");
         RTCPeerConnectionBuilder::new()
             .with_media_engine(media_engine)
-            .build()
+            .build(Instant::now())
             .expect("build peer connection")
     }
 
@@ -398,17 +403,17 @@ mod tests {
     fn negotiate(offerer: &mut RTCPeerConnection, answerer: &mut RTCPeerConnection) {
         let offer = offerer.create_offer(None).expect("create offer");
         offerer
-            .set_local_description(offer.clone())
+            .set_local_description(Instant::now(), offer.clone())
             .expect("offerer set local");
         answerer
-            .set_remote_description(offer)
+            .set_remote_description(Instant::now(), offer)
             .expect("answerer set remote");
         let answer = answerer.create_answer(None).expect("create answer");
         answerer
-            .set_local_description(answer.clone())
+            .set_local_description(Instant::now(), answer.clone())
             .expect("answerer set local");
         offerer
-            .set_remote_description(answer)
+            .set_remote_description(Instant::now(), answer)
             .expect("offerer set remote");
     }
 

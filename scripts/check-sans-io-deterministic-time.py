@@ -12,10 +12,11 @@ This script fails on any ambient clock read in non-test code that is not recorde
 
 Two categories are permanently allow-listed:
 
-* **NTP / RTP wall-clock baselines** via `SystemInstant::now()`. An RTCP sender report carries real
-  wall-clock time in NTP format; a virtual instant would put a fictional timestamp on the wire.
-  These are real-world observations and are correctly not reproducible under replay.
-* Nothing else. Once the migration completes, the baselines are the only entries left.
+* **Wall-clock observations**: `SystemInstant`'s own construction, `Instant` <-> epoch conversion,
+  and protocol or format fields that are *specified* as wall-clock time (DTLS `gmt_unix_time`, SDP
+  session version, X.509 validity). These are real-world observations and are correctly not
+  reproducible under replay.
+* Nothing else. Once the migration completes, those are the only entries left.
 
 Every other entry is temporary and shrinks as the migration phases land. The allow-list records a
 per-file *count* rather than a line number, so that unrelated edits do not shift a pinned line and
@@ -154,19 +155,17 @@ def load_allowlist() -> dict[str, int]:
 # Reads that are wall-clock *by definition* and stay after the migration completes. Anything not
 # listed here is temporary and must eventually reach zero.
 #
-# Keyed by path, value is (permanent count, reason). A file may hold both kinds — the packetizer
-# and the sender-report stream each pair an NTP baseline with an ordinary read that migrates.
+# Keyed by path, value is (permanent count, reason). A file may hold both kinds; none does today,
+# but the allow-list format supports it and the packetizer and sender-report stream both did
+# before C2 collapsed their NTP baselines into `SystemInstant::now(now)`.
 PERMANENT: dict[str, tuple[int, str]] = {
-    # NTP / RTP baselines. An RTCP sender report carries real wall-clock time in NTP format; a
-    # virtual instant would put a fictional timestamp on the wire.
-    "rtc-media/src/lib.rs": (1, "NTP/RTP wall-clock baseline"),
-    "rtc-media/src/io/sample_builder/mod.rs": (1, "NTP/RTP wall-clock baseline"),
-    "rtc-rtp/src/packetizer/mod.rs": (1, "NTP/RTP wall-clock baseline"),
-    "rtc-interceptor/src/report/sender_stream.rs": (1, "NTP/RTP wall-clock baseline"),
-
     # `SystemInstant` itself: the primitive that pairs a monotonic reading with a wall-clock one.
-    # It is what everything above is built from, so it must read both clocks.
-    "rtc-shared/src/time.rs": (2, "SystemInstant's own construction"),
+    # An RTCP sender report carries real wall-clock time in NTP format, and a virtual instant
+    # would put a fictional timestamp on the wire — so this reads the system clock. The monotonic
+    # half is the caller's `now`, which is why the four sites that used to hold an NTP baseline of
+    # their own (rtc-media ×2, rtc-rtp/packetizer, rtc-interceptor/report/sender_stream) no longer
+    # read a clock at all.
+    "rtc-shared/src/time.rs": (1, "SystemInstant's own construction"),
 
     # Serializing an `Instant` requires anchoring it to the wall clock: `Instant` is opaque, so a
     # portable absolute timestamp can only be derived from a `SystemTime` taken alongside it.

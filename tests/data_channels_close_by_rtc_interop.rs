@@ -80,7 +80,7 @@ async fn test_data_channel_close_interop() -> Result<()> {
     let mut rtc_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Create a data channel from RTC side
@@ -109,7 +109,7 @@ async fn test_data_channel_close_interop() -> Result<()> {
     log::info!("RTC created offer");
 
     // Set local description on rtc peer
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("RTC set local description");
 
     // Convert rtc offer to webrtc SDP
@@ -185,7 +185,7 @@ async fn test_data_channel_close_interop() -> Result<()> {
     )?;
 
     // Set remote description on rtc (the answer from webrtc)
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
     log::info!("RTC set remote description");
 
     // Run event loops for both peers

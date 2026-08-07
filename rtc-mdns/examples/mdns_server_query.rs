@@ -108,20 +108,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "webrtc-rs-mdns-2.local".to_string(),
         ])
         .with_local_ip(get_local_ip());
-    let mut mdns_server = Mdns::new(config_server);
+    let mut mdns_server = Mdns::new(Instant::now(), config_server);
 
     // Client: queries for names with timeout
     let config_client = MdnsConfig::default()
         .with_query_interval(Duration::from_millis(args.interval))
         .with_query_timeout(Duration::from_secs(args.timeout));
-    let mut mdns_client = Mdns::new(config_client);
+    let mut mdns_client = Mdns::new(Instant::now(), config_client);
 
     // Create a shared multicast UDP socket using the builder
     // In a real application, you might use separate sockets
     let multicast_udp_socket = UdpSocket::from_std(MulticastSocket::new().into_std()?)?;
 
     // Query 1: webrtc-rs-mdns-1.local
-    let query_id_1 = mdns_client.query("webrtc-rs-mdns-1.local");
+    let query_id_1 = mdns_client.query_now(Instant::now(), "webrtc-rs-mdns-1.local");
     log::info!(
         "Started query for webrtc-rs-mdns-1.local (query_id={}, timeout={}s, interval={}ms)",
         query_id_1,
@@ -233,7 +233,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Start query 2 after query 1 is answered
                         if query_id_2.is_none() {
-                            let id = mdns_client.query("webrtc-rs-mdns-2.local");
+                            let id =
+                                mdns_client.query_now(Instant::now(), "webrtc-rs-mdns-2.local");
                             query_id_2 = Some(id);
                             log::info!(
                                 "Started query for webrtc-rs-mdns-2.local (query_id={}, timeout={}s, interval={}ms)",

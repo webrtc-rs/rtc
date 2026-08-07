@@ -20,9 +20,9 @@ pub struct SystemInstant {
 
 impl SystemInstant {
     /// Captures the current monotonic instant together with the current wall-clock time.
-    pub fn now() -> Self {
+    pub fn now(now: Instant) -> Self {
         Self {
-            instant: Instant::now(),
+            instant: now,
             duration_since_unix_epoch: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0)),

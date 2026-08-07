@@ -279,7 +279,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 .as_mut()
                 .ok_or(Error::ErrDtlsTransportNotStarted)?;
 
-            dtls_endpoint.write(msg.transport.peer_addr, &dtls_message)?;
+            dtls_endpoint.write(msg.now, msg.transport.peer_addr, &dtls_message)?;
             while let Some(transmit) = dtls_endpoint.poll_transmit() {
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: transmit.now,

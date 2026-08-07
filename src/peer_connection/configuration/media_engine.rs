@@ -226,6 +226,7 @@ impl MediaEngineHeaderExtension {
 /// ## Default Configuration
 ///
 /// ```
+/// # use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
@@ -235,7 +236,7 @@ impl MediaEngineHeaderExtension {
 ///
 /// let pc = RTCPeerConnectionBuilder::new()
 ///     .with_media_engine(media_engine)
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```

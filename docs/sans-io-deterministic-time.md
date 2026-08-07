@@ -62,13 +62,15 @@ Ask of every default duration: is this protocol state, or caller policy that lea
 ## What stays on the wall clock
 
 Some reads are correct. They are listed in the allow-list's *permanent* section with a reason, and
-they fall into four categories:
+they fall into three categories:
 
-- **NTP / RTP baselines.** An RTCP sender report carries real wall-clock time in NTP format. A
-  virtual instant would put a fictional timestamp on the wire. These are real-world observations
-  and are correctly *not* reproducible under replay.
 - **`SystemInstant`'s own construction** (`rtc-shared/src/time.rs`), the primitive that pairs a
-  monotonic reading with a wall-clock one. Everything above is built from it.
+  monotonic reading with a wall-clock one. An RTCP sender report carries real wall-clock time in
+  NTP format, and a virtual instant would put a fictional timestamp on the wire, so this reads the
+  system clock. It is a real-world observation and is correctly *not* reproducible under replay.
+  The monotonic half is the caller's `now` — `SystemInstant::now(now)` — which is why the four
+  sites that used to keep an NTP baseline of their own (`rtc-media` ×2, `rtc-rtp/packetizer`,
+  `rtc-interceptor/report/sender_stream`) no longer read a clock at all.
 - **`Instant` ↔ epoch conversion** (`rtc-shared/src/serde.rs`). `Instant` is opaque, so a portable
   absolute timestamp can only be derived from a `SystemTime` sampled alongside it.
 - **Fields specified as wall-clock by a protocol or format.** DTLS `gmt_unix_time`

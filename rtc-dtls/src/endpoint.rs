@@ -223,12 +223,12 @@ impl Endpoint {
     /// # Errors
     ///
     /// Fails if there is no association with `remote`, or its handshake has not completed.
-    pub fn write(&mut self, remote: SocketAddr, data: &[u8]) -> Result<()> {
+    pub fn write(&mut self, now: Instant, remote: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.write(data)?;
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -404,7 +404,7 @@ mod tests {
             "DTLS handshake did not complete"
         );
 
-        client.write(server_addr(), b"provider-backed DTLS")?;
+        client.write(Instant::now(), server_addr(), b"provider-backed DTLS")?;
         let transmit = client
             .poll_transmit()
             .expect("application write produces a DTLS record");

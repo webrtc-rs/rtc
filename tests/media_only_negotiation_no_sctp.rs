@@ -59,7 +59,7 @@ fn build_video_only_peer(
         .with_configuration(RTCConfigurationBuilder::new().build())
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
-        .build()
+        .build(Instant::now())
         .map_err(Into::into)
 }
 
@@ -137,8 +137,8 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
         "media-only offer should not contain an application m-line:\n{}",
         offer.sdp
     );
-    offerer_pc.set_local_description(offer.clone())?;
-    answerer_pc.set_remote_description(offer)?;
+    offerer_pc.set_local_description(Instant::now(), offer.clone())?;
+    answerer_pc.set_remote_description(Instant::now(), offer)?;
 
     let answer = answerer_pc.create_answer(None)?;
     assert!(
@@ -149,8 +149,8 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
         "media-only answer should not contain an application m-line:\n{}",
         answer.sdp
     );
-    answerer_pc.set_local_description(answer.clone())?;
-    offerer_pc.set_remote_description(answer)?;
+    answerer_pc.set_local_description(Instant::now(), answer.clone())?;
+    offerer_pc.set_remote_description(Instant::now(), answer)?;
 
     let mut offerer_buf = vec![0u8; 2000];
     let mut answerer_buf = vec![0u8; 2000];

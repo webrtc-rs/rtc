@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 /// Regression test for duplicate mid bug in generate_matched_sdp().
 ///
 /// When create_offer() is called for a renegotiation (i.e. current_remote_description
@@ -5,7 +6,7 @@
 /// iterates all local transceivers for unmatched ones. Without the fix, transceivers
 /// already matched from the remote description would be added again, producing duplicate
 /// m-sections with the same mid in the generated SDP.
-use std::collections::HashSet;
+use std::time::Instant;
 
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
@@ -61,7 +62,7 @@ fn test_renegotiation_no_duplicate_mids() -> Result<(), Box<dyn std::error::Erro
     // --- Offerer ---
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_media_engine(me)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add an initial video track.
     let track1 = new_video_track("stream-1", "video-1", 11111);
@@ -70,17 +71,17 @@ fn test_renegotiation_no_duplicate_mids() -> Result<(), Box<dyn std::error::Erro
     // --- Answerer ---
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_media_engine(me2)
-        .build()?;
+        .build(Instant::now())?;
 
     // ---- First offer/answer exchange ----
     let offer1 = offerer.create_offer(None)?;
-    offerer.set_local_description(offer1.clone())?;
+    offerer.set_local_description(Instant::now(), offer1.clone())?;
 
-    answerer.set_remote_description(offer1)?;
+    answerer.set_remote_description(Instant::now(), offer1)?;
     let answer1 = answerer.create_answer(None)?;
-    answerer.set_local_description(answer1.clone())?;
+    answerer.set_local_description(Instant::now(), answer1.clone())?;
 
-    offerer.set_remote_description(answer1)?;
+    offerer.set_remote_description(Instant::now(), answer1)?;
 
     // Sanity: first offer has unique mids.
     let offer1_for_check = offerer.create_offer(None)?;

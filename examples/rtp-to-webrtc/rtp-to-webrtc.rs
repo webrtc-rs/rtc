@@ -130,7 +130,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Bind to local UDP socket
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -138,7 +138,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
     println!("RTP forwarder listening on {}", local_addr);
 
     // Set remote description (offer)
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add video track
     let video_ssrc = rand::random::<u32>();
@@ -184,7 +184,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
 
     let answer = peer_connection.create_answer(None)?;
     println!("Created Answer={}", answer);
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     // Output the answer
     let json_str = serde_json::to_string(&answer)?;

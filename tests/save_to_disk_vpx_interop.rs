@@ -193,7 +193,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Add transceivers to receive video and audio
@@ -216,7 +216,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
     log::info!("Added video transceiver");
 
     // Set remote description (the offer from webrtc)
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate for rtc peer
     let candidate = CandidateHostConfig {
@@ -238,7 +238,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
     log::info!("RTC created answer");
 
     // Set local description on rtc peer
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("RTC set local description");
 
     // Convert rtc answer to webrtc SDP

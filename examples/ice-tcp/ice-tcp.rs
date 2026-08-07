@@ -395,12 +395,12 @@ async fn run_main_loop(
 
                                 .build();
 
-                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)  .with_setting_engine(setting_engine).build()?;
+                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)  .with_setting_engine(setting_engine).build(Instant::now())?;
                             println!("Created peer connection");
 
                             // Set remote description
                             println!("Setting remote description {}", offer);
-                            pc.set_remote_description(offer)?;
+                            pc.set_remote_description(Instant::now(), offer)?;
 
                             // Create TCP passive candidate using the same IP
                             let candidate = CandidateHostConfig {
@@ -423,7 +423,7 @@ async fn run_main_loop(
                             // Create and set answer - includes the TCP candidate in SDP
                             let answer = pc.create_answer(None)?;
                             println!("Answer with TCP candidate: {}", answer);
-                            pc.set_local_description(answer.clone())?;
+                            pc.set_local_description(Instant::now(), answer.clone())?;
 
                             // Send answer back via HTTP
                             let _ = response_tx.send(answer);

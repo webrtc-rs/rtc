@@ -62,7 +62,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     let mut offer_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(offer_config)
         .with_setting_engine(offer_setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created offer peer connection");
 
     // Create data channel on offer side
@@ -90,7 +90,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Offer peer created offer");
 
     // Set local description on offer
-    offer_pc.set_local_description(offer.clone())?;
+    offer_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("Offer peer set local description {}", offer);
 
     // Create answer peer
@@ -111,12 +111,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     let mut answer_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(answer_config)
         .with_setting_engine(answer_setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created answer peer connection");
 
     // Set remote description on answer (the offer)
     log::info!("Answer peer set remote description {}", offer);
-    answer_pc.set_remote_description(offer)?;
+    answer_pc.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate for answer peer
     let answer_candidate = CandidateHostConfig {
@@ -138,12 +138,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Answer peer created answer");
 
     // Set local description on answer
-    answer_pc.set_local_description(answer.clone())?;
+    answer_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("Answer peer set local description {}", answer);
 
     // Set remote description on answer
     log::info!("Offer peer set remote description {}", answer);
-    offer_pc.set_remote_description(answer)?;
+    offer_pc.set_remote_description(Instant::now(), answer)?;
 
     // Add remote candidates (these are actually local candidates for the remote peer)
     // In sansio API, we add the remote peer's local candidate as our remote candidate

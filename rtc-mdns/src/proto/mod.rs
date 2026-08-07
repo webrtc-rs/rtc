@@ -135,10 +135,10 @@ pub enum MdnsEvent {
 /// use sansio::Protocol;
 /// use std::time::{Duration, Instant};
 ///
-/// let mut mdns = Mdns::new(MdnsConfig::default());
+/// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
 ///
 /// // Start a query
-/// let query_id = mdns.query("device.local");
+/// let query_id = mdns.query_now(Instant::now(), "device.local");
 ///
 /// // Simulate an event loop iteration
 /// let now = Instant::now();
@@ -173,15 +173,16 @@ pub enum MdnsEvent {
 /// # Example: Multiple Concurrent Queries
 ///
 /// ```rust
+/// # use std::time::Instant;
 /// use rtc_mdns::{MdnsConfig, Mdns};
 /// use sansio::Protocol;
 ///
-/// let mut mdns = Mdns::new(MdnsConfig::default());
+/// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
 ///
 /// // Start multiple queries - each gets a unique ID
-/// let id1 = mdns.query("printer.local");
-/// let id2 = mdns.query("server.local");
-/// let id3 = mdns.query("nas.local");
+/// let id1 = mdns.query_now(Instant::now(), "printer.local");
+/// let id2 = mdns.query_now(Instant::now(), "server.local");
+/// let id3 = mdns.query_now(Instant::now(), "nas.local");
 ///
 /// assert_eq!(mdns.pending_query_count(), 3);
 /// assert!(mdns.is_query_pending(id1));
@@ -218,6 +219,9 @@ pub struct Mdns {
     /// Local names with trailing dots (for matching questions)
     local_names: Vec<String>,
 
+    /// Scheduled queries
+    scheduled_queries: VecDeque<(QueryId, String)>,
+
     /// Pending queries
     queries: Vec<Query>,
 
@@ -239,6 +243,8 @@ pub struct Mdns {
     /// Next timeout for query retries
     next_timeout: Option<Instant>,
 
+    last_now: Instant,
+
     /// Whether the connection is closed
     closed: bool,
 }
@@ -254,14 +260,15 @@ impl Mdns {
     ///
     /// ```rust
     /// use rtc_mdns::{MdnsConfig, Mdns};
-    /// use std::time::Duration;
+    /// use std::time::{Duration, Instant};
     ///
     /// // Client-only configuration
-    /// let client = Mdns::new(MdnsConfig::default());
+    /// let client = Mdns::new(Instant::now(), MdnsConfig::default());
     ///
     /// // Server configuration
     /// use std::net::{IpAddr, Ipv4Addr};
     /// let server = Mdns::new(
+    ///     Instant::now(),
     ///     MdnsConfig::default()
     ///         .with_local_names(vec!["myhost.local".to_string()])
     ///         .with_local_ip(
@@ -269,7 +276,7 @@ impl Mdns {
     ///         )
     /// );
     /// ```
-    pub fn new(config: MdnsConfig) -> Self {
+    pub fn new(now: Instant, config: MdnsConfig) -> Self {
         let local_names = config
             .local_names
             .iter()
@@ -293,6 +300,7 @@ impl Mdns {
         Self {
             config,
             local_names,
+            scheduled_queries: VecDeque::new(),
             queries: Vec::new(),
             next_query_id: 1,
             query_interval,
@@ -300,6 +308,7 @@ impl Mdns {
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             next_timeout: None,
+            last_now: now,
             closed: false,
         }
     }
@@ -324,13 +333,14 @@ impl Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns, MdnsEvent};
     /// use sansio::Protocol;
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
     ///
     /// // Start a query
-    /// let query_id = mdns.query("printer.local");
+    /// let query_id = mdns.query_now(Instant::now(), "printer.local");
     ///
     /// // The query packet is now queued
     /// let packet = mdns.poll_write().expect("query packet should be queued");
@@ -339,7 +349,7 @@ impl Mdns {
     /// // Track the query
     /// assert!(mdns.is_query_pending(query_id));
     /// ```
-    pub fn query(&mut self, name: &str) -> QueryId {
+    pub fn query_now(&mut self, now: Instant, name: &str) -> QueryId {
         let name_with_suffix = if name.ends_with('.') {
             name.to_string()
         } else {
@@ -349,20 +359,26 @@ impl Mdns {
         let id = self.next_query_id;
         self.next_query_id += 1;
 
-        let now = Instant::now();
-        let query = Query {
-            id,
-            name_with_suffix: name_with_suffix.clone(),
-            start_time: now,
-            next_retry: now + self.query_interval, // Schedule first retry after interval
-        };
-        self.queries.push(query);
-
-        // Send the initial query immediately
-        self.send_question(&name_with_suffix, now);
+        self.query(now, id, name_with_suffix);
 
         // Update timeout
         self.update_next_timeout();
+
+        id
+    }
+
+    /// Schedule a query
+    pub fn schedule_query(&mut self, name: &str) -> QueryId {
+        let name_with_suffix = if name.ends_with('.') {
+            name.to_string()
+        } else {
+            format!("{name}.")
+        };
+
+        let id = self.next_query_id;
+        self.next_query_id += 1;
+
+        self.scheduled_queries.push_back((id, name_with_suffix));
 
         id
     }
@@ -379,10 +395,11 @@ impl Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
-    /// let query_id = mdns.query("device.local");
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
+    /// let query_id = mdns.query_now(Instant::now(), "device.local");
     ///
     /// assert!(mdns.is_query_pending(query_id));
     /// mdns.cancel_query(query_id);
@@ -390,6 +407,7 @@ impl Mdns {
     /// ```
     pub fn cancel_query(&mut self, query_id: QueryId) {
         self.queries.retain(|q| q.id != query_id);
+        self.scheduled_queries.retain(|q| q.0 != query_id);
         self.update_next_timeout();
     }
 
@@ -408,10 +426,11 @@ impl Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
-    /// let query_id = mdns.query("device.local");
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
+    /// let query_id = mdns.query_now(Instant::now(), "device.local");
     ///
     /// // Query is pending until answered or cancelled
     /// assert!(mdns.is_query_pending(query_id));
@@ -429,17 +448,31 @@ impl Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
     /// assert_eq!(mdns.pending_query_count(), 0);
     ///
-    /// mdns.query("device1.local");
-    /// mdns.query("device2.local");
+    /// mdns.query_now(Instant::now(), "device1.local");
+    /// mdns.query_now(Instant::now(), "device2.local");
     /// assert_eq!(mdns.pending_query_count(), 2);
     /// ```
     pub fn pending_query_count(&self) -> usize {
-        self.queries.len()
+        self.queries.len() + self.scheduled_queries.len()
+    }
+
+    fn query(&mut self, now: Instant, id: QueryId, name_with_suffix: String) {
+        let query = Query {
+            id,
+            name_with_suffix: name_with_suffix.clone(),
+            start_time: now,
+            next_retry: now + self.query_interval, // Schedule first retry after interval
+        };
+        self.queries.push(query);
+
+        // Send the initial query immediately
+        self.send_question(&name_with_suffix, now);
     }
 
     fn send_question(&mut self, name: &str, now: Instant) {
@@ -777,11 +810,12 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     /// use sansio::Protocol;
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
-    /// mdns.query("device.local");
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
+    /// mdns.query_now(Instant::now(), "device.local");
     ///
     /// // Send all queued packets
     /// while let Some(packet) = mdns.poll_write() {
@@ -852,9 +886,10 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     /// use std::time::{Duration, Instant};
     ///
     /// let mut mdns = Mdns::new(
+    ///     Instant::now(),
     ///     MdnsConfig::default().with_query_interval(Duration::from_millis(100))
     /// );
-    /// mdns.query("device.local");
+    /// mdns.query_now(Instant::now(), "device.local");
     ///
     /// // Consume initial packet
     /// mdns.poll_write();
@@ -869,6 +904,11 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     fn handle_timeout(&mut self, now: Self::Time) -> Result<()> {
         if self.closed {
             return Err(Error::ErrConnectionClosed);
+        }
+
+        // handle all scheduled queries first
+        while let Some((id, name_with_suffix)) = self.scheduled_queries.pop_front() {
+            self.query(now, id, name_with_suffix);
         }
 
         if let Some(next_timeout) = self.next_timeout.as_ref()
@@ -907,9 +947,12 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
             for name in names_to_query {
                 self.send_question(&name, now);
             }
-
-            self.update_next_timeout();
         }
+
+        // Update timeout
+        self.update_next_timeout();
+        self.last_now = now;
+
         Ok(())
     }
 
@@ -926,22 +969,28 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     /// use sansio::Protocol;
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
     ///
     /// // No queries, no timeout
     /// assert!(mdns.poll_timeout().is_none());
     ///
     /// // Start a query
-    /// mdns.query("device.local");
+    /// mdns.query_now(Instant::now(), "device.local");
     ///
     /// // Now there's a timeout scheduled
     /// assert!(mdns.poll_timeout().is_some());
     /// ```
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        self.next_timeout
+        if !self.scheduled_queries.is_empty() {
+            // immediately handle scheduled_queries
+            Some(self.last_now)
+        } else {
+            self.next_timeout
+        }
     }
 
     /// Close the connection.
@@ -954,11 +1003,12 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     /// # Example
     ///
     /// ```rust
+    /// # use std::time::Instant;
     /// use rtc_mdns::{MdnsConfig, Mdns};
     /// use sansio::Protocol;
     ///
-    /// let mut mdns = Mdns::new(MdnsConfig::default());
-    /// mdns.query("device.local");
+    /// let mut mdns = Mdns::new(Instant::now(), MdnsConfig::default());
+    /// mdns.query_now(Instant::now(), "device.local");
     ///
     /// assert_eq!(mdns.pending_query_count(), 1);
     ///
@@ -972,6 +1022,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     fn close(&mut self) -> Result<()> {
         self.closed = true;
         self.queries.clear();
+        self.scheduled_queries.clear();
         self.write_outs.clear();
         self.event_outs.clear();
         self.next_timeout = None;

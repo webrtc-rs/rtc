@@ -241,7 +241,7 @@ async fn run(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     let mut rtp_sender_ids = HashMap::new();
     let mut kind_codecs = HashMap::new();
@@ -285,7 +285,7 @@ async fn run(
     println!("Offer received: {}", offer);
 
     // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -306,7 +306,7 @@ async fn run(
     let answer = peer_connection.create_answer(None)?;
 
     // Sets the LocalDescription
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
@@ -540,6 +540,7 @@ async fn stream_video(
     println!("play video from disk file {video_file_name}");
 
     let mut packetizer = rtp::packetizer::new_packetizer(
+        Instant::now(),
         RTP_OUTBOUND_MTU,
         codec.payload_type,
         ssrc,
@@ -576,7 +577,7 @@ async fn stream_video(
 
         let sample_duration = Duration::from_millis(40);
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&frame.freeze(), samples)?;
+        let packets = packetizer.packetize(Instant::now(), &frame.freeze(), samples)?;
         for packet in packets {
             video_message_tx.send((video_sender_id, packet)).await?;
         }
@@ -614,6 +615,7 @@ async fn stream_audio(
     println!("play audio from disk file {audio_file_name}");
 
     let mut packetizer = rtp::packetizer::new_packetizer(
+        Instant::now(),
         RTP_OUTBOUND_MTU,
         codec.payload_type,
         ssrc,
@@ -635,7 +637,7 @@ async fn stream_audio(
         let sample_duration = Duration::from_millis(sample_count * 1000 / 48000);
 
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&page_data.freeze(), samples)?;
+        let packets = packetizer.packetize(Instant::now(), &page_data.freeze(), samples)?;
         for packet in packets {
             audio_message_tx.send((audio_sender_id, packet)).await?;
         }

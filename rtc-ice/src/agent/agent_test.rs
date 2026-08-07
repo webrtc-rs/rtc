@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Instant;
 use stun::message::*;
 use stun::textattrs::Username;
 
@@ -21,7 +22,7 @@ fn test_crypto_provider() -> std::sync::Arc<dyn crypto::RTCCryptoProvider> {
 #[test]
 fn test_pair_search() -> Result<()> {
     let config = Arc::new(AgentConfig::default());
-    let mut a = Agent::new(config, test_crypto_provider())?;
+    let mut a = Agent::new(Instant::now(), config, test_crypto_provider())?;
 
     assert!(
         a.candidate_pairs.is_empty(),
@@ -38,7 +39,11 @@ fn test_pair_search() -> Result<()> {
 
 #[test]
 fn test_pair_priority() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -160,7 +165,7 @@ fn pipe(
     };
     cfg0.urls = vec![];
 
-    let a_agent = Agent::new(Arc::new(cfg0), test_crypto_provider())?;
+    let a_agent = Agent::new(Instant::now(), Arc::new(cfg0), test_crypto_provider())?;
 
     let mut cfg1 = if let Some(cfg) = default_config1 {
         cfg
@@ -169,14 +174,18 @@ fn pipe(
     };
     cfg1.urls = vec![];
 
-    let b_agent = Agent::new(Arc::new(cfg1), test_crypto_provider())?;
+    let b_agent = Agent::new(Instant::now(), Arc::new(cfg1), test_crypto_provider())?;
 
     Ok((a_agent, b_agent))
 }
 
 #[test]
 fn test_on_selected_candidate_pair_change() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -227,7 +236,11 @@ fn test_on_selected_candidate_pair_change() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let host_config = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -313,7 +326,11 @@ fn test_handle_peer_reflexive_udp_pflx_candidate() -> Result<()> {
 
 #[test]
 fn test_handle_peer_reflexive_unknown_remote() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let mut tid = TransactionId::default();
     tid.0[..3].copy_from_slice("ABC".as_bytes());
@@ -434,7 +451,7 @@ fn test_connectivity_on_startup() -> Result<()> {
         ..Default::default()
     };
 
-    let mut a_agent = Agent::new(cfg0, test_crypto_provider())?;
+    let mut a_agent = Agent::new(Instant::now(), cfg0, test_crypto_provider())?;
 
     let cfg1 = AgentConfig {
         keepalive_interval,
@@ -442,7 +459,7 @@ fn test_connectivity_on_startup() -> Result<()> {
         ..Default::default()
     };
 
-    let mut b_agent = Agent::new(cfg1, test_crypto_provider())?;
+    let mut b_agent = Agent::new(Instant::now(), cfg1, test_crypto_provider())?;
 
     // Manual signaling
     let (a_ufrag, a_pwd) = a_agent.get_local_user_credentials();
@@ -505,7 +522,7 @@ fn test_connectivity_lite() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
     a_agent.on_connection_state_change(a_notifier);
 
     let cfg1 = AgentConfig {
@@ -517,7 +534,7 @@ fn test_connectivity_lite() -> Result<()> {
         ..Default::default()
     };
 
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
     b_agent.on_connection_state_change(b_notifier);
 
     let _ = connect_with_vnet(&a_agent, &b_agent)?;
@@ -616,7 +633,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Invalid Binding requests should be discarded"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let local_pwd = {
@@ -661,7 +678,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Invalid Binding success responses should be discarded"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let username = {
@@ -688,7 +705,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Discard non-binding messages"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let username = {
@@ -713,7 +730,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Valid bind request"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let (username, local_pwd) = {
@@ -741,7 +758,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Valid bind without fingerprint"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let (username, local_pwd) = {
@@ -774,7 +791,7 @@ fn test_inbound_validity() -> Result<()> {
 
     //"Success with invalid TransactionID"
     {
-        let a = Agent::new(AgentConfig::default())?;
+        let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
         {
             let remote = SocketAddr::from_str("172.17.0.3:999")?;
@@ -815,7 +832,7 @@ fn test_inbound_validity() -> Result<()> {
 
 #[test]
 fn test_invalid_agent_starts() -> Result<()> {
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let (_cancel_tx1, cancel_rx1) = mpsc::channel(1);
     let result = a.dial(cancel_rx1, "".to_owned(), "bar".to_owned());
@@ -897,8 +914,8 @@ fn test_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let (is_checking_tx, mut is_checking_rx) = mpsc::channel::<()>(1);
     let (is_connected_tx, mut is_connected_rx) = mpsc::channel::<()>(1);
@@ -973,7 +990,7 @@ fn test_connection_state_callback() -> Result<()> {
 #[test]
 fn test_invalid_gather() -> Result<()> {
     //"Gather with no OnCandidate should error"
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     if let Err(err) = a.gather_candidates() {
         assert_eq!(
@@ -990,7 +1007,7 @@ fn test_invalid_gather() -> Result<()> {
 
 #[test]
 fn test_candidate_pair_stats() -> Result<()> {
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let host_local: Arc<dyn Candidate + Send + Sync> = Arc::new(
         CandidateHostConfig {
@@ -1151,7 +1168,7 @@ fn test_candidate_pair_stats() -> Result<()> {
 
 #[test]
 fn test_local_candidate_stats() -> Result<()> {
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let host_local: Arc<dyn Candidate + Send + Sync> = Arc::new(
         CandidateHostConfig {
@@ -1242,7 +1259,7 @@ fn test_local_candidate_stats() -> Result<()> {
 
 #[test]
 fn test_remote_candidate_stats() -> Result<()> {
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let relay_remote: Arc<dyn Candidate + Send + Sync> = Arc::new(
         CandidateRelayConfig {
@@ -1391,7 +1408,7 @@ fn test_remote_candidate_stats() -> Result<()> {
 fn test_binding_request_timeout() -> Result<()> {
     const EXPECTED_REMOVAL_COUNT: usize = 2;
 
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let now = Instant::now();
     {
@@ -1434,7 +1451,7 @@ fn test_agent_credentials() -> Result<()> {
     // Agent should not require any of the usernames and password to be set
     // If set, they should follow the default 16/128 bits random number generator strategy
 
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
     {
         let ufrag_pwd = a.internal.ufrag_pwd.lock();
         assert!(ufrag_pwd.local_ufrag.as_bytes().len() * 8 >= 24);
@@ -1447,7 +1464,7 @@ fn test_agent_credentials() -> Result<()> {
     // random number generator output used to generate the password, and
     // at least 24 bits of output to generate the username fragment.
 
-    if let Err(err) = Agent::new(AgentConfig {
+    if let Err(err) = Agent::new(Instant::now(), AgentConfig {
         local_ufrag: "xx".to_owned(),
         ..Default::default()
     }) {
@@ -1456,7 +1473,7 @@ fn test_agent_credentials() -> Result<()> {
         panic!("expected error, but got ok");
     }
 
-    if let Err(err) = Agent::new(AgentConfig {
+    if let Err(err) = Agent::new(Instant::now(), AgentConfig {
         local_pwd: "xxxxxx".to_owned(),
         ..Default::default()
     }) {
@@ -1490,8 +1507,8 @@ fn test_connection_state_failed_delete_all_candidates() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let (is_failed_tx, mut is_failed_rx) = mpsc::channel::<()>(1);
     let is_failed_tx = Arc::new(Mutex::new(Some(is_failed_tx)));
@@ -1544,8 +1561,8 @@ fn test_connection_state_connecting_to_failed() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let is_failed = WaitGroup::new();
     let is_checking = WaitGroup::new();
@@ -1604,13 +1621,13 @@ fn test_connection_state_connecting_to_failed() -> Result<()> {
 fn test_agent_restart_during_gather() -> Result<()> {
     //"Restart During Gather"
 
-    let agent = Agent::new(AgentConfig::default())?;
+    let agent = Agent::new(Instant::now(), AgentConfig::default())?;
 
     agent
         .gathering_state
         .store(GatheringState::Gathering as u8, Ordering::SeqCst);
 
-    if let Err(err) = agent.restart("".to_owned(), "".to_owned()) {
+    if let Err(err) = agent.restart(Instant::now(), "".to_owned(), "".to_owned()) {
         assert_eq!(Error::ErrRestartWhenGathering, err);
     } else {
         panic!("expected error, but got ok");
@@ -1625,10 +1642,10 @@ fn test_agent_restart_during_gather() -> Result<()> {
 fn test_agent_restart_when_closed() -> Result<()> {
     //"Restart When Closed"
 
-    let agent = Agent::new(AgentConfig::default())?;
+    let agent = Agent::new(Instant::now(), AgentConfig::default())?;
     agent.close()?;
 
-    if let Err(err) = agent.restart("".to_owned(), "".to_owned()) {
+    if let Err(err) = agent.restart(Instant::now(), "".to_owned(), "".to_owned()) {
         assert_eq!(Error::ErrClosed, err);
     } else {
         panic!("expected error, but got ok");
@@ -1667,7 +1684,7 @@ fn test_agent_restart_one_side() -> Result<()> {
         })
     }));
 
-    agent_a.restart("".to_owned(), "".to_owned())?;
+    agent_a.restart(Instant::now(), "".to_owned(), "".to_owned())?;
 
     let _ = cancel_rx.recv();
 
@@ -1722,8 +1739,8 @@ fn test_agent_restart_both_side() -> Result<()> {
     agent_b.on_connection_state_change(b_notifier);
 
     // Restart and Re-Signal
-    agent_a.restart("".to_owned(), "".to_owned())?;
-    agent_b.restart("".to_owned(), "".to_owned())?;
+    agent_a.restart(Instant::now(), "".to_owned(), "".to_owned())?;
+    agent_b.restart(Instant::now(), "".to_owned(), "".to_owned())?;
 
     // Exchange Candidates and Credentials
     let (ufrag, pwd) = agent_b.get_local_user_credentials();
@@ -1756,7 +1773,7 @@ fn test_agent_restart_both_side() -> Result<()> {
 
 #[test]
 fn test_get_remote_credentials() -> Result<()> {
-    let a = Agent::new(AgentConfig::default())?;
+    let a = Agent::new(Instant::now(), AgentConfig::default())?;
 
     let (remote_ufrag, remote_pwd) = {
         let mut ufrag_pwd = a.internal.ufrag_pwd.lock();
@@ -1804,8 +1821,8 @@ fn test_close_in_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let (is_closed_tx, mut is_closed_rx) = mpsc::channel::<()>(1);
     let (is_connected_tx, mut is_connected_rx) = mpsc::channel::<()>(1);
@@ -1861,8 +1878,8 @@ fn test_run_task_in_connection_state_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let (is_complete_tx, mut is_complete_rx) = mpsc::channel::<()>(1);
     let is_complete_tx = Arc::new(Mutex::new(Some(is_complete_tx)));
@@ -1880,7 +1897,7 @@ fn test_run_task_in_connection_state_callback() -> Result<()> {
 
     let _ = is_complete_rx.recv();
     let _ = a_agent.get_local_user_credentials();
-    a_agent.restart("".to_owned(), "".to_owned())?;
+    a_agent.restart(Instant::now(), "".to_owned(), "".to_owned())?;
 
     a_agent.close()?;
     b_agent.close()?;
@@ -1913,8 +1930,8 @@ fn test_run_task_in_selected_candidate_pair_change_callback() -> Result<()> {
         ..Default::default()
     };
 
-    let a_agent = Arc::new(Agent::new(cfg0, test_crypto_provider())?);
-    let b_agent = Arc::new(Agent::new(cfg1, test_crypto_provider())?);
+    let a_agent = Arc::new(Agent::new(Instant::now(), cfg0, test_crypto_provider())?);
+    let b_agent = Arc::new(Agent::new(Instant::now(), cfg1, test_crypto_provider())?);
 
     let (is_tested_tx, mut is_tested_rx) = mpsc::channel::<()>(1);
     let is_tested_tx = Arc::new(Mutex::new(Some(is_tested_tx)));
@@ -1958,7 +1975,7 @@ fn test_run_task_in_selected_candidate_pair_change_callback() -> Result<()> {
 fn test_lite_lifecycle() -> Result<()> {
     let (a_notifier, mut a_connected_rx) = on_connected();
 
-    let a_agent = Arc::new(Agent::new(AgentConfig {
+    let a_agent = Arc::new(Agent::new(Instant::now(), AgentConfig {
         network_types: supported_network_types(),
         ..Default::default()
     })?);
@@ -1969,7 +1986,7 @@ fn test_lite_lifecycle() -> Result<()> {
     let failed_duration = Duration::from_secs(1);
     let keepalive_interval = Duration::from_secs(0);
 
-    let b_agent = Arc::new(Agent::new(AgentConfig {
+    let b_agent = Arc::new(Agent::new(Instant::now(), AgentConfig {
         lite: true,
         candidate_types: vec![CandidateType::Host],
         network_types: supported_network_types(),
@@ -2028,7 +2045,7 @@ fn test_role_conflict_both_controlling_smaller_tiebreaker_switches() -> Result<(
     // Create agent with controlling role
     let mut config = AgentConfig::default();
     config.is_controlling = true;
-    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
 
     // Set a specific tiebreaker value
     agent.tie_breaker = 100;
@@ -2149,7 +2166,7 @@ fn test_role_conflict_both_controlling_larger_tiebreaker_stays() -> Result<()> {
     // Create agent with controlling role
     let mut config = AgentConfig::default();
     config.is_controlling = true;
-    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
 
     // Set a larger tiebreaker value
     agent.tie_breaker = 500;
@@ -2245,7 +2262,7 @@ fn test_role_conflict_both_controlled_larger_tiebreaker_switches() -> Result<()>
     // Create agent with controlled role
     let mut config = AgentConfig::default();
     config.is_controlling = false; // Controlled
-    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
 
     // Set a larger tiebreaker value
     agent.tie_breaker = 500;
@@ -2347,7 +2364,7 @@ fn test_role_conflict_both_controlled_smaller_tiebreaker_stays() -> Result<()> {
     // Create agent with controlled role
     let mut config = AgentConfig::default();
     config.is_controlling = false; // Controlled
-    let mut agent = Agent::new(Arc::new(config), test_crypto_provider())?;
+    let mut agent = Agent::new(Instant::now(), Arc::new(config), test_crypto_provider())?;
 
     // Set a smaller tiebreaker value
     agent.tie_breaker = 100;
@@ -2441,7 +2458,7 @@ fn test_candidate_type_filtering() -> Result<()> {
         candidate_types: vec![CandidateType::Relay],
         ..Default::default()
     });
-    let mut agent = Agent::new(config, test_crypto_provider())?;
+    let mut agent = Agent::new(Instant::now(), config, test_crypto_provider())?;
 
     // Host local candidate should be rejected
     let host_local = CandidateHostConfig {
@@ -2515,7 +2532,11 @@ fn test_candidate_type_filtering() -> Result<()> {
 // recently updated the candidate timestamps (RFC 7675).
 #[test]
 fn test_keepalive_sent_during_media_flow() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     // Set up a selected pair
     let host_local = CandidateHostConfig {
@@ -2556,8 +2577,8 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
     a.set_selected_pair(Some(0));
 
     // Simulate recent media activity on both candidates
-    a.local_candidates[0].seen(true);
-    a.remote_candidates[0].seen(false);
+    a.local_candidates[0].seen(Instant::now(), true);
+    a.remote_candidates[0].seen(Instant::now(), false);
 
     // Virtual time: the agent is told the instant, so nothing here sleeps or samples a clock.
     let base = Instant::now();
@@ -2598,7 +2619,11 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
 
 #[test]
 fn test_pair_network_type_mismatch() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     // UDP: IPv4 local should not pair with IPv6 remote.
     let local_v4 = CandidateHostConfig {
@@ -2720,7 +2745,11 @@ fn test_pair_network_type_mismatch() -> Result<()> {
 //     thread '...' panicked at 'index out of bounds: the len is 0 but the index is 0'
 #[test]
 fn test_transition_to_failed_clears_stale_candidate_pairs() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let local = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -2794,7 +2823,7 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
         failed_timeout: Some(Duration::from_secs(0)),
         ..Default::default()
     };
-    let mut a = Agent::new(Arc::new(cfg), test_crypto_provider())?;
+    let mut a = Agent::new(Instant::now(), Arc::new(cfg), test_crypto_provider())?;
 
     let local_candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -2880,14 +2909,21 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
 // candidate -- i.e. issue an mDNS query, which surfaces as an outbound packet to
 // MDNS_PORT -- whereas a Disabled agent silently drops it. This guards the
 // behavioral consequence of defaulting the SettingEngine mDNS mode to QueryOnly.
+//
+// `add_remote_candidate` takes no instant, so it only *schedules* the query; the
+// packet is stamped and emitted by the next `handle_timeout`, which does have one.
+// `poll_timeout` reports an already-due deadline so the driver comes back at once.
 #[test]
 fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
     // A .local host candidate in Safari's exact format.
     let cand_line =
         "1114572465 1 udp 2113939711 61b445d2-6503-41ac-96ce-ee3edac00e9f.local 61163 typ host";
 
+    let base = Instant::now();
+
     // QueryOnly: adding the candidate issues an mDNS query (not a drop).
     let mut agent = Agent::new(
+        base,
         Arc::new(AgentConfig {
             multicast_dns_mode: crate::mdns::MulticastDnsMode::QueryOnly,
             ..Default::default()
@@ -2899,6 +2935,14 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
         !added,
         "an mDNS candidate is not immediately usable; resolution is async"
     );
+    let deadline = agent
+        .poll_timeout()
+        .expect("a scheduled mDNS query must ask the driver for a timeout");
+    assert!(
+        deadline <= base,
+        "the scheduled query is already due, so the driver runs it immediately"
+    );
+    agent.handle_timeout(deadline)?;
     let pkt = agent
         .poll_write()
         .expect("QueryOnly must emit an mDNS query for a .local remote candidate");
@@ -2907,9 +2951,14 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
         mdns::MDNS_PORT,
         "the emitted packet must be an mDNS query"
     );
+    assert_eq!(
+        pkt.now, deadline,
+        "the query is stamped with the instant the driver supplied, not an ambient one"
+    );
 
     // Disabled: the same candidate is silently dropped -- no mDNS query.
     let mut agent = Agent::new(
+        base,
         Arc::new(AgentConfig {
             multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
             ..Default::default()
@@ -2932,7 +2981,11 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
 /// and drop the packet.
 #[test]
 fn test_send_stun_from_srflx_uses_base_addr() -> Result<()> {
-    let mut a = Agent::new(Arc::new(AgentConfig::default()), test_crypto_provider())?;
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
 
     let srflx_local = CandidateServerReflexiveConfig {
         base_config: CandidateConfig {
@@ -2965,7 +3018,7 @@ fn test_send_stun_from_srflx_uses_base_addr() -> Result<()> {
     a.write_outs.clear();
 
     let msg = Message::new();
-    a.send_stun(&msg, 0, 0);
+    a.send_stun(Instant::now(), &msg, 0, 0);
 
     let transmit = a.write_outs.pop_front().expect("send_stun must emit");
     assert_eq!(
@@ -2976,6 +3029,117 @@ fn test_send_stun_from_srflx_uses_base_addr() -> Result<()> {
     assert_eq!(
         transmit.transport.peer_addr,
         "10.79.11.1:37983".parse().unwrap()
+    );
+
+    a.close()?;
+    Ok(())
+}
+
+/// Staging an ICE restart must not disturb the live session.
+///
+/// JSEP requires `createOffer` to be free of side effects, so the credentials an ICE-restart offer
+/// advertises are generated but *not* installed until the local description is applied. If they
+/// were installed at offer time, inbound STUN would immediately start failing its USERNAME and
+/// MESSAGE-INTEGRITY checks against the new pair — and permanently so if the offer were discarded,
+/// which JSEP explicitly permits.
+#[test]
+fn test_staged_ice_restart_keeps_live_session_authenticating() -> Result<()> {
+    let mut a = Agent::new(
+        Instant::now(),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    let local_candidate = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 777,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    let local_priority = local_candidate.priority();
+    a.add_local_candidate(local_candidate)?;
+
+    a.ufrag_pwd.remote_credentials = Some(Credentials {
+        ufrag: String::new(),
+        pwd: String::new(),
+    });
+
+    let original = a.ufrag_pwd.local_credentials.clone();
+    let remote_addr = SocketAddr::from_str("172.17.0.3:999")?;
+
+    // Builds a binding request authenticated with `pwd`, as the remote peer would send it.
+    let inbound = |ufrag: &str, pwd: String, tie_breaker: u64| -> Result<Message> {
+        let mut msg = Message::new();
+        msg.build(&[
+            Box::new(BINDING_REQUEST),
+            Box::new(TransactionId::new()),
+            Box::new(Username::new(ATTR_USERNAME, format!("{ufrag}:"))),
+            Box::new(AttrControlling(tie_breaker)),
+            Box::new(PriorityAttr(local_priority)),
+            Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                pwd,
+                test_crypto_provider().crypto(),
+            )),
+            Box::new(FINGERPRINT),
+        ])?;
+        Ok(msg)
+    };
+
+    // Baseline: the peer's checks are accepted.
+    let mut msg = inbound(&original.ufrag, original.pwd.clone(), a.tie_breaker)?;
+    a.handle_inbound(Instant::now(), &mut msg, 0, remote_addr)?;
+
+    // What `create_offer` does for an ICE restart: generate credentials for the offer to carry.
+    a.generate_restart_credentials(String::new(), String::new())?;
+
+    // The offer advertises the new pair...
+    let advertised = a.get_local_credentials().clone();
+    assert_ne!(
+        advertised.ufrag, original.ufrag,
+        "staging a restart must generate a fresh ufrag for the offer"
+    );
+    assert_ne!(advertised.pwd, original.pwd);
+
+    // ...while the live session still authenticates with the old one.
+    // (`Credentials` deliberately implements neither `Debug` nor `PartialEq`: `pwd` is the
+    // MESSAGE-INTEGRITY key and must not reach a log line, so compare the fields directly.)
+    assert_eq!(
+        a.ufrag_pwd.local_credentials.ufrag, original.ufrag,
+        "staging must not install the new ufrag into the live session"
+    );
+    assert_eq!(
+        a.ufrag_pwd.local_credentials.pwd, original.pwd,
+        "staging must not install the new pwd into the live session"
+    );
+
+    // The guarantee: the peer is still sending checks keyed on the original credentials, and they
+    // must keep being accepted while the offer is in flight.
+    let mut msg = inbound(&original.ufrag, original.pwd.clone(), a.tie_breaker)?;
+    a.handle_inbound(Instant::now(), &mut msg, 0, remote_addr)
+        .expect("inbound STUN keyed on the pre-restart credentials must still validate");
+
+    // The application discards the offer and never sets a local description. The connection must
+    // be exactly as it was.
+    assert!(a.has_pending_restart());
+    let mut msg = inbound(&original.ufrag, original.pwd.clone(), a.tie_breaker)?;
+    a.handle_inbound(Instant::now(), &mut msg, 0, remote_addr)
+        .expect("a discarded ICE-restart offer must leave the session working");
+
+    // Applying it — what `set_local_description` does — installs the staged pair.
+    a.apply_restart(Instant::now(), true)?;
+    assert!(!a.has_pending_restart());
+    assert_eq!(
+        a.ufrag_pwd.local_credentials.ufrag, advertised.ufrag,
+        "apply_restart must install exactly the ufrag the offer advertised"
+    );
+    assert_eq!(
+        a.ufrag_pwd.local_credentials.pwd, advertised.pwd,
+        "apply_restart must install exactly the pwd the offer advertised"
     );
 
     a.close()?;

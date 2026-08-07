@@ -12,7 +12,7 @@ use crate::attributes::{control::*, priority::*, use_candidate::*};
 use crate::candidate::{candidate_pair::*, *};
 
 trait ControllingSelector {
-    fn start(&mut self);
+    fn start(&mut self, now: Instant);
     fn contact_candidates(&mut self, now: Instant);
     fn ping_candidate(&mut self, now: Instant, local_index: usize, remote_index: usize);
     fn handle_success_response(
@@ -33,7 +33,7 @@ trait ControllingSelector {
 }
 
 trait ControlledSelector {
-    fn start(&mut self);
+    fn start(&mut self, now: Instant);
     fn contact_candidates(&mut self, now: Instant);
     fn ping_candidate(&mut self, now: Instant, local_index: usize, remote_index: usize);
     fn handle_success_response(
@@ -137,11 +137,11 @@ impl Agent {
         }
     }
 
-    pub(crate) fn start(&mut self) {
+    pub(crate) fn start(&mut self, now: Instant) {
         if self.is_controlling {
-            ControllingSelector::start(self);
+            ControllingSelector::start(self, now);
         } else {
-            ControlledSelector::start(self);
+            ControlledSelector::start(self, now);
         }
     }
 
@@ -208,9 +208,9 @@ impl Agent {
 }
 
 impl ControllingSelector for Agent {
-    fn start(&mut self) {
+    fn start(&mut self, now: Instant) {
         self.nominated_pair = None;
-        self.start_time = Instant::now();
+        self.start_time = now;
     }
 
     fn contact_candidates(&mut self, now: Instant) {
@@ -357,7 +357,7 @@ impl ControllingSelector for Agent {
         local_index: usize,
         remote_index: usize,
     ) {
-        self.send_binding_success(m, local_index, remote_index);
+        self.send_binding_success(now, m, local_index, remote_index);
         trace!("controllingSelector: sendBindingSuccess");
 
         if let Some(pair_index) = self.find_pair(local_index, remote_index) {
@@ -410,7 +410,7 @@ impl ControllingSelector for Agent {
 }
 
 impl ControlledSelector for Agent {
-    fn start(&mut self) {}
+    fn start(&mut self, _now: Instant) {}
 
     fn contact_candidates(&mut self, now: Instant) {
         // A lite selector should not contact candidates
@@ -545,7 +545,7 @@ impl ControlledSelector for Agent {
                     if self.get_selected_pair().is_none() {
                         self.set_selected_pair(Some(pair_index));
                     }
-                    self.send_binding_success(m, local_index, remote_index);
+                    self.send_binding_success(now, m, local_index, remote_index);
                 } else {
                     // If the received Binding request triggered a new check to be
                     // enqueued in the triggered-check queue (Section 7.3.1.4), once the
@@ -558,7 +558,7 @@ impl ControlledSelector for Agent {
                     self.ping_candidate(now, local_index, remote_index);
                 }
             } else {
-                self.send_binding_success(m, local_index, remote_index);
+                self.send_binding_success(now, m, local_index, remote_index);
                 self.ping_candidate(now, local_index, remote_index);
             }
         }

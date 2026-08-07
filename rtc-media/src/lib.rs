@@ -26,14 +26,17 @@
 //! use bytes::Bytes;
 //! use rtc_media::Sample;
 //! use shared::time::SystemInstant;
-//! use std::time::Duration;
+//! use std::time::{Duration, Instant};
+//!
+//! // The caller supplies the instant; `Sample` resolves no clock of its own.
+//! let now = Instant::now();
 //!
 //! // One encoded frame, ready to hand to a sample-based local track.
 //! let sample = Sample {
 //!     data: Bytes::from_static(&[0u8; 128]),
-//!     timestamp: SystemInstant::now(),
+//!     timestamp: SystemInstant::now(now),
 //!     duration: Duration::from_millis(33), // ~30 fps
-//!     ..Default::default()
+//!     ..Sample::new(now)
 //! };
 //! assert_eq!(sample.data.len(), 128);
 //! ```
@@ -50,7 +53,7 @@ pub mod video;
 
 use bytes::Bytes;
 use shared::time::SystemInstant;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A Sample contains encoded media and timing information
 #[derive(Debug)]
@@ -92,12 +95,12 @@ pub struct Sample {
     ///
     /// ```rust
     /// # use bytes::Bytes;
-    /// # use std::time::{SystemTime, Duration};
+    /// # use std::time::{Instant, SystemTime, Duration};
     /// # use rtc_media::Sample;
     /// use shared::time::SystemInstant;
     /// # let sample = Sample {
     /// #   data: Bytes::new(),
-    /// #   timestamp: SystemInstant::now(),
+    /// #   timestamp: SystemInstant::now(Instant::now()),
     /// #   duration: Duration::from_secs(0),
     /// #   packet_timestamp: 0,
     /// #   prev_dropped_packets: 10,
@@ -110,11 +113,15 @@ pub struct Sample {
     pub prev_padding_packets: u16,
 }
 
-impl Default for Sample {
-    fn default() -> Self {
+impl Sample {
+    /// An empty sample stamped at `now`.
+    ///
+    /// This replaces `Default`: the timestamp is a real-world observation the caller supplies,
+    /// not something the constructor may reach for.
+    pub fn new(now: Instant) -> Self {
         Sample {
             data: Bytes::new(),
-            timestamp: SystemInstant::now(),
+            timestamp: SystemInstant::now(now),
             duration: Duration::from_secs(0),
             packet_timestamp: 0,
             prev_dropped_packets: 0,

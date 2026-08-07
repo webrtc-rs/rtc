@@ -168,14 +168,15 @@ impl PerfectNegotiationHandler {
             rollback.sdp_type = RTCSdpType::Rollback;
             rollback.sdp = String::new(); // Spec: SDP omitted or empty for rollback
 
-            self.pc.set_local_description(rollback)?;
+            self.pc.set_local_description(Instant::now(), rollback)?;
 
             // Update our signaling state after rollback
             self.signaling_state = RTCSignalingState::Stable;
         }
 
         // Set the remote description
-        self.pc.set_remote_description(description.clone())?;
+        self.pc
+            .set_remote_description(Instant::now(), description.clone())?;
 
         // Debug: Check if received SDP contains candidates
         if description.sdp.contains("candidate:") {
@@ -202,7 +203,8 @@ impl PerfectNegotiationHandler {
             self.add_local_host_candidate(local_addr)?;
 
             let answer = self.pc.create_answer(None)?;
-            self.pc.set_local_description(answer.clone())?;
+            self.pc
+                .set_local_description(Instant::now(), answer.clone())?;
             info!("[{}] Creating answer", role);
             self.signaling_state = RTCSignalingState::Stable; // Answer completes negotiation
             return Ok(Some(answer));
@@ -426,7 +428,7 @@ async fn run_peer(
     let pc = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     // Don't create data channel yet - wait for user to click "Connect"
     // This makes the "Connect" button meaningful
@@ -550,7 +552,7 @@ async fn run_peer(
                     negotiation.add_local_host_candidate(local_addr)?;
 
                     let offer = negotiation.peer_connection().create_offer(None)?;
-                    negotiation.peer_connection().set_local_description(offer.clone())?;
+                    negotiation.peer_connection().set_local_description(Instant::now(), offer.clone())?;
 
                     // Update our state tracker immediately
                     negotiation.signaling_state = RTCSignalingState::HaveLocalOffer;

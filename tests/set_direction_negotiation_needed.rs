@@ -17,6 +17,7 @@ use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::rtp_transceiver::RTCRtpTransceiverDirection;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use sansio::Protocol;
+use std::time::Instant;
 
 /// Drain every currently queued peer-connection event and return how many of
 /// them were `OnNegotiationNeededEvent`.
@@ -40,10 +41,10 @@ fn test_set_direction_updates_negotiation_needed_flag() -> Result<(), Box<dyn st
 
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_media_engine(me)
-        .build()?;
+        .build(Instant::now())?;
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_media_engine(me2)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add one video transceiver on each side (defaults to "recvonly").
     let transceiver_id = offerer.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
@@ -52,12 +53,12 @@ fn test_set_direction_updates_negotiation_needed_flag() -> Result<(), Box<dyn st
     // Complete a full offer/answer exchange so the offerer settles back into a
     // stable, idle negotiation state.
     let offer = offerer.create_offer(None)?;
-    offerer.set_local_description(offer.clone())?;
-    answerer.set_remote_description(offer)?;
+    offerer.set_local_description(Instant::now(), offer.clone())?;
+    answerer.set_remote_description(Instant::now(), offer)?;
 
     let answer = answerer.create_answer(None)?;
-    answerer.set_local_description(answer.clone())?;
-    offerer.set_remote_description(answer)?;
+    answerer.set_local_description(Instant::now(), answer.clone())?;
+    offerer.set_remote_description(Instant::now(), answer)?;
 
     // Drain everything produced by the initial negotiation so the counter starts clean.
     let _ = count_negotiation_needed(&mut offerer);

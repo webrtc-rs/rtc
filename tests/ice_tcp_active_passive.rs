@@ -62,7 +62,7 @@ impl TcpPeerRunner {
         let mut offer_pc = RTCPeerConnectionBuilder::new()
             .with_configuration(offer_config)
             .with_setting_engine(offer_setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         // Create TCP active candidate for offer side
         // Port 9 (discard) is used as placeholder for active candidates
@@ -92,7 +92,7 @@ impl TcpPeerRunner {
         let mut answer_pc = RTCPeerConnectionBuilder::new()
             .with_configuration(answer_config)
             .with_setting_engine(answer_setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         // Create TCP passive candidate for answer side
         let answer_candidate = CandidateHostConfig {
@@ -142,12 +142,20 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
 
     // Exchange offer/answer
     let offer = runner.offer_pc.create_offer(None)?;
-    runner.offer_pc.set_local_description(offer.clone())?;
-    runner.answer_pc.set_remote_description(offer)?;
+    runner
+        .offer_pc
+        .set_local_description(Instant::now(), offer.clone())?;
+    runner
+        .answer_pc
+        .set_remote_description(Instant::now(), offer)?;
 
     let answer = runner.answer_pc.create_answer(None)?;
-    runner.answer_pc.set_local_description(answer.clone())?;
-    runner.offer_pc.set_remote_description(answer)?;
+    runner
+        .answer_pc
+        .set_local_description(Instant::now(), answer.clone())?;
+    runner
+        .offer_pc
+        .set_remote_description(Instant::now(), answer)?;
 
     // Track state
     let mut offer_connected = false;
@@ -534,12 +542,20 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
 
     // Exchange offer/answer
     let offer = runner.offer_pc.create_offer(None)?;
-    runner.offer_pc.set_local_description(offer.clone())?;
-    runner.answer_pc.set_remote_description(offer)?;
+    runner
+        .offer_pc
+        .set_local_description(Instant::now(), offer.clone())?;
+    runner
+        .answer_pc
+        .set_remote_description(Instant::now(), offer)?;
 
     let answer = runner.answer_pc.create_answer(None)?;
-    runner.answer_pc.set_local_description(answer.clone())?;
-    runner.offer_pc.set_remote_description(answer)?;
+    runner
+        .answer_pc
+        .set_local_description(Instant::now(), answer.clone())?;
+    runner
+        .offer_pc
+        .set_remote_description(Instant::now(), answer)?;
 
     // State tracking
     let mut offer_connected = false;

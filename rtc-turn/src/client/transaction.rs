@@ -25,6 +25,8 @@ pub(crate) enum TransactionType {
 
 // TransactionConfig is a set of config params used by NewTransaction
 pub(crate) struct TransactionConfig {
+    /// The instant the transaction starts, from which its first retransmit deadline is computed.
+    pub(crate) now: Instant,
     pub(crate) transaction_id: TransactionId,
     pub(crate) transaction_type: TransactionType,
     pub(crate) raw: BytesMut,
@@ -60,7 +62,7 @@ impl Transaction {
             transport_protocol: config.transport_protocol,
             n_rtx: 0,
             interval: config.interval,
-            timeout: Instant::now().add(Duration::from_millis(config.interval)),
+            timeout: config.now.add(Duration::from_millis(config.interval)),
             transmits: VecDeque::new(),
         }
     }

@@ -30,7 +30,7 @@
 //! let config = RTCConfigurationBuilder::new().build();
 //! let mut peer_connection = RTCPeerConnectionBuilder::new()
 //!     .with_configuration(config)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! loop {
 //!     // Poll and handle events

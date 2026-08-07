@@ -255,12 +255,12 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Set the remote description (offer from webrtc)
     log::info!("RTC set remote description offer {}", rtc_offer);
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -283,7 +283,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
     log::info!("RTC created answer {}", answer);
 
     // Set the local description
-    rtc_pc.set_local_description(answer)?;
+    rtc_pc.set_local_description(Instant::now(), answer)?;
 
     // Get the answer to send back to webrtc
     let rtc_answer = rtc_pc

@@ -192,7 +192,7 @@ async fn run_main_loop(
     // An application is the outside caller, so it selects the crypto provider explicitly.
     // Library code never resolves a default.
     let mut turn_client = Client::new(cfg, crypto::default_provider()?)?;
-    let allocate_tid = turn_client.allocate()?;
+    let allocate_tid = turn_client.allocate(Instant::now())?;
     let mut relay_addr: Option<SocketAddr> = None;
     let relay_local_addr = local_addr;
     let mut relay_candidate_added = false;
@@ -310,10 +310,11 @@ async fn run_main_loop(
                     // Check if we have permission for this peer
                     if granted_permissions.contains(&msg.transport.peer_addr) {
                         // Send through TURN relay
-                        if let Err(err) = turn_client
-                            .relay(relay)?
-                            .send_to(&msg.message, msg.transport.peer_addr)
-                        {
+                        if let Err(err) = turn_client.relay(relay)?.send_to(
+                            msg.now,
+                            &msg.message,
+                            msg.transport.peer_addr,
+                        ) {
                             error!("TURN relay send error: {}", err);
                         } else {
                             trace!(
@@ -468,7 +469,7 @@ async fn run_main_loop(
 
                                                 // Create permission if relay is allocated
                                                 if let Some(relay) = relay_addr {
-                                                    if let Some(tid) = turn_client.relay(relay)?.create_permission(addr)? {
+                                                    if let Some(tid) = turn_client.relay(relay)?.create_permission(Instant::now(), addr)? {
                                                         pending_permissions.insert(tid, addr);
                                                         println!("Requesting permission for peer {}", addr);
                                                     }
@@ -589,16 +590,16 @@ async fn run_main_loop(
 
                                             .build();
 
-                                        let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config) .with_setting_engine(setting_engine).build()?;
+                                        let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config) .with_setting_engine(setting_engine).build(Instant::now())?;
                                         println!("Created peer connection");
 
                                         // Set remote description
                                         println!("Setting remote description {}", offer);
-                                        pc.set_remote_description(offer)?;
+                                        pc.set_remote_description(Instant::now(), offer)?;
 
                                         // Create answer
                                         let answer = pc.create_answer(None)?;
-                                        pc.set_local_description(answer.clone())?;
+                                        pc.set_local_description(Instant::now(), answer.clone())?;
                                         println!("Created and set answer {}", answer);
 
                                         // Now that both local and remote descriptions are set,

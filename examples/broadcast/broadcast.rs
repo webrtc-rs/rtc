@@ -195,12 +195,12 @@ async fn run_broadcaster(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add transceiver to receive video
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
 
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -217,7 +217,7 @@ async fn run_broadcaster(
     peer_connection.add_local_candidate(local_candidate_init)?;
 
     let answer = peer_connection.create_answer(None)?;
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     if let Some(local_desc) = peer_connection.local_description() {
         let json_str = serde_json::to_string(&local_desc)?;
@@ -537,7 +537,7 @@ async fn run_viewer(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Wait for codec information from broadcaster
     println!(
@@ -589,7 +589,7 @@ async fn run_viewer(
 
     let _rtp_sender_id = peer_connection.add_track(video_track)?;
 
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -606,7 +606,7 @@ async fn run_viewer(
     peer_connection.add_local_candidate(local_candidate_init)?;
 
     let answer = peer_connection.create_answer(None)?;
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     if let Some(local_desc) = peer_connection.local_description() {
         let json_str = serde_json::to_string(&local_desc)?;

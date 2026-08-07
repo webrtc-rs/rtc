@@ -188,8 +188,10 @@ pub struct Candidate {
 
     pub(crate) resolved_addr: SocketAddr,
 
-    pub(crate) last_sent: Instant,
-    pub(crate) last_received: Instant,
+    /// When traffic was last sent on this candidate, or `None` if none ever has been.
+    pub(crate) last_sent: Option<Instant>,
+    /// When traffic was last received on this candidate, or `None` if none ever has been.
+    pub(crate) last_received: Option<Instant>,
 
     pub(crate) foundation_override: String,
     pub(crate) priority_override: u32,
@@ -214,8 +216,8 @@ impl Default for Candidate {
 
             resolved_addr: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0),
 
-            last_sent: Instant::now(),
-            last_received: Instant::now(),
+            last_sent: None,
+            last_received: None,
 
             foundation_override: String::new(),
             priority_override: 0,
@@ -287,13 +289,17 @@ impl Candidate {
         self.component = component;
     }
 
-    /// Returns a time indicating the last time this candidate was received.
-    pub fn last_received(&self) -> Instant {
+    /// When traffic was last received on this candidate.
+    ///
+    /// `None` until the first packet arrives. A freshly constructed or freshly parsed candidate
+    /// has not received anything, and previously said it had — it was seeded with the
+    /// construction instant, which also meant every candidate constructor needed a clock.
+    pub fn last_received(&self) -> Option<Instant> {
         self.last_received
     }
 
-    /// Returns a time indicating the last time this candidate was sent.
-    pub fn last_sent(&self) -> Instant {
+    /// When traffic was last sent on this candidate, or `None` if none ever has been.
+    pub fn last_sent(&self) -> Option<Instant> {
         self.last_sent
     }
 
@@ -408,9 +414,7 @@ impl Candidate {
     /// Records traffic on this candidate, updating its last-sent or last-received time.
     ///
     /// Feeds consent freshness — a pair that stops seeing traffic is eventually abandoned.
-    pub fn seen(&mut self, outbound: bool) {
-        let now = Instant::now();
-
+    pub fn seen(&mut self, now: Instant, outbound: bool) {
         if outbound {
             self.set_last_sent(now);
         } else {
@@ -463,12 +467,12 @@ impl Candidate {
 impl Candidate {
     /// Records that traffic was received on this candidate at `now`.
     pub fn set_last_received(&mut self, now: Instant) {
-        self.last_received = now;
+        self.last_received = Some(now);
     }
 
     /// Records that traffic was sent on this candidate at `now`.
     pub fn set_last_sent(&mut self, now: Instant) {
-        self.last_sent = now;
+        self.last_sent = Some(now);
     }
 
     /// Returns the local preference for this candidate.

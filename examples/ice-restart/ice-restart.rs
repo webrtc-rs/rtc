@@ -333,10 +333,10 @@ async fn main() -> Result<()> {
 
                             // For ICE restart, we process the new offer
                             println!("Set remote description {} for ICE restart", offer);
-                            pc.set_remote_description(offer)?;
+                            pc.set_remote_description(Instant::now(), offer)?;
 
                             let answer = pc.create_answer(None)?;
-                            pc.set_local_description(answer.clone())?;
+                            pc.set_local_description(Instant::now(), answer.clone())?;
                             println!("Created and set answer {} for ICE restart", answer);
 
                             // Send answer back to HTTP handler
@@ -375,7 +375,7 @@ async fn main() -> Result<()> {
                                 .build();
 
                             let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)
-                               .with_setting_engine(setting_engine).build()?;
+                               .with_setting_engine(setting_engine).build(Instant::now())?;
                             println!("Created peer connection");
 
                             // Add local candidate
@@ -395,10 +395,10 @@ async fn main() -> Result<()> {
 
                             // Process the offer
                             println!("Set remote description {}", offer);
-                            pc.set_remote_description(offer)?;
+                            pc.set_remote_description(Instant::now(), offer)?;
 
                             let answer = pc.create_answer(None)?;
-                            pc.set_local_description(answer.clone())?;
+                            pc.set_local_description(Instant::now(), answer.clone())?;
                             println!("Created and set answer {}", answer);
 
                             // Send answer back to HTTP handler

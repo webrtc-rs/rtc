@@ -146,7 +146,7 @@ pub struct SenderReportInterceptor<P> {
     inner: P,
 
     interval: Duration,
-    eto: Instant,
+    next_timeout: Option<Instant>,
 
     /// Whether to always use the latest packet, even if out-of-order.
     use_latest_packet: bool,
@@ -164,7 +164,7 @@ impl<P> SenderReportInterceptor<P> {
             inner,
 
             interval,
-            eto: Instant::now(),
+            next_timeout: None,
 
             use_latest_packet,
 
@@ -204,6 +204,11 @@ impl<P: Interceptor> SenderReportInterceptor<P> {
             && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
         {
             stream.process_rtp(msg.now, rtp_packet);
+
+            // Arm the report timer from the first packet's instant (see nack::generator).
+            if self.next_timeout.is_none() {
+                self.next_timeout = Some(msg.now + self.interval);
+            }
         }
 
         self.inner.handle_write(msg)
@@ -220,16 +225,19 @@ impl<P: Interceptor> SenderReportInterceptor<P> {
 
     #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        if self.eto <= now {
-            self.eto = now + self.interval;
+        if let Some(next_timeout) = self.next_timeout
+            && now >= next_timeout
+        {
+            self.next_timeout = Some(now + self.interval);
 
             for stream in self.streams.values_mut() {
-                let rr = stream.generate_report(now);
-                self.write_queue.push_back(TaggedPacket {
-                    now,
-                    transport: TransportContext::default(),
-                    message: Packet::Rtcp(vec![Box::new(rr)]),
-                });
+                if let Some(rr) = stream.generate_report(now) {
+                    self.write_queue.push_back(TaggedPacket {
+                        now,
+                        transport: TransportContext::default(),
+                        message: Packet::Rtcp(vec![Box::new(rr)]),
+                    });
+                }
             }
         }
 
@@ -238,12 +246,11 @@ impl<P: Interceptor> SenderReportInterceptor<P> {
 
     #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        if let Some(eto) = self.inner.poll_timeout()
-            && eto < self.eto
-        {
-            Some(eto)
-        } else {
-            Some(self.eto)
+        match (self.next_timeout, self.inner.poll_timeout()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
         }
     }
 
@@ -631,17 +638,48 @@ mod tests {
 
     #[test]
     fn test_poll_timeout_returns_earliest() {
-        // Test that poll_timeout returns the earliest timeout
+        let interval = Duration::from_secs(5);
         let mut chain = Registry::new()
             .with(
                 SenderReportBuilder::default()
-                    .with_interval(Duration::from_secs(5))
+                    .with_interval(interval)
                     .build(),
             )
             .build();
 
-        // The interceptor should return its own eto
-        let timeout = chain.poll_timeout();
-        assert!(timeout.is_some());
+        // Nothing is scheduled before any traffic: the report timer is armed from the first
+        // packet's instant, not from a clock read at construction. Asking for a wake-up here
+        // would be asking to report on a stream that does not exist yet.
+        assert_eq!(
+            chain.poll_timeout(),
+            None,
+            "an idle interceptor must not request a wake-up"
+        );
+
+        let info = StreamInfo {
+            ssrc: 123456,
+            clock_rate: 90000,
+            ..Default::default()
+        };
+        chain.bind_local_stream(&info);
+
+        let base_time = Instant::now();
+        chain
+            .handle_write(TaggedPacket {
+                now: base_time,
+                transport: Default::default(),
+                message: Packet::Rtp(rtp::Packet {
+                    header: rtp::header::Header {
+                        ssrc: 123456,
+                        ..Default::default()
+                    },
+                    payload: vec![0u8; 100].into(),
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+
+        // The first packet arms the timer one interval out, from that packet's instant.
+        assert_eq!(chain.poll_timeout(), Some(base_time + interval));
     }
 }

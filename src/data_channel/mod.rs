@@ -10,11 +10,12 @@
 //! # Examples
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::data_channel::RTCDataChannelInit;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut pc = RTCPeerConnectionBuilder::new().build()?;
+//! let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! let init = RTCDataChannelInit {
 //!     ordered: true,

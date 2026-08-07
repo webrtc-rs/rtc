@@ -126,7 +126,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         .with_setting_engine(answerer_setting_engine)
         .with_media_engine(answerer_media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created answerer peer connection");
 
     // Add local candidate for answerer
@@ -191,7 +191,7 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         .with_setting_engine(offerer_setting_engine)
         .with_media_engine(offerer_media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created offerer peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs
@@ -257,11 +257,11 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     log::info!("Offerer created offer {}", offer);
 
     // Set local description on offerer
-    offerer_pc.set_local_description(offer.clone())?;
+    offerer_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("Offerer set local description");
 
     // Set remote description on answerer
-    answerer_pc.set_remote_description(offer.clone())?;
+    answerer_pc.set_remote_description(Instant::now(), offer.clone())?;
     log::info!("Answerer set remote description");
 
     // Create answer from answerer
@@ -269,12 +269,12 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
     log::info!("Answerer created answer");
 
     // Set local description on answerer
-    answerer_pc.set_local_description(answer.clone())?;
+    answerer_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("Answerer set local description");
 
     // Set remote description on offerer
     log::info!("Offerer set remote description {}", answer);
-    offerer_pc.set_remote_description(answer)?;
+    offerer_pc.set_remote_description(Instant::now(), answer)?;
 
     // Run event loops for both peers
     let offerer_socket = Arc::new(offerer_socket);

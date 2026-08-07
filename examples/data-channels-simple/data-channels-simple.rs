@@ -349,10 +349,10 @@ fn create_peer_connection(
 
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
-        .build()?;
+        .build(Instant::now())?;
 
     // Set remote description (the offer)
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local ICE candidate
     let candidate = CandidateHostConfig {
@@ -373,7 +373,7 @@ fn create_peer_connection(
     let answer = peer_connection.create_answer(None)?;
 
     // Set local description
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     Ok((peer_connection, answer))
 }

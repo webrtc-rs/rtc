@@ -270,7 +270,7 @@ impl Peer {
         let mut pc = RTCPeerConnectionBuilder::new()
             .with_setting_engine(setting_engine)
             .with_media_engine(media_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         let sender_id = if send_media {
             Some(pc.add_track(MediaStreamTrack::new(
@@ -347,11 +347,19 @@ async fn exercise_pair(
     let (mut answer, _) = Peer::new(answer_provider, false).await?;
 
     let description = offer.pc.create_offer(None)?;
-    offer.pc.set_local_description(description.clone())?;
-    answer.pc.set_remote_description(description)?;
+    offer
+        .pc
+        .set_local_description(Instant::now(), description.clone())?;
+    answer
+        .pc
+        .set_remote_description(Instant::now(), description)?;
     let description = answer.pc.create_answer(None)?;
-    answer.pc.set_local_description(description.clone())?;
-    offer.pc.set_remote_description(description)?;
+    answer
+        .pc
+        .set_local_description(Instant::now(), description.clone())?;
+    offer
+        .pc
+        .set_remote_description(Instant::now(), description)?;
 
     let mut offer_connected = false;
     let mut answer_connected = false;

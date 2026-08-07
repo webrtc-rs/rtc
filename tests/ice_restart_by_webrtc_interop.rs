@@ -162,7 +162,7 @@ async fn test_ice_restart_interop() -> Result<()> {
     let mut rtc_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(rtc_config)
         .with_setting_engine(rtc_setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created rtc peer connection");
 
     // Add local candidate for rtc peer
@@ -186,7 +186,7 @@ async fn test_ice_restart_interop() -> Result<()> {
         rtc::peer_connection::sdp::RTCSessionDescription::offer(webrtc_offer.sdp.clone())?;
 
     // Set remote description on rtc peer
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
     log::info!("RTC peer set remote description");
 
     // Create answer
@@ -194,7 +194,7 @@ async fn test_ice_restart_interop() -> Result<()> {
     log::info!("RTC peer created answer");
 
     // Set local description on rtc peer
-    rtc_pc.set_local_description(rtc_answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), rtc_answer.clone())?;
     log::info!("RTC peer set local description");
 
     // Convert rtc answer to webrtc format
@@ -484,13 +484,13 @@ async fn test_ice_restart_interop() -> Result<()> {
         rtc::peer_connection::sdp::RTCSessionDescription::offer(restart_offer.sdp.clone())?;
 
     // Process restart on rtc peer
-    rtc_pc.set_remote_description(rtc_restart_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_restart_offer)?;
     log::info!("RTC peer set remote description for restart");
 
     let rtc_restart_answer = rtc_pc.create_answer(None)?;
     log::info!("RTC peer created restart answer");
 
-    rtc_pc.set_local_description(rtc_restart_answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), rtc_restart_answer.clone())?;
     log::info!("RTC peer set local description for restart");
 
     // Convert restart answer to webrtc format

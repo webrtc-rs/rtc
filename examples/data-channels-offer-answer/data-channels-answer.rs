@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
     // Create a new RTCPeerConnection
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
-        .build()?;
+        .build(Instant::now())?;
 
     // Get local candidates
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -299,7 +299,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Command::SetRemoteDescription(sdp) => {
-                        if let Err(e) = peer_connection.set_remote_description(sdp) {
+                        if let Err(e) = peer_connection.set_remote_description(Instant::now(), sdp) {
                             eprintln!("Failed to set remote description: {}", e);
                         } else {
                             println!("Remote description (offer) set successfully");
@@ -312,7 +312,7 @@ async fn main() -> Result<()> {
                             // Create answer
                             match peer_connection.create_answer(None) {
                                 Ok(answer) => {
-                                    if let Err(e) = peer_connection.set_local_description(answer.clone()) {
+                                    if let Err(e) = peer_connection.set_local_description(Instant::now(), answer.clone()) {
                                         eprintln!("Failed to set local description: {}", e);
                                     } else {
                                         println!("Created and set answer, sending to offer");
