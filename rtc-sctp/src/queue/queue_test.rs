@@ -674,8 +674,10 @@ fn test_reassembly_queue_read_prefers_earlier_completion() -> Result<()> {
 
     // Ordered completes first -> read it first, unordered second.
     let mut rq = ReassemblyQueue::new(0);
+    // No sleep between the pushes: `Chunks::arrival` is a monotonic counter incremented per
+    // completed message, not a timestamp, so ordering follows insertion order. The sleep this
+    // replaces dated from when `arrival` was an `Instant` and bought nothing but 2ms.
     assert!(rq.push(make_chunk(1, 0, false, b"ABC")));
-    std::thread::sleep(std::time::Duration::from_millis(2));
     assert!(rq.push(make_chunk(2, 1, true, b"DEF")));
 
     let chunks = rq.read().expect("first read");
@@ -689,7 +691,6 @@ fn test_reassembly_queue_read_prefers_earlier_completion() -> Result<()> {
     // Unordered completes first -> read it first, ordered second.
     let mut rq = ReassemblyQueue::new(0);
     assert!(rq.push(make_chunk(2, 1, true, b"DEF")));
-    std::thread::sleep(std::time::Duration::from_millis(2));
     assert!(rq.push(make_chunk(1, 0, false, b"ABC")));
 
     let chunks = rq.read().expect("first read");

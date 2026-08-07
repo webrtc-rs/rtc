@@ -1392,7 +1392,7 @@ where
     ///
     /// This is called automatically by `get_stats()` to ensure ICE candidate pair
     /// statistics (RTT, requests/responses sent/received) are up to date.
-    pub(super) fn update_ice_agent_stats(&mut self) {
+    pub(super) fn update_ice_agent_stats(&mut self, now: Instant) {
         if let Some((local, remote)) = self
             .pipeline_context
             .ice_handler_context
@@ -1408,7 +1408,7 @@ where
                 .ice_handler_context
                 .ice_transport
                 .agent
-                .get_candidate_pairs_stats()
+                .get_candidate_pairs_stats(now)
             {
                 let ice_pair_id = format!(
                     "RTCIceCandidatePair_{}_{}",

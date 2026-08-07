@@ -29,4 +29,3 @@ src/peer_connection/transport/dtls/mod.rs:1:X.509 validity window
 # Each phase deletes lines from here. See sans-io-deterministic-time-work-plan.md.
 # Target end state: this section is empty.
 
-rtc-ice/src/agent/agent_stats.rs:11:awaiting clock injection

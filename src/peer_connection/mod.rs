@@ -2341,7 +2341,7 @@ where
     /// [The stats selection algorithm](https://www.w3.org/TR/webrtc/#the-stats-selection-algorithm)
     pub fn get_stats(&mut self, now: Instant, selector: StatsSelector) -> RTCStatsReport {
         // Update ICE agent stats before taking snapshot
-        self.update_ice_agent_stats();
+        self.update_ice_agent_stats(now);
         // Update codec stats from transceivers before taking snapshot
         self.update_codec_stats();
         self.pipeline_context

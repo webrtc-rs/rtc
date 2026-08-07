@@ -3220,3 +3220,79 @@ fn test_agent_events_carry_the_instant_they_were_observed_at() -> Result<()> {
 
     Ok(())
 }
+
+/// A `getStats` snapshot reports the instant the caller asked at, throughout — including the
+/// fields that default rather than being populated from live state. Mixing virtual protocol time
+/// with wall-clock timestamps in one report is worse than no report: the reader cannot tell which
+/// numbers are comparable.
+#[test]
+fn test_stats_snapshot_reports_the_callers_instant_throughout() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let mut a = Agent::new(
+        t(0),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    let host_local = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 1000,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(host_local)?;
+
+    let host_remote = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.3".to_owned(),
+            port: 1001,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_remote_candidate(host_remote)?;
+
+    // Take the snapshot at an instant far from "now", so a stray wall-clock read is obvious.
+    let pairs = a.get_candidate_pairs_stats(t(600));
+    assert!(!pairs.is_empty(), "adding a remote candidate forms a pair");
+    for p in &pairs {
+        for (field, stamp) in [
+            ("timestamp", p.timestamp),
+            ("last_packet_sent_timestamp", p.last_packet_sent_timestamp),
+            (
+                "last_packet_received_timestamp",
+                p.last_packet_received_timestamp,
+            ),
+            ("first_request_timestamp", p.first_request_timestamp),
+            ("last_request_timestamp", p.last_request_timestamp),
+            ("last_response_timestamp", p.last_response_timestamp),
+            ("consent_expired_timestamp", p.consent_expired_timestamp),
+        ] {
+            assert_eq!(stamp, t(600), "{field} must report the caller's instant");
+        }
+    }
+
+    let locals = a.get_local_candidates_stats(t(600));
+    assert_eq!(locals.len(), 1);
+    assert_eq!(locals[0].timestamp, t(600));
+
+    let remotes = a.get_remote_candidates_stats(t(600));
+    assert_eq!(remotes.len(), 1);
+    assert_eq!(remotes[0].timestamp, t(600));
+
+    // A second snapshot at a different instant reports that one, with no wall-clock time having
+    // passed between the two calls.
+    assert_eq!(a.get_candidate_pairs_stats(t(900))[0].timestamp, t(900));
+
+    Ok(())
+}
