@@ -37,7 +37,7 @@
 
 use ::serde::{Deserialize, Serialize};
 use shared::serde::instant_to_epoch;
-use std::time::Instant;
+use shared::time::SystemInstant;
 
 pub mod certificate;
 pub mod codec;
@@ -128,7 +128,7 @@ pub struct RTCStats {
     ///
     /// Serialized as milliseconds since the Unix epoch for W3C compatibility.
     #[serde(with = "instant_to_epoch")]
-    pub timestamp: Instant,
+    pub timestamp: SystemInstant,
 
     /// The type of this statistics object.
     #[serde(rename = "type")]

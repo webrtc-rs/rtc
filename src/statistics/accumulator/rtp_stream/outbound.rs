@@ -8,6 +8,7 @@ use crate::statistics::stats::rtp_stream::received::remote_inbound::RTCRemoteInb
 use crate::statistics::stats::rtp_stream::sent::RTCSentRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::outbound::RTCOutboundRtpStreamStats;
 use crate::statistics::stats::{RTCQualityLimitationReason, RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -167,7 +168,7 @@ impl OutboundRtpStreamAccumulator {
             sent_rtp_stream_stats: RTCSentRtpStreamStats {
                 rtp_stream_stats: RTCRtpStreamStats {
                     stats: RTCStats {
-                        timestamp: now,
+                        timestamp: SystemInstant::now(now),
                         typ: RTCStatsType::OutboundRTP,
                         id: id.to_string(),
                     },
@@ -254,7 +255,7 @@ impl OutboundRtpStreamAccumulator {
             received_rtp_stream_stats: RTCReceivedRtpStreamStats {
                 rtp_stream_stats: RTCRtpStreamStats {
                     stats: RTCStats {
-                        timestamp: now,
+                        timestamp: SystemInstant::now(now),
                         typ: RTCStatsType::RemoteInboundRTP,
                         id: format!("RTCRemoteInboundRTPStream_{}_{}", self.kind, self.ssrc),
                     },

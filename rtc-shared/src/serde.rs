@@ -1,57 +1,38 @@
-/// Serializes a `tokio::time::Instant` to an approximation of epoch time in the form
+/// Serializes a `SystemInstant` to an approximation of epoch time in the form
 /// of an `f64` where the integer portion is seconds and the decimal portion is milliseconds.
-/// For instance, `Monday, May 30, 2022 10:45:26.456 PM UTC` converts to `1653950726.456`.
-///
-/// Note that an `Instant` is not connected to real world time, so this conversion is
-/// approximate.
 pub mod instant_to_epoch {
+    use crate::time::SystemInstant;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
 
-    /// Serializes an [`Instant`] as a duration relative to the process's reference instant.
+    /// Serializes an [`SystemInstant`] as a duration relative to the process's reference instant.
     ///
-    /// [`Instant`] has no absolute representation, so this encodes the offset instead. Use
+    /// [`SystemInstant`] has no absolute representation, so this encodes the offset instead. Use
     /// with `#[serde(with = "...")]`.
     ///
     /// # Errors
     ///
     /// Propagates any failure from the underlying serializer.
-    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(instant: &SystemInstant, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let approx = system_now - (instant_now - *instant);
-        let epoch = approx
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-
+        let epoch = instant.duration_since_unix_epoch();
         let epoch_s = epoch.as_millis() as f64 / 1000.0;
-
         epoch_s.serialize(serializer)
     }
 
-    /// Deserializes an [`Instant`] from the relative offset written by [`serialize`].
+    /// Deserializes an [`SystemInstant`] from the relative offset written by [`serialize`].
     ///
     /// # Errors
     ///
     /// Propagates any failure from the underlying deserializer.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemInstant, D::Error>
     where
         D: Deserializer<'de>,
     {
         let epoch_s = f64::deserialize(deserializer)?;
         let epoch_duration = Duration::from_secs_f64(epoch_s);
-
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-
-        let duration_since_approx = system_now
-            .duration_since(UNIX_EPOCH + epoch_duration)
-            .expect("Time went backwards");
-        let instant = instant_now - duration_since_approx;
-
-        Ok(instant)
+        Ok(SystemInstant::from_epoch(epoch_duration))
     }
 }

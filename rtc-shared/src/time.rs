@@ -29,6 +29,23 @@ impl SystemInstant {
         }
     }
 
+    /// Only used for deserialization
+    pub fn from_epoch(duration_since_unix_epoch: Duration) -> Self {
+        let system_now = SystemTime::now(); // Exemption: wall-clock is correct here to deserialization only
+        let instant_now = Instant::now(); // Exemption: Instant::now() is correct here to deserialization only
+
+        let duration_since_approx = system_now
+            .duration_since(UNIX_EPOCH + duration_since_unix_epoch)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+
+        let instant = instant_now - duration_since_approx;
+
+        Self {
+            instant,
+            duration_since_unix_epoch,
+        }
+    }
+
     /// Converts a Unix-epoch duration back into the monotonic [`Instant`] it corresponds to.
     pub fn instant(&self, duration_since_unix_epoch: Duration) -> Instant {
         self.instant + duration_since_unix_epoch - self.duration_since_unix_epoch

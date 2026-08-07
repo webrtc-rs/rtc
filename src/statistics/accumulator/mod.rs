@@ -99,6 +99,26 @@ pub(crate) struct RTCStatsAccumulator {
     fec_ssrc_to_primary: HashMap<SSRC, SSRC>,
 }
 
+/// Asserts a stats record was stamped with `expected`, ignoring the wall-clock half.
+///
+/// A [`SystemInstant`] pairs a monotonic instant with a wall-clock reading taken beside it, and
+/// `PartialEq` compares both. Rebuilding one in a test — `SystemInstant::now(now)` — reproduces
+/// the monotonic half exactly but takes a *fresh* wall-clock reading, so the two are never equal:
+/// they differ by however long the test took to get there, typically a few hundred microseconds.
+///
+/// The monotonic half is the part under test: it says the snapshot stamped the record with the
+/// instant the caller supplied rather than one it went and read. Recover it via the round-trip
+/// `instant(duration_since_unix_epoch())`, which cancels the anchor and returns the instant the
+/// `SystemInstant` was built from.
+#[cfg(test)]
+pub(crate) fn assert_stamped_at(stamp: shared::time::SystemInstant, expected: Instant) {
+    assert_eq!(
+        stamp.instant(stamp.duration_since_unix_epoch()),
+        expected,
+        "stats must be stamped with the caller's instant"
+    );
+}
+
 impl RTCStatsAccumulator {
     /// Creates a new empty stats accumulator.
     pub(crate) fn new() -> Self {

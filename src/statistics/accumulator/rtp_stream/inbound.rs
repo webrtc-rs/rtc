@@ -8,6 +8,7 @@ use crate::statistics::stats::rtp_stream::received::inbound::RTCInboundRtpStream
 use crate::statistics::stats::rtp_stream::sent::RTCSentRtpStreamStats;
 use crate::statistics::stats::rtp_stream::sent::remote_outbound::RTCRemoteOutboundRtpStreamStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated statistics for an inbound RTP stream.
@@ -191,7 +192,7 @@ impl InboundRtpStreamAccumulator {
             received_rtp_stream_stats: RTCReceivedRtpStreamStats {
                 rtp_stream_stats: RTCRtpStreamStats {
                     stats: RTCStats {
-                        timestamp: now,
+                        timestamp: SystemInstant::now(now),
                         typ: RTCStatsType::InboundRTP,
                         id: id.to_string(),
                     },
@@ -258,7 +259,9 @@ impl InboundRtpStreamAccumulator {
             total_pauses_duration: self.total_pauses_duration,
             freeze_count: self.freeze_count,
             total_freezes_duration: self.total_freezes_duration,
-            last_packet_received_timestamp: self.last_packet_received_timestamp.unwrap_or(now),
+            last_packet_received_timestamp: SystemInstant::now(
+                self.last_packet_received_timestamp.unwrap_or(now),
+            ),
             header_bytes_received: self.header_bytes_received,
             packets_discarded: self.packets_discarded,
             fec_bytes_received: self.fec_bytes_received,
@@ -269,7 +272,7 @@ impl InboundRtpStreamAccumulator {
             fir_count: self.fir_count,
             pli_count: self.pli_count,
             total_processing_delay: 0.0,
-            estimated_playout_timestamp: now,
+            estimated_playout_timestamp: SystemInstant::now(now),
             jitter_buffer_delay: self
                 .audio_receiver_stats
                 .as_ref()
@@ -361,7 +364,7 @@ impl InboundRtpStreamAccumulator {
             sent_rtp_stream_stats: RTCSentRtpStreamStats {
                 rtp_stream_stats: RTCRtpStreamStats {
                     stats: RTCStats {
-                        timestamp: now,
+                        timestamp: SystemInstant::now(now),
                         typ: RTCStatsType::RemoteOutboundRTP,
                         id: format!("RTCRemoteOutboundRTPStream_{}_{}", self.kind, self.ssrc),
                     },
@@ -374,7 +377,7 @@ impl InboundRtpStreamAccumulator {
                 bytes_sent: self.remote_bytes_sent,
             },
             local_id: format!("RTCInboundRTPStream_{}_{}", self.kind, self.ssrc),
-            remote_timestamp: self.remote_timestamp.unwrap_or(now),
+            remote_timestamp: SystemInstant::now(self.remote_timestamp.unwrap_or(now)),
             reports_sent: self.reports_received,
             round_trip_time: 0.0,
             total_round_trip_time: 0.0,

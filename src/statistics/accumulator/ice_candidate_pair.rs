@@ -2,6 +2,7 @@ use crate::statistics::stats::ice_candidate_pair::{
     RTCIceCandidatePairStats, RTCStatsIceCandidatePairState,
 };
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated ICE candidate pair statistics.
@@ -127,7 +128,7 @@ impl IceCandidatePairAccumulator {
     pub fn snapshot(&self, now: Instant, id: &str) -> RTCIceCandidatePairStats {
         RTCIceCandidatePairStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::CandidatePair,
                 id: id.to_string(),
             },
@@ -140,8 +141,12 @@ impl IceCandidatePairAccumulator {
             packets_received: self.packets_received,
             bytes_sent: self.bytes_sent,
             bytes_received: self.bytes_received,
-            last_packet_sent_timestamp: self.last_packet_sent_timestamp.unwrap_or(now),
-            last_packet_received_timestamp: self.last_packet_received_timestamp.unwrap_or(now),
+            last_packet_sent_timestamp: SystemInstant::now(
+                self.last_packet_sent_timestamp.unwrap_or(now),
+            ),
+            last_packet_received_timestamp: SystemInstant::now(
+                self.last_packet_received_timestamp.unwrap_or(now),
+            ),
             total_round_trip_time: self.total_round_trip_time,
             current_round_trip_time: self.current_round_trip_time,
             available_outgoing_bitrate: self.available_outgoing_bitrate,
