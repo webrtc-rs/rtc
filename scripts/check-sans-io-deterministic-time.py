@@ -166,17 +166,21 @@ def load_allowlist() -> dict[str, int]:
 # before C2 collapsed their NTP baselines into `SystemInstant::now(now)`.
 PERMANENT: dict[str, tuple[int, str]] = {
     # `SystemInstant` itself: the primitive that pairs a monotonic reading with a wall-clock one.
-    # An RTCP sender report carries real wall-clock time in NTP format, and a virtual instant
-    # would put a fictional timestamp on the wire — so this reads the system clock. The monotonic
-    # half is the caller's `now`, which is why the four sites that used to hold an NTP baseline of
-    # their own (rtc-media ×2, rtc-rtp/packetizer, rtc-interceptor/report/sender_stream) no longer
-    # read a clock at all.
-    "rtc-shared/src/time.rs": (1, "SystemInstant's own construction"),
-
-    # Serializing an `Instant` requires anchoring it to the wall clock: `Instant` is opaque, so a
-    # portable absolute timestamp can only be derived from a `SystemTime` taken alongside it.
-    # Both directions need the pair.
-    "rtc-shared/src/serde.rs": (4, "Instant <-> epoch conversion anchor"),
+    # Three reads, in two categories, both permanent:
+    #
+    #   * `now(now)` — an RTCP sender report carries real wall-clock time in NTP format, and a
+    #     virtual instant would put a fictional timestamp on the wire, so this reads the system
+    #     clock. The monotonic half is the caller's `now`, which is why the four sites that used
+    #     to hold an NTP baseline of their own (rtc-media ×2, rtc-rtp/packetizer,
+    #     rtc-interceptor/report/sender_stream) no longer read a clock at all.
+    #
+    #   * `from_epoch(..)` — the inverse, for deserialization. `Instant` is opaque, so recovering
+    #     one from a portable absolute timestamp needs both clocks read together. This is the
+    #     anchor that used to live in `rtc-shared/src/serde.rs` as 4 reads; serialization no
+    #     longer needs any, so only the 2 on the deserialize side remain.
+    #
+    # Net across the workspace this is a reduction: serde.rs 4 -> 0, time.rs 1 -> 3.
+    "rtc-shared/src/time.rs": (3, "SystemInstant's construction and its epoch anchor"),
 
     # Protocol fields specified as wall-clock time.
     "rtc-dtls/src/handshake/handshake_random.rs": (1, "gmt_unix_time, RFC 5246 s7.4.1.2"),

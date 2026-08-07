@@ -11,7 +11,6 @@ use crate::Sample;
 use bytes::Bytes;
 use rtp::Packet;
 use rtp::packetizer::Depacketizer;
-use shared::time::SystemInstant;
 use std::time::{Duration, Instant};
 
 /// SampleBuilder buffers packets until media frames are complete.
@@ -365,7 +364,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         let sample = Sample {
             data: sample_data,
-            timestamp: SystemInstant::now(now),
+            timestamp: now,
             duration: Duration::from_secs_f64((samples as f64) / (self.sample_rate as f64)),
             packet_timestamp: sample_timestamp,
             prev_dropped_packets: self.dropped_packets,

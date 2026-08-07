@@ -32,7 +32,7 @@ impl SystemInstant {
     /// Only used for deserialization
     pub fn from_epoch(duration_since_unix_epoch: Duration) -> Self {
         let system_now = SystemTime::now(); // Exemption: wall-clock is correct here to deserialization only
-        let instant_now = Instant::now(); // Exemption: Instant::now() is correct here to deserialization only
+        let instant_now = Instant::now(); // Exemption: Instant-now is correct here to deserialization only
 
         let duration_since_approx = system_now
             .duration_since(UNIX_EPOCH + duration_since_unix_epoch)
