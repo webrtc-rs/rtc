@@ -353,7 +353,7 @@ impl SessionDescription {
             origin: Origin {
                 username: "-".to_string(),
                 session_id: new_session_id(),
-                session_version: SystemTime::now()
+                session_version: SystemTime::now() // Exemption: wall-clock is correct here to generate random SDP session version
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .subsec_nanos() as u64,

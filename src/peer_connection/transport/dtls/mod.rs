@@ -77,7 +77,7 @@ impl RTCDtlsTransport {
             crypto_provider,
         } = config;
         if !certificates.is_empty() {
-            let now = SystemTime::now();
+            let now = SystemTime::now(); // Exemption: wall-clock is correct here to check X.509 certificate expiry
             for cert in &certificates {
                 cert.expires
                     .duration_since(now)

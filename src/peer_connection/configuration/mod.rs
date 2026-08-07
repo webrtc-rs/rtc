@@ -393,7 +393,7 @@ impl RTCConfiguration {
 
         // <https://www.w3.org/TR/webrtc/#constructor> (step #3)
         if !self.certificates.is_empty() {
-            let now = SystemTime::now();
+            let now = SystemTime::now(); // Exemption: wall-clock is correct here to check X.509 certificate expiry
             for cert in &self.certificates {
                 cert.expires
                     .duration_since(now)

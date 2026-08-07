@@ -79,7 +79,7 @@ impl HandshakeRandom {
     // may be called multiple times
     /// Fills in the current time and fresh random bytes.
     pub fn populate(&mut self, random: &dyn crypto::RTCRandom) -> shared::error::Result<()> {
-        self.gmt_unix_time = SystemTime::now();
+        self.gmt_unix_time = SystemTime::now(); // Exemption: wall-clock is correct here to generate randomness
         random
             .fill(&mut self.random_bytes)
             .map_err(|error| shared::error::Error::Crypto(error.to_string()))?;

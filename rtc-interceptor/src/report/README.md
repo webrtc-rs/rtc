@@ -185,7 +185,7 @@ This section compares this sans-I/O implementation with the async-based webrtc c
 | **Pattern**     | Async/await with Tokio runtime                    | Sans-I/O with explicit time/polling     |
 | **Concurrency** | `Arc<Mutex<>>`, `tokio::spawn`, WaitGroup         | No async, no locks, explicit state      |
 | **Timer**       | `tokio::time::interval()` with MissedTickBehavior | `handle_timeout()` / `poll_timeout()`   |
-| **Time Source** | `SystemTime::now()` or injected function          | `Instant` passed via `TaggedPacket.now` |
+| **Time Source** | `SystemTime :: now()` or injected function        | `Instant` passed via `TaggedPacket.now` |
 | **Lifecycle**   | WaitGroup for graceful shutdown                   | No background tasks to manage           |
 
 ### Sender Report Comparison

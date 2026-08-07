@@ -338,7 +338,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
             "Starting to send samples on all simulcast layers (webrtc will add RID extensions)"
         );
 
-        let start_time = std::time::SystemTime::now();
+        let start_time = std::time::SystemTime::now(); // Exemption: usage in #test code
 
         for i in 0..30u32 {
             let timestamp = start_time + Duration::from_millis(i as u64 * 33); // ~30fps
