@@ -18,7 +18,7 @@ use rtc::data_channel::RTCDataChannelState;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCDtlsTransportState, RTCIceCandidate,
@@ -206,7 +206,7 @@ async fn test_data_channel_statistics_collection() -> Result<()> {
         }
 
         // Read messages from offer
-        while let Some(message) = runner.offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.offer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 // Handle any incoming messages
             }
@@ -236,7 +236,7 @@ async fn test_data_channel_statistics_collection() -> Result<()> {
         }
 
         // Read messages from answer
-        while let Some(message) = runner.answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.answer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 answer_messages_received += 1;
             }
@@ -246,7 +246,7 @@ async fn test_data_channel_statistics_collection() -> Result<()> {
         if offer_connected && offer_dc_id.is_some() && offer_messages_sent < messages_to_send {
             if let Some(mut dc) = runner.offer_pc.data_channel(offer_dc_id.unwrap()) {
                 let msg = "x".repeat(message_size);
-                dc.send_text(msg)?;
+                dc.send_text(Instant::now(), msg)?;
                 offer_messages_sent += 1;
             }
         }

@@ -89,6 +89,7 @@ impl Endpoint {
     /// Initiate an Association
     pub fn connect(
         &mut self,
+        now: Instant,
         remote: SocketAddr,
         client_config: Arc<HandshakeConfig>,
         initial_state: Option<State>,
@@ -99,11 +100,11 @@ impl Endpoint {
 
         if let Vacant(e) = self.connections.entry(remote) {
             let mut conn = DTLSConn::new(client_config, true, initial_state);
-            conn.handshake()?;
+            conn.handshake(now)?;
 
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -186,13 +187,13 @@ impl Endpoint {
             let is_handshake_completed_before = conn.is_handshake_completed();
             conn.read(&data)?;
             if !conn.is_handshake_completed() {
-                conn.handshake()?;
+                conn.handshake(now)?;
                 // Drain any queued future-epoch packets (e.g. Finished that arrived
                 // before ChangeCipherSpec bumped remote_epoch). If draining sets
                 // handshake_rx, run handshake() again so the FSM can advance.
                 let is_handshake = conn.handle_incoming_queued_packets()?;
                 if is_handshake && !conn.is_handshake_completed() {
-                    conn.handshake()?;
+                    conn.handshake(now)?;
                 }
             }
             if !is_handshake_completed_before && conn.is_handshake_completed() {
@@ -384,7 +385,7 @@ mod tests {
         let server_config = config(server_provider, false, suite)?;
         let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
         let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
-        client.connect(server_addr(), client_config, None)?;
+        client.connect(Instant::now(), server_addr(), client_config, None)?;
 
         let mut client_complete = false;
         let mut server_complete = false;
@@ -483,7 +484,7 @@ mod tests {
         )?;
         let mut endpoint = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
 
-        let result = endpoint.connect(server_addr(), config, None);
+        let result = endpoint.connect(Instant::now(), server_addr(), config, None);
         assert!(matches!(result, Err(Error::Crypto(_))));
         Ok(())
     }

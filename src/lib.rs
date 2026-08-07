@@ -82,7 +82,7 @@
 //! use rtc::peer_connection::transport::RTCIceServer;
 //! use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 //! use rtc::peer_connection::state::{RTCPeerConnectionState, RTCIceConnectionState};
-//! use rtc::peer_connection::message::RTCMessage;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 //! use rtc::sansio::Protocol;
 //! use std::time::{Duration, Instant};
@@ -156,7 +156,7 @@
 //!     }
 //!
 //!     // 3. poll_read() - Get incoming application messages (RTP/RTCP/data)
-//!     while let Some(message) = pc.poll_read() {
+//!     while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!         match message {
 //!             RTCMessage::RtpPacket(track_id, rtp_packet) => {
 //!                 println!("Received RTP packet on track {track_id}");
@@ -513,7 +513,8 @@
 //! use rtc::peer_connection::configuration::RTCConfiguration;
 //! use rtc::data_channel::RTCDataChannelInit;
 //! use rtc::peer_connection::event::RTCPeerConnectionEvent;
-//! use rtc::peer_connection::message::RTCMessage;
+//! use std::time::Instant;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::sansio::Protocol;
 //! use bytes::BytesMut;
 //!
@@ -529,18 +530,18 @@
 //! let channel_id = dc.id();
 //!
 //! // Send text message
-//! dc.send_text("Hello, WebRTC!")?;
+//! dc.send_text(Instant::now(), "Hello, WebRTC!")?;
 //!
 //! // Send binary message
-//! dc.send(BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]))?;
+//! dc.send(Instant::now(), BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]))?;
 //!
 //! // Later, retrieve the data channel by ID
 //! if let Some(mut dc) = pc.data_channel(channel_id) {
-//!     dc.send_text("Another message")?;
+//!     dc.send_text(Instant::now(), "Another message")?;
 //! }
 //!
 //! // Receive messages in event loop
-//! while let Some(message) = pc.poll_read() {
+//! while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!     if let RTCMessage::DataChannelMessage(channel_id, msg) = message {
 //!         if msg.is_string {
 //!             let text = String::from_utf8_lossy(&msg.data);
@@ -594,7 +595,7 @@
 //!
 //! // Send RTP packets
 //! if let Some(mut sender) = pc.rtp_sender(sender_id) {
-//!     // sender.write_rtp(rtp_packet)?;
+//!     // sender.write_rtp(Instant::now(), rtp_packet)?;
 //! }
 //! # Ok(())
 //! # }
@@ -605,7 +606,7 @@
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-//! use rtc::peer_connection::message::RTCMessage;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::sansio::Protocol;
 //! use std::collections::HashMap;
 //!
@@ -632,7 +633,7 @@
 //! }
 //!
 //! // Receive RTP packets
-//! while let Some(message) = pc.poll_read() {
+//! while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!     if let RTCMessage::RtpPacket(track_id, rtp_packet) = message {
 //!         println!("RTP packet on track {}: {} bytes",
 //!             track_id, rtp_packet.payload.len());
@@ -657,12 +658,13 @@
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+//! use std::time::Instant;
 //!
 //! # fn example(mut pc: RTCPeerConnection, receiver_id: RTCRtpReceiverId, media_ssrc: u32)
 //! #     -> Result<(), Box<dyn std::error::Error>> {
 //! // Request keyframe by sending Picture Loss Indication (PLI)
 //! if let Some(mut receiver) = pc.rtp_receiver(receiver_id) {
-//!     receiver.write_rtcp(vec![Box::new(PictureLossIndication {
+//!     receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication {
 //!         sender_ssrc: 0,
 //!         media_ssrc,
 //!     })])?;

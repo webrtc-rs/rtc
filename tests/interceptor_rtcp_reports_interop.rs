@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -262,7 +262,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtpPacket(_track_id, rtp_packet) = message {
                 let count = received_packets_clone.fetch_add(1, Ordering::SeqCst) + 1;
                 log::info!(
@@ -322,7 +322,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
                 log::info!("RTC sent RTP packet #{}", packets_sent);
             }
@@ -604,7 +604,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
             }
 
@@ -839,7 +839,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtpPacket(_, _) = message {
                 received_packets_clone.fetch_add(1, Ordering::SeqCst);
             }
@@ -892,7 +892,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
                 log::info!("RTC sent RTP packet #{}", packets_sent);
             }

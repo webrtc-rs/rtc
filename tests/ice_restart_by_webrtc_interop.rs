@@ -17,7 +17,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -253,7 +253,7 @@ async fn test_ice_restart_interop() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -381,7 +381,7 @@ async fn test_ice_restart_interop() -> Result<()> {
 
         while let Some(_event) = rtc_pc.poll_event() {}
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -423,7 +423,7 @@ async fn test_ice_restart_interop() -> Result<()> {
     // Send from rtc to webrtc
     if let Some(channel_id) = rtc_dc_id {
         if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
-            dc.send_text(ECHO_MESSAGE_1.to_owned())?;
+            dc.send_text(Instant::now(), ECHO_MESSAGE_1.to_owned())?;
             log::info!("RTC sent: {}", ECHO_MESSAGE_1);
         }
     }
@@ -542,7 +542,7 @@ async fn test_ice_restart_interop() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -615,7 +615,7 @@ async fn test_ice_restart_interop() -> Result<()> {
 
         while let Some(_event) = rtc_pc.poll_event() {}
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -660,7 +660,7 @@ async fn test_ice_restart_interop() -> Result<()> {
     // Send from rtc to webrtc
     if let Some(channel_id) = rtc_dc_id {
         if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
-            dc.send_text(ECHO_MESSAGE_2.to_owned())?;
+            dc.send_text(Instant::now(), ECHO_MESSAGE_2.to_owned())?;
             log::info!("RTC sent after restart: {}", ECHO_MESSAGE_2);
         }
     }

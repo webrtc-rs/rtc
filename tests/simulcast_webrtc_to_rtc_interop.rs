@@ -30,7 +30,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -464,7 +464,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         }
 
         // Poll read - receive application messages
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, rtp_packet) => {
                     // Get the receiver for this track

@@ -27,7 +27,7 @@ use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCPeerConnectionIceEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::{RTCSdpType, RTCSessionDescription};
 use rtc::peer_connection::state::{RTCPeerConnectionState, RTCSignalingState};
 use rtc::peer_connection::transport::{
@@ -579,7 +579,7 @@ async fn run_peer(
                 }
 
                 // Poll read (data channel messages)
-                while let Some(message) = negotiation.peer_connection().poll_read() {
+                while let Some(TaggedRTCMessage { message, .. }) = negotiation.peer_connection().poll_read() {
                     match message {
                         RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
                             let msg_str = String::from_utf8(data_channel_message.data.to_vec())
@@ -660,7 +660,7 @@ async fn run_peer(
                                     // Send message through data channel if open
                                     if let Some(ch_id) = data_channel_id {
                                         if let Some(mut dc) = negotiation.peer_connection().data_channel(ch_id) {
-                                            if let Err(e) = dc.send_text(message) {
+                                            if let Err(e) = dc.send_text(Instant::now(), message) {
                                                 error!("[{}] Failed to send message: {}", role, e);
                                             }
                                         }

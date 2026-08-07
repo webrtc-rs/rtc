@@ -23,7 +23,7 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
 
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -235,7 +235,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -258,7 +258,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
 
                     // Echo back
                     log::info!("RTC echoing message back: '{}'", msg_str);
-                    dc.send_text(msg_str)?;
+                    dc.send_text(Instant::now(), msg_str)?;
                 }
                 _ => {}
             }

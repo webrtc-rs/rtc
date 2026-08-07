@@ -21,7 +21,7 @@ use rtc::peer_connection::configuration::media_engine::{
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -366,7 +366,7 @@ async fn run(
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, rtp_packet) => {
                     let receiver_id = track_id2_receiver_id

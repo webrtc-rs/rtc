@@ -438,7 +438,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
                     payload: bytes::Bytes::from(dummy_frame.clone()),
                 };
 
-                if let Err(e) = rtp_sender.write_rtp(packet) {
+                if let Err(e) = rtp_sender.write_rtp(Instant::now(), packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
                 sequence_number += 1;

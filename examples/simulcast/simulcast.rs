@@ -12,7 +12,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngi
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -321,7 +321,7 @@ async fn run(
         }
 
         // Poll read - receive application messages
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     // Get the receiver for this track
@@ -399,7 +399,7 @@ async fn run(
                             "forwarding rtp packet for rid={}, sender_ssrc={}",
                             rid, rtp_packet.header.ssrc
                         );
-                        rtp_sender.write_rtp(rtp_packet)?;
+                        rtp_sender.write_rtp(Instant::now(), rtp_packet)?;
                     } else {
                         debug!("output_track not found for rid = {rid}");
                     }
@@ -452,7 +452,7 @@ async fn run(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         println!("sending PLI rtcp packet with rid: {}, media_ssrc: {}", rid, media_ssrc);
-                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                             sender_ssrc: 0,
                             media_ssrc,
                         })])?;

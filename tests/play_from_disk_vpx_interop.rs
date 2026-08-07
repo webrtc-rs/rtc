@@ -441,7 +441,7 @@ async fn test_play_from_disk_vpx_rtc_to_webrtc() -> Result<()> {
                 .map(|codec| codec.payload_type)
                 .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
             log::trace!("sending rtp packet with ssrc={}", packet.header.ssrc);
-            rtp_sender.write_rtp(packet)?;
+            rtp_sender.write_rtp(Instant::now(), packet)?;
         }
 
         // Check if streaming is complete or if we've received enough packets

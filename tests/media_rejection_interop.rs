@@ -30,7 +30,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
@@ -333,7 +333,7 @@ async fn test_video_only_webrtc_offerer_rtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtpPacket(_track_id, rtp_packet) = message {
                 video_packets_received += 1;
                 if video_packets_received == 1 || video_packets_received % 10 == 0 {

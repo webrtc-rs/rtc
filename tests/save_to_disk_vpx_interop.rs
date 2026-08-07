@@ -21,7 +21,7 @@ use rtc::peer_connection::configuration::media_engine::{
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -357,7 +357,7 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
         }
 
         // Process RTP packets received by rtc
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, _rtp_packet) => {
                     let receiver_id = {

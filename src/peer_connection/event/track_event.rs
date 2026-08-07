@@ -135,7 +135,7 @@ pub struct RTCTrackEventInit {
 /// ```
 /// use rtc::peer_connection::RTCPeerConnection;
 /// use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-/// use rtc::peer_connection::message::RTCMessage;
+/// use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 /// use rtc::sansio::Protocol;
 ///
 /// fn handle_events(peer_connection: &mut RTCPeerConnection) {
@@ -148,7 +148,7 @@ pub struct RTCTrackEventInit {
 ///
 ///     // Poll incoming media. Both RTP and RTCP are tagged with the *track* id they
 ///     // belong to.
-///     while let Some(message) = peer_connection.poll_read() {
+///     while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
 ///         match message {
 ///             RTCMessage::RtpPacket(track_id, rtp) => {
 ///                 println!("RTP packet from track {:?}: {} bytes", track_id, rtp.payload.len());

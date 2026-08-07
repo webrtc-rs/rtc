@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -203,7 +203,7 @@ async fn run_rtc_event_loop(
     }
 
     // Process reads
-    while let Some(message) = rtc_pc.poll_read() {
+    while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
         if let RTCMessage::DataChannelMessage(channel_id, data_channel_message) = message {
             let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
             log::info!(
@@ -219,7 +219,7 @@ async fn run_rtc_event_loop(
 
             if echo_messages && let Some(mut dc) = rtc_pc.data_channel(channel_id) {
                 log::info!("RTC echoing message back: '{}'", msg_str);
-                dc.send_text(msg_str)?;
+                dc.send_text(Instant::now(), msg_str)?;
             }
         }
     }
@@ -751,7 +751,7 @@ async fn test_mdns_query_only_rtc_offerer_webrtc_answerer() -> Result<()> {
             {
                 let msg = "Hello from RTC offerer!";
                 log::info!("RTC sending: '{}'", msg);
-                dc.send_text(msg.to_string()).ok();
+                dc.send_text(Instant::now(), msg.to_string()).ok();
             }
         }
 
@@ -924,7 +924,7 @@ async fn test_mdns_query_and_gather_rtc_offerer_webrtc_answerer() -> Result<()> 
             {
                 let msg = "Hello from RTC offerer (QueryAndGather)!";
                 log::info!("RTC sending: '{}'", msg);
-                dc.send_text(msg.to_string()).ok();
+                dc.send_text(Instant::now(), msg.to_string()).ok();
             }
         }
 

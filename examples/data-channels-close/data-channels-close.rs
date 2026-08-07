@@ -14,8 +14,8 @@ use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -269,7 +269,7 @@ async fn run(
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -310,7 +310,7 @@ async fn run(
             res = message_rx.recv() => {
                 match res {
                     Ok(message) => {
-                        peer_connection.handle_write(message)?;
+                        peer_connection.handle_write(TaggedRTCMessage { now: Instant::now(), message: message })?;
                     }
                     Err(err) => {
                         eprintln!("write_rx error: {}", err);
@@ -321,7 +321,7 @@ async fn run(
             res = event_rx.recv() => {
                 match res {
                     Ok(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     Err(err) => {
                         eprintln!("event_rx error: {}", err);
@@ -341,7 +341,7 @@ async fn run(
 
                         let message = math_rand_alpha(15);
                         println!("Sending '{message}'");
-                        dc.send_text(message)?;
+                        dc.send_text(Instant::now(), message)?;
                         data_channel_last_sent = now;
 
                         close_after -= 1;

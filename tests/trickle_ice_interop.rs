@@ -27,7 +27,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -291,7 +291,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(channel_id, data_channel_message) = message {
                 let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                 log::info!("RTC received message: '{}'", msg_str);
@@ -304,7 +304,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
                 // Echo back
                 if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
                     log::info!("RTC echoing message back");
-                    dc.send_text(msg_str)?;
+                    dc.send_text(Instant::now(), msg_str)?;
                 }
             }
         }
@@ -584,7 +584,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_channel_id, data_channel_message) = message {
                 let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                 log::info!("RTC received message: '{}'", msg_str);

@@ -281,7 +281,7 @@ async fn test_data_channel_close_interop() -> Result<()> {
                     if messages_to_send > 0 {
                         let message = format!("Message #{}", 4 - messages_to_send);
                         log::info!("RTC sending: '{}'", message);
-                        dc.send_text(message)?;
+                        dc.send_text(Instant::now(), message)?;
                         last_message_time = Instant::now();
 
                         messages_to_send -= 1;

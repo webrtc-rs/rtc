@@ -260,7 +260,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                     log::info!("RTC: Sending message: {}", msg);
                     if let Some(channel_id) = dc_id {
                         if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
-                            if let Err(e) = dc.send_text(msg) {
+                            if let Err(e) = dc.send_text(Instant::now(), msg) {
                                 resp_tx
                                     .send(Response::Error(format!("Failed to send message: {}", e)))
                                     .ok();

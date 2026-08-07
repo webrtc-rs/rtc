@@ -31,12 +31,12 @@ fn send_before_the_stream_exists_is_rejected() -> Result<()> {
     );
 
     assert_eq!(
-        dc.send(BytesMut::from(&b"dropped"[..])),
+        dc.send(Instant::now(), BytesMut::from(&b"dropped"[..])),
         Err(Error::ErrDataChannelNotOpen),
         "send must not claim success before the channel opens"
     );
     assert_eq!(
-        dc.send_text("dropped"),
+        dc.send_text(Instant::now(), "dropped"),
         Err(Error::ErrDataChannelNotOpen),
         "send_text must not claim success before the channel opens"
     );
@@ -53,7 +53,7 @@ fn rejected_send_does_not_charge_outstanding_bytes() -> Result<()> {
 
     let mut dc = pc.create_data_channel("probe", Some(RTCDataChannelInit::default()))?;
 
-    let _ = dc.send(BytesMut::from(&b"dropped"[..]));
+    let _ = dc.send(Instant::now(), BytesMut::from(&b"dropped"[..]));
 
     assert_eq!(
         dc.outstanding_bytes(),
@@ -76,7 +76,7 @@ fn send_on_a_closed_channel_reports_closed() -> Result<()> {
 
     let mut dc = pc.data_channel(id).expect("handle survives close");
     assert_ne!(
-        dc.send(BytesMut::from(&b"dropped"[..])),
+        dc.send(Instant::now(), BytesMut::from(&b"dropped"[..])),
         Ok(()),
         "send on a closed channel must fail"
     );

@@ -24,7 +24,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
@@ -366,7 +366,7 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
         }
 
         // Process reads - check for RTCP packets
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     rtp_packets_received += 1;
@@ -636,7 +636,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     rtp_packets_received += 1;
@@ -853,7 +853,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
                     },
                     payload: bytes::Bytes::from(vec![0xAAu8; 100]),
                 };
-                let _ = sender.write_rtp(packet);
+                let _ = sender.write_rtp(Instant::now(), packet);
                 rtp_packets_sent += 1;
             }
         }
@@ -880,7 +880,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtcpPacket(track_id, rtcp_packets) = message {
                 // The fix: feedback about our SENT stream surfaces, tagged with the
                 // sender's track id (the RTC peer has no receiver, so all inbound RTCP

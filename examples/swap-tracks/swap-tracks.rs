@@ -10,7 +10,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngi
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -335,7 +335,7 @@ async fn run(
         }
 
         // Poll read - receive application messages
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     // Get the receiver for this track
@@ -440,7 +440,7 @@ async fn run(
                                 .map(|candidate| candidate.payload_type)
                                 .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?
                         };
-                        output_sender.write_rtp(rtp_packet)?;
+                        output_sender.write_rtp(Instant::now(), rtp_packet)?;
                     }
                 }
                 RTCMessage::RtcpPacket(_, _) => {
@@ -488,7 +488,7 @@ async fn run(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
-                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                             sender_ssrc: 0,
                             media_ssrc,
                         })])?;
@@ -515,7 +515,7 @@ async fn run(
                         // Send PLI for the new track
                         if let (Some(&media_ssrc), Some(mut rtp_receiver)) =
                             (receiver_id2ssrcs.get(&next_receiver_id), peer_connection.rtp_receiver(next_receiver_id)) {
-                            let _ = rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                            let _ = rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                                 sender_ssrc: 0,
                                 media_ssrc,
                             })]);

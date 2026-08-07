@@ -20,6 +20,19 @@ const DEFAULT_RTO: Duration = Duration::from_millis(300);
 const DEFAULT_MAX_ATTEMPTS: u32 = 7;
 const DEFAULT_MAX_BUFFER_SIZE: usize = 8;
 
+/// A [`Message`] together with the instant the caller is sending it at.
+///
+/// `Rin` is a [`TaggedBytesMut`], which carries a timestamp; without this the write channel
+/// would not, and `handle_write` would have to ask the clock for one. A STUN client's first
+/// action is typically a write before any read, so a retained instant is not an option here —
+/// it would still be the construction seed.
+pub struct TaggedMessage {
+    /// When the caller is sending this message.
+    pub now: Instant,
+    /// The STUN message to send.
+    pub message: Message,
+}
+
 /// ClientTransaction represents transaction in progress.
 /// If transaction is succeed or failed, f will be called
 /// provided by event.
@@ -111,11 +124,12 @@ impl ClientBuilder {
     /// Fails if the configured timings are inconsistent.
     pub fn build(
         self,
+        now: Instant,
         local: SocketAddr,
         remote: SocketAddr,
         protocol: TransportProtocol,
     ) -> Result<Client> {
-        Ok(Client::new(local, remote, protocol, self.settings))
+        Ok(Client::new(now, local, remote, protocol, self.settings))
     }
 }
 
@@ -128,10 +142,18 @@ pub struct Client {
     settings: ClientSettings,
     transactions: HashMap<TransactionId, ClientTransaction>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
+
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// `poll_event` schedules retransmissions, which needs a deadline, but a poll is a drain
+    /// and receives no instant. The retransmission is caused by the timeout the caller reported
+    /// through `handle_timeout`, so that instant is the right one to schedule against.
+    now: Instant,
 }
 
 impl Client {
     fn new(
+        now: Instant,
         local: SocketAddr,
         remote: SocketAddr,
         transport_protocol: TransportProtocol,
@@ -145,7 +167,16 @@ impl Client {
             settings,
             transactions: HashMap::new(),
             transmits: VecDeque::new(),
+            now,
         }
+    }
+
+    /// Records the newest instant a caller has supplied.
+    ///
+    /// `max` rather than assignment: an outbound message carries the instant of the input that
+    /// caused it, so a caller can legitimately present an older one than the newest seen.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
     }
 
     /// The address this client sends from.
@@ -159,7 +190,7 @@ impl Client {
     }
 }
 
-impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
+impl sansio::Protocol<TaggedBytesMut, TaggedMessage, ()> for Client {
     type Rout = ();
     type Wout = TaggedBytesMut;
     type Eout = StunEvent;
@@ -167,6 +198,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<()> {
+        self.observe(msg.now);
         let mut stun_msg = Message::new();
         let mut reader = BufReader::new(&msg.message[..]);
         stun_msg.read_from(&mut reader)?;
@@ -177,17 +209,20 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
         None
     }
 
-    fn handle_write(&mut self, m: Message) -> Result<()> {
+    fn handle_write(&mut self, msg: TaggedMessage) -> Result<()> {
         if self.settings.closed {
             return Err(Error::ErrClientClosed);
         }
 
+        let now = msg.now;
+        self.observe(now);
+        let m = msg.message;
         let payload = BytesMut::from(&m.raw[..]);
 
         let ct = ClientTransaction {
             id: m.transaction_id,
             attempt: 0,
-            start: Instant::now(),
+            start: now,
             rto: self.settings.rto,
             raw: m.raw,
         };
@@ -197,7 +232,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
             .handle_event(ClientAgent::Start(m.transaction_id, deadline))?;
 
         self.transmits.push_back(TransportMessage {
-            now: Instant::now(),
+            now,
             transport: TransportContext {
                 local_addr: self.local,
                 peer_addr: self.remote,
@@ -240,7 +275,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
             ct.attempt += 1;
 
             let payload = BytesMut::from(&ct.raw[..]);
-            let timeout = ct.next_timeout(Instant::now());
+            let timeout = ct.next_timeout(self.now);
             let id = ct.id;
 
             // Starting client transaction.
@@ -258,7 +293,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
 
             // Writing message to connection again.
             self.transmits.push_back(TransportMessage {
-                now: Instant::now(),
+                now: self.now,
                 transport: TransportContext {
                     local_addr: self.local,
                     peer_addr: self.remote,
@@ -277,6 +312,7 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        self.observe(now);
         self.agent.handle_event(ClientAgent::Collect(now))
     }
 
@@ -286,5 +322,85 @@ impl sansio::Protocol<TaggedBytesMut, Message, ()> for Client {
         }
         self.settings.closed = true;
         self.agent.handle_event(ClientAgent::Close)
+    }
+}
+
+#[cfg(test)]
+mod client_test {
+    use super::*;
+    use sansio::Protocol;
+
+    fn addrs() -> (SocketAddr, SocketAddr) {
+        (
+            "127.0.0.1:5000".parse().unwrap(),
+            "127.0.0.1:3478".parse().unwrap(),
+        )
+    }
+
+    fn binding_request() -> Message {
+        let mut msg = Message::new();
+        msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])
+            .expect("a binding request encodes");
+        msg
+    }
+
+    /// The transaction deadline is computed from the instant the caller supplied to
+    /// `handle_write`, not from an ambient reading, so a retransmission can be observed by
+    /// arithmetic on a base instant with no wall-clock time passing and no sleeping.
+    #[test]
+    fn test_transaction_retransmits_on_injected_time() -> Result<()> {
+        let base = Instant::now();
+        let t = |millis| base + Duration::from_millis(millis);
+
+        let (local, remote) = addrs();
+        let mut client = ClientBuilder::new()
+            .with_rto(Duration::from_millis(100))
+            .build(t(0), local, remote, TransportProtocol::UDP)?;
+
+        // The write is stamped at t(10), so the first attempt's deadline is t(10) + 1 * rto.
+        client.handle_write(TaggedMessage {
+            now: t(10),
+            message: binding_request(),
+        })?;
+
+        let transmit = client.poll_write().expect("the request is queued");
+        assert_eq!(
+            transmit.now,
+            t(10),
+            "the request carries the caller's instant, not an ambient reading"
+        );
+        assert!(client.poll_write().is_none());
+
+        assert_eq!(
+            client.poll_timeout(),
+            Some(t(110)),
+            "the deadline is one RTO after the instant the caller wrote at"
+        );
+
+        // Before the deadline nothing is retransmitted. Note the agent collects on
+        // `deadline < now`, *strictly* — so arriving exactly at the deadline is not yet
+        // late. A virtual clock advanced by exactly one RTO therefore needs one more tick,
+        // which is worth knowing before writing a `clock.advance(rto)` test against it.
+        client.handle_timeout(t(110))?;
+        while client.poll_event().is_some() {}
+        assert!(
+            client.poll_write().is_none(),
+            "the deadline is not yet past at exactly the deadline"
+        );
+
+        // Past the deadline the request goes out again, stamped with that same instant.
+        client.handle_timeout(t(111))?;
+        while client.poll_event().is_some() {}
+        let retransmit = client.poll_write().expect("the request is retransmitted");
+        assert_eq!(retransmit.now, t(111));
+        assert_eq!(
+            retransmit.message, transmit.message,
+            "a retransmission repeats the original request verbatim"
+        );
+
+        // The second attempt backs off to two RTOs from the instant it was scheduled at.
+        assert_eq!(client.poll_timeout(), Some(t(311)));
+
+        client.close()
     }
 }

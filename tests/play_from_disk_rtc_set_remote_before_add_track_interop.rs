@@ -442,7 +442,7 @@ async fn test_play_from_disk_rtc_set_remote_before_add_track() -> Result<()> {
                 .map(|codec| codec.payload_type)
                 .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
             log::trace!("sending rtp packet with ssrc={}", packet.header.ssrc);
-            rtp_sender.write_rtp(packet)?;
+            rtp_sender.write_rtp(Instant::now(), packet)?;
         }
 
         // Check if we've received enough packets

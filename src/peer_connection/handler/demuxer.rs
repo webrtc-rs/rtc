@@ -1,4 +1,4 @@
-use crate::peer_connection::event::RTCEventInternal;
+use crate::peer_connection::event::TaggedRTCEventInternal;
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, RTPMessage, STUNMessage, TaggedRTCMessageInternal,
 };
@@ -47,7 +47,7 @@ fn match_srtp(b: &[u8]) -> bool {
 pub(crate) struct DemuxerHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 }
 
 /// DemuxerHandler implements demuxing of STUN/DTLS/RTP/RTCP Protocol packets
@@ -69,12 +69,13 @@ impl<'a> DemuxerHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for DemuxerHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -140,7 +141,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> shared::error::Result<()> {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> shared::error::Result<()> {
         self.ctx.event_outs.push_back(evt);
         Ok(())
     }

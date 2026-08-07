@@ -15,7 +15,7 @@ use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -231,7 +231,7 @@ async fn run_requester(
         if req_data_channel_opened.is_some() && req_can_send_more {
             let channel_id = req_data_channel_opened.unwrap();
             if let Some(mut dc) = requester.data_channel(channel_id) {
-                let _ = dc.send(BytesMut::from(&send_buf[..]));
+                let _ = dc.send(Instant::now(), BytesMut::from(&send_buf[..]));
             }
         }
 
@@ -373,7 +373,7 @@ async fn run_responder(
             }
         }
 
-        while let Some(message) = responder.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = responder.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}

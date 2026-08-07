@@ -218,12 +218,12 @@ fn test_on_selected_candidate_pair_change() -> Result<()> {
     // select the pair
     let (local, remote) = (0, 0);
     a.add_pair(local, remote);
-    a.set_selected_pair(Some(0));
+    a.set_selected_pair(Some(Instant::now()), Some(0));
 
     // ensure that the callback fired on setting the pair
     let mut is_selected_candidate_pair_change_event_fired = false;
     while let Some(event) = a.poll_event() {
-        if let Event::SelectedCandidatePairChange(_, _) = event {
+        if let Event::SelectedCandidatePairChange(_, _) = event.event {
             is_selected_candidate_pair_change_event_fired = true;
         }
     }
@@ -2574,7 +2574,7 @@ fn test_keepalive_sent_during_media_flow() -> Result<()> {
     a.is_controlling = true;
 
     a.add_pair(0, 0);
-    a.set_selected_pair(Some(0));
+    a.set_selected_pair(Some(Instant::now()), Some(0));
 
     // Simulate recent media activity on both candidates
     a.local_candidates[0].seen(Instant::now(), true);
@@ -2780,11 +2780,11 @@ fn test_transition_to_failed_clears_stale_candidate_pairs() -> Result<()> {
     // A single local/remote pair now exists; mark it selected and nominated so that
     // both index-into-pairs fields are populated.
     assert_eq!(a.candidate_pairs.len(), 1);
-    a.set_selected_pair(Some(0));
+    a.set_selected_pair(Some(Instant::now()), Some(0));
     a.nominated_pair = Some(0);
 
     // Transition to Failed: this deletes all candidates.
-    a.update_connection_state(ConnectionState::Failed);
+    a.update_connection_state(Some(Instant::now()), ConnectionState::Failed);
 
     // The pairs and the indices into them must be gone, otherwise they dangle.
     assert!(
@@ -3143,5 +3143,80 @@ fn test_staged_ice_restart_keeps_live_session_authenticating() -> Result<()> {
     );
 
     a.close()?;
+    Ok(())
+}
+
+/// Agent events carry the instant their condition was observed at, so a consumer draining
+/// `poll_event` is *told* the time rather than having to retain one and guess. `close` has no
+/// caller-supplied instant, so it stamps with the newest one the agent was given.
+#[test]
+fn test_agent_events_carry_the_instant_they_were_observed_at() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let mut a = Agent::new(
+        t(0),
+        Arc::new(AgentConfig::default()),
+        test_crypto_provider(),
+    )?;
+
+    let host_local = CandidateHostConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "192.168.0.2".to_owned(),
+            port: 1000,
+            component: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .new_candidate_host()?;
+    a.add_local_candidate(host_local)?;
+
+    let relay_remote = CandidateRelayConfig {
+        base_config: CandidateConfig {
+            network: "udp".to_owned(),
+            address: "1.2.3.4".to_owned(),
+            port: 12340,
+            component: 1,
+            ..Default::default()
+        },
+        rel_addr: "4.3.2.1".to_owned(),
+        rel_port: 43210,
+        ..Default::default()
+    }
+    .new_candidate_relay()?;
+    a.add_remote_candidate(relay_remote)?;
+
+    a.add_pair(0, 0);
+    a.set_selected_pair(Some(t(5)), Some(0));
+
+    // Selecting a pair emits Connected *and* SelectedCandidatePairChange; both are stamped
+    // with the instant that caused them, not with a reading taken at drain time.
+    let stamped: Vec<_> = std::iter::from_fn(|| a.poll_event()).collect();
+    assert!(!stamped.is_empty(), "selecting a pair emits events");
+    for e in &stamped {
+        assert_eq!(
+            e.now,
+            t(5),
+            "event {:?} must carry the instant its condition was observed at",
+            std::mem::discriminant(&e.event)
+        );
+    }
+
+    a.handle_timeout(t(30))?;
+    while a.poll_event().is_some() {}
+
+    // `close` is a drain with no caller-supplied instant, and the agent retains none, so the
+    // Closed transition is applied to `connection_state` but emits no event — there is no
+    // honest instant to stamp one with. A consumer that needs to observe the close should read
+    // the state rather than wait for an event.
+    a.close()?;
+    assert_eq!(a.connection_state, ConnectionState::Closed);
+    assert!(
+        a.poll_event().is_none(),
+        "close emits no event, having no instant to stamp one with"
+    );
+
     Ok(())
 }

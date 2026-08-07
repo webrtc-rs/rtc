@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -331,7 +331,7 @@ async fn main() -> Result<()> {
         }
 
         // Poll reads (data channel messages)
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -372,7 +372,7 @@ async fn main() -> Result<()> {
             if Instant::now().duration_since(last_send) >= Duration::from_secs(3) {
                 if let Some(mut dc) = peer_connection.data_channel(channel_id) {
                     let message = format!("[Offer] {}", chrono::Local::now());
-                    if let Err(e) = dc.send_text(message) {
+                    if let Err(e) = dc.send_text(Instant::now(), message) {
                         println!("[Offer] DataChannel send error: {}", e);
                         data_channel_id = None;
                     }

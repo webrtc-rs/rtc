@@ -162,7 +162,7 @@ pub(crate) mod rtp_contributing_source;
 
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::RTCPeerConnection;
-use crate::peer_connection::message::RTCMessage;
+use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use crate::rtp_transceiver::RTCRtpReceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
@@ -170,6 +170,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceivePa
 use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::Result;
+use std::time::Instant;
 
 pub use rtp_contributing_source::{RTCRtpContributingSource, RTCRtpSynchronizationSource};
 
@@ -328,6 +329,7 @@ where
     /// use rtc::peer_connection::RTCPeerConnection;
     /// use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
     /// use rtc::rtp_transceiver::RTCRtpReceiverId;
+    /// use std::time::Instant;
     ///
     /// # fn example(
     /// #     peer_connection: &mut RTCPeerConnection,
@@ -339,12 +341,12 @@ where
     ///         sender_ssrc: 0,
     ///         media_ssrc: remote_ssrc,
     ///     };
-    ///     receiver.write_rtcp(vec![Box::new(pli)])?;
+    ///     receiver.write_rtcp(Instant::now(), vec![Box::new(pli)])?;
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
+    pub fn write_rtcp(&mut self, now: Instant, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
@@ -354,7 +356,9 @@ where
             .unwrap();
 
         let track_id = receiver.track().track_id().to_string();
-        self.peer_connection
-            .handle_write(RTCMessage::RtcpPacket(track_id, packets))
+        self.peer_connection.handle_write(TaggedRTCMessage {
+            now,
+            message: RTCMessage::RtcpPacket(track_id, packets),
+        })
     }
 }

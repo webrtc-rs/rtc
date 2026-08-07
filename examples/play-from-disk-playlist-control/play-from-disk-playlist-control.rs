@@ -34,7 +34,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_OPUS, MediaEng
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -676,7 +676,7 @@ async fn run_peer_connection<I: Interceptor>(
                                 &tracks,
                                 current_track.load(Ordering::SeqCst),
                             );
-                            let _ = dc.send_text(playlist_msg);
+                            let _ = dc.send_text(Instant::now(), playlist_msg);
                         }
                     } else if state == RTCPeerConnectionState::Failed
                         || state == RTCPeerConnectionState::Closed
@@ -696,7 +696,7 @@ async fn run_peer_connection<I: Interceptor>(
         }
 
         // Process data channel messages
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             if let RTCMessage::DataChannelMessage(dc_id, dc_message) = message {
                 if dc_id == playlist_channel_id {
                     let command = String::from_utf8_lossy(&dc_message.data)
@@ -756,7 +756,7 @@ async fn run_peer_connection<I: Interceptor>(
                             .map(|codec| codec.payload_type)
                             .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
-                        rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(Instant::now(), packet)?;
                     }
 
                     last_stream_time = Instant::now();
@@ -770,7 +770,7 @@ async fn run_peer_connection<I: Interceptor>(
                         // Send now playing
                         if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                             let now_msg = build_now_playing_message(&tracks, switch as usize);
-                            let _ = dc.send_text(now_msg);
+                            let _ = dc.send_text(Instant::now(), now_msg);
                         }
                     } else {
                         current_page.store(page_idx + 1, Ordering::SeqCst);
@@ -784,7 +784,7 @@ async fn run_peer_connection<I: Interceptor>(
                     // Send now playing
                     if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                         let now_msg = build_now_playing_message(&tracks, next as usize);
-                        let _ = dc.send_text(now_msg);
+                        let _ = dc.send_text(Instant::now(), now_msg);
                     }
                 }
             }
@@ -864,7 +864,7 @@ fn handle_playlist_command<I: Interceptor>(
         "list" => {
             if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                 let msg = build_playlist_message(tracks, current);
-                let _ = dc.send_text(msg);
+                let _ = dc.send_text(Instant::now(), msg);
             }
             return;
         }
@@ -884,7 +884,7 @@ fn handle_playlist_command<I: Interceptor>(
 
     if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
         let msg = build_playlist_message(tracks, next);
-        let _ = dc.send_text(msg);
+        let _ = dc.send_text(Instant::now(), msg);
     }
 }
 

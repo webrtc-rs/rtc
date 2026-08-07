@@ -11,8 +11,8 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -305,7 +305,7 @@ async fn run_broadcaster(
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, rtp_packet) => {
                     packet_count += 1;
@@ -355,7 +355,7 @@ async fn run_broadcaster(
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("[Receiver] event_rx closed");
@@ -379,7 +379,7 @@ async fn run_broadcaster(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
-                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                                         sender_ssrc: 0,
                                         media_ssrc,
                                 })])?;
@@ -715,7 +715,7 @@ async fn run_viewer(
                                     .ssrcs()
                                     .last()
                                     .ok_or(Error::ErrSenderWithNoSSRCs)?;
-                                if let Err(err) = sender.write_rtp(packet.clone()) {
+                                if let Err(err) = sender.write_rtp(Instant::now(), packet.clone()) {
                                     if err != Error::ErrClosedPipe {
                                         debug!("[Viewer {}] sender {:?} write error: {}", viewer_id, sender_id, err);
                                     }
@@ -740,7 +740,7 @@ async fn run_viewer(
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => break 'EventLoop,
                 }

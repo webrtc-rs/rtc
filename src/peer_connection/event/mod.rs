@@ -525,6 +525,21 @@ pub enum RTCPeerConnectionEvent {
 #[non_exhaustive]
 pub enum RTCEvent {}
 
+/// An [`RTCEvent`] together with the instant its condition was observed at.
+///
+/// The counterpart of [`TaggedRTCMessage`](crate::peer_connection::message::TaggedRTCMessage)
+/// for the event channel, so that all three of the core's input channels carry a timestamp
+/// rather than two of them carrying one and the third leaving the core to ask the clock.
+///
+/// [`RTCEvent`] is currently uninhabited, so no value of this type can be constructed yet; it
+/// exists so the signature is already right when the first event variant is added.
+pub struct TaggedRTCEvent {
+    /// When the condition this event reports was observed.
+    pub now: Instant,
+    /// The event itself.
+    pub event: RTCEvent,
+}
+
 /// Internal event types for WebRTC implementation.
 ///
 /// These events are used internally by the WebRTC stack to coordinate between

@@ -16,7 +16,7 @@ use bytes::BytesMut;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
@@ -256,14 +256,14 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
         }
 
         // Read messages from offer peer
-        while let Some(message) = runner.offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.offer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 // Handle any echo messages
             }
         }
 
         // Read messages from answer peer
-        while let Some(message) = runner.answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.answer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, msg) = message {
                 let received = String::from_utf8_lossy(&msg.data);
                 log::info!("[Answer] Received message: {}", received);
@@ -277,7 +277,7 @@ async fn test_ice_tcp_active_passive_connection() -> Result<()> {
             && let Some(dc_id) = offer_dc_id
             && let Some(mut dc) = runner.offer_pc.data_channel(dc_id)
         {
-            dc.send_text(message_content.to_string())?;
+            dc.send_text(Instant::now(), message_content.to_string())?;
             offer_messages_sent += 1;
             log::info!(
                 "[Offer] Sent message {}/{}",
@@ -623,12 +623,12 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = runner.offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.offer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 offer_received += 1;
             }
         }
-        while let Some(message) = runner.answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = runner.answer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 answer_received += 1;
             }
@@ -641,7 +641,7 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
                 && let Some(dc_id) = offer_dc_id
                 && let Some(mut dc) = runner.offer_pc.data_channel(dc_id)
             {
-                dc.send_text("From offer".to_string()).ok();
+                dc.send_text(Instant::now(), "From offer".to_string()).ok();
             }
         }
         if answer_connected {
@@ -650,7 +650,7 @@ async fn test_ice_tcp_bidirectional_data_channel() -> Result<()> {
                 && let Some(dc_id) = answer_dc_id
                 && let Some(mut dc) = runner.answer_pc.data_channel(dc_id)
             {
-                dc.send_text("From answer".to_string()).ok();
+                dc.send_text(Instant::now(), "From answer".to_string()).ok();
             }
         }
 

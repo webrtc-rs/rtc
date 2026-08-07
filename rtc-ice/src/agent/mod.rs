@@ -117,6 +117,20 @@ pub enum Event {
     RoleChange(bool),
 }
 
+/// An [`Event`] together with the instant its condition was observed at.
+///
+/// The agent's events are produced inside `handle_read` / `handle_timeout` / `close`, all of
+/// which know the time, but they are consumed from `poll_event`, which does not. Carrying the
+/// instant in the payload means the consumer is *told* when the condition happened rather than
+/// having to retain an instant of its own and guess — the same channel `TaggedBytesMut` already
+/// provides on the read path.
+pub struct TaggedEvent {
+    /// When the condition this event reports was observed.
+    pub now: Instant,
+    /// The event itself.
+    pub event: Event,
+}
+
 /// Represents the ICE agent.
 pub struct Agent {
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
@@ -182,7 +196,7 @@ pub struct Agent {
     pub(crate) urls: Vec<Url>,
 
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
-    pub(crate) event_outs: VecDeque<Event>,
+    pub(crate) event_outs: VecDeque<TaggedEvent>,
 }
 
 impl Agent {
@@ -640,7 +654,7 @@ impl Agent {
         self.is_controlling = is_controlling;
         self.start(now);
 
-        self.update_connection_state(ConnectionState::Checking);
+        self.update_connection_state(Some(now), ConnectionState::Checking);
         self.request_connectivity_check();
 
         Ok(())
@@ -703,14 +717,14 @@ impl Agent {
 
         self.candidate_pairs = vec![];
 
-        self.set_selected_pair(None);
+        self.set_selected_pair(Some(now), None);
         self.delete_all_candidates(keep_local_candidates);
         self.start(now);
 
         // Restart is used by NewAgent. Accept/Connect should be used to move to checking
         // for new Agents
         if self.connection_state != ConnectionState::New {
-            self.update_connection_state(ConnectionState::Checking);
+            self.update_connection_state(Some(now), ConnectionState::Checking);
         }
 
         Ok(())
@@ -762,7 +776,7 @@ impl Agent {
                 .unwrap_or_else(|| Duration::from_secs(0))
                 > self.disconnected_timeout + self.failed_timeout
             {
-                self.update_connection_state(ConnectionState::Failed);
+                self.update_connection_state(Some(now), ConnectionState::Failed);
                 self.last_connection_state = self.connection_state;
                 return;
             }
@@ -774,11 +788,15 @@ impl Agent {
         self.last_checking_time = now;
     }
 
-    pub(crate) fn update_connection_state(&mut self, new_state: ConnectionState) {
+    pub(crate) fn update_connection_state(
+        &mut self,
+        now: Option<Instant>,
+        new_state: ConnectionState,
+    ) {
         if self.connection_state != new_state {
             // Connection has gone to failed, release all gathered candidates
             if new_state == ConnectionState::Failed {
-                self.set_selected_pair(None);
+                self.set_selected_pair(now, None);
                 self.delete_all_candidates(false);
             }
 
@@ -788,12 +806,16 @@ impl Agent {
                 new_state
             );
             self.connection_state = new_state;
-            self.event_outs
-                .push_back(Event::ConnectionStateChange(new_state));
+            if let Some(now) = now {
+                self.event_outs.push_back(TaggedEvent {
+                    now,
+                    event: Event::ConnectionStateChange(new_state),
+                });
+            }
         }
     }
 
-    pub(crate) fn set_selected_pair(&mut self, selected_pair: Option<usize>) {
+    pub(crate) fn set_selected_pair(&mut self, now: Option<Instant>, selected_pair: Option<usize>) {
         if let Some(pair_index) = selected_pair {
             trace!(
                 "[{}]: Set selected candidate pair: {:?}",
@@ -804,15 +826,19 @@ impl Agent {
             self.candidate_pairs[pair_index].nominated = true;
             self.selected_pair = Some(pair_index);
 
-            self.update_connection_state(ConnectionState::Connected);
+            self.update_connection_state(now, ConnectionState::Connected);
 
             // Notify when the selected pair changes
             let candidate_pair = &self.candidate_pairs[pair_index];
-            self.event_outs
-                .push_back(Event::SelectedCandidatePairChange(
-                    Box::new(self.local_candidates[candidate_pair.local_index].clone()),
-                    Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
-                ));
+            if let Some(now) = now {
+                self.event_outs.push_back(TaggedEvent {
+                    now,
+                    event: Event::SelectedCandidatePairChange(
+                        Box::new(self.local_candidates[candidate_pair.local_index].clone()),
+                        Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
+                    ),
+                });
+            }
         } else {
             self.selected_pair = None;
         }
@@ -917,13 +943,13 @@ impl Agent {
             if total_time_to_failure != Duration::from_secs(0)
                 && disconnected_time > total_time_to_failure
             {
-                self.update_connection_state(ConnectionState::Failed);
+                self.update_connection_state(Some(now), ConnectionState::Failed);
             } else if self.disconnected_timeout != Duration::from_secs(0)
                 && disconnected_time > self.disconnected_timeout
             {
-                self.update_connection_state(ConnectionState::Disconnected);
+                self.update_connection_state(Some(now), ConnectionState::Disconnected);
             } else {
-                self.update_connection_state(ConnectionState::Connected);
+                self.update_connection_state(Some(now), ConnectionState::Connected);
             }
         }
 
@@ -1143,7 +1169,7 @@ impl Agent {
 
     /// Switches the ICE agent role and recomputes all candidate pair priorities.
     /// RFC 8445 Section 7.3.1.1
-    pub(crate) fn switch_role(&mut self) {
+    pub(crate) fn switch_role(&mut self, now: Instant) {
         self.is_controlling = !self.is_controlling;
 
         // Recompute priorities for all candidate pairs
@@ -1161,8 +1187,10 @@ impl Agent {
             self.candidate_pairs.len()
         );
 
-        self.event_outs
-            .push_back(Event::RoleChange(self.is_controlling));
+        self.event_outs.push_back(TaggedEvent {
+            now,
+            event: Event::RoleChange(self.is_controlling),
+        });
     }
 
     /// Removes pending binding requests that are over `maxBindingRequestTimeout` old Let HTO be the
@@ -1274,7 +1302,7 @@ impl Agent {
                             "[{}]: Switching from controlling to controlled due to role conflict (smaller tiebreaker)",
                             self.get_name()
                         );
-                        self.switch_role();
+                        self.switch_role(now);
                     }
                 }
                 // Continue processing the message after handling role conflict
@@ -1317,7 +1345,7 @@ impl Agent {
                         "[{}]: Switching from controlled to controlling due to role conflict (larger tiebreaker)",
                         self.get_name()
                     );
-                    self.switch_role();
+                    self.switch_role(now);
                 }
             }
             // Continue processing the message after handling role conflict

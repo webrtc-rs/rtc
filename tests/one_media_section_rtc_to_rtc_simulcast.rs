@@ -18,7 +18,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -361,7 +361,7 @@ async fn test_one_media_section_rtc_to_rtc_simulcast() -> Result<()> {
         }
 
         // Poll read - receive RTP packets on answerer
-        while let Some(message) = answerer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = answerer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, rtp_packet) => {
                     // Get the receiver for this track
@@ -492,7 +492,7 @@ async fn test_one_media_section_rtc_to_rtc_simulcast() -> Result<()> {
                     rid,
                     packet.header.sequence_number
                 );
-                if let Err(e) = rtp_sender.write_rtp(packet) {
+                if let Err(e) = rtp_sender.write_rtp(Instant::now(), packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
             }

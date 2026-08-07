@@ -36,11 +36,12 @@
 //! * [RFC 8832 - WebRTC Data Channel Establishment Protocol](https://www.rfc-editor.org/rfc/rfc8832.html)
 
 use crate::peer_connection::RTCPeerConnection;
-use crate::peer_connection::message::RTCMessage;
+use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use bytes::BytesMut;
 use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::{Error, Result};
+use std::time::Instant;
 
 pub(crate) mod init;
 pub(crate) mod internal;
@@ -271,17 +272,19 @@ where
     ///
     /// Returns [`Error::ErrDataChannelNotOpen`] if the channel's SCTP stream has not been
     /// established yet, and [`Error::ErrDataChannelClosed`] once it is gone.
-    pub fn send(&mut self, data: BytesMut) -> Result<()> {
+    pub fn send(&mut self, now: Instant, data: BytesMut) -> Result<()> {
         self.ensure_sendable()?;
         let data_len = data.len();
-        self.peer_connection
-            .handle_write(RTCMessage::DataChannelMessage(
+        self.peer_connection.handle_write(TaggedRTCMessage {
+            now,
+            message: RTCMessage::DataChannelMessage(
                 self.id,
                 RTCDataChannelMessage {
                     is_string: false,
                     data,
                 },
-            ))?;
+            ),
+        })?;
         // Count only after a successful enqueue, so a failed send never leaks the
         // counter upward (those bytes never entered the SCTP send pipeline). This
         // is the synchronous send-boundary accounting used for back-pressure.
@@ -294,18 +297,20 @@ where
     /// send_text sends the text message to the DataChannel peer
     ///
     /// Error contract matches [`send`](Self::send).
-    pub fn send_text(&mut self, s: impl Into<String>) -> Result<()> {
+    pub fn send_text(&mut self, now: Instant, s: impl Into<String>) -> Result<()> {
         self.ensure_sendable()?;
         let data = BytesMut::from(s.into().as_str());
         let data_len = data.len();
-        self.peer_connection
-            .handle_write(RTCMessage::DataChannelMessage(
+        self.peer_connection.handle_write(TaggedRTCMessage {
+            now,
+            message: RTCMessage::DataChannelMessage(
                 self.id,
                 RTCDataChannelMessage {
                     is_string: true,
                     data,
                 },
-            ))?;
+            ),
+        })?;
         if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
             dc.outstanding_bytes += data_len;
         }

@@ -4,7 +4,7 @@ use mdns::{MDNS_PORT, MdnsEvent};
 impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     type Rout = TaggedBytesMut;
     type Wout = TaggedBytesMut;
-    type Eout = Event;
+    type Eout = TaggedEvent;
     type Error = Error;
     type Time = Instant;
 
@@ -157,9 +157,9 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
     }
 
     fn close(&mut self) -> std::result::Result<(), Self::Error> {
-        self.set_selected_pair(None);
+        self.set_selected_pair(None, None);
         self.delete_all_candidates(false);
-        self.update_connection_state(ConnectionState::Closed);
+        self.update_connection_state(None, ConnectionState::Closed);
         if let Some(mdns_conn) = &mut self.mdns {
             mdns_conn.close()?;
         }

@@ -1,7 +1,7 @@
 use crate::data_channel::message::RTCDataChannelMessage;
-use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
     TaggedRTCMessageInternal, TrackPacket,
@@ -31,7 +31,7 @@ use std::time::Instant;
 pub(crate) struct EndpointHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 }
 
 /// EndpointHandler implements DataChannel/Media Endpoint handling
@@ -73,14 +73,15 @@ where
 }
 
 // Implement Protocol trait for message processing
-impl<'a, I> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a, I>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for EndpointHandler<'a, I>
 where
     I: Interceptor,
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -115,7 +116,7 @@ where
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
         self.ctx.event_outs.push_back(evt);
         Ok(())
     }
@@ -196,7 +197,7 @@ where
 
         let ssrc = rtp_packet.header.ssrc;
 
-        if let Some(track_id) = self.find_track_id(ssrc, Some(&rtp_packet.header)) {
+        if let Some(track_id) = self.find_track_id(now, ssrc, Some(&rtp_packet.header)) {
             // Track RTP stats if accumulator exists (created when OnOpen event is fired)
             if let Some(stream) = self.stats.inbound_rtp_streams.get_mut(&ssrc) {
                 stream.on_rtp_received(
@@ -235,7 +236,7 @@ where
         };
 
         if let Some(rtcp_ssrc) = rtcp_ssrc {
-            if let Some(track_id) = self.find_track_id(rtcp_ssrc, None) {
+            if let Some(track_id) = self.find_track_id(now, rtcp_ssrc, None) {
                 self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now,
                     transport: transport_context,
@@ -256,34 +257,34 @@ where
 
     fn handle_datachannel_open(
         &mut self,
-        _now: Instant,
+        now: Instant,
         transport_context: TransportContext,
         data_channel_id: u16,
     ) -> Result<()> {
         debug!("data channel is open for {:?}", transport_context);
-        self.ctx
-            .event_outs
-            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(data_channel_id)),
-            ));
+        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+            now,
+            event: RTCEventInternal::RTCPeerConnectionEvent(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnOpen(data_channel_id),
+            )),
+        });
 
         Ok(())
     }
 
     fn handle_datachannel_close(
         &mut self,
-        _now: Instant,
+        now: Instant,
         transport_context: TransportContext,
         data_channel_id: u16,
     ) -> Result<()> {
         debug!("data channel is close for {:?}", transport_context);
-        self.ctx
-            .event_outs
-            .push_back(RTCEventInternal::RTCPeerConnectionEvent(
-                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
-                    data_channel_id,
-                )),
-            ));
+        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+            now,
+            event: RTCEventInternal::RTCPeerConnectionEvent(RTCPeerConnectionEvent::OnDataChannel(
+                RTCDataChannelEvent::OnClose(data_channel_id),
+            )),
+        });
 
         Ok(())
     }
@@ -336,13 +337,14 @@ where
     // crosscheck with RTCPeerConnection::start_rtp, since remote tracks(RTCRtpCodingParameters) are added in it
     fn find_track_id(
         &mut self,
+        now: Instant,
         ssrc: SSRC,
         rtp_header: Option<&rtp::Header>,
     ) -> Option<MediaStreamTrackId> {
-        if let Some(track_id) = self.find_track_id_by_ssrc(ssrc, rtp_header) {
+        if let Some(track_id) = self.find_track_id_by_ssrc(now, ssrc, rtp_header) {
             Some(track_id)
         } else if let Some(rtp_header) = rtp_header // rid search only for RTP packet
-            && let Some(track_id) = self.find_track_id_by_rid(ssrc, rtp_header)
+            && let Some(track_id) = self.find_track_id_by_rid(now, ssrc, rtp_header)
         {
             Some(track_id)
         } else {
@@ -352,6 +354,7 @@ where
 
     fn find_track_id_by_ssrc(
         &mut self,
+        now: Instant,
         ssrc: SSRC,
         rtp_header: Option<&rtp::Header>,
     ) -> Option<MediaStreamTrackId> {
@@ -427,9 +430,9 @@ where
                     );
 
                     // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-                    self.ctx
-                        .event_outs
-                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                    self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                        now,
+                        event: RTCEventInternal::RTCPeerConnectionEvent(
                             RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(
                                 RTCTrackEventInit {
                                     receiver_id: RTCRtpReceiverId(id),
@@ -439,7 +442,8 @@ where
                                     rid: None,
                                 },
                             )),
-                        ));
+                        ),
+                    });
                 }
 
                 return Some(track_id);
@@ -479,11 +483,12 @@ where
 
     fn find_track_id_by_rid(
         &mut self,
+        now: Instant,
         ssrc: SSRC,
         rtp_header: &rtp::Header,
     ) -> Option<MediaStreamTrackId> {
         // If the remote SDP was only one media section the ssrc doesn't have to be explicitly declared
-        let track_id = self.handle_undeclared_ssrc(rtp_header);
+        let track_id = self.handle_undeclared_ssrc(now, rtp_header);
         if track_id.is_some() {
             return track_id;
         }
@@ -565,9 +570,9 @@ where
                     );
 
                     // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-                    self.ctx
-                        .event_outs
-                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                    self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                        now,
+                        event: RTCEventInternal::RTCPeerConnectionEvent(
                             RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(
                                 RTCTrackEventInit {
                                     receiver_id: RTCRtpReceiverId(id),
@@ -577,7 +582,8 @@ where
                                     rid: Some(rid),
                                 },
                             )),
-                        ));
+                        ),
+                    });
                     return Some(track_id);
                 }
             }
@@ -585,7 +591,11 @@ where
         None
     }
 
-    fn handle_undeclared_ssrc(&mut self, rtp_header: &rtp::Header) -> Option<MediaStreamTrackId> {
+    fn handle_undeclared_ssrc(
+        &mut self,
+        now: Instant,
+        rtp_header: &rtp::Header,
+    ) -> Option<MediaStreamTrackId> {
         if self.rtp_transceivers.len() != 1 {
             // it is multi-media-section case, let's use find_track_id_by_rid
             return None;
@@ -650,9 +660,9 @@ where
                 );
 
                 // Fire RTCTrackEvent::OnOpen event when received the first RTP packet for such ssrc stream
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::RTCPeerConnectionEvent(
                         RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(RTCTrackEventInit {
                             receiver_id: RTCRtpReceiverId(0),
                             track_id: track_id.clone(),
@@ -660,7 +670,8 @@ where
                             ssrc: rtp_header.ssrc,
                             rid: None,
                         })),
-                    ));
+                    ),
+                });
                 return Some(track_id);
             }
         }

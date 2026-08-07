@@ -1,4 +1,4 @@
-use crate::peer_connection::event::RTCEventInternal;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
@@ -22,7 +22,7 @@ pub(crate) struct InterceptorHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 }
 
 /// InterceptorHandler implements RTCP feedback handling
@@ -168,14 +168,15 @@ where
     }
 }
 
-impl<'a, I> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a, I>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for InterceptorHandler<'a, I>
 where
     I: Interceptor,
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -275,8 +276,8 @@ where
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
+        if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt.event {
             debug!("interceptor recv dtls handshake complete");
             self.ctx.is_dtls_handshake_complete = true;
             // self.interceptor.handle_event(());

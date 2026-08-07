@@ -26,7 +26,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -228,6 +228,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
 
             let transport_context = TransportContext::default();
             let client = ClientBuilder::new().build(
+                Instant::now(),
                 local_addr,
                 transport_context.peer_addr,
                 TransportProtocol::UDP,
@@ -237,7 +238,10 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
 
             stun_client = Some(client);
             if let Some(ref mut client) = stun_client {
-                client.handle_write(msg)?;
+                client.handle_write(TaggedMessage {
+                    now: Instant::now(),
+                    message: msg,
+                })?;
             }
         } else {
             warn!("Failed to resolve STUN server: {}", cli.stun_server);
@@ -516,7 +520,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
             }
 
             // Poll reads (data channel messages)
-            while let Some(message) = pc.poll_read() {
+            while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
                 match message {
                     RTCMessage::RtpPacket(_, _) => {}
                     RTCMessage::RtcpPacket(_, _) => {}
@@ -534,7 +538,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                 if Instant::now().duration_since(last_send) >= Duration::from_secs(3) {
                     if let Some(mut dc) = pc.data_channel(channel_id) {
                         let message = chrono::Local::now().to_string();
-                        if let Err(e) = dc.send_text(message) {
+                        if let Err(e) = dc.send_text(Instant::now(), message) {
                             println!(
                                 "{} - DataChannel closed, stopping send loop: {}",
                                 chrono::Local::now().format("%H:%M:%S"),

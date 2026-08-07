@@ -17,7 +17,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -223,7 +223,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = offer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -277,7 +277,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = answer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -291,7 +291,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                     if !echo_sent {
                         if let Some(mut dc) = answer_pc.data_channel(channel_id) {
                             log::info!("Answer echoing: '{}'", ECHO_MESSAGE);
-                            dc.send_text(ECHO_MESSAGE.to_string())?;
+                            dc.send_text(Instant::now(), ECHO_MESSAGE.to_string())?;
                             echo_sent = true;
                         }
                     }
@@ -304,7 +304,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
         if offer_connected && offer_dc_id.is_some() && !message_sent {
             if let Some(mut dc) = offer_pc.data_channel(offer_dc_id.unwrap()) {
                 log::info!("Offer sending message: '{}'", TEST_MESSAGE);
-                dc.send_text(TEST_MESSAGE.to_string())?;
+                dc.send_text(Instant::now(), TEST_MESSAGE.to_string())?;
                 message_sent = true;
             }
         }

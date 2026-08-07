@@ -336,7 +336,7 @@ impl ControllingSelector for Agent {
                     rtt.as_millis()
                 );
                 if pending_request.is_use_candidate && selected_pair_is_none {
-                    self.set_selected_pair(Some(pair_index));
+                    self.set_selected_pair(Some(now), Some(pair_index));
                 }
             } else {
                 // This shouldn't happen
@@ -543,7 +543,7 @@ impl ControlledSelector for Agent {
                     // generated a valid pair (Section 7.2.5.3.2).  The agent sets the
                     // nominated flag value of the valid pair to true.
                     if self.get_selected_pair().is_none() {
-                        self.set_selected_pair(Some(pair_index));
+                        self.set_selected_pair(Some(now), Some(pair_index));
                     }
                     self.send_binding_success(now, m, local_index, remote_index);
                 } else {

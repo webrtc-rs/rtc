@@ -27,7 +27,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -308,7 +308,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
         }
 
         // Process rtc reads (reflected packets from webrtc)
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     let mut count = received_packets_clone.lock().await;
@@ -403,7 +403,7 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if let Err(e) = rtp_sender.write_rtp(packet) {
+            if let Err(e) = rtp_sender.write_rtp(Instant::now(), packet) {
                 log::warn!("Failed to send RTP packet: {}", e);
             } else {
                 packets_sent += 1;

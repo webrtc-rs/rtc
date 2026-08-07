@@ -1,5 +1,5 @@
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
-use crate::peer_connection::event::RTCEventInternal;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -26,7 +26,7 @@ pub(crate) struct DtlsHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 }
 
 impl DtlsHandlerContext {
@@ -148,12 +148,13 @@ impl<'a> DtlsHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for DtlsHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -231,12 +232,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     .dtls_transport
                     .state_change(RTCDtlsTransportState::Connected);
 
-                self.ctx
-                    .event_outs
-                    .push_back(RTCEventInternal::DTLSHandshakeComplete(
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now: msg.now,
+                    event: RTCEventInternal::DTLSHandshakeComplete(
                         Some(local_srtp_context),
                         Some(remote_srtp_context),
-                    ));
+                    ),
+                });
             }
 
             // Update stats after dtls_endpoint borrow ends
@@ -299,8 +301,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        if let RTCEventInternal::ICESelectedCandidatePairChange = evt {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
+        let now = evt.now;
+        if let RTCEventInternal::ICESelectedCandidatePairChange = evt.event {
             if self.ctx.dtls_transport.dtls_role == RTCDtlsRole::Client {
                 // dtls_endpoint only connect once when acts as DTLSRole::Client
                 if let Some(dtls_handshake_config) =
@@ -313,6 +316,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         .as_mut()
                         .ok_or(Error::ErrDtlsTransportNotStarted)?;
                     dtls_endpoint.connect(
+                        now,
                         TransportContext::default().peer_addr, // always use default for transport to make DTLS tunneled
                         dtls_handshake_config,
                         None,

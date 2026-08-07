@@ -23,8 +23,8 @@ use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -361,7 +361,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
         }
 
         // Poll for incoming RTP/RTCP packets
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, _rtp_packet) => {
                     // We're not processing RTP packets in this example
@@ -422,7 +422,7 @@ async fn run(input_sdp_file: String) -> Result<()> {
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("event_rx closed");

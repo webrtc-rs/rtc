@@ -14,7 +14,7 @@ use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MediaEngine,
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -481,7 +481,7 @@ async fn run(
                             .map(|codec| codec.payload_type)
                             .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
-                        rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(Instant::now(), packet)?;
                     }
                     None => {
                         eprintln!("message_rx.recv() is closed");
@@ -492,7 +492,7 @@ async fn run(
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("event_rx.recv() is closed");

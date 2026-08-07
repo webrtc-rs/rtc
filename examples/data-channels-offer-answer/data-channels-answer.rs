@@ -18,7 +18,7 @@ use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
@@ -248,7 +248,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -267,7 +267,7 @@ async fn main() -> Result<()> {
                 if let Some(mut dc) = peer_connection.data_channel(channel_id) {
                     let message = math_rand_alpha(15);
                     println!("Sending '{}'", message);
-                    let _ = dc.send_text(message);
+                    let _ = dc.send_text(Instant::now(), message);
                     last_send = Instant::now();
                 }
             }

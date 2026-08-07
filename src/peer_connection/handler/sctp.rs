@@ -1,6 +1,6 @@
-use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -26,7 +26,7 @@ pub(crate) struct SctpHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 
     // Batch-drain state: handle_read/handle_write/handle_timeout only INGEST (set
     // `flush_dirty`); the single transmit flush runs in poll_write, once per driver
@@ -96,12 +96,13 @@ enum SctpMessage {
     Outbound(TransportMessage<Payload>),
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for SctpHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -174,15 +175,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             }
                             Event::Connected => {
                                 debug!("association_handle {} is connected", ch.0);
-                                self.ctx
-                                    .event_outs
-                                    .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPHandshakeComplete(ch.0),
+                                });
                             }
                             Event::AssociationLost { reason, id } => {
                                 debug!("association_handle {} is closed due to {}", ch.0, reason);
-                                self.ctx
-                                    .event_outs
-                                    .push_back(RTCEventInternal::SCTPStreamClosed(ch.0, id));
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPStreamClosed(ch.0, id),
+                                });
                             }
                             Event::Stream(StreamEvent::Readable { id }) => {
                                 let mut stream = conn.stream(id)?;
@@ -207,34 +210,37 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                     "association_handle {} stream id {} is buffered amount low",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::RTCPeerConnectionEvent(
                                         RTCPeerConnectionEvent::OnDataChannel(
                                             RTCDataChannelEvent::OnBufferedAmountLow(id),
                                         ),
                                     ),
-                                );
+                                });
                             }
                             Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
                                 debug!(
                                     "association_handle {} stream id {} is buffered amount high",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::RTCPeerConnectionEvent(
                                         RTCPeerConnectionEvent::OnDataChannel(
                                             RTCDataChannelEvent::OnBufferedAmountHigh(id),
                                         ),
                                     ),
-                                );
+                                });
                             }
                             Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
                                 // Forward the exact released byte count so the data
                                 // channel handler can decrement its synchronous
                                 // send back-pressure counter (see DataChannelHandler).
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
-                                );
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
+                                });
                             }
                             _ => {}
                         }
@@ -370,12 +376,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             let mut stream = conn.stream(message.stream_id)?;
                             stream.close()?;
 
-                            self.ctx
-                                .event_outs
-                                .push_back(RTCEventInternal::SCTPStreamClosed(
+                            self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                now,
+                                event: RTCEventInternal::SCTPStreamClosed(
                                     message.association_handle,
                                     message.stream_id,
-                                ));
+                                ),
+                            });
                         }
                         Message::DataChannelThreshold(data_channel_threshold) => {
                             is_dcep_internal_control_message = true;
@@ -435,9 +442,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
+        // The event's instant arms the deferred flush below, so `poll_write` can stamp the
+        // client INIT with the time the handshake completed rather than the wall clock.
+        let now = evt.now;
+        self.ctx.last_now = Some(now.max(self.ctx.last_now.unwrap_or(now)));
+
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
-        let dtls_complete = matches!(&evt, RTCEventInternal::DTLSHandshakeComplete(_, _));
+        let dtls_complete = matches!(&evt.event, RTCEventInternal::DTLSHandshakeComplete(_, _));
         if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
@@ -456,6 +468,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 debug!("sctp endpoint initiates connection for dtls client role");
                 let (ch, conn) = sctp_endpoint
                     .connect(
+                        now,
                         ClientConfig::new(sctp_transport_config),
                         TransportContext::default().peer_addr,
                     )
@@ -594,6 +607,7 @@ mod tests {
     use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
     use shared::TransportProtocol;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::Duration;
 
     fn client_addr() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4444)
@@ -646,7 +660,11 @@ mod tests {
         );
 
         let (client_ch, mut client_conn) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_addr())
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_addr(),
+            )
             .expect("client connect");
 
         let mut server_conns: HashMap<AssociationHandle, Association> = HashMap::new();
@@ -745,10 +763,18 @@ mod tests {
         );
 
         let (ch_a, mut conn_a) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_a_addr)
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_a_addr,
+            )
             .expect("connect A");
         let (ch_b, mut conn_b) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_b_addr)
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_b_addr,
+            )
             .expect("connect B");
 
         let mut sa: HashMap<AssociationHandle, Association> = HashMap::new();
@@ -1041,5 +1067,65 @@ mod tests {
             b.poll_transmit(Instant::now()).is_some(),
             "B's queued DATA must remain pending, not consumed by A's teardown"
         );
+    }
+
+    // Design §3.7's worked example. The client INIT is queued by `connect` inside
+    // `handle_event` and emitted by the *next* `poll_write` — so before C3-01 gave the event
+    // channel a timestamp, `last_now` was still `None` at that point and the flush fell back
+    // to `Instant::now()`. That was not a defensive branch: it was the path taken on every
+    // client connection. Now the INIT is stamped from the event that armed it.
+    #[test]
+    fn client_init_flush_is_stamped_from_the_event_that_armed_it() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        ));
+        transport.sctp_transport_config = Some(TransportConfig::default());
+        let mut ctx = SctpHandlerContext::new(transport);
+
+        // No inbound SCTP has been seen, so nothing but the event can supply an instant.
+        assert!(ctx.last_now.is_none());
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now: t(7),
+                    event: RTCEventInternal::DTLSHandshakeComplete(None, None),
+                })
+                .expect("handle_event");
+        }
+        assert_eq!(
+            ctx.last_now,
+            Some(t(7)),
+            "the event's instant must arm the deferred flush"
+        );
+
+        let flushed = {
+            let mut handler = SctpHandler::new(&mut ctx);
+            let mut out = vec![];
+            while let Some(msg) = handler.poll_write() {
+                out.push(msg);
+            }
+            out
+        };
+
+        assert!(!flushed.is_empty(), "poll_write must emit the client INIT");
+        for msg in &flushed {
+            assert_eq!(
+                msg.now,
+                t(7),
+                "the INIT carries the instant of the event that caused it, not the wall clock"
+            );
+        }
     }
 }

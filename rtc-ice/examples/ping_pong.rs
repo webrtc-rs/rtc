@@ -306,7 +306,7 @@ async fn main() -> Result<(), Error> {
         }
         let mut is_failed = false;
         while let Some(event) = ice_agent.poll_event() {
-            match event {
+            match event.event {
                 Event::ConnectionStateChange(cs) => {
                     println!("ConnectionStateChange with {}", cs);
                     match cs {

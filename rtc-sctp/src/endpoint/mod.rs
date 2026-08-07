@@ -173,6 +173,7 @@ impl Endpoint {
     /// Initiate an Association
     pub fn connect(
         &mut self,
+        now: Instant,
         config: ClientConfig,
         remote: SocketAddr,
     ) -> Result<(AssociationHandle, Association), ConnectError> {
@@ -186,14 +187,8 @@ impl Endpoint {
         let remote_aid = RandomAssociationIdGenerator::new().generate_aid();
         let local_aid = self.new_aid();
 
-        let (ch, conn) = self.add_association(
-            remote_aid,
-            local_aid,
-            remote,
-            Instant::now(),
-            None,
-            config.transport,
-        );
+        let (ch, conn) =
+            self.add_association(remote_aid, local_aid, remote, now, None, config.transport);
         Ok((ch, conn))
     }
 

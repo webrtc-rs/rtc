@@ -19,7 +19,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -370,7 +370,7 @@ async fn run_main_loop(
             }
 
             // Poll reads (data channel messages)
-            while let Some(message) = pc.poll_read() {
+            while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
                 match message {
                     RTCMessage::RtpPacket(_, _) => {}
                     RTCMessage::RtcpPacket(_, _) => {}
@@ -389,7 +389,7 @@ async fn run_main_loop(
                     if let Some(mut dc) = pc.data_channel(channel_id) {
                         let message = chrono::Local::now().to_string();
                         println!("Data Channel {} - send {}", channel_id, message);
-                        if let Err(e) = dc.send_text(message) {
+                        if let Err(e) = dc.send_text(Instant::now(), message) {
                             println!(
                                 "{} - DataChannel closed, stopping send loop: {}",
                                 chrono::Local::now().format("%H:%M:%S"),

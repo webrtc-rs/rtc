@@ -1,4 +1,4 @@
-use crate::peer_connection::event::RTCEventInternal;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
@@ -19,7 +19,7 @@ pub(crate) struct SrtpHandlerContext {
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 }
 
 /// SrtpHandler implements SRTP/RTP/RTCP Protocols handling
@@ -37,12 +37,13 @@ impl<'a> SrtpHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for SrtpHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -167,9 +168,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, mut evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, mut evt: TaggedRTCEventInternal) -> Result<()> {
         if let RTCEventInternal::DTLSHandshakeComplete(local_srtp_context, remote_srtp_context) =
-            &mut evt
+            &mut evt.event
         {
             debug!("srtp recv dtls handshake complete");
 
