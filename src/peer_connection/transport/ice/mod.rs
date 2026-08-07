@@ -10,6 +10,7 @@ use ice::tcp_type::TcpType;
 use ice::{Agent, AgentConfig};
 use shared::error::{Error, Result};
 use std::sync::Arc;
+use std::time::Instant;
 
 pub(crate) mod candidate;
 pub(crate) mod candidate_pair;
@@ -32,10 +33,11 @@ pub(crate) struct RTCIceTransport {
 impl RTCIceTransport {
     /// creates a new RTCIceTransport
     pub(crate) fn new(
+        now: Instant,
         agent_config: AgentConfig,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {
-        let agent = Agent::new(Arc::new(agent_config), crypto_provider)?;
+        let agent = Agent::new(now, Arc::new(agent_config), crypto_provider)?;
 
         Ok(RTCIceTransport {
             agent,
@@ -148,19 +150,34 @@ impl RTCIceTransport {
         self.agent.state().into()
     }
 
-    /// restart is not exposed currently because ORTC has users create a whole new ICETransport
-    /// so for now lets keep it private so we don't cause ORTC users to depend on non-standard APIs
-    pub(crate) fn restart(
+    /// Stages ICE-restart credentials so an offer can advertise them.
+    ///
+    /// Does not disturb the live session; see [`ice::Agent::generate_restart_credentials`].
+    pub(crate) fn generate_restart_credentials(
         &mut self,
         ufrag: String,
         pwd: String,
+    ) -> Result<()> {
+        self.agent.generate_restart_credentials(ufrag, pwd)
+    }
+
+    /// Whether an ICE restart has been staged but not yet applied.
+    pub(crate) fn has_pending_restart(&self) -> bool {
+        self.agent.has_pending_restart()
+    }
+
+    /// Applies a staged ICE restart, restarting the agent's timers at `now`.
+    pub(crate) fn apply_restart(
+        &mut self,
+        now: Instant,
         keep_local_candidates: bool,
     ) -> Result<()> {
-        self.agent.restart(ufrag, pwd, keep_local_candidates)
+        self.agent.apply_restart(now, keep_local_candidates)
     }
 
     pub(crate) fn start(
         &mut self,
+        now: Instant,
         local_ice_role: RTCIceRole,
         remote_ice_parameters: RTCIceParameters,
     ) -> Result<()> {
@@ -169,6 +186,7 @@ impl RTCIceTransport {
         }
 
         self.agent.start_connectivity_checks(
+            now,
             local_ice_role == RTCIceRole::Controlling,
             remote_ice_parameters.username_fragment,
             remote_ice_parameters.password,

@@ -30,7 +30,7 @@
 //! let config = RTCConfigurationBuilder::new().build();
 //! let mut peer_connection = RTCPeerConnectionBuilder::new()
 //!     .with_configuration(config)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! loop {
 //!     // Poll and handle events
@@ -149,6 +149,7 @@ use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use srtp::context::Context;
+use std::time::Instant;
 
 pub(crate) mod data_channel_event;
 pub(crate) mod ice_error_event;
@@ -524,6 +525,21 @@ pub enum RTCPeerConnectionEvent {
 #[non_exhaustive]
 pub enum RTCEvent {}
 
+/// An [`RTCEvent`] together with the instant its condition was observed at.
+///
+/// The counterpart of [`TaggedRTCMessage`](crate::peer_connection::message::TaggedRTCMessage)
+/// for the event channel, so that all three of the core's input channels carry a timestamp
+/// rather than two of them carrying one and the third leaving the core to ask the clock.
+///
+/// [`RTCEvent`] is currently uninhabited, so no value of this type can be constructed yet; it
+/// exists so the signature is already right when the first event variant is added.
+pub struct TaggedRTCEvent {
+    /// When the condition this event reports was observed.
+    pub now: Instant,
+    /// The event itself.
+    pub event: RTCEvent,
+}
+
 /// Internal event types for WebRTC implementation.
 ///
 /// These events are used internally by the WebRTC stack to coordinate between
@@ -574,4 +590,9 @@ pub(crate) enum RTCEventInternal {
         u16,   /*StreamID*/
         usize, /*n_bytes*/
     ),
+}
+
+pub(crate) struct TaggedRTCEventInternal {
+    pub(crate) now: Instant,
+    pub(crate) event: RTCEventInternal,
 }

@@ -34,7 +34,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_OPUS, MediaEng
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -538,7 +538,7 @@ async fn handle_whep_connection(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create audio track
     let ssrc: SSRC = rand::random();
@@ -565,7 +565,7 @@ async fn handle_whep_connection(
     // Set remote description
     let offer = RTCSessionDescription::offer(offer_sdp)?;
     println!("Received Offer {}", offer);
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -584,7 +584,7 @@ async fn handle_whep_connection(
 
     // Create answer
     let answer = peer_connection.create_answer(None)?;
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     let answer_sdp = peer_connection
         .local_description()
@@ -631,6 +631,7 @@ async fn run_peer_connection<I: Interceptor>(
 
     // Create packetizer
     let mut packetizer = rtp::packetizer::new_packetizer(
+        Instant::now(),
         RTP_OUTBOUND_MTU,
         codec.payload_type,
         ssrc,
@@ -675,7 +676,7 @@ async fn run_peer_connection<I: Interceptor>(
                                 &tracks,
                                 current_track.load(Ordering::SeqCst),
                             );
-                            let _ = dc.send_text(playlist_msg);
+                            let _ = dc.send_text(Instant::now(), playlist_msg);
                         }
                     } else if state == RTCPeerConnectionState::Failed
                         || state == RTCPeerConnectionState::Closed
@@ -695,7 +696,7 @@ async fn run_peer_connection<I: Interceptor>(
         }
 
         // Process data channel messages
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             if let RTCMessage::DataChannelMessage(dc_id, dc_message) = message {
                 if dc_id == playlist_channel_id {
                     let command = String::from_utf8_lossy(&dc_message.data)
@@ -727,8 +728,11 @@ async fn run_peer_connection<I: Interceptor>(
                     let sample_duration = page.duration;
                     let samples =
                         (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-                    let packets =
-                        packetizer.packetize(&bytes::Bytes::from(page.payload.clone()), samples)?;
+                    let packets = packetizer.packetize(
+                        Instant::now(),
+                        &bytes::Bytes::from(page.payload.clone()),
+                        samples,
+                    )?;
 
                     for mut packet in packets {
                         let mut rtp_sender = peer_connection
@@ -752,7 +756,7 @@ async fn run_peer_connection<I: Interceptor>(
                             .map(|codec| codec.payload_type)
                             .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
-                        rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(Instant::now(), packet)?;
                     }
 
                     last_stream_time = Instant::now();
@@ -766,7 +770,7 @@ async fn run_peer_connection<I: Interceptor>(
                         // Send now playing
                         if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                             let now_msg = build_now_playing_message(&tracks, switch as usize);
-                            let _ = dc.send_text(now_msg);
+                            let _ = dc.send_text(Instant::now(), now_msg);
                         }
                     } else {
                         current_page.store(page_idx + 1, Ordering::SeqCst);
@@ -780,7 +784,7 @@ async fn run_peer_connection<I: Interceptor>(
                     // Send now playing
                     if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                         let now_msg = build_now_playing_message(&tracks, next as usize);
-                        let _ = dc.send_text(now_msg);
+                        let _ = dc.send_text(Instant::now(), now_msg);
                     }
                 }
             }
@@ -860,7 +864,7 @@ fn handle_playlist_command<I: Interceptor>(
         "list" => {
             if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
                 let msg = build_playlist_message(tracks, current);
-                let _ = dc.send_text(msg);
+                let _ = dc.send_text(Instant::now(), msg);
             }
             return;
         }
@@ -880,7 +884,7 @@ fn handle_playlist_command<I: Interceptor>(
 
     if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
         let msg = build_playlist_message(tracks, next);
-        let _ = dc.send_text(msg);
+        let _ = dc.send_text(Instant::now(), msg);
     }
 }
 

@@ -27,7 +27,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -85,7 +85,7 @@ fn create_rtc_peer_config(
     let pc = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     Ok(pc)
 }
@@ -171,12 +171,12 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
 
     // Set remote description (offer) on RTC - no candidates in SDP yet (trickle ICE demo)
     let rtc_offer = rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_sdp)?;
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
     log::info!("RTC set remote description (offer without candidates)");
 
     // Create answer on RTC
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("RTC created and set answer");
 
     // Set answer on webrtc
@@ -291,7 +291,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(channel_id, data_channel_message) = message {
                 let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                 log::info!("RTC received message: '{}'", msg_str);
@@ -304,7 +304,7 @@ async fn test_trickle_ice_webrtc_offerer_rtc_answerer() -> Result<()> {
                 // Echo back
                 if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
                     log::info!("RTC echoing message back");
-                    dc.send_text(msg_str)?;
+                    dc.send_text(Instant::now(), msg_str)?;
                 }
             }
         }
@@ -421,7 +421,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
 
     // Create offer on RTC (without adding candidates yet - trickle ICE)
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("RTC created and set offer (without candidates)");
 
     // Create webrtc peer (answerer)
@@ -476,7 +476,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
 
     // Set answer on RTC
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(answer.sdp.clone())?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
     log::info!("RTC set remote description (answer)");
 
     // === TRICKLE ICE: Add candidates AFTER SDP exchange ===
@@ -584,7 +584,7 @@ async fn test_trickle_ice_rtc_offerer_webrtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_channel_id, data_channel_message) = message {
                 let msg_str = String::from_utf8(data_channel_message.data.to_vec())?;
                 log::info!("RTC received message: '{}'", msg_str);

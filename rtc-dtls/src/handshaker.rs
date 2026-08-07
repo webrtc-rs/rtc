@@ -72,7 +72,7 @@ pub(crate) fn srv_cli_str(is_client: bool) -> String {
 }
 
 impl DTLSConn {
-    pub(crate) fn handshake(&mut self) -> Result<()> {
+    pub(crate) fn handshake(&mut self, now: Instant) -> Result<()> {
         loop {
             debug!(
                 "[handshake:{}] {}: {}",
@@ -95,7 +95,7 @@ impl DTLSConn {
             let previous_handshake_state = self.current_handshake_state;
             self.current_handshake_state = match previous_handshake_state {
                 HandshakeState::Preparing => self.prepare()?,
-                HandshakeState::Sending => self.send()?,
+                HandshakeState::Sending => self.send(now)?,
                 HandshakeState::Waiting => self.wait()?,
                 HandshakeState::Finished => self.finish()?,
                 _ => return Err(Error::ErrInvalidFsmTransition),
@@ -158,7 +158,7 @@ impl DTLSConn {
 
         Ok(HandshakeState::Sending)
     }
-    fn send(&mut self) -> Result<HandshakeState> {
+    fn send(&mut self, now: Instant) -> Result<HandshakeState> {
         // Send flights
         if let Some(pkts) = self.flights.clone() {
             self.write_packets(pkts);
@@ -167,8 +167,7 @@ impl DTLSConn {
         if self.current_flight.is_last_send_flight() {
             Ok(HandshakeState::Finished)
         } else {
-            self.current_retransmit_timer =
-                Some(Instant::now() + self.handshake_config.retransmit_interval);
+            self.current_retransmit_timer = Some(now + self.handshake_config.retransmit_interval);
             Ok(HandshakeState::Waiting)
         }
     }
@@ -248,7 +247,7 @@ impl DTLSConn {
         Ok(HandshakeState::Finished)
     }
 
-    pub(crate) fn handshake_timeout(&mut self, _now: Instant) -> Result<()> {
+    pub(crate) fn handshake_timeout(&mut self, now: Instant) -> Result<()> {
         let next_handshake_state = if self.current_handshake_state == HandshakeState::Waiting {
             debug!(
                 "[handshake:{}] {} retransmit_timer",
@@ -271,7 +270,7 @@ impl DTLSConn {
                 }
             } else {
                 self.current_retransmit_timer =
-                    Some(Instant::now() + self.handshake_config.retransmit_interval);
+                    Some(now + self.handshake_config.retransmit_interval);
                 Some(HandshakeState::Waiting)
             }
         } else if self.current_handshake_state == HandshakeState::Finished {
@@ -283,7 +282,7 @@ impl DTLSConn {
 
         if let Some(next_handshake_state) = next_handshake_state {
             self.current_handshake_state = next_handshake_state;
-            self.handshake()
+            self.handshake(now)
         } else {
             Ok(())
         }

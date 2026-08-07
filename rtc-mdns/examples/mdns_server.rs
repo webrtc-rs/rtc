@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MdnsConfig::default()
         .with_local_names(vec![args.local_name.clone()])
         .with_local_ip(local_addr.ip());
-    let mut conn = Mdns::new(config);
+    let mut conn = Mdns::new(Instant::now(), config);
 
     // Create a multicast UDP socket using the builder
     let multicast_local_ip = match bind_addr.ip() {

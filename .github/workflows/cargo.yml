@@ -179,6 +179,19 @@ jobs:
             exit 1
           fi
 
+  sans_io_deterministic_time_audit:
+    name: Sans-I/O deterministic time boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Enforces the G4 invariant: sans-I/O protocol code is told the time, it does not ask.
+      # An `Instant::now()` in the core cannot be driven by a virtual clock, which is what makes
+      # timing-dependent behaviour untestable without sleeping. The allow-list is a ratchet:
+      # counts go down as the migration lands, and a new read fails here. Removing a read also
+      # fails, prompting `--snapshot` so the reduction is recorded. See docs/sans-io-deterministic-time.md.
+      - name: No ambient clock reads outside the allow-list
+        run: python3 scripts/check-sans-io-deterministic-time.py
+
   package_publication_order:
     name: cargo package (publication order)
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ use rtc::rtp_transceiver::rtp_sender::{
 };
 use rtc::rtp_transceiver::{RTCRtpSenderId, RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use rtc::shared::error::Error;
+use std::time::Instant;
 
 const BASE_SSRC: u32 = 0x1111_1111;
 const ALT_SSRC: u32 = 0x2222_2222;
@@ -126,7 +127,7 @@ fn test_add_transceiver_from_kind_negotiates_non_first_codec() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let transceiver_id = offerer
@@ -155,18 +156,18 @@ fn test_add_transceiver_from_kind_negotiates_non_first_codec() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_non_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("H264/90000"), "{}", answer.sdp);
@@ -174,10 +175,10 @@ fn test_add_transceiver_from_kind_negotiates_non_first_codec() {
     assert_non_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -206,7 +207,7 @@ fn test_add_transceiver_from_track_negotiates_non_first_codec() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let transceiver_id = offerer
@@ -234,18 +235,18 @@ fn test_add_transceiver_from_track_negotiates_non_first_codec() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_non_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("H264/90000"), "{}", answer.sdp);
@@ -253,10 +254,10 @@ fn test_add_transceiver_from_track_negotiates_non_first_codec() {
     assert_non_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -285,7 +286,7 @@ fn test_add_track_negotiates_non_first_codec() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let sender_id = offerer
@@ -304,18 +305,18 @@ fn test_add_track_negotiates_non_first_codec() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_non_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("H264/90000"), "{}", answer.sdp);
@@ -323,10 +324,10 @@ fn test_add_track_negotiates_non_first_codec() {
     assert_non_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -354,7 +355,7 @@ fn test_add_transceiver_from_kind_preserves_simulcast() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let transceiver_id = offerer
@@ -377,28 +378,28 @@ fn test_add_transceiver_from_kind_preserves_simulcast() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("VP8/90000"), "{}", answer.sdp);
     assert_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -422,7 +423,7 @@ fn test_add_transceiver_from_track_preserves_simulcast() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let transceiver_id = offerer
@@ -445,28 +446,28 @@ fn test_add_transceiver_from_track_preserves_simulcast() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("VP8/90000"), "{}", answer.sdp);
     assert_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -490,7 +491,7 @@ fn test_add_track_preserves_simulcast() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let sender_id = offerer
@@ -504,28 +505,28 @@ fn test_add_track_preserves_simulcast() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
     assert_simulcast_offer(&offer.sdp);
 
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
     assert!(answer.sdp.contains("VP8/90000"), "{}", answer.sdp);
     assert_simulcast_answer(&answer.sdp);
 
     answerer
-        .set_local_description(answer.clone())
+        .set_local_description(Instant::now(), answer.clone())
         .expect("set local answer");
     offerer
-        .set_remote_description(answer)
+        .set_remote_description(Instant::now(), answer)
         .expect("set remote answer");
 
     let parameters = offerer
@@ -550,7 +551,7 @@ fn test_add_transceiver_from_kind_rejects_invalid_rid_mix() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let result = offerer.add_transceiver_from_kind(
@@ -574,7 +575,7 @@ fn test_add_transceiver_from_track_rejects_invalid_rid_mix() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let result = offerer.add_transceiver_from_track(
@@ -598,7 +599,7 @@ fn test_add_track_rejects_invalid_rid_mix() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(video_media_engine(&[vp8.clone(), h264.clone()]))
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     let result = offerer.add_track(video_track(invalid_mixed_encodings(&vp8, &h264)));
@@ -625,7 +626,7 @@ fn test_default_codecs_negotiate_rtx() {
     let mut offerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config.clone())
         .with_media_engine(default_media_engine())
-        .build()
+        .build(Instant::now())
         .expect("build offerer");
 
     // A recvonly transceiver with no codec preferences offers the full default
@@ -643,7 +644,7 @@ fn test_default_codecs_negotiate_rtx() {
 
     let offer = offerer.create_offer(None).expect("create offer");
     offerer
-        .set_local_description(offer.clone())
+        .set_local_description(Instant::now(), offer.clone())
         .expect("set local offer");
 
     // The offer advertises an RTX codec associated with VP8 (apt=96).
@@ -661,11 +662,11 @@ fn test_default_codecs_negotiate_rtx() {
     let mut answerer = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_media_engine(default_media_engine())
-        .build()
+        .build(Instant::now())
         .expect("build answerer");
 
     answerer
-        .set_remote_description(offer)
+        .set_remote_description(Instant::now(), offer)
         .expect("set remote offer");
     let answer = answerer.create_answer(None).expect("create answer");
 

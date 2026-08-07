@@ -16,6 +16,7 @@
 //! ## Accessing the received track
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::media_stream::MediaStreamTrackId;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
@@ -23,7 +24,7 @@
 //! #     receiver_id: RTCRtpReceiverId,
 //! #     track_id: MediaStreamTrackId
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // Get the receiver and access its track
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
@@ -39,10 +40,11 @@
 //! ## Getting receive parameters
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get current receive parameters
@@ -59,11 +61,12 @@
 //! ## Checking receiver capabilities
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! if let Some(receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Check video capabilities
@@ -86,10 +89,11 @@
 //! ## Getting contributing sources
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get CSRC information for mixed audio
@@ -106,10 +110,11 @@
 //! ## Getting synchronization sources
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! # fn example(receiver_id: RTCRtpReceiverId) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! if let Some(mut receiver) = peer_connection.rtp_receiver(receiver_id) {
 //!     // Get SSRC information
@@ -125,9 +130,10 @@
 //! ## Handling incoming receivers
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut peer_connection = RTCPeerConnectionBuilder::new().build()?;
+//! let mut peer_connection = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 //!
 //! // After remote description is set, collect receiver IDs first
 //! let receiver_ids: Vec<_> = peer_connection.get_receivers().collect();
@@ -156,7 +162,7 @@ pub(crate) mod rtp_contributing_source;
 
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::RTCPeerConnection;
-use crate::peer_connection::message::RTCMessage;
+use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use crate::rtp_transceiver::RTCRtpReceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
@@ -164,6 +170,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceivePa
 use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::Result;
+use std::time::Instant;
 
 pub use rtp_contributing_source::{RTCRtpContributingSource, RTCRtpSynchronizationSource};
 
@@ -322,6 +329,7 @@ where
     /// use rtc::peer_connection::RTCPeerConnection;
     /// use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
     /// use rtc::rtp_transceiver::RTCRtpReceiverId;
+    /// use std::time::Instant;
     ///
     /// # fn example(
     /// #     peer_connection: &mut RTCPeerConnection,
@@ -333,12 +341,12 @@ where
     ///         sender_ssrc: 0,
     ///         media_ssrc: remote_ssrc,
     ///     };
-    ///     receiver.write_rtcp(vec![Box::new(pli)])?;
+    ///     receiver.write_rtcp(Instant::now(), vec![Box::new(pli)])?;
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn write_rtcp(&mut self, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
+    pub fn write_rtcp(&mut self, now: Instant, packets: Vec<Box<dyn rtcp::Packet>>) -> Result<()> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and
         // the direction won't be changed too, so, unwrap() here is safe.
 
@@ -348,7 +356,9 @@ where
             .unwrap();
 
         let track_id = receiver.track().track_id().to_string();
-        self.peer_connection
-            .handle_write(RTCMessage::RtcpPacket(track_id, packets))
+        self.peer_connection.handle_write(TaggedRTCMessage {
+            now,
+            message: RTCMessage::RtcpPacket(track_id, packets),
+        })
     }
 }

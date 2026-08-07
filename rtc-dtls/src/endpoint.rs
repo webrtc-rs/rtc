@@ -89,6 +89,7 @@ impl Endpoint {
     /// Initiate an Association
     pub fn connect(
         &mut self,
+        now: Instant,
         remote: SocketAddr,
         client_config: Arc<HandshakeConfig>,
         initial_state: Option<State>,
@@ -99,11 +100,11 @@ impl Endpoint {
 
         if let Vacant(e) = self.connections.entry(remote) {
             let mut conn = DTLSConn::new(client_config, true, initial_state);
-            conn.handshake()?;
+            conn.handshake(now)?;
 
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -121,12 +122,16 @@ impl Endpoint {
     }
 
     /// Process stop remote
-    pub fn stop(&mut self, remote: SocketAddr) -> Option<DTLSConn> {
+    ///
+    /// `now` stamps the close_notify this queues. Like [`Self::connect`], the instant is a
+    /// parameter rather than something the endpoint samples: it owns no sockets and reads no
+    /// clock.
+    pub fn stop(&mut self, now: Instant, remote: SocketAddr) -> Option<DTLSConn> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -141,12 +146,14 @@ impl Endpoint {
     }
 
     /// Process close
-    pub fn close(&mut self) -> Result<()> {
+    ///
+    /// `now` stamps the close_notify queued for every live association.
+    pub fn close(&mut self, now: Instant) -> Result<()> {
         for (remote_addr, conn) in self.connections.iter_mut() {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: *remote_addr,
@@ -186,13 +193,13 @@ impl Endpoint {
             let is_handshake_completed_before = conn.is_handshake_completed();
             conn.read(&data)?;
             if !conn.is_handshake_completed() {
-                conn.handshake()?;
+                conn.handshake(now)?;
                 // Drain any queued future-epoch packets (e.g. Finished that arrived
                 // before ChangeCipherSpec bumped remote_epoch). If draining sets
                 // handshake_rx, run handshake() again so the FSM can advance.
                 let is_handshake = conn.handle_incoming_queued_packets()?;
                 if is_handshake && !conn.is_handshake_completed() {
-                    conn.handshake()?;
+                    conn.handshake(now)?;
                 }
             }
             if !is_handshake_completed_before && conn.is_handshake_completed() {
@@ -223,12 +230,12 @@ impl Endpoint {
     /// # Errors
     ///
     /// Fails if there is no association with `remote`, or its handshake has not completed.
-    pub fn write(&mut self, remote: SocketAddr, data: &[u8]) -> Result<()> {
+    pub fn write(&mut self, now: Instant, remote: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.write(data)?;
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -384,7 +391,7 @@ mod tests {
         let server_config = config(server_provider, false, suite)?;
         let mut client = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
         let mut server = Endpoint::new(server_addr(), TransportProtocol::UDP, Some(server_config));
-        client.connect(server_addr(), client_config, None)?;
+        client.connect(Instant::now(), server_addr(), client_config, None)?;
 
         let mut client_complete = false;
         let mut server_complete = false;
@@ -404,7 +411,7 @@ mod tests {
             "DTLS handshake did not complete"
         );
 
-        client.write(server_addr(), b"provider-backed DTLS")?;
+        client.write(Instant::now(), server_addr(), b"provider-backed DTLS")?;
         let transmit = client
             .poll_transmit()
             .expect("application write produces a DTLS record");
@@ -483,7 +490,7 @@ mod tests {
         )?;
         let mut endpoint = Endpoint::new(client_addr(), TransportProtocol::UDP, None);
 
-        let result = endpoint.connect(server_addr(), config, None);
+        let result = endpoint.connect(Instant::now(), server_addr(), config, None);
         assert!(matches!(result, Err(Error::Crypto(_))));
         Ok(())
     }

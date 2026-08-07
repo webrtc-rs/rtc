@@ -12,7 +12,7 @@ use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngi
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -181,7 +181,7 @@ async fn run(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create Track that we send video back to browser on
     // Create tracks for each simulcast layer: quarter (q), half (h), full (f)
@@ -223,7 +223,7 @@ async fn run(
     println!("Offer received: {}", offer);
 
     // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -244,7 +244,7 @@ async fn run(
     let answer = peer_connection.create_answer(None)?;
 
     // Sets the LocalDescription
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
@@ -321,7 +321,7 @@ async fn run(
         }
 
         // Poll read - receive application messages
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     // Get the receiver for this track
@@ -399,7 +399,7 @@ async fn run(
                             "forwarding rtp packet for rid={}, sender_ssrc={}",
                             rid, rtp_packet.header.ssrc
                         );
-                        rtp_sender.write_rtp(rtp_packet)?;
+                        rtp_sender.write_rtp(Instant::now(), rtp_packet)?;
                     } else {
                         debug!("output_track not found for rid = {rid}");
                     }
@@ -452,7 +452,7 @@ async fn run(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         println!("sending PLI rtcp packet with rid: {}, media_ssrc: {}", rid, media_ssrc);
-                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                             sender_ssrc: 0,
                             media_ssrc,
                         })])?;

@@ -3,7 +3,9 @@ use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
-use crate::peer_connection::event::{RTCEventInternal, RTCPeerConnectionEvent};
+use crate::peer_connection::event::{
+    RTCEventInternal, RTCPeerConnectionEvent, TaggedRTCEventInternal,
+};
 use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -15,11 +17,35 @@ use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct DataChannelHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
+
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// `poll_write` drains each channel's outbound queue, and a message can still be sitting
+    /// there from an earlier `handle_*` — the datachannel layer buffers when SCTP back-pressures
+    /// it. Stamping those with the instant of the input that caused them is the right answer;
+    /// this field is what a `poll_*` has instead of a parameter.
+    now: Instant,
+}
+
+impl DataChannelHandlerContext {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self {
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
+            now,
+        }
+    }
+
+    /// Records the newest instant a caller has supplied. See the design's §9.3 for why there is
+    /// no monotonicity assert alongside the `max`.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
+    }
 }
 
 /// DataChannelHandler implements DataChannel Protocol handling
@@ -47,16 +73,20 @@ impl<'a> DataChannelHandler<'a> {
     }
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for DataChannelHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
+        self.ctx.observe(now);
+
         if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "recv SCTP DataChannelMessage from {:?}",
@@ -166,7 +196,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
             while let Some(data_channel_message) = data_channel.poll_write() {
                 debug!("send data channel message from handle_read");
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext::default(),
                     message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                 });
@@ -184,6 +214,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
+        self.ctx.observe(now);
+
         if let RTCMessageInternal::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
             debug!("send application message {:?}", msg.transport.peer_addr);
 
@@ -223,7 +256,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from handle_write");
                     self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: Instant::now(),
+                        now,
                         transport: TransportContext::default(),
                         message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                     });
@@ -248,7 +281,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from poll_write");
                     self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: Instant::now(),
+                        now: self.ctx.now,
                         transport: TransportContext::default(),
                         message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                     });
@@ -259,8 +292,9 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
-        match evt {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
+        let now = evt.now;
+        match evt.event {
             RTCEventInternal::SCTPHandshakeComplete(association_handle) => {
                 for data_channel_internal in self.data_channels.values_mut() {
                     if data_channel_internal.ready_state == RTCDataChannelState::Connecting {
@@ -272,7 +306,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             .ok_or(Error::ErrDataChannelNotExisted)?;
 
                         self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
-                            now: Instant::now(),
+                            now,
                             transport: TransportContext::default(),
                             message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(
                                 ApplicationMessage {
@@ -295,7 +329,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         while let Some(data_channel_message) = data_channel.poll_write() {
                             debug!("send data channel message from handle_event");
                             self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                                now: Instant::now(),
+                                now,
                                 transport: TransportContext::default(),
                                 message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(
                                     data_channel_message,
@@ -314,13 +348,14 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                         dc_stats.on_state_changed(RTCDataChannelState::Closed);
                     }
 
-                    self.ctx
-                        .event_outs
-                        .push_back(RTCEventInternal::RTCPeerConnectionEvent(
+                    self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                        now,
+                        event: RTCEventInternal::RTCPeerConnectionEvent(
                             RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
                                 stream_id,
                             )),
-                        ));
+                        ),
+                    });
                 }
             }
             RTCEventInternal::SCTPBufferReleased(_association_handle, stream_id, n_bytes) => {
@@ -331,8 +366,12 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                     dc.outstanding_bytes = dc.outstanding_bytes.saturating_sub(n_bytes);
                 }
             }
-            _ => {
-                self.ctx.event_outs.push_back(evt);
+            // Events propagate rather than being re-stamped: the forwarded event keeps the
+            // instant at which its condition was observed, not the instant this hop ran.
+            event => {
+                self.ctx
+                    .event_outs
+                    .push_back(TaggedRTCEventInternal { now, event });
             }
         }
         Ok(())
@@ -342,7 +381,8 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         self.ctx.event_outs.pop_front()
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        self.ctx.observe(now);
         Ok(())
     }
 

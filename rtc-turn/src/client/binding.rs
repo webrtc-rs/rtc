@@ -72,12 +72,12 @@ impl BindingManager {
         n
     }
 
-    pub(crate) fn create(&mut self, addr: SocketAddr) -> Option<&Binding> {
+    pub(crate) fn create(&mut self, now: Instant, addr: SocketAddr) -> Option<&Binding> {
         let b = Binding {
             number: self.assign_channel_number(),
             st: BindingState::Idle,
             addr,
-            refreshed_at: Instant::now(),
+            refreshed_at: now,
         };
 
         self.chan_map.insert(b.number, b.addr.to_string());

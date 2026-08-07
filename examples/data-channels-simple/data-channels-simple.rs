@@ -14,7 +14,7 @@ use log::{error, info, trace};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -218,8 +218,10 @@ async fn run_webrtc(
                         RTCDataChannelEvent::OnOpen(channel_id) => {
                             if let Some(mut dc) = pc.data_channel(channel_id) {
                                 info!("DataChannel '{}' opened (Server)", dc.label());
-                                if let Err(e) = dc.send_text("Hello from Rust server!".to_string())
-                                {
+                                if let Err(e) = dc.send_text(
+                                    Instant::now(),
+                                    "Hello from Rust server!".to_string(),
+                                ) {
                                     error!("Failed to send greeting: {}", e);
                                 }
                             }
@@ -237,7 +239,7 @@ async fn run_webrtc(
             }
 
             // Poll for incoming messages
-            while let Some(message) = pc.poll_read() {
+            while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
                 if let RTCMessage::DataChannelMessage(channel_id, dc_message) = message {
                     if let Some(dc) = pc.data_channel(channel_id) {
                         let msg_str = String::from_utf8_lossy(&dc_message.data);
@@ -349,10 +351,10 @@ fn create_peer_connection(
 
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
-        .build()?;
+        .build(Instant::now())?;
 
     // Set remote description (the offer)
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local ICE candidate
     let candidate = CandidateHostConfig {
@@ -373,7 +375,7 @@ fn create_peer_connection(
     let answer = peer_connection.create_answer(None)?;
 
     // Set local description
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     Ok((peer_connection, answer))
 }

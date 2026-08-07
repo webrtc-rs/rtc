@@ -118,7 +118,7 @@ pub struct NackGeneratorInterceptor<P> {
     max_nacks_per_packet: u16,
 
     /// Next timeout for NACK generation
-    eto: Instant,
+    next_timeout: Option<Instant>,
 
     /// Sender SSRC for NACK packets
     sender_ssrc: u32,
@@ -147,7 +147,7 @@ impl<P> NackGeneratorInterceptor<P> {
             interval,
             skip_last_n,
             max_nacks_per_packet,
-            eto: Instant::now(),
+            next_timeout: None,
             sender_ssrc: rand::random(),
             receive_logs: HashMap::new(),
             nack_counts: HashMap::new(),
@@ -221,6 +221,12 @@ impl<P: Interceptor> NackGeneratorInterceptor<P> {
             && let Some(receive_log) = self.receive_logs.get_mut(&rtp_packet.header.ssrc)
         {
             receive_log.add(rtp_packet.header.sequence_number);
+
+            // Arm the NACK timer from the first tracked packet's instant. `None` means nothing is
+            // scheduled, so the interceptor asks for no wake-up until a stream is actually flowing.
+            if self.next_timeout.is_none() {
+                self.next_timeout = Some(msg.now + self.interval);
+            }
         }
 
         self.inner.handle_read(msg)
@@ -237,8 +243,10 @@ impl<P: Interceptor> NackGeneratorInterceptor<P> {
 
     #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        if self.eto <= now {
-            self.eto = now + self.interval;
+        if let Some(next_timeout) = self.next_timeout
+            && now >= next_timeout
+        {
+            self.next_timeout = Some(now + self.interval);
             self.generate_nacks(now);
         }
 
@@ -247,12 +255,12 @@ impl<P: Interceptor> NackGeneratorInterceptor<P> {
 
     #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        if let Some(inner_eto) = self.inner.poll_timeout()
-            && inner_eto < self.eto
-        {
-            return Some(inner_eto);
+        match (self.next_timeout, self.inner.poll_timeout()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
         }
-        Some(self.eto)
     }
 
     #[overrides]

@@ -18,7 +18,7 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
@@ -270,7 +270,7 @@ impl Peer {
         let mut pc = RTCPeerConnectionBuilder::new()
             .with_setting_engine(setting_engine)
             .with_media_engine(media_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         let sender_id = if send_media {
             Some(pc.add_track(MediaStreamTrack::new(
@@ -347,11 +347,19 @@ async fn exercise_pair(
     let (mut answer, _) = Peer::new(answer_provider, false).await?;
 
     let description = offer.pc.create_offer(None)?;
-    offer.pc.set_local_description(description.clone())?;
-    answer.pc.set_remote_description(description)?;
+    offer
+        .pc
+        .set_local_description(Instant::now(), description.clone())?;
+    answer
+        .pc
+        .set_remote_description(Instant::now(), description)?;
     let description = answer.pc.create_answer(None)?;
-    answer.pc.set_local_description(description.clone())?;
-    offer.pc.set_remote_description(description)?;
+    answer
+        .pc
+        .set_local_description(Instant::now(), description.clone())?;
+    offer
+        .pc
+        .set_remote_description(Instant::now(), description)?;
 
     let mut offer_connected = false;
     let mut answer_connected = false;
@@ -392,12 +400,12 @@ async fn exercise_pair(
             }
         }
 
-        while let Some(message) = answer.pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = answer.pc.poll_read() {
             if matches!(message, RTCMessage::RtpPacket(_, _)) {
                 received_rtp = true;
             }
         }
-        while let Some(message) = offer.pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = offer.pc.poll_read() {
             if matches!(message, RTCMessage::RtcpPacket(_, _)) {
                 received_rtcp = true;
             }
@@ -425,18 +433,21 @@ async fn exercise_pair(
                 .pc
                 .rtp_sender(sender_id)
                 .expect("media sender exists")
-                .write_rtp(rtp::packet::Packet {
-                    header: rtp::header::Header {
-                        version: 2,
-                        marker: true,
-                        payload_type,
-                        sequence_number,
-                        timestamp: 90_000,
-                        ssrc: MEDIA_SSRC,
-                        ..Default::default()
+                .write_rtp(
+                    Instant::now(),
+                    rtp::packet::Packet {
+                        header: rtp::header::Header {
+                            version: 2,
+                            marker: true,
+                            payload_type,
+                            sequence_number,
+                            timestamp: 90_000,
+                            ssrc: MEDIA_SSRC,
+                            ..Default::default()
+                        },
+                        payload: Bytes::from_static(b"provider-isolation"),
                     },
-                    payload: Bytes::from_static(b"provider-isolation"),
-                })?;
+                )?;
             sent_rtp += 1;
         }
         if received_rtp && !sent_rtcp {
@@ -448,10 +459,13 @@ async fn exercise_pair(
                 .pc
                 .rtp_receiver(receiver_id.expect("receiver opened before RTP arrived"))
                 .expect("media receiver exists")
-                .write_rtcp(vec![Box::new(PictureLossIndication {
-                    sender_ssrc: 0,
-                    media_ssrc: MEDIA_SSRC,
-                })])?;
+                .write_rtcp(
+                    Instant::now(),
+                    vec![Box::new(PictureLossIndication {
+                        sender_ssrc: 0,
+                        media_ssrc: MEDIA_SSRC,
+                    })],
+                )?;
             sent_rtcp = true;
         }
 

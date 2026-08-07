@@ -1,6 +1,6 @@
-use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
@@ -20,13 +20,12 @@ use shared::{TransportContext, TransportMessage};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct SctpHandlerContext {
     pub(crate) sctp_transport: RTCSctpTransport,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) event_outs: VecDeque<RTCEventInternal>,
+    pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 
     // Batch-drain state: handle_read/handle_write/handle_timeout only INGEST (set
     // `flush_dirty`); the single transmit flush runs in poll_write, once per driver
@@ -34,21 +33,39 @@ pub(crate) struct SctpHandlerContext {
     // chunks are processed before one flush, so the ack machine coalesces them into
     // ONE SACK (1st arms Delay, 2nd+ stay Immediate until flushed) instead of one
     // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
-    // cost. `last_now` carries the newest timestamp seen into that flush.
+    // cost. `now` carries the newest timestamp seen into that flush.
     flush_dirty: bool,
-    last_now: Option<Instant>,
+
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// This is the one place in the core that genuinely needs a retained instant: the flush is
+    /// armed by a `handle_*` but executed by the next `poll_write`, and `flush_transmits` does
+    /// real time-dependent work there — retransmit timers, congestion window, SACK scheduling.
+    /// It was `Option<Instant>` with an `unwrap_or_else(Instant::now)` fallback only because
+    /// nothing seeded it; that fallback was taken on **every client connection**, for the flush
+    /// that emits the INIT chunk. Seeding at construction makes the `Option` unnecessary.
+    now: Instant,
 }
 
 impl SctpHandlerContext {
-    pub(crate) fn new(sctp_transport: RTCSctpTransport) -> Self {
+    pub(crate) fn new(now: Instant, sctp_transport: RTCSctpTransport) -> Self {
         Self {
             sctp_transport,
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             flush_dirty: false,
-            last_now: None,
+            now,
         }
+    }
+
+    /// Records the newest instant a caller has supplied.
+    ///
+    /// `max` rather than assignment, and without a monotonicity assert: an outbound message
+    /// carries the instant of the input that *caused* it, so `handle_write` can legitimately be
+    /// handed one older than the newest seen. See the design's §9.3.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
     }
 }
 
@@ -96,12 +113,13 @@ enum SctpMessage {
     Outbound(TransportMessage<Payload>),
 }
 
-impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RTCEventInternal>
+impl<'a>
+    sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
     for SctpHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
-    type Eout = RTCEventInternal;
+    type Eout = TaggedRTCEventInternal;
     type Error = Error;
     type Time = Instant;
 
@@ -174,15 +192,17 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             }
                             Event::Connected => {
                                 debug!("association_handle {} is connected", ch.0);
-                                self.ctx
-                                    .event_outs
-                                    .push_back(RTCEventInternal::SCTPHandshakeComplete(ch.0));
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPHandshakeComplete(ch.0),
+                                });
                             }
                             Event::AssociationLost { reason, id } => {
                                 debug!("association_handle {} is closed due to {}", ch.0, reason);
-                                self.ctx
-                                    .event_outs
-                                    .push_back(RTCEventInternal::SCTPStreamClosed(ch.0, id));
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPStreamClosed(ch.0, id),
+                                });
                             }
                             Event::Stream(StreamEvent::Readable { id }) => {
                                 let mut stream = conn.stream(id)?;
@@ -207,34 +227,37 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                     "association_handle {} stream id {} is buffered amount low",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::RTCPeerConnectionEvent(
                                         RTCPeerConnectionEvent::OnDataChannel(
                                             RTCDataChannelEvent::OnBufferedAmountLow(id),
                                         ),
                                     ),
-                                );
+                                });
                             }
                             Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
                                 debug!(
                                     "association_handle {} stream id {} is buffered amount high",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::RTCPeerConnectionEvent(
                                         RTCPeerConnectionEvent::OnDataChannel(
                                             RTCDataChannelEvent::OnBufferedAmountHigh(id),
                                         ),
                                     ),
-                                );
+                                });
                             }
                             Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
                                 // Forward the exact released byte count so the data
                                 // channel handler can decrement its synchronous
                                 // send back-pressure counter (see DataChannelHandler).
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
-                                );
+                                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                    now,
+                                    event: RTCEventInternal::SCTPBufferReleased(ch.0, id, n_bytes),
+                                });
                             }
                             _ => {}
                         }
@@ -300,7 +323,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
             // Ingest done — mark dirty so poll_write runs the single flush.
             self.ctx.flush_dirty = true;
-            self.ctx.last_now = Some(now);
+            self.ctx.observe(now);
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -370,12 +393,13 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                             let mut stream = conn.stream(message.stream_id)?;
                             stream.close()?;
 
-                            self.ctx
-                                .event_outs
-                                .push_back(RTCEventInternal::SCTPStreamClosed(
+                            self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                                now,
+                                event: RTCEventInternal::SCTPStreamClosed(
                                     message.association_handle,
                                     message.stream_id,
-                                ));
+                                ),
+                            });
                         }
                         Message::DataChannelThreshold(data_channel_threshold) => {
                             is_dcep_internal_control_message = true;
@@ -415,7 +439,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
             // Ingest done — mark dirty so poll_write runs the single flush.
             self.ctx.flush_dirty = true;
-            self.ctx.last_now = Some(now);
+            self.ctx.observe(now);
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -429,15 +453,19 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
         // iteration before serving queued outbound.
         if self.ctx.flush_dirty {
             self.ctx.flush_dirty = false;
-            let now = self.ctx.last_now.unwrap_or_else(Instant::now);
-            self.flush_transmits(now);
+            self.flush_transmits(self.ctx.now);
         }
         self.ctx.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEventInternal) -> Result<()> {
+    fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
+        // The event's instant arms the deferred flush below, so `poll_write` can stamp the
+        // client INIT with the time the handshake completed rather than the wall clock.
+        let now = evt.now;
+        self.ctx.observe(now);
+
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
-        let dtls_complete = matches!(&evt, RTCEventInternal::DTLSHandshakeComplete(_, _));
+        let dtls_complete = matches!(&evt.event, RTCEventInternal::DTLSHandshakeComplete(_, _));
         if dtls_complete {
             debug!("sctp recv dtls handshake complete");
 
@@ -456,6 +484,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                 debug!("sctp endpoint initiates connection for dtls client role");
                 let (ch, conn) = sctp_endpoint
                     .connect(
+                        now,
                         ClientConfig::new(sctp_transport_config),
                         TransportContext::default().peer_addr,
                     )
@@ -537,7 +566,7 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
 
         // Timer processed — mark dirty so poll_write runs the single flush.
         self.ctx.flush_dirty = true;
-        self.ctx.last_now = Some(now);
+        self.ctx.observe(now);
 
         Ok(())
     }
@@ -594,6 +623,7 @@ mod tests {
     use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
     use shared::TransportProtocol;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::Duration;
 
     fn client_addr() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4444)
@@ -646,7 +676,11 @@ mod tests {
         );
 
         let (client_ch, mut client_conn) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_addr())
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_addr(),
+            )
             .expect("client connect");
 
         let mut server_conns: HashMap<AssociationHandle, Association> = HashMap::new();
@@ -745,10 +779,18 @@ mod tests {
         );
 
         let (ch_a, mut conn_a) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_a_addr)
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_a_addr,
+            )
             .expect("connect A");
         let (ch_b, mut conn_b) = client_ep
-            .connect(ClientConfig::new(TransportConfig::default()), server_b_addr)
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_b_addr,
+            )
             .expect("connect B");
 
         let mut sa: HashMap<AssociationHandle, Association> = HashMap::new();
@@ -842,6 +884,7 @@ mod tests {
 
     /// Wrap an established client endpoint + association in a handler context.
     fn client_ctx(
+        now: Instant,
         client_ep: Endpoint,
         ch: AssociationHandle,
         conn: Association,
@@ -852,7 +895,7 @@ mod tests {
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch, conn);
-        SctpHandlerContext::new(transport)
+        SctpHandlerContext::new(now, transport)
     }
 
     // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
@@ -880,13 +923,14 @@ mod tests {
     // *before* removal, or the peer would never learn the association closed.
     #[test]
     fn handle_timeout_flushes_final_packet_before_drain() {
+        let now = Instant::now();
         let e = establish();
         let mut client_conn = e.client_conn;
         client_conn
             .shutdown()
             .expect("shutdown from Established queues Drained + SHUTDOWN");
 
-        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
 
         {
@@ -941,7 +985,7 @@ mod tests {
         assert!(!ack_dgrams.is_empty(), "server replies SHUTDOWN_ACK");
 
         // Feed SHUTDOWN_ACK to the client HANDLER via handle_read.
-        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
         {
             let mut handler = SctpHandler::new(&mut ctx);
@@ -979,6 +1023,7 @@ mod tests {
     // B's DATA here too; this test rejects that.
     #[test]
     fn teardown_flush_targets_only_the_draining_association() {
+        let now = Instant::now();
         let (client_ep, ch_a, mut conn_a, ch_b, mut conn_b) = establish_two();
 
         // A: graceful shutdown -> Drained + a pending SHUTDOWN.
@@ -1001,7 +1046,7 @@ mod tests {
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch_a, conn_a);
         transport.sctp_associations.insert(ch_b, conn_b);
-        let mut ctx = SctpHandlerContext::new(transport);
+        let mut ctx = SctpHandlerContext::new(now, transport);
 
         {
             let mut handler = SctpHandler::new(&mut ctx);
@@ -1040,6 +1085,153 @@ mod tests {
         assert!(
             b.poll_transmit(Instant::now()).is_some(),
             "B's queued DATA must remain pending, not consumed by A's teardown"
+        );
+    }
+
+    // Design §3.7's worked example. The client INIT is queued by `connect` inside
+    // `handle_event` and emitted by the *next* `poll_write` — so before C3-01 gave the event
+    // channel a timestamp, the retained instant was still unset at that point and the flush
+    // fell back to `Instant::now()`. That was not a defensive branch: it was the path taken on
+    // every client connection. Now the INIT is stamped from the event that armed it.
+    #[test]
+    fn client_init_flush_is_stamped_from_the_event_that_armed_it() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        transport
+            .internal_buffer
+            .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
+        transport.sctp_endpoint = Some(Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        ));
+        transport.sctp_transport_config = Some(TransportConfig::default());
+        let mut ctx = SctpHandlerContext::new(t(0), transport);
+
+        // No inbound SCTP has been seen, so nothing but the event has moved the retained
+        // instant off its construction seed.
+        assert_eq!(ctx.now, t(0));
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now: t(7),
+                    event: RTCEventInternal::DTLSHandshakeComplete(None, None),
+                })
+                .expect("handle_event");
+        }
+        assert_eq!(
+            ctx.now,
+            t(7),
+            "the event's instant must arm the deferred flush"
+        );
+
+        let flushed = {
+            let mut handler = SctpHandler::new(&mut ctx);
+            let mut out = vec![];
+            while let Some(msg) = handler.poll_write() {
+                out.push(msg);
+            }
+            out
+        };
+
+        assert!(!flushed.is_empty(), "poll_write must emit the client INIT");
+        for msg in &flushed {
+            assert_eq!(
+                msg.now,
+                t(7),
+                "the INIT carries the instant of the event that caused it, not the wall clock"
+            );
+        }
+    }
+
+    // C4-04 replaced `last_now: Option<Instant>` + `unwrap_or_else(Instant::now)` with a
+    // construction-seeded `now: Instant`. The *point* of the deferred flush is batching — N
+    // inbound DATA chunks ingested before one flush, so the ack machine coalesces them into a
+    // single SACK instead of one per two packets. Nothing in the suite pinned that invariant,
+    // and the workspace has no SCTP throughput benchmark to measure it with, so this asserts it
+    // structurally: a burst of reads must arm the flush once and produce one flush's worth of
+    // output, not one per packet.
+    #[test]
+    fn a_burst_of_reads_produces_one_flush_not_one_per_packet() {
+        let base = Instant::now();
+        let t = |millis| base + Duration::from_millis(millis);
+
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let server_ch = e.server_ch;
+        let mut ctx = client_ctx(t(0), e.client_ep, e.client_ch, e.client_conn);
+
+        // Server sends several DATA chunks; each becomes its own inbound datagram.
+        let mut stream = server_conn
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .expect("open stream");
+        for i in 0..4u8 {
+            stream
+                .write_chunk_with_ppi(
+                    &Bytes::from(vec![i; 1024]),
+                    PayloadProtocolIdentifier::Binary,
+                )
+                .expect("queue DATA");
+        }
+        let dgrams = drain_transmits(&mut server_conn, t(0));
+        assert!(
+            dgrams.len() >= 2,
+            "the burst must be more than one datagram to be worth batching, got {}",
+            dgrams.len()
+        );
+        let _ = server_ch;
+
+        // Ingest the whole burst. Every read arms the flush; none performs it.
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            for (i, d) in dgrams.iter().enumerate() {
+                handler
+                    .handle_read(TaggedRTCMessageInternal {
+                        now: t(i as u64),
+                        transport: TransportContext {
+                            local_addr: client_addr(),
+                            peer_addr: server_addr(),
+                            transport_protocol: TransportProtocol::UDP,
+                            ecn: None,
+                        },
+                        message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&d[..]))),
+                    })
+                    .expect("handle_read");
+            }
+        }
+        assert!(
+            ctx.write_outs.is_empty(),
+            "ingest must not flush: that is what makes the SACKs coalesce"
+        );
+        assert_eq!(
+            ctx.now,
+            t(dgrams.len() as u64 - 1),
+            "the retained instant is the newest of the burst, which is what stamps the flush"
+        );
+
+        // One poll_write runs the single flush for the whole burst.
+        let flushed = {
+            let mut handler = SctpHandler::new(&mut ctx);
+            let mut out = vec![];
+            while let Some(msg) = handler.poll_write() {
+                out.push(msg);
+            }
+            out
+        };
+        assert!(
+            !flushed.is_empty(),
+            "the flush must emit the coalesced SACK"
+        );
+        assert!(
+            flushed.len() < dgrams.len(),
+            "batching must emit fewer datagrams than it ingested ({} in, {} out)",
+            dgrams.len(),
+            flushed.len()
         );
     }
 }

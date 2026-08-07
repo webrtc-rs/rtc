@@ -2,6 +2,7 @@
 
 use crate::statistics::stats::certificate::RTCCertificateStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated certificate statistics.
@@ -25,7 +26,7 @@ impl CertificateStatsAccumulator {
     pub fn snapshot(&self, now: Instant, id: &str) -> RTCCertificateStats {
         RTCCertificateStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::Certificate,
                 id: id.to_string(),
             },
@@ -40,6 +41,7 @@ impl CertificateStatsAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::accumulator::assert_stamped_at;
 
     #[test]
     fn test_default() {
@@ -64,7 +66,7 @@ mod tests {
 
         assert_eq!(stats.stats.id, "RTCCertificate_local");
         assert_eq!(stats.stats.typ, RTCStatsType::Certificate);
-        assert_eq!(stats.stats.timestamp, now);
+        assert_stamped_at(stats.stats.timestamp, now);
         assert_eq!(
             stats.fingerprint,
             "AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90"

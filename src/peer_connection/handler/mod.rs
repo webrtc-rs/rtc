@@ -9,7 +9,7 @@ pub(crate) mod srtp;
 
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::event::{RTCEvent, RTCEventInternal};
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEvent};
 use crate::peer_connection::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
 use crate::peer_connection::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
 use crate::peer_connection::handler::dtls::{DtlsHandler, DtlsHandlerContext};
@@ -19,7 +19,7 @@ use crate::peer_connection::handler::interceptor::{InterceptorHandler, Intercept
 use crate::peer_connection::handler::sctp::{SctpHandler, SctpHandlerContext};
 use crate::peer_connection::handler::srtp::{SrtpHandler, SrtpHandlerContext};
 use crate::peer_connection::message::{
-    RTCMessage,
+    RTCMessage, TaggedRTCMessage,
     internal::{
         ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, RTPMessage,
         TaggedRTCMessageInternal,
@@ -111,7 +111,7 @@ pub(crate) struct PipelineContext {
     pub(crate) endpoint_handler_context: EndpointHandlerContext,
 
     // Pipeline
-    pub(crate) read_outs: VecDeque<RTCMessage>,
+    pub(crate) read_outs: VecDeque<TaggedRTCMessage>,
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
     pub(crate) event_outs: VecDeque<RTCPeerConnectionEvent>,
 
@@ -187,11 +187,11 @@ where
     }
 }
 
-impl<I> sansio::Protocol<TaggedBytesMut, RTCMessage, RTCEvent> for RTCPeerConnection<I>
+impl<I> sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection<I>
 where
     I: Interceptor,
 {
-    type Rout = RTCMessage;
+    type Rout = TaggedRTCMessage;
     type Wout = TaggedBytesMut;
     type Eout = RTCPeerConnectionEvent;
     type Error = Error;
@@ -246,7 +246,12 @@ where
             };
 
             if let Some(rtc_message) = rtc_message {
-                self.pipeline_context.read_outs.push_back(rtc_message);
+                // The instant travels with the message: the application learns when the packet
+                // was observed at the socket, not when it happened to drain it.
+                self.pipeline_context.read_outs.push_back(TaggedRTCMessage {
+                    now: msg.now,
+                    message: rtc_message,
+                });
             }
         }
 
@@ -257,8 +262,9 @@ where
         self.pipeline_context.read_outs.pop_front()
     }
 
-    fn handle_write(&mut self, msg: RTCMessage) -> Result<(), Self::Error> {
-        let rtc_message_internal = match msg {
+    fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+        let now = msg.now;
+        let rtc_message_internal = match msg.message {
             RTCMessage::DataChannelMessage(data_channel_id, data_channel_message) => {
                 RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
                     data_channel_id,
@@ -276,7 +282,7 @@ where
         // Only endpoint can handle user write message
         let mut endpoint_handler = self.get_endpoint_handler();
         endpoint_handler.handle_write(TaggedRTCMessageInternal {
-            now: Instant::now(),
+            now,
             transport: Default::default(),
             message: rtc_message_internal,
         })
@@ -310,10 +316,13 @@ where
         self.pipeline_context.write_outs.pop_front()
     }
 
-    fn handle_event(&mut self, evt: RTCEvent) -> Result<(), Self::Error> {
-        // Only endpoint can handle user event
-        let mut endpoint_handler = self.get_endpoint_handler();
-        endpoint_handler.handle_event(RTCEventInternal::RTCEvent(evt))
+    fn handle_event(&mut self, evt: TaggedRTCEvent) -> Result<(), Self::Error> {
+        // `RTCEvent` is `pub enum RTCEvent {}` — uninhabited, reserved for future use — so no
+        // caller can construct one and this arm is unreachable. Diverging on the empty match
+        // keeps that fact in the type system, and avoids inventing an instant to wrap the
+        // event with when there is none to be had. C3-03 replaces this with `evt.now` once
+        // the public channel carries a timestamp.
+        match evt.event {}
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {
@@ -332,7 +341,7 @@ where
 
         // Finally, put intermediate_eouts into RTCPeerConnection's eouts
         while let Some(evt_internal) = intermediate_eouts.pop_front() {
-            match &evt_internal {
+            match &evt_internal.event {
                 RTCEventInternal::RTCPeerConnectionEvent(
                     RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(_),
                 )
@@ -342,7 +351,7 @@ where
                 _ => {}
             };
 
-            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal {
+            if let RTCEventInternal::RTCPeerConnectionEvent(evt) = evt_internal.event {
                 self.pipeline_context.event_outs.push_back(evt);
             }
         }
@@ -434,5 +443,55 @@ where
         self.update_connection_state(true);
 
         flatten_errs(close_errs)
+    }
+}
+
+#[cfg(test)]
+mod handler_test {
+    use super::*;
+    use crate::data_channel::message::RTCDataChannelMessage;
+    use crate::peer_connection::RTCPeerConnectionBuilder;
+    use bytes::BytesMut;
+    use sansio::Protocol;
+    use std::time::Duration;
+
+    /// The instant the application supplies on `handle_write` is the one the core stamps the
+    /// resulting internal message with — not a reading the core took for itself. Before C3-03
+    /// the public `Win` was a bare `RTCMessage`, so this entry point had no time source and
+    /// stamped `Instant::now()`.
+    #[test]
+    fn handle_write_stamps_from_the_caller_not_the_clock() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(t(0))
+            .expect("a default peer connection builds");
+
+        pc.handle_write(TaggedRTCMessage {
+            now: t(5),
+            message: RTCMessage::DataChannelMessage(
+                1,
+                RTCDataChannelMessage {
+                    is_string: true,
+                    data: BytesMut::from(&b"hello"[..]),
+                },
+            ),
+        })
+        .expect("handle_write queues the message");
+
+        let queued = pc
+            .pipeline_context
+            .endpoint_handler_context
+            .write_outs
+            .front()
+            .expect("the message reaches the endpoint handler");
+
+        assert_eq!(
+            queued.now,
+            t(5),
+            "the internal message carries the caller's instant, not an ambient reading"
+        );
+        assert_ne!(queued.now, t(0), "and not the construction instant either");
     }
 }

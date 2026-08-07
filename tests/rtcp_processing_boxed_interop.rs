@@ -45,7 +45,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
@@ -209,7 +209,7 @@ fn build_boxed_rtc_peer(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     Ok(pc)
 }
 
@@ -309,7 +309,7 @@ impl RtcpPeer {
     /// RTCP only ever appears here for peers built with `forward_rtcp: true` — the
     /// default chain consumes it. That asymmetry is what test 3 asserts on.
     fn drain_reads(&mut self) {
-        while let Some(message) = self.pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = self.pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     self.rtp_received += 1;
@@ -488,10 +488,11 @@ async fn test_boxed_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> 
 
     let rtc_offer =
         rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_with_candidates.sdp.clone())?;
-    peer.pc.set_remote_description(rtc_offer)?;
+    peer.pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     let answer = peer.pc.create_answer(None)?;
-    peer.pc.set_local_description(answer.clone())?;
+    peer.pc
+        .set_local_description(Instant::now(), answer.clone())?;
 
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;
     webrtc_pc.set_remote_description(webrtc_answer).await?;
@@ -616,7 +617,8 @@ async fn test_boxed_rtcp_processing_rtc_sender_receives_feedback() -> Result<()>
     ))?;
 
     let offer = peer.pc.create_offer(None)?;
-    peer.pc.set_local_description(offer.clone())?;
+    peer.pc
+        .set_local_description(Instant::now(), offer.clone())?;
 
     let webrtc_pc = create_webrtc_peer().await?;
     let webrtc_offer = WebrtcRTCSessionDescription::offer(offer.sdp.clone())?;
@@ -632,7 +634,7 @@ async fn test_boxed_rtcp_processing_rtc_sender_receives_feedback() -> Result<()>
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    peer.pc.set_remote_description(rtc_answer)?;
+    peer.pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     let mut buf = vec![0u8; 2000];
     let mut rtp_packets_sent = 0u32;
@@ -646,7 +648,7 @@ async fn test_boxed_rtcp_processing_rtc_sender_receives_feedback() -> Result<()>
             && rtp_packets_sent < 300
             && let Some(mut sender) = peer.pc.rtp_sender(sender_id)
         {
-            let _ = sender.write_rtp(dummy_rtp(SENDER_SSRC, rtp_packets_sent, 96));
+            let _ = sender.write_rtp(Instant::now(), dummy_rtp(SENDER_SSRC, rtp_packets_sent, 96));
             rtp_packets_sent += 1;
         }
 
@@ -743,11 +745,15 @@ async fn test_boxed_rtc_to_rtc_heterogeneous_chains() -> Result<()> {
 
     // Offer/answer between the two.
     let offer = peers[0].pc.create_offer(None)?;
-    peers[0].pc.set_local_description(offer.clone())?;
-    peers[1].pc.set_remote_description(offer)?;
+    peers[0]
+        .pc
+        .set_local_description(Instant::now(), offer.clone())?;
+    peers[1].pc.set_remote_description(Instant::now(), offer)?;
     let answer = peers[1].pc.create_answer(None)?;
-    peers[1].pc.set_local_description(answer.clone())?;
-    peers[0].pc.set_remote_description(answer)?;
+    peers[1]
+        .pc
+        .set_local_description(Instant::now(), answer.clone())?;
+    peers[0].pc.set_remote_description(Instant::now(), answer)?;
 
     let mut bufs = [vec![0u8; 2000], vec![0u8; 2000]];
     let mut rtp_packets_sent = 0u32;
@@ -762,7 +768,7 @@ async fn test_boxed_rtc_to_rtc_heterogeneous_chains() -> Result<()> {
             && rtp_packets_sent < 600
             && let Some(mut sender) = peers[0].pc.rtp_sender(sender_id)
         {
-            let _ = sender.write_rtp(dummy_rtp(SENDER_SSRC, rtp_packets_sent, 96));
+            let _ = sender.write_rtp(Instant::now(), dummy_rtp(SENDER_SSRC, rtp_packets_sent, 96));
             rtp_packets_sent += 1;
         }
 

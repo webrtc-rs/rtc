@@ -33,6 +33,7 @@ fn main() -> Result<(), Error> {
     conn.connect(server)?;
 
     let mut client = ClientBuilder::new().build(
+        Instant::now(),
         conn.local_addr()?,
         conn.peer_addr()?,
         TransportProtocol::UDP,
@@ -40,7 +41,10 @@ fn main() -> Result<(), Error> {
 
     let mut msg = Message::new();
     msg.build(&[Box::<TransactionId>::default(), Box::new(BINDING_REQUEST)])?;
-    client.handle_write(msg)?;
+    client.handle_write(TaggedMessage {
+        now: Instant::now(),
+        message: msg,
+    })?;
     while let Some(transmit) = client.poll_write() {
         conn.send(&transmit.message)?;
     }

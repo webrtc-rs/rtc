@@ -207,7 +207,7 @@ impl Client {
     // Caller should check if the packet was handled by this client or not.
     // If not handled, it is assumed that the packet is application data.
     // If an error is returned, the caller should discard the packet regardless.
-    fn handle_inbound(&mut self, data: &[u8], from: SocketAddr) -> Result<()> {
+    fn handle_inbound(&mut self, now: Instant, data: &[u8], from: SocketAddr) -> Result<()> {
         // +-------------------+-------------------------------+
         // |   Return Values   |                               |
         // +-------------------+       Meaning / Action        |
@@ -227,7 +227,7 @@ impl Client {
         //  - Non-STUN message from the STUN server
 
         if is_stun_message(data) {
-            self.handle_stun_message(data)
+            self.handle_stun_message(now, data)
         } else if ChannelData::is_channel_data(data) {
             self.handle_channel_data(data)
         } else if self.stun_serv_addr.is_some() && &from == self.stun_serv_addr.as_ref().unwrap() {
@@ -240,7 +240,7 @@ impl Client {
         }
     }
 
-    fn handle_stun_message(&mut self, data: &[u8]) -> Result<()> {
+    fn handle_stun_message(&mut self, now: Instant, data: &[u8]) -> Result<()> {
         let mut msg = Message::new();
         msg.raw = data.to_vec();
         msg.decode()?;
@@ -314,7 +314,7 @@ impl Client {
                     }
                 }
                 METHOD_ALLOCATE => {
-                    self.handle_allocate_response(msg, tr.transaction_type)?;
+                    self.handle_allocate_response(now, msg, tr.transaction_type)?;
                 }
                 METHOD_CREATE_PERMISSION => {
                     if let TransactionType::CreatePermissionRequest(relayed_addr, peer_addr) =
@@ -344,7 +344,7 @@ impl Client {
                             relayed_addr,
                             client: self,
                         };
-                        relay.handle_channel_bind_response(msg, bind_addr)?;
+                        relay.handle_channel_bind_response(now, msg, bind_addr)?;
                     }
                 }
                 _ => {}
@@ -398,7 +398,11 @@ impl Client {
 
     /// send_binding_request_to sends a new STUN request to the given transport address
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
-    pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<TransactionId> {
+    pub fn send_binding_request_to(
+        &mut self,
+        now: Instant,
+        to: SocketAddr,
+    ) -> Result<TransactionId> {
         let msg = {
             let attrs: Vec<Box<dyn Setter + '_>> = if !self.software.text.is_empty() {
                 vec![
@@ -416,14 +420,14 @@ impl Client {
         };
 
         debug!("client.SendBindingRequestTo call PerformTransaction 1");
-        Ok(self.perform_transaction(&msg, to, TransactionType::BindingRequest))
+        Ok(self.perform_transaction(now, &msg, to, TransactionType::BindingRequest))
     }
 
     /// send_binding_request sends a new STUN request to the STUN server
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
-    pub fn send_binding_request(&mut self) -> Result<TransactionId> {
+    pub fn send_binding_request(&mut self, now: Instant) -> Result<TransactionId> {
         if let Some(stun_serv_addr) = &self.stun_serv_addr {
-            self.send_binding_request_to(*stun_serv_addr)
+            self.send_binding_request_to(now, *stun_serv_addr)
         } else {
             Err(Error::ErrStunserverAddressNotSet)
         }
@@ -523,7 +527,7 @@ impl Client {
     ///
     /// Each allocation is refreshed with its own current lifetime, so this extends rather
     /// than changes it. Intended to follow [`update_credentials`](Self::update_credentials).
-    pub fn refresh_allocations(&mut self) -> Result<()> {
+    pub fn refresh_allocations(&mut self, now: Instant) -> Result<()> {
         let relays: Vec<(RelayedAddr, Duration)> = self
             .relays
             .iter()
@@ -531,14 +535,15 @@ impl Client {
             .collect();
 
         for (relayed_addr, lifetime) in relays {
-            self.relay(relayed_addr)?.refresh_allocation(lifetime)?;
+            self.relay(relayed_addr)?
+                .refresh_allocation(now, lifetime)?;
         }
 
         Ok(())
     }
 
     /// Allocate sends a TURN allocation request to the given transport address
-    pub fn allocate(&mut self) -> Result<TransactionId> {
+    pub fn allocate(&mut self, now: Instant) -> Result<TransactionId> {
         let mut msg = Message::new();
         msg.build(&[
             Box::new(TransactionId::new()),
@@ -555,6 +560,7 @@ impl Client {
 
         debug!("client.Allocate call PerformTransaction 1");
         let mut tid = self.perform_transaction(
+            now,
             &msg,
             self.turn_server_addr()?,
             TransactionType::AllocateAttempt,
@@ -565,6 +571,7 @@ impl Client {
 
     fn handle_allocate_response(
         &mut self,
+        now: Instant,
         response: Message,
         allocate_state: TransactionType,
     ) -> Result<()> {
@@ -622,6 +629,7 @@ impl Client {
 
                 debug!("client.Allocate call PerformTransaction 2");
                 self.perform_transaction(
+                    now,
                     &msg,
                     self.turn_server_addr()?,
                     TransactionType::AllocateRequest(nonce),
@@ -652,6 +660,7 @@ impl Client {
                 self.relays.insert(
                     relayed_addr,
                     RelayState::new(
+                        now,
                         relayed_addr,
                         MessageIntegrity::long_term_integrity_key(
                             self.username.text.clone(),
@@ -689,9 +698,9 @@ impl Client {
     }
 
     /// WriteTo sends data to the specified destination using the base socket.
-    fn write_to(&mut self, data: &[u8], remote: SocketAddr) {
+    fn write_to(&mut self, now: Instant, data: &[u8], remote: SocketAddr) {
         self.transmits.push_back(TransportMessage {
-            now: Instant::now(),
+            now,
             transport: TransportContext {
                 local_addr: self.local_addr,
                 peer_addr: remote,
@@ -705,11 +714,13 @@ impl Client {
     // PerformTransaction performs STUN transaction
     fn perform_transaction(
         &mut self,
+        now: Instant,
         msg: &Message,
         to: SocketAddr,
         transaction_type: TransactionType,
     ) -> TransactionId {
         let tr = Transaction::new(TransactionConfig {
+            now,
             transaction_id: msg.transaction_id,
             transaction_type,
             raw: BytesMut::from(&msg.raw[..]),
@@ -725,7 +736,7 @@ impl Client {
         );
         self.tr_map.insert(msg.transaction_id, tr);
 
-        self.write_to(&msg.raw, to);
+        self.write_to(now, &msg.raw, to);
 
         msg.transaction_id
     }

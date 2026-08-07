@@ -24,7 +24,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
@@ -199,7 +199,7 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     Ok(pc)
 }
 
@@ -281,11 +281,11 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
     // Set remote description (offer)
     let rtc_offer =
         rtc::peer_connection::sdp::RTCSessionDescription::offer(offer_with_candidates.sdp.clone())?;
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Create and set answer
     let answer = rtc_pc.create_answer(None)?;
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
 
     // Set answer on webrtc
     let webrtc_answer = WebrtcRTCSessionDescription::answer(answer.sdp.clone())?;
@@ -366,7 +366,7 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
         }
 
         // Process reads - check for RTCP packets
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     rtp_packets_received += 1;
@@ -518,7 +518,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
 
     // Create offer
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     // Create webrtc peer (answerer)
     let webrtc_pc = create_webrtc_peer().await?;
@@ -561,7 +561,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Run event loop
     let mut buf = vec![0u8; 2000];
@@ -636,7 +636,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, rtp_packet) => {
                     rtp_packets_received += 1;
@@ -811,7 +811,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
 
     // Offer/answer with the webrtc peer (answerer, which receives the video).
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     let webrtc_pc = create_webrtc_peer().await?;
     let webrtc_offer = WebrtcRTCSessionDescription::offer(offer.sdp.clone())?;
@@ -827,7 +827,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
     let rtc_answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(
         answer_with_candidates.sdp.clone(),
     )?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Event loop: stream RTP once connected, watch for inbound RTCP about our sent stream.
     let mut buf = vec![0u8; 2000];
@@ -853,7 +853,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
                     },
                     payload: bytes::Bytes::from(vec![0xAAu8; 100]),
                 };
-                let _ = sender.write_rtp(packet);
+                let _ = sender.write_rtp(Instant::now(), packet);
                 rtp_packets_sent += 1;
             }
         }
@@ -880,7 +880,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtcpPacket(track_id, rtcp_packets) = message {
                 // The fix: feedback about our SENT stream surfaces, tagged with the
                 // sender's track id (the RTC peer has no receiver, so all inbound RTCP

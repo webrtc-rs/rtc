@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MdnsConfig::default()
         .with_query_interval(Duration::from_millis(args.interval))
         .with_query_timeout(Duration::from_secs(args.timeout));
-    let mut conn = Mdns::new(config);
+    let mut conn = Mdns::new(Instant::now(), config);
 
     let multicast_local_ip = match bind_addr.ip() {
         IpAddr::V4(local_ip) => local_ip,
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = UdpSocket::from_std(std_socket)?;
 
     // Start the query
-    let query_id = conn.query(&args.local_name);
+    let query_id = conn.query_now(Instant::now(), &args.local_name);
     log::info!(
         "Querying for '{}' (query_id={}, timeout={}s, interval={}ms)",
         args.local_name,

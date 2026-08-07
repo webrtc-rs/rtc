@@ -111,7 +111,7 @@ pub struct ReceiverReportInterceptor<P> {
     inner: P,
 
     interval: Duration,
-    eto: Instant,
+    next_timeout: Option<Instant>,
 
     streams: HashMap<u32, ReceiverStream>,
 
@@ -126,7 +126,7 @@ impl<P> ReceiverReportInterceptor<P> {
             inner,
 
             interval,
-            eto: Instant::now(),
+            next_timeout: None,
 
             streams: HashMap::new(),
 
@@ -198,6 +198,11 @@ impl<P: Interceptor> ReceiverReportInterceptor<P> {
             && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
         {
             stream.process_rtp(msg.now, rtp_packet);
+
+            // Arm the report timer from the first packet's instant (see nack::generator).
+            if self.next_timeout.is_none() {
+                self.next_timeout = Some(msg.now + self.interval);
+            }
         }
 
         self.inner.handle_read(msg)
@@ -214,8 +219,10 @@ impl<P: Interceptor> ReceiverReportInterceptor<P> {
 
     #[overrides]
     fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        if self.eto <= now {
-            self.eto = now + self.interval;
+        if let Some(next_timeout) = self.next_timeout
+            && now >= next_timeout
+        {
+            self.next_timeout = Some(now + self.interval);
 
             for stream in self.streams.values_mut() {
                 let rr = stream.generate_report(now);
@@ -232,12 +239,11 @@ impl<P: Interceptor> ReceiverReportInterceptor<P> {
 
     #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        if let Some(eto) = self.inner.poll_timeout()
-            && eto < self.eto
-        {
-            Some(eto)
-        } else {
-            Some(self.eto)
+        match (self.next_timeout, self.inner.poll_timeout()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
         }
     }
 

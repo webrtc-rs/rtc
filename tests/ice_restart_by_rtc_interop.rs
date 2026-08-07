@@ -161,7 +161,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
         let mut rtc_pc = RTCPeerConnectionBuilder::new()
             .with_configuration(config)
             .with_setting_engine(setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         // Create data channel
         let _ = rtc_pc.create_data_channel("test", None)?;
@@ -178,7 +178,9 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                     log::info!("RTC: Creating offer");
                     match rtc_pc.create_offer(None) {
                         Ok(offer) => {
-                            if let Err(e) = rtc_pc.set_local_description(offer.clone()) {
+                            if let Err(e) =
+                                rtc_pc.set_local_description(Instant::now(), offer.clone())
+                            {
                                 resp_tx
                                     .send(Response::Error(format!(
                                         "Failed to set local description: {}",
@@ -245,7 +247,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                 Ok(Command::SetRemoteDescription(sdp)) => {
                     log::info!("RTC: Setting remote description");
                     let answer = rtc::peer_connection::sdp::RTCSessionDescription::answer(sdp)?;
-                    if let Err(e) = rtc_pc.set_remote_description(answer) {
+                    if let Err(e) = rtc_pc.set_remote_description(Instant::now(), answer) {
                         resp_tx
                             .send(Response::Error(format!(
                                 "Failed to set remote description: {}",
@@ -258,7 +260,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                     log::info!("RTC: Sending message: {}", msg);
                     if let Some(channel_id) = dc_id {
                         if let Some(mut dc) = rtc_pc.data_channel(channel_id) {
-                            if let Err(e) = dc.send_text(msg) {
+                            if let Err(e) = dc.send_text(Instant::now(), msg) {
                                 resp_tx
                                     .send(Response::Error(format!("Failed to send message: {}", e)))
                                     .ok();
@@ -357,7 +359,9 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
                                 new_pwd
                             );
 
-                            if let Err(e) = rtc_pc.set_local_description(offer.clone()) {
+                            if let Err(e) =
+                                rtc_pc.set_local_description(Instant::now(), offer.clone())
+                            {
                                 resp_tx
                                     .send(Response::Error(format!(
                                         "Failed to set local description: {}",

@@ -5,6 +5,7 @@ use crate::peer_connection::transport::{
 };
 use crate::statistics::stats::transport::RTCTransportStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated transport-level statistics.
@@ -133,7 +134,7 @@ impl TransportStatsAccumulator {
     pub fn snapshot(&self, now: Instant) -> RTCTransportStats {
         RTCTransportStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::Transport,
                 id: self.transport_id.clone(),
             },
@@ -188,6 +189,7 @@ impl Default for TransportStatsAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::accumulator::assert_stamped_at;
 
     #[test]
     fn test_default() {
@@ -347,7 +349,7 @@ mod tests {
 
         assert_eq!(stats.stats.id, "RTCTransport_0");
         assert_eq!(stats.stats.typ, RTCStatsType::Transport);
-        assert_eq!(stats.stats.timestamp, now);
+        assert_stamped_at(stats.stats.timestamp, now);
         assert_eq!(stats.packets_sent, 1);
         assert_eq!(stats.bytes_sent, 100);
         assert_eq!(stats.packets_received, 1);

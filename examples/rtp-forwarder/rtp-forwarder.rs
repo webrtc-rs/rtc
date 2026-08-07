@@ -12,7 +12,8 @@ use rtc::peer_connection::configuration::media_engine::{
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::TaggedRTCMessage;
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -175,13 +176,13 @@ async fn run_peer_connection(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add transceivers for receiving audio and video
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Audio, None)?;
     peer_connection.add_transceiver_from_kind(RtpCodecKind::Video, None)?;
 
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -198,7 +199,7 @@ async fn run_peer_connection(
     peer_connection.add_local_candidate(local_candidate_init)?;
 
     let answer = peer_connection.create_answer(None)?;
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     println!("RTP forwarder listening on {}...", socket.local_addr()?);
 
@@ -280,7 +281,7 @@ async fn run_peer_connection(
         }
 
         // Poll for incoming RTP/RTCP packets from tracks
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 rtc::peer_connection::message::RTCMessage::RtpPacket(_track_id, mut rtp_packet) => {
                     // Determine which socket to forward to based on payload type
@@ -344,7 +345,7 @@ async fn run_peer_connection(
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("event_rx closed");
@@ -365,7 +366,7 @@ async fn run_peer_connection(
                         let receiver_ids: Vec<_> = peer_connection.get_receivers().collect();
                         for receiver_id in receiver_ids {
                             if let Some(mut rtp_receiver) = peer_connection.rtp_receiver(receiver_id) {
-                                let _ = rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication {
+                                let _ = rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication {
                                     sender_ssrc: 0,
                                     media_ssrc: *ssrc,
                                 })]);

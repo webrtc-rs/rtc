@@ -5,6 +5,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::statistics::stats::codec::RTCCodecStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Direction qualifier for codec stats IDs.
@@ -90,7 +91,7 @@ impl CodecStatsAccumulator {
     pub fn snapshot(&self, now: Instant, id: &str) -> RTCCodecStats {
         RTCCodecStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::Codec,
                 id: id.to_string(),
             },
@@ -106,6 +107,7 @@ impl CodecStatsAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::accumulator::assert_stamped_at;
 
     #[test]
     fn test_default() {
@@ -195,7 +197,7 @@ mod tests {
 
         assert_eq!(stats.stats.id, "RTCCodec_RTCTransport_0_send_PT96");
         assert_eq!(stats.stats.typ, RTCStatsType::Codec);
-        assert_eq!(stats.stats.timestamp, now);
+        assert_stamped_at(stats.stats.timestamp, now);
         assert_eq!(stats.payload_type, 96);
         assert_eq!(stats.mime_type, "video/H264");
         assert_eq!(stats.clock_rate, 90000);

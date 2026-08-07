@@ -18,6 +18,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
@@ -35,11 +36,11 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 2. Create an offer
 //! let offer = pc.create_offer(None)?;
-//! pc.set_local_description(offer.clone())?;
+//! pc.set_local_description(Instant::now(), offer.clone())?;
 //!
 //! // Send offer to remote peer via your signaling channel
 //! // signaling.send(offer.sdp)?;
@@ -48,7 +49,7 @@
 //! // let answer_sdp = signaling.receive()?;
 //! # let answer_sdp = String::new();
 //! let answer = RTCSessionDescription::answer(answer_sdp)?;
-//! pc.set_remote_description(answer)?;
+//! pc.set_remote_description(Instant::now(), answer)?;
 //!
 //! // 4. Add local ICE candidate
 //! # use std::net::{IpAddr, Ipv4Addr};
@@ -81,7 +82,7 @@
 //! use rtc::peer_connection::transport::RTCIceServer;
 //! use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 //! use rtc::peer_connection::state::{RTCPeerConnectionState, RTCIceConnectionState};
-//! use rtc::peer_connection::message::RTCMessage;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 //! use rtc::sansio::Protocol;
 //! use std::time::{Duration, Instant};
@@ -104,7 +105,7 @@
 //!             .build()
 //!     )
 //!     .with_media_engine(media_engine)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // Bind UDP socket for network I/O
 //! let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -155,7 +156,7 @@
 //!     }
 //!
 //!     // 3. poll_read() - Get incoming application messages (RTP/RTCP/data)
-//!     while let Some(message) = pc.poll_read() {
+//!     while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!         match message {
 //!             RTCMessage::RtpPacket(track_id, rtp_packet) => {
 //!                 println!("Received RTP packet on track {track_id}");
@@ -247,6 +248,7 @@
 //! candidates. This example shows the complete offer/answer flow:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::transport::RTCIceServer;
@@ -266,13 +268,13 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 1. Create offer
 //! let offer = offerer.create_offer(None)?;
 //!
 //! // 2. Set local description
-//! offerer.set_local_description(offer.clone())?;
+//! offerer.set_local_description(Instant::now(), offer.clone())?;
 //!
 //! // 3. Add local ICE candidate
 //! let candidate = CandidateHostConfig {
@@ -301,18 +303,18 @@
 //!             }])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //!
 //! // 5. Receive and set remote description
 //! let offer_json = receive_from_remote_peer();
 //! let remote_offer: RTCSessionDescription = serde_json::from_str(&offer_json)?;
-//! answerer.set_remote_description(remote_offer)?;
+//! answerer.set_remote_description(Instant::now(), remote_offer)?;
 //!
 //! // 6. Create answer
 //! let answer = answerer.create_answer(None)?;
 //!
 //! // 7. Set local description
-//! answerer.set_local_description(answer.clone())?;
+//! answerer.set_local_description(Instant::now(), answer.clone())?;
 //!
 //! // 8. Send answer back to offerer
 //! send_to_remote_peer(&serde_json::to_string(&answer)?);
@@ -321,7 +323,7 @@
 //! // 9. Receive and set remote description
 //! let answer_json = receive_from_remote_peer();
 //! let remote_answer: RTCSessionDescription = serde_json::from_str(&answer_json)?;
-//! offerer.set_remote_description(remote_answer)?;
+//! offerer.set_remote_description(Instant::now(), remote_answer)?;
 //!
 //! // Now both peers are connected!
 //! # Ok(())
@@ -402,6 +404,7 @@
 //! to configure packet loss recovery, congestion control, and quality monitoring:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -423,7 +426,7 @@
 //! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -431,6 +434,7 @@
 //! For custom interceptor configuration:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -453,7 +457,7 @@
 //! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -471,6 +475,7 @@
 //! concrete type no matter how it was built:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::interceptor::{BoxedInterceptor, Registry};
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
@@ -490,7 +495,7 @@
 //!     peer_connection: RTCPeerConnectionBuilder::new()
 //!         .with_media_engine(media_engine)
 //!         .with_interceptor_registry(registry.boxed())
-//!         .build()?,
+//!         .build(Instant::now())?,
 //! });
 //! # Ok(())
 //! # }
@@ -508,7 +513,8 @@
 //! use rtc::peer_connection::configuration::RTCConfiguration;
 //! use rtc::data_channel::RTCDataChannelInit;
 //! use rtc::peer_connection::event::RTCPeerConnectionEvent;
-//! use rtc::peer_connection::message::RTCMessage;
+//! use std::time::Instant;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::sansio::Protocol;
 //! use bytes::BytesMut;
 //!
@@ -524,18 +530,18 @@
 //! let channel_id = dc.id();
 //!
 //! // Send text message
-//! dc.send_text("Hello, WebRTC!")?;
+//! dc.send_text(Instant::now(), "Hello, WebRTC!")?;
 //!
 //! // Send binary message
-//! dc.send(BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]))?;
+//! dc.send(Instant::now(), BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]))?;
 //!
 //! // Later, retrieve the data channel by ID
 //! if let Some(mut dc) = pc.data_channel(channel_id) {
-//!     dc.send_text("Another message")?;
+//!     dc.send_text(Instant::now(), "Another message")?;
 //! }
 //!
 //! // Receive messages in event loop
-//! while let Some(message) = pc.poll_read() {
+//! while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!     if let RTCMessage::DataChannelMessage(channel_id, msg) = message {
 //!         if msg.is_string {
 //!             let text = String::from_utf8_lossy(&msg.data);
@@ -589,7 +595,7 @@
 //!
 //! // Send RTP packets
 //! if let Some(mut sender) = pc.rtp_sender(sender_id) {
-//!     // sender.write_rtp(rtp_packet)?;
+//!     // sender.write_rtp(Instant::now(), rtp_packet)?;
 //! }
 //! # Ok(())
 //! # }
@@ -600,7 +606,7 @@
 //! ```no_run
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-//! use rtc::peer_connection::message::RTCMessage;
+//! use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 //! use rtc::sansio::Protocol;
 //! use std::collections::HashMap;
 //!
@@ -627,7 +633,7 @@
 //! }
 //!
 //! // Receive RTP packets
-//! while let Some(message) = pc.poll_read() {
+//! while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
 //!     if let RTCMessage::RtpPacket(track_id, rtp_packet) = message {
 //!         println!("RTP packet on track {}: {} bytes",
 //!             track_id, rtp_packet.payload.len());
@@ -652,12 +658,13 @@
 //! use rtc::peer_connection::RTCPeerConnection;
 //! use rtc::rtp_transceiver::RTCRtpReceiverId;
 //! use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+//! use std::time::Instant;
 //!
 //! # fn example(mut pc: RTCPeerConnection, receiver_id: RTCRtpReceiverId, media_ssrc: u32)
 //! #     -> Result<(), Box<dyn std::error::Error>> {
 //! // Request keyframe by sending Picture Loss Indication (PLI)
 //! if let Some(mut receiver) = pc.rtp_receiver(receiver_id) {
-//!     receiver.write_rtcp(vec![Box::new(PictureLossIndication {
+//!     receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication {
 //!         sender_ssrc: 0,
 //!         media_ssrc,
 //!     })])?;

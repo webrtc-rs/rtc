@@ -3,6 +3,7 @@
 use crate::rtp_transceiver::rtp_sender::RtpCodecKind;
 use crate::statistics::stats::media::audio_playout::RTCAudioPlayoutStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated audio playout statistics.
@@ -30,7 +31,7 @@ impl AudioPlayoutStatsAccumulator {
     pub fn snapshot(&self, now: Instant, id: &str) -> RTCAudioPlayoutStats {
         RTCAudioPlayoutStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::MediaPlayout,
                 id: id.to_string(),
             },

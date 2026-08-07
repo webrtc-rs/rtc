@@ -33,6 +33,7 @@ where
     I: Interceptor,
 {
     pub(super) fn new(
+        now: Instant,
         mut configuration: RTCConfiguration,
         media_engine: MediaEngine,
         mut setting_engine: SettingEngine,
@@ -107,7 +108,7 @@ where
         };
 
         // Create the ICE transport
-        let ice_transport = RTCIceTransport::new(agent_config, crypto_provider.clone())?;
+        let ice_transport = RTCIceTransport::new(now, agent_config, crypto_provider.clone())?;
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
@@ -133,7 +134,7 @@ where
         // Create Pipeline Context
         let ice_handler_context = IceHandlerContext::new(ice_transport);
         let dtls_handler_context = DtlsHandlerContext::new(dtls_transport);
-        let sctp_handler_context = SctpHandlerContext::new(sctp_transport);
+        let sctp_handler_context = SctpHandlerContext::new(now, sctp_transport);
 
         // Listed in full rather than filled from `Default`: the ICE and DTLS handler contexts
         // own a crypto provider, and deriving `Default` for them would mean resolving one
@@ -143,7 +144,7 @@ where
             ice_handler_context,
             dtls_handler_context,
             sctp_handler_context,
-            datachannel_handler_context: DataChannelHandlerContext::default(),
+            datachannel_handler_context: DataChannelHandlerContext::new(now),
             srtp_handler_context: SrtpHandlerContext::default(),
             interceptor_handler_context: InterceptorHandlerContext::default(),
             endpoint_handler_context: EndpointHandlerContext::default(),
@@ -1225,21 +1226,25 @@ where
         &mut self.pipeline_context.stats
     }
 
-    /// Updates stats after ICE restart with the new credentials from the agent.
-    pub(super) fn ice_restart(&mut self) -> Result<()> {
-        let (local_ufrag, local_pwd, keep_local_candidates) = (
+    /// Stages an ICE restart so the next offer advertises fresh credentials.
+    ///
+    /// The live session is untouched: inbound STUN keeps validating against the current ufrag/pwd
+    /// until [`Self::apply_ice_restart`] runs at `set_local_description`. JSEP requires
+    /// `createOffer` to be free of side effects, and an offer that is created and then discarded
+    /// must leave a working connection working.
+    ///
+    /// The gathering state does move here, because SDP generation reads it and a restart offer
+    /// must not claim end-of-candidates.
+    pub(super) fn stage_ice_restart(&mut self) -> Result<()> {
+        let (local_ufrag, local_pwd) = (
             self.setting_engine.candidates.username_fragment.clone(),
             self.setting_engine.candidates.password.clone(),
-            !self
-                .setting_engine
-                .candidates
-                .discard_local_candidates_during_ice_restart,
         );
         self.ice_transport_mut()
-            .restart(local_ufrag, local_pwd, keep_local_candidates)?;
+            .generate_restart_credentials(local_ufrag, local_pwd)?;
         self.ice_transport_mut().ice_gathering_state = RTCIceGatheringState::Gathering;
 
-        // Update stats with new ICE credentials after restart
+        // Update stats with the credentials the offer will carry.
         if let Ok(params) = self.ice_transport().get_local_parameters() {
             self.pipeline_context
                 .stats
@@ -1250,8 +1255,22 @@ where
         Ok(())
     }
 
+    /// Applies a staged ICE restart, restarting the agent's timers at `now`.
+    ///
+    /// A no-op when nothing is staged, so `set_local_description` can call it unconditionally
+    /// without tearing down a session that was never asked to restart.
+    pub(super) fn apply_ice_restart(&mut self, now: Instant) -> Result<()> {
+        let keep_local_candidates = !self
+            .setting_engine
+            .candidates
+            .discard_local_candidates_during_ice_restart;
+        self.ice_transport_mut()
+            .apply_restart(now, keep_local_candidates)
+    }
+
     pub(super) fn start_transports(
         &mut self,
+        now: Instant,
         local_ice_role: RTCIceRole,
         remote_ice_parameters: RTCIceParameters,
         remote_dtls_parameters: RTCDtlsParameters,
@@ -1261,7 +1280,7 @@ where
 
         // Start the ice transport
         self.ice_transport_mut()
-            .start(local_ice_role, remote_ice_parameters)?;
+            .start(now, local_ice_role, remote_ice_parameters)?;
 
         // Start the dtls transport
         self.dtls_transport_mut()
@@ -1373,7 +1392,7 @@ where
     ///
     /// This is called automatically by `get_stats()` to ensure ICE candidate pair
     /// statistics (RTT, requests/responses sent/received) are up to date.
-    pub(super) fn update_ice_agent_stats(&mut self) {
+    pub(super) fn update_ice_agent_stats(&mut self, now: Instant) {
         if let Some((local, remote)) = self
             .pipeline_context
             .ice_handler_context
@@ -1389,7 +1408,7 @@ where
                 .ice_handler_context
                 .ice_transport
                 .agent
-                .get_candidate_pairs_stats()
+                .get_candidate_pairs_stats(now)
             {
                 let ice_pair_id = format!(
                     "RTCIceCandidatePair_{}_{}",

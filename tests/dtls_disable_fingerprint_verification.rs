@@ -24,6 +24,7 @@ use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::sansio::Protocol;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::UdpSocket;
 
 use crate::dtls_common::TestPeer;
@@ -50,7 +51,7 @@ impl Peer {
         let mut pc = RTCPeerConnectionBuilder::new()
             .with_configuration(RTCConfigurationBuilder::new().build())
             .with_setting_engine(setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         // Host candidate only: the peers talk over loopback, so no STUN is needed.
         let candidate = CandidateHostConfig {
@@ -123,16 +124,22 @@ async fn handshake_with_mismatched_fingerprint(disable_verification: bool) -> Re
     offer.pc.create_data_channel("test", None)?;
 
     let local_offer = offer.pc.create_offer(None)?;
-    offer.pc.set_local_description(local_offer.clone())?;
+    offer
+        .pc
+        .set_local_description(Instant::now(), local_offer.clone())?;
 
     // The answerer is handed an offer whose fingerprint the offerer cannot satisfy.
     let mut tampered = local_offer;
     tampered.sdp = with_placeholder_fingerprint(&tampered.sdp);
-    answer.pc.set_remote_description(tampered)?;
+    answer.pc.set_remote_description(Instant::now(), tampered)?;
 
     let local_answer = answer.pc.create_answer(None)?;
-    answer.pc.set_local_description(local_answer.clone())?;
-    offer.pc.set_remote_description(local_answer)?;
+    answer
+        .pc
+        .set_local_description(Instant::now(), local_answer.clone())?;
+    offer
+        .pc
+        .set_remote_description(Instant::now(), local_answer)?;
 
     let connected = offer.connect(&mut answer).await?;
 

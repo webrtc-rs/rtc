@@ -10,6 +10,7 @@
 //! per-layer `a=ssrc-group:FID` lines alongside `a=rid` / `a=simulcast:send`.
 
 use anyhow::Result;
+use std::time::Instant;
 
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
@@ -46,7 +47,7 @@ fn build_answerer()
         .with_setting_engine(SettingEngine::default())
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?)
+        .build(Instant::now())?)
 }
 
 /// Normalize to CRLF line endings per RFC 8866 §5.
@@ -65,7 +66,7 @@ fn firefox_simulcast_offer_answer() -> Result<()> {
     let mut pc = build_answerer()?;
 
     let offer = RTCSessionDescription::offer(crlf(FIREFOX_OFFER))?;
-    pc.set_remote_description(offer)?;
+    pc.set_remote_description(Instant::now(), offer)?;
 
     let answer = pc.create_answer(None)?;
     let ans = &answer.sdp;
@@ -120,7 +121,10 @@ fn simulcast_recv_order_follows_simulcast_attribute_not_rid_lines() -> Result<()
     assert!(reordered.contains("a=simulcast:send h;m;l"));
 
     let mut pc = build_answerer()?;
-    pc.set_remote_description(RTCSessionDescription::offer(crlf(&reordered))?)?;
+    pc.set_remote_description(
+        Instant::now(),
+        RTCSessionDescription::offer(crlf(&reordered))?,
+    )?;
     let answer = pc.create_answer(None)?;
     let ans = &answer.sdp;
 

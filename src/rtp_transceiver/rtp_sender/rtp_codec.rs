@@ -291,7 +291,7 @@ pub(crate) fn rtcp_feedback_intersection(
 }
 
 #[cfg(test)]
-mod rtx_apt_tests {
+mod rtx_apt_test {
     use super::{RTCRtpCodec, RTCRtpCodecParameters, find_rtx_payload_type, parse_rtx_apt};
 
     fn rtx(payload_type: u8, fmtp: &str) -> RTCRtpCodecParameters {

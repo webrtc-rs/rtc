@@ -27,7 +27,7 @@ use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCPeerConnectionIceEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::{RTCSdpType, RTCSessionDescription};
 use rtc::peer_connection::state::{RTCPeerConnectionState, RTCSignalingState};
 use rtc::peer_connection::transport::{
@@ -168,14 +168,15 @@ impl PerfectNegotiationHandler {
             rollback.sdp_type = RTCSdpType::Rollback;
             rollback.sdp = String::new(); // Spec: SDP omitted or empty for rollback
 
-            self.pc.set_local_description(rollback)?;
+            self.pc.set_local_description(Instant::now(), rollback)?;
 
             // Update our signaling state after rollback
             self.signaling_state = RTCSignalingState::Stable;
         }
 
         // Set the remote description
-        self.pc.set_remote_description(description.clone())?;
+        self.pc
+            .set_remote_description(Instant::now(), description.clone())?;
 
         // Debug: Check if received SDP contains candidates
         if description.sdp.contains("candidate:") {
@@ -202,7 +203,8 @@ impl PerfectNegotiationHandler {
             self.add_local_host_candidate(local_addr)?;
 
             let answer = self.pc.create_answer(None)?;
-            self.pc.set_local_description(answer.clone())?;
+            self.pc
+                .set_local_description(Instant::now(), answer.clone())?;
             info!("[{}] Creating answer", role);
             self.signaling_state = RTCSignalingState::Stable; // Answer completes negotiation
             return Ok(Some(answer));
@@ -426,7 +428,7 @@ async fn run_peer(
     let pc = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     // Don't create data channel yet - wait for user to click "Connect"
     // This makes the "Connect" button meaningful
@@ -550,7 +552,7 @@ async fn run_peer(
                     negotiation.add_local_host_candidate(local_addr)?;
 
                     let offer = negotiation.peer_connection().create_offer(None)?;
-                    negotiation.peer_connection().set_local_description(offer.clone())?;
+                    negotiation.peer_connection().set_local_description(Instant::now(), offer.clone())?;
 
                     // Update our state tracker immediately
                     negotiation.signaling_state = RTCSignalingState::HaveLocalOffer;
@@ -577,7 +579,7 @@ async fn run_peer(
                 }
 
                 // Poll read (data channel messages)
-                while let Some(message) = negotiation.peer_connection().poll_read() {
+                while let Some(TaggedRTCMessage { message, .. }) = negotiation.peer_connection().poll_read() {
                     match message {
                         RTCMessage::DataChannelMessage(channel_id, data_channel_message) => {
                             let msg_str = String::from_utf8(data_channel_message.data.to_vec())
@@ -658,7 +660,7 @@ async fn run_peer(
                                     // Send message through data channel if open
                                     if let Some(ch_id) = data_channel_id {
                                         if let Some(mut dc) = negotiation.peer_connection().data_channel(ch_id) {
-                                            if let Err(e) = dc.send_text(message) {
+                                            if let Err(e) = dc.send_text(Instant::now(), message) {
                                                 error!("[{}] Failed to send message: {}", role, e);
                                             }
                                         }

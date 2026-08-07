@@ -118,10 +118,15 @@ fn test_candidate_priority() -> Result<()> {
 #[test]
 fn test_candidate_last_sent() -> Result<()> {
     let mut candidate = Candidate::default();
+    assert_eq!(
+        candidate.last_sent(),
+        None,
+        "a fresh candidate has sent nothing"
+    );
 
     let now = Instant::now();
     candidate.set_last_sent(now);
-    assert_eq!(candidate.last_sent(), now);
+    assert_eq!(candidate.last_sent(), Some(now));
 
     Ok(())
 }
@@ -129,10 +134,15 @@ fn test_candidate_last_sent() -> Result<()> {
 #[test]
 fn test_candidate_last_received() -> Result<()> {
     let mut candidate = Candidate::default();
+    assert_eq!(
+        candidate.last_received(),
+        None,
+        "a fresh candidate has received nothing"
+    );
 
     let now = Instant::now();
     candidate.set_last_received(now);
-    assert_eq!(candidate.last_received(), now);
+    assert_eq!(candidate.last_received(), Some(now));
 
     Ok(())
 }

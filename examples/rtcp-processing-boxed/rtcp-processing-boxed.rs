@@ -50,8 +50,8 @@ use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -195,7 +195,7 @@ fn build_peer_connection(
         .with_configuration(config)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     Ok(peer_connection)
 }
@@ -272,7 +272,8 @@ impl RtcpSession {
 
     /// Apply the browser's offer and produce our answer.
     fn answer(&mut self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
-        self.peer_connection.set_remote_description(offer)?;
+        self.peer_connection
+            .set_remote_description(Instant::now(), offer)?;
 
         let candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -289,7 +290,8 @@ impl RtcpSession {
             .add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
 
         let answer = self.peer_connection.create_answer(None)?;
-        self.peer_connection.set_local_description(answer.clone())?;
+        self.peer_connection
+            .set_local_description(Instant::now(), answer.clone())?;
         Ok(answer)
     }
 
@@ -363,7 +365,7 @@ impl RtcpSession {
     /// Nothing arrives here when the session was built without the forwarder — that is
     /// what `--no-rtcp-forwarding` demonstrates.
     fn drain_reads(&mut self) {
-        while let Some(message) = self.peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = self.peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_track_id, _rtp_packet) => {
                     // We're not processing RTP packets in this example
@@ -556,7 +558,7 @@ async fn run(input_sdp_file: String, forward_rtcp: bool) -> Result<()> {
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        session.peer_connection.handle_event(event)?;
+                        session.peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("event_rx closed");

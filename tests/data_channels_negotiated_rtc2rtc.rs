@@ -13,7 +13,7 @@ use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate, RTCIceServer,
@@ -63,7 +63,7 @@ impl PeerRunner {
         let mut offer_pc = RTCPeerConnectionBuilder::new()
             .with_configuration(offer_config)
             .with_setting_engine(offer_setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         let offer_candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -95,7 +95,7 @@ impl PeerRunner {
         let mut answer_pc = RTCPeerConnectionBuilder::new()
             .with_configuration(answer_config)
             .with_setting_engine(answer_setting_engine)
-            .build()?;
+            .build(Instant::now())?;
 
         let answer_candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -149,12 +149,20 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
 
     // Exchange offer/answer
     let offer = runner.offer_pc.create_offer(None)?;
-    runner.offer_pc.set_local_description(offer.clone())?;
-    runner.answer_pc.set_remote_description(offer)?;
+    runner
+        .offer_pc
+        .set_local_description(Instant::now(), offer.clone())?;
+    runner
+        .answer_pc
+        .set_remote_description(Instant::now(), offer)?;
 
     let answer = runner.answer_pc.create_answer(None)?;
-    runner.answer_pc.set_local_description(answer.clone())?;
-    runner.offer_pc.set_remote_description(answer)?;
+    runner
+        .answer_pc
+        .set_local_description(Instant::now(), answer.clone())?;
+    runner
+        .offer_pc
+        .set_remote_description(Instant::now(), answer)?;
 
     let mut offer_connected = false;
     let mut answer_connected = false;
@@ -196,7 +204,11 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
 
         // Read messages arriving at the offer peer (answer -> offer). This
         // connection carries no media, so every read is a data-channel message.
-        while let Some(RTCMessage::DataChannelMessage(id, msg)) = runner.offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage {
+            message: RTCMessage::DataChannelMessage(id, msg),
+            ..
+        }) = runner.offer_pc.poll_read()
+        {
             assert_eq!(id, NEGOTIATED_ID);
             offer_received.push(String::from_utf8_lossy(&msg.data).into_owned());
         }
@@ -225,7 +237,11 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
 
         // Read messages arriving at the answer peer (offer -> answer). This
         // connection carries no media, so every read is a data-channel message.
-        while let Some(RTCMessage::DataChannelMessage(id, msg)) = runner.answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage {
+            message: RTCMessage::DataChannelMessage(id, msg),
+            ..
+        }) = runner.answer_pc.poll_read()
+        {
             assert_eq!(id, NEGOTIATED_ID);
             answer_received.push(String::from_utf8_lossy(&msg.data).into_owned());
         }
@@ -237,7 +253,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
                 .offer_pc
                 .data_channel(NEGOTIATED_ID)
                 .expect("negotiated channel must exist once open");
-            dc.send_text(format!("o2a-{offer_sent}"))?;
+            dc.send_text(Instant::now(), format!("o2a-{offer_sent}"))?;
             offer_sent += 1;
         }
         if answer_connected && answer_dc_open && answer_sent < ANSWER_TO_OFFER {
@@ -245,7 +261,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
                 .answer_pc
                 .data_channel(NEGOTIATED_ID)
                 .expect("negotiated channel must exist once open");
-            dc.send_text(format!("a2o-{answer_sent}"))?;
+            dc.send_text(Instant::now(), format!("a2o-{answer_sent}"))?;
             answer_sent += 1;
         }
 
@@ -367,11 +383,19 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
         .create_data_channel("negotiated", Some(init))?;
 
     let offer = runner.offer_pc.create_offer(None)?;
-    runner.offer_pc.set_local_description(offer.clone())?;
-    runner.answer_pc.set_remote_description(offer)?;
+    runner
+        .offer_pc
+        .set_local_description(Instant::now(), offer.clone())?;
+    runner
+        .answer_pc
+        .set_remote_description(Instant::now(), offer)?;
     let answer = runner.answer_pc.create_answer(None)?;
-    runner.answer_pc.set_local_description(answer.clone())?;
-    runner.offer_pc.set_remote_description(answer)?;
+    runner
+        .answer_pc
+        .set_local_description(Instant::now(), answer.clone())?;
+    runner
+        .offer_pc
+        .set_remote_description(Instant::now(), answer)?;
 
     const PAYLOAD: usize = 4096;
     let mut offer_connected = false;
@@ -429,7 +453,11 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
                 _ => {}
             }
         }
-        while let Some(RTCMessage::DataChannelMessage(id, msg)) = runner.answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage {
+            message: RTCMessage::DataChannelMessage(id, msg),
+            ..
+        }) = runner.answer_pc.poll_read()
+        {
             assert_eq!(id, NEGOTIATED_ID);
             received += msg.data.len();
         }
@@ -446,7 +474,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
                 0,
                 "outstanding_bytes must start at zero"
             );
-            dc.send(BytesMut::from(&vec![7u8; PAYLOAD][..]))?;
+            dc.send(Instant::now(), BytesMut::from(&vec![7u8; PAYLOAD][..]))?;
             assert_eq!(
                 dc.outstanding_bytes(),
                 PAYLOAD,

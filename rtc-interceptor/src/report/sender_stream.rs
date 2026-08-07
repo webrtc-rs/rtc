@@ -17,8 +17,8 @@ pub(crate) struct SenderStream {
 
     /// data from rtp packets
     last_rtp_time_rtp: u32,
-    last_rtp_time_time: Instant,
-    time_baseline: SystemInstant,
+    last_rtp_time_time: Option<Instant>,
+    time_baseline: Option<SystemInstant>,
 
     counters: Counters,
 }
@@ -34,8 +34,8 @@ impl SenderStream {
             started: false,
             last_rtp_sn: 0,
             last_rtp_time_rtp: 0,
-            last_rtp_time_time: Instant::now(),
-            time_baseline: SystemInstant::now(),
+            last_rtp_time_time: None,
+            time_baseline: None,
 
             counters: Default::default(),
         }
@@ -59,10 +59,13 @@ impl SenderStream {
 
             // Update time only on first packet of a frame (when timestamp changes)
             // This ensures sender report is not affected by processing delay
-            // of pushing a large frame which could span multiple packets
-            if pkt.header.timestamp != self.last_rtp_time_rtp {
+            // of pushing a large frame which could span multiple packets.
+            // The first accepted packet always establishes the mapping, even when its RTP
+            // timestamp happens to be the zero `last_rtp_time_rtp` starts at.
+            if self.last_rtp_time_time.is_none() || pkt.header.timestamp != self.last_rtp_time_rtp {
                 self.last_rtp_time_rtp = pkt.header.timestamp;
-                self.last_rtp_time_time = now;
+                self.last_rtp_time_time = Some(now);
+                self.time_baseline = Some(SystemInstant::now(now));
             }
         }
 
@@ -71,17 +74,25 @@ impl SenderStream {
         self.counters.count_octets(pkt.payload.len());
     }
 
-    pub(crate) fn generate_report(&mut self, now: Instant) -> rtcp::sender_report::SenderReport {
-        rtcp::sender_report::SenderReport {
-            ssrc: self.ssrc,
-            ntp_time: self.time_baseline.ntp(now),
-            rtp_time: self.last_rtp_time_rtp.wrapping_add(
-                (now.duration_since(self.last_rtp_time_time).as_secs_f64() * self.clock_rate)
-                    as u32,
-            ),
-            packet_count: self.counters.packet_count(),
-            octet_count: self.counters.octet_count(),
-            ..Default::default()
+    pub(crate) fn generate_report(
+        &mut self,
+        now: Instant,
+    ) -> Option<rtcp::sender_report::SenderReport> {
+        if let (Some(last_rtp_time_time), Some(time_baseline)) =
+            (self.last_rtp_time_time, self.time_baseline)
+        {
+            Some(rtcp::sender_report::SenderReport {
+                ssrc: self.ssrc,
+                ntp_time: time_baseline.ntp(now),
+                rtp_time: self.last_rtp_time_rtp.wrapping_add(
+                    (now.duration_since(last_rtp_time_time).as_secs_f64() * self.clock_rate) as u32,
+                ),
+                packet_count: self.counters.packet_count(),
+                octet_count: self.counters.octet_count(),
+                ..Default::default()
+            })
+        } else {
+            None
         }
     }
 }
@@ -145,13 +156,9 @@ mod tests {
         let stream = SenderStream::new(123456, 90000, false);
         let now = Instant::now();
 
-        // Generate report before any packets
+        // No RTP has been sent, so there is no RTP-to-wall-clock mapping to report yet.
         let mut stream = stream;
-        let sr = stream.generate_report(now);
-
-        assert_eq!(sr.ssrc, 123456);
-        assert_eq!(sr.packet_count, 0);
-        assert_eq!(sr.octet_count, 0);
+        assert!(stream.generate_report(now).is_none());
     }
 
     #[test]
@@ -166,7 +173,9 @@ mod tests {
             stream.process_rtp(now, &pkt);
         }
 
-        let sr = stream.generate_report(now);
+        let sr = stream
+            .generate_report(now)
+            .expect("a report is available once RTP has been sent");
 
         assert_eq!(sr.ssrc, 123456);
         assert_eq!(sr.packet_count, 10);
@@ -193,7 +202,9 @@ mod tests {
         let pkt = make_rtp_packet(11, 11, 2);
         stream.process_rtp(now, &pkt);
 
-        let sr = stream.generate_report(now);
+        let sr = stream
+            .generate_report(now)
+            .expect("a report is available once RTP has been sent");
 
         assert_eq!(sr.ssrc, 123456);
         // All 12 packets are counted
@@ -223,7 +234,9 @@ mod tests {
         let pkt = make_rtp_packet(11, 11, 2);
         stream.process_rtp(now, &pkt);
 
-        let sr = stream.generate_report(now);
+        let sr = stream
+            .generate_report(now)
+            .expect("a report is available once RTP has been sent");
 
         assert_eq!(sr.ssrc, 123456);
         // All 12 packets are counted
@@ -250,7 +263,9 @@ mod tests {
 
         // The time mapping should still be from the first packet
         // Generate report at base_time - RTP time should be 1000 (no extrapolation)
-        let sr = stream.generate_report(base_time);
+        let sr = stream
+            .generate_report(base_time)
+            .expect("a report is available once RTP has been sent");
         assert_eq!(sr.rtp_time, 1000);
     }
 
@@ -276,7 +291,9 @@ mod tests {
         let pkt = make_rtp_packet(1, 400, 10);
         stream.process_rtp(now, &pkt);
 
-        let sr = stream.generate_report(now);
+        let sr = stream
+            .generate_report(now)
+            .expect("a report is available once RTP has been sent");
 
         assert_eq!(sr.packet_count, 4);
         assert_eq!(sr.octet_count, 40);

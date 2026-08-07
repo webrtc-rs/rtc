@@ -29,6 +29,7 @@
 //! standard WebRTC functionality:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::interceptor::Registry;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -46,7 +47,7 @@
 //! let pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -56,6 +57,7 @@
 //! For fine-grained control, configure individual interceptors:
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! use rtc::interceptor::Registry;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::interceptor_registry::{configure_nack, configure_twcc};
@@ -74,7 +76,7 @@
 //! let pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
 //!     .with_interceptor_registry(registry)
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```

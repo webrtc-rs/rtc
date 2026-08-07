@@ -70,6 +70,7 @@ impl Depacketizer for FakeDepacketizer {
 #[test]
 pub fn test_sample_builder() {
     #![allow(clippy::needless_update)]
+    let now = Instant::now();
     let test_data: Vec<SampleBuilderTest> = vec![
         SampleBuilderTest {
             #[rustfmt::skip]
@@ -147,14 +148,14 @@ pub fn test_sample_builder() {
                     data: bytes!(1),
                     duration: Duration::from_secs(1), // technically this is the default value, but since it was in .go source....
                     packet_timestamp: 5,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second sample
                     data: bytes!(2),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 6,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             max_late: 50,
@@ -242,7 +243,7 @@ pub fn test_sample_builder() {
                 data: bytes!(1),
                 duration: Duration::from_secs(2),
                 packet_timestamp: 5,
-                ..Default::default()
+                ..Sample::new(now)
             }],
             max_late: 5,
             max_late_timestamp: Duration::from_secs(0),
@@ -411,7 +412,7 @@ pub fn test_sample_builder() {
                     data: bytes!(1),
                     duration: Duration::from_secs(2),
                     packet_timestamp: 5,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // First correct sample
@@ -419,7 +420,7 @@ pub fn test_sample_builder() {
                     duration: Duration::from_secs(2),
                     packet_timestamp: 7,
                     prev_dropped_packets: 1,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             max_late: 5,
@@ -477,14 +478,14 @@ pub fn test_sample_builder() {
                     data: bytes!(1),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 5,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second (duplicate) correct sample
                     data: bytes!(2, 3),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 6,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             max_late: 50,
@@ -692,35 +693,35 @@ pub fn test_sample_builder() {
                     data: bytes!(1),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 1,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second sample
                     data: bytes!(2),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 2,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Third sample
                     data: bytes!(3),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 3,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Fourth sample
                     data: bytes!(4),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 4,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Fifth sample
                     data: bytes!(5),
                     duration: Duration::from_secs(1),
                     packet_timestamp: 5,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             max_late: 50,
@@ -818,7 +819,7 @@ pub fn test_sample_builder() {
                 duration: Duration::from_secs(2),
                 packet_timestamp: 4000,
                 prev_dropped_packets: 12,
-                ..Default::default()
+                ..Sample::new(now)
             }],
             with_head_checker: true,
             head_bytes: vec![bytes!(4)],
@@ -923,7 +924,7 @@ pub fn test_sample_builder() {
                     duration: Duration::from_secs(0),
                     packet_timestamp: 1,
                     prev_dropped_packets: 0,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second sample
@@ -932,7 +933,7 @@ pub fn test_sample_builder() {
                     packet_timestamp: 2,
                     prev_dropped_packets: 2,
                     prev_padding_packets: 2,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             with_head_checker: true,
@@ -1037,7 +1038,7 @@ pub fn test_sample_builder() {
                     duration: Duration::from_secs(0),
                     packet_timestamp: 1,
                     prev_dropped_packets: 0,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second sample
@@ -1046,7 +1047,7 @@ pub fn test_sample_builder() {
                     packet_timestamp: 3,
                     prev_dropped_packets: 2,
                     prev_padding_packets: 2,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             with_head_checker: true,
@@ -1087,7 +1088,7 @@ pub fn test_sample_builder() {
                 duration: Duration::from_secs(1),
                 packet_timestamp: 1,
                 prev_dropped_packets: 0,
-                ..Default::default()
+                ..Sample::new(now)
             }],
             with_head_checker: true,
             head_bytes: vec![bytes!(1)],
@@ -1172,7 +1173,7 @@ pub fn test_sample_builder() {
                     duration: Duration::from_secs(0),
                     packet_timestamp: 1,
                     prev_dropped_packets: 0,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
                 Sample {
                     // Second sample
@@ -1181,7 +1182,7 @@ pub fn test_sample_builder() {
                     packet_timestamp: 2,
                     prev_dropped_packets: 2,
                     prev_padding_packets: 2,
-                    ..Default::default()
+                    ..Sample::new(now)
                 },
             ],
             with_head_checker: true,
@@ -1209,16 +1210,16 @@ pub fn test_sample_builder() {
 
         let mut samples = Vec::<Sample>::new();
         for p in t.packets {
-            s.push(p)
+            s.push(now, p)
         }
 
-        while let Some(sample) = s.pop() {
+        while let Some(sample) = s.pop(now) {
             samples.push(sample)
         }
 
         for _ in 0..t.extra_pop_attempts {
             // Pop some more
-            while let Some(sample) = s.pop() {
+            while let Some(sample) = s.pop(now) {
                 samples.push(sample)
             }
         }
@@ -1266,106 +1267,128 @@ pub fn test_sample_builder() {
 // SampleBuilder should respect maxLate if we popped successfully but then have a gap larger then maxLate
 #[test]
 fn test_sample_builder_max_late() {
+    let now = Instant::now();
     let mut s = SampleBuilder::new(50, FakeDepacketizer::new(), 1);
 
-    s.push(Packet {
-        header: Header {
-            sequence_number: 0,
-            timestamp: 1,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 0,
+                timestamp: 1,
+                ..Default::default()
+            },
+            payload: bytes!(0x01),
         },
-        payload: bytes!(0x01),
-    });
-    s.push(Packet {
-        header: Header {
-            sequence_number: 1,
-            timestamp: 2,
-            ..Default::default()
+    );
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 1,
+                timestamp: 2,
+                ..Default::default()
+            },
+            payload: bytes!(0x01),
         },
-        payload: bytes!(0x01),
-    });
-    s.push(Packet {
-        header: Header {
-            sequence_number: 2,
-            timestamp: 3,
-            ..Default::default()
+    );
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 2,
+                timestamp: 3,
+                ..Default::default()
+            },
+            payload: bytes!(0x01),
         },
-        payload: bytes!(0x01),
-    });
+    );
     assert_eq!(
-        s.pop(),
+        s.pop(now),
         Some(Sample {
             data: bytes!(0x01),
             duration: Duration::from_secs(1),
             packet_timestamp: 1,
-            ..Default::default()
+            ..Sample::new(now)
         }),
         "Failed to build samples before gap"
     );
 
-    s.push(Packet {
-        header: Header {
-            sequence_number: 5000,
-            timestamp: 500,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 5000,
+                timestamp: 500,
+                ..Default::default()
+            },
+            payload: bytes!(0x02),
         },
-        payload: bytes!(0x02),
-    });
-    s.push(Packet {
-        header: Header {
-            sequence_number: 5001,
-            timestamp: 501,
-            ..Default::default()
+    );
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 5001,
+                timestamp: 501,
+                ..Default::default()
+            },
+            payload: bytes!(0x02),
         },
-        payload: bytes!(0x02),
-    });
-    s.push(Packet {
-        header: Header {
-            sequence_number: 5002,
-            timestamp: 502,
-            ..Default::default()
+    );
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 5002,
+                timestamp: 502,
+                ..Default::default()
+            },
+            payload: bytes!(0x02),
         },
-        payload: bytes!(0x02),
-    });
+    );
 
     assert_eq!(
-        s.pop(),
+        s.pop(now),
         Some(Sample {
             data: bytes!(0x01),
             duration: Duration::from_secs(1),
             packet_timestamp: 2,
-            ..Default::default()
+            ..Sample::new(now)
         }),
         "Failed to build samples after large gap"
     );
-    assert_eq!(None, s.pop(), "Failed to build samples after large gap");
+    assert_eq!(None, s.pop(now), "Failed to build samples after large gap");
 
-    s.push(Packet {
-        header: Header {
-            sequence_number: 6000,
-            timestamp: 600,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 6000,
+                timestamp: 600,
+                ..Default::default()
+            },
+            payload: bytes!(0x03),
         },
-        payload: bytes!(0x03),
-    });
+    );
     assert_eq!(
-        s.pop(),
+        s.pop(now),
         Some(Sample {
             data: bytes!(0x02),
             duration: Duration::from_secs(1),
             packet_timestamp: 500,
             prev_dropped_packets: 4998,
-            ..Default::default()
+            ..Sample::new(now)
         }),
         "Failed to build samples after large gap"
     );
     assert_eq!(
-        s.pop(),
+        s.pop(now),
         Some(Sample {
             data: bytes!(0x02),
             duration: Duration::from_secs(1),
             packet_timestamp: 501,
-            ..Default::default()
+            ..Sample::new(now)
         }),
         "Failed to build samples after large gap"
     );
@@ -1426,32 +1449,42 @@ fn test_seqnum_distance() {
 
 #[test]
 fn test_sample_builder_clean_reference() {
+    let now = Instant::now();
     for seq_start in [0_u16, 0xfff8, 0xfffe] {
         let mut s = SampleBuilder::new(10, FakeDepacketizer::new(), 1);
-        s.push(Packet {
-            header: Header {
-                sequence_number: seq_start,
-                timestamp: 0,
-                ..Default::default()
+        s.push(
+            now,
+            Packet {
+                header: Header {
+                    sequence_number: seq_start,
+                    timestamp: 0,
+                    ..Default::default()
+                },
+                payload: bytes!(0x01),
             },
-            payload: bytes!(0x01),
-        });
-        s.push(Packet {
-            header: Header {
-                sequence_number: seq_start.wrapping_add(1),
-                timestamp: 0,
-                ..Default::default()
+        );
+        s.push(
+            now,
+            Packet {
+                header: Header {
+                    sequence_number: seq_start.wrapping_add(1),
+                    timestamp: 0,
+                    ..Default::default()
+                },
+                payload: bytes!(0x02),
             },
-            payload: bytes!(0x02),
-        });
-        s.push(Packet {
-            header: Header {
-                sequence_number: seq_start.wrapping_add(2),
-                timestamp: 0,
-                ..Default::default()
+        );
+        s.push(
+            now,
+            Packet {
+                header: Header {
+                    sequence_number: seq_start.wrapping_add(2),
+                    timestamp: 0,
+                    ..Default::default()
+                },
+                payload: bytes!(0x03),
             },
-            payload: bytes!(0x03),
-        });
+        );
         let pkt4 = Packet {
             header: Header {
                 sequence_number: seq_start.wrapping_add(14),
@@ -1460,7 +1493,7 @@ fn test_sample_builder_clean_reference() {
             },
             payload: bytes!(0x04),
         };
-        s.push(pkt4.clone());
+        s.push(now, pkt4.clone());
         let pkt5 = Packet {
             header: Header {
                 sequence_number: seq_start.wrapping_add(12),
@@ -1469,7 +1502,7 @@ fn test_sample_builder_clean_reference() {
             },
             payload: bytes!(0x05),
         };
-        s.push(pkt5.clone());
+        s.push(now, pkt5.clone());
 
         for i in 0..3 {
             assert_eq!(
@@ -1485,6 +1518,7 @@ fn test_sample_builder_clean_reference() {
 
 #[test]
 fn test_sample_builder_push_max_zero() {
+    let now = Instant::now();
     let pkt = Packet {
         header: Header {
             sequence_number: 0,
@@ -1499,43 +1533,51 @@ fn test_sample_builder_push_max_zero() {
         head_bytes: vec![bytes!(0x01)],
     };
     let mut s = SampleBuilder::new(0, d, 1);
-    s.push(pkt);
-    assert!(s.pop().is_some(), "Should expect a popped sample.")
+    s.push(now, pkt);
+    assert!(s.pop(now).is_some(), "Should expect a popped sample.")
 }
 
 #[test]
 fn test_pop_with_timestamp() {
+    let now = Instant::now();
     let mut s = SampleBuilder::new(0, FakeDepacketizer::new(), 1);
-    assert_eq!(s.pop_with_timestamp(), None);
+    assert_eq!(s.pop_with_timestamp(now), None);
 }
 
 #[test]
 fn test_too_old_timestamp_wrapping() {
+    let now = Instant::now();
     // Create a SampleBuilder with 1ms max late duration (sample rate 48000 = 48 samples per 1ms)
     let mut s = SampleBuilder::new(10, FakeDepacketizer::new(), 48000)
         .with_max_time_delay(Duration::from_millis(1));
 
     // Push packet with very high timestamp that would wrap around
-    s.push(Packet {
-        header: Header {
-            sequence_number: 1,
-            timestamp: u32::MAX - 10, // Very high timestamp
-            marker: false,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 1,
+                timestamp: u32::MAX - 10, // Very high timestamp
+                marker: false,
+                ..Default::default()
+            },
+            payload: bytes!(0x01),
         },
-        payload: bytes!(0x01),
-    });
+    );
 
     // Push packet with wrapped timestamp, too_old will say true and we would get a sample with above packet
-    s.push(Packet {
-        header: Header {
-            sequence_number: 2,
-            timestamp: 38, // Very low timestamp but the ts diff will be > 48
-            marker: false,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 2,
+                timestamp: 38, // Very low timestamp but the ts diff will be > 48
+                marker: false,
+                ..Default::default()
+            },
+            payload: bytes!(0x02),
         },
-        payload: bytes!(0x02),
-    });
+    );
 
     // This test would panic with "attempt to subtract with overflow" if wrapping_sub wasn't used
     // The difference between timestamps should wrap around properly
@@ -1547,31 +1589,38 @@ fn test_too_old_timestamp_wrapping() {
 
 #[test]
 fn test_too_old_ok_timestamp_wrapping() {
+    let now = Instant::now();
     // Create a SampleBuilder with 1ms max late duration (sample rate 48000 = 48 samples per 1ms)
     let mut s = SampleBuilder::new(10, FakeDepacketizer::new(), 48000)
         .with_max_time_delay(Duration::from_millis(1));
 
     // Push packet with very high timestamp that would wrap around
-    s.push(Packet {
-        header: Header {
-            sequence_number: 1,
-            timestamp: u32::MAX - 10, // Very high timestamp
-            marker: false,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 1,
+                timestamp: u32::MAX - 10, // Very high timestamp
+                marker: false,
+                ..Default::default()
+            },
+            payload: bytes!(0x01),
         },
-        payload: bytes!(0x01),
-    });
+    );
 
     // Push packet with low timestamp
-    s.push(Packet {
-        header: Header {
-            sequence_number: 2,
-            timestamp: 10, // Very low timestamp
-            marker: false,
-            ..Default::default()
+    s.push(
+        now,
+        Packet {
+            header: Header {
+                sequence_number: 2,
+                timestamp: 10, // Very low timestamp
+                marker: false,
+                ..Default::default()
+            },
+            payload: bytes!(0x02),
         },
-        payload: bytes!(0x02),
-    });
+    );
 
     // This test would panic with "attempt to subtract with overflow" if wrapping_sub wasn't used
     // The difference between timestamps should wrap around properly
@@ -1584,6 +1633,7 @@ fn test_too_old_ok_timestamp_wrapping() {
 
 #[test]
 fn test_sample_builder_data() {
+    let now = Instant::now();
     let mut s = SampleBuilder::new(10, FakeDepacketizer::new(), 1);
     let mut j: usize = 0;
     for i in 0..0x20000_usize {
@@ -1595,8 +1645,8 @@ fn test_sample_builder_data() {
             },
             payload: Bytes::copy_from_slice(&[i as u8]),
         };
-        s.push(p);
-        while let Some((sample, ts)) = s.pop_with_timestamp() {
+        s.push(now, p);
+        while let Some((sample, ts)) = s.pop_with_timestamp(now) {
             assert_eq!(ts, (j + 42) as u32, "timestamp");
             assert_eq!(sample.data.len(), 1, "data length");
             assert_eq!(sample.data[0], j as u8, "timestamp");

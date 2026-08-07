@@ -14,8 +14,8 @@ use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -148,7 +148,7 @@ async fn run(
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;
@@ -172,7 +172,7 @@ async fn run(
     let offer = peer_connection.create_offer(None)?;
 
     // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(offer)?;
+    peer_connection.set_local_description(Instant::now(), offer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
@@ -196,7 +196,7 @@ async fn run(
     println!("answer received: {}", answer);
 
     // Apply the answer as the remote description
-    peer_connection.set_remote_description(answer)?;
+    peer_connection.set_remote_description(Instant::now(), answer)?;
 
     println!("listening {}...", socket.local_addr()?);
 
@@ -260,7 +260,7 @@ async fn run(
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -301,7 +301,7 @@ async fn run(
             res = message_rx.recv() => {
                 match res {
                     Ok(message) => {
-                        peer_connection.handle_write(message)?;
+                        peer_connection.handle_write(TaggedRTCMessage { now: Instant::now(), message: message })?;
                     }
                     Err(err) => {
                         eprintln!("write_rx error: {}", err);
@@ -312,7 +312,7 @@ async fn run(
             res = event_rx.recv() => {
                 match res {
                     Ok(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     Err(err) => {
                         eprintln!("event_rx error: {}", err);
@@ -332,7 +332,7 @@ async fn run(
 
                         let message = math_rand_alpha(15);
                         println!("Sending '{message}'");
-                        dc.send_text(message)?;
+                        dc.send_text(Instant::now(), message)?;
                         data_channel_last_sent = now;
                     }
                 }

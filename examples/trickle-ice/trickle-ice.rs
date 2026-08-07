@@ -26,7 +26,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -228,6 +228,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
 
             let transport_context = TransportContext::default();
             let client = ClientBuilder::new().build(
+                Instant::now(),
                 local_addr,
                 transport_context.peer_addr,
                 TransportProtocol::UDP,
@@ -237,7 +238,10 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
 
             stun_client = Some(client);
             if let Some(ref mut client) = stun_client {
-                client.handle_write(msg)?;
+                client.handle_write(TaggedMessage {
+                    now: Instant::now(),
+                    message: msg,
+                })?;
             }
         } else {
             warn!("Failed to resolve STUN server: {}", cli.stun_server);
@@ -283,7 +287,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                 };
 
                 let mut client = TurnClient::new(cfg, crypto::default_provider()?)?;
-                let tid = client.allocate()?;
+                let tid = client.allocate(Instant::now())?;
                 allocate_tid = Some(tid);
                 turn_client = Some(client);
             } else {
@@ -447,10 +451,11 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                 // If TURN relay is active and has permission, use it
                 if let (Some(ref mut client), Some(relay)) = (turn_client.as_mut(), relay_addr) {
                     if granted_permissions.contains(&msg.transport.peer_addr) {
-                        if let Err(err) = client
-                            .relay(relay)?
-                            .send_to(&msg.message, msg.transport.peer_addr)
-                        {
+                        if let Err(err) = client.relay(relay)?.send_to(
+                            msg.now,
+                            &msg.message,
+                            msg.transport.peer_addr,
+                        ) {
                             error!("TURN relay send error: {}", err);
                         } else {
                             trace!(
@@ -515,7 +520,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
             }
 
             // Poll reads (data channel messages)
-            while let Some(message) = pc.poll_read() {
+            while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
                 match message {
                     RTCMessage::RtpPacket(_, _) => {}
                     RTCMessage::RtcpPacket(_, _) => {}
@@ -533,7 +538,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                 if Instant::now().duration_since(last_send) >= Duration::from_secs(3) {
                     if let Some(mut dc) = pc.data_channel(channel_id) {
                         let message = chrono::Local::now().to_string();
-                        if let Err(e) = dc.send_text(message) {
+                        if let Err(e) = dc.send_text(Instant::now(), message) {
                             println!(
                                 "{} - DataChannel closed, stopping send loop: {}",
                                 chrono::Local::now().format("%H:%M:%S"),
@@ -669,7 +674,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                                             if let Some(addr) = extract_address_from_candidate(&candidate.candidate) {
                                                 if !granted_permissions.contains(&addr) &&
                                                    !pending_permissions.values().any(|&v| v == addr) {
-                                                    if let Some(tid) = client.relay(relay)?.create_permission(addr)? {
+                                                    if let Some(tid) = client.relay(relay)?.create_permission(Instant::now(), addr)? {
                                                         pending_permissions.insert(tid, addr);
                                                         println!("Requesting TURN permission for peer {}", addr);
                                                     }
@@ -848,16 +853,16 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                                             .build();
 
                                         let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)
-                                         .with_setting_engine(setting_engine).build()?;
+                                         .with_setting_engine(setting_engine).build(Instant::now())?;
                                         println!("Created peer connection");
 
                                         // Set remote description
                                         println!("Setting remote description");
-                                        pc.set_remote_description(offer)?;
+                                        pc.set_remote_description(Instant::now(), offer)?;
 
                                         // Create answer
                                         let answer = pc.create_answer(None)?;
-                                        pc.set_local_description(answer.clone())?;
+                                        pc.set_local_description(Instant::now(), answer.clone())?;
                                         println!("Created and set answer");
 
                                         // Add all available candidates

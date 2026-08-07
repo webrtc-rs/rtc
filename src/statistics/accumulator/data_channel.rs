@@ -3,6 +3,7 @@
 use crate::data_channel::RTCDataChannelState;
 use crate::statistics::stats::data_channel::RTCDataChannelStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated data channel statistics.
@@ -52,7 +53,7 @@ impl DataChannelStatsAccumulator {
     pub fn snapshot(&self, now: Instant, id: String) -> RTCDataChannelStats {
         RTCDataChannelStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: RTCStatsType::DataChannel,
                 id,
             },
@@ -71,6 +72,7 @@ impl DataChannelStatsAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::accumulator::assert_stamped_at;
 
     #[test]
     fn test_default() {
@@ -163,7 +165,7 @@ mod tests {
 
         assert_eq!(stats.stats.id, "RTCDataChannel_42");
         assert_eq!(stats.stats.typ, RTCStatsType::DataChannel);
-        assert_eq!(stats.stats.timestamp, now);
+        assert_stamped_at(stats.stats.timestamp, now);
         assert_eq!(stats.data_channel_identifier, 42);
         assert_eq!(stats.label, "test-channel");
         assert_eq!(stats.protocol, "json");

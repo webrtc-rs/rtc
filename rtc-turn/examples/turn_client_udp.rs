@@ -99,11 +99,11 @@ fn main() -> Result<()> {
     let mut client = Client::new(cfg, provider)?;
 
     // Allocate a relay socket on the TURN server.
-    let allocate_tid = client.allocate()?;
+    let allocate_tid = client.allocate(Instant::now())?;
     let mut relayed_addr = None;
     let mut create_permission_tid = None;
     // Send BindingRequest to learn our external IP
-    //let binding_tid = client.send_binding_request()?;
+    //let binding_tid = client.send_binding_request(Instant::now())?;
 
     let (stop_tx, stop_rx) = crossbeam_channel::bounded::<()>(1);
     println!("Press Ctrl-C to stop");
@@ -149,7 +149,10 @@ fn main() -> Result<()> {
                     if relayed_addr.is_none() {
                         assert_eq!(tid, allocate_tid);
                         relayed_addr = Some(addr);
-                        if let Some(id) = client.relay(addr)?.create_permission(peer_addr)? {
+                        if let Some(id) = client
+                            .relay(addr)?
+                            .create_permission(Instant::now(), peer_addr)?
+                        {
                             create_permission_tid = Some(id);
                         } else {
                             assert!(false, "create_permission failed");
@@ -175,7 +178,9 @@ fn main() -> Result<()> {
 
                     // Echo back
                     if let Some(&relay_addr) = relayed_addr.as_ref() {
-                        client.relay(relay_addr)?.send_to(&data[..], from)?;
+                        client
+                            .relay(relay_addr)?
+                            .send_to(Instant::now(), &data[..], from)?;
                     }
                 }
                 _ => {}

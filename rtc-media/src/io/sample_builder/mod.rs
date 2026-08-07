@@ -11,8 +11,7 @@ use crate::Sample;
 use bytes::Bytes;
 use rtp::Packet;
 use rtp::packetizer::Depacketizer;
-use shared::time::SystemInstant;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// SampleBuilder buffers packets until media frames are complete.
 pub struct SampleBuilder<T: Depacketizer> {
@@ -163,7 +162,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
     /// Flushes all buffers that are already consumed or those buffers
     /// that are too late to consume.
-    fn purge_buffers(&mut self) {
+    fn purge_buffers(&mut self, now: Instant) {
         self.purge_consumed_buffers();
 
         while (self.too_old(&self.filled) || (self.filled.count() > self.max_late))
@@ -177,7 +176,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
             if self.active.has_data() && (self.active.head == self.filled.head) {
                 // attempt to force the active packet to be consumed even though
                 // outstanding data may be pending arrival
-                let err = match self.build_sample(true) {
+                let err = match self.build_sample(now, true) {
                     Ok(_) => continue,
                     Err(e) => e,
                 };
@@ -200,7 +199,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
     ///
     /// Push does not copy the input. If you wish to reuse
     /// this memory make sure to copy before calling push
-    pub fn push(&mut self, p: Packet) {
+    pub fn push(&mut self, now: Instant, p: Packet) {
         let sequence_number = p.header.sequence_number;
         self.buffer[sequence_number as usize] = Some(p);
         match self.filled.compare(sequence_number) {
@@ -216,7 +215,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
             }
             _ => {}
         }
-        self.purge_buffers();
+        self.purge_buffers(now);
     }
 
     /// Creates a sample from a valid collection of RTP Packets by
@@ -224,6 +223,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
     /// update buffer+values
     fn build_sample(
         &mut self,
+        now: Instant,
         purging_buffers: bool,
     ) -> Result<SampleSequenceLocation, BuildError> {
         if self.active.empty() {
@@ -364,7 +364,7 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
         let sample = Sample {
             data: sample_data,
-            timestamp: SystemInstant::now(),
+            timestamp: now,
             duration: Duration::from_secs_f64((samples as f64) / (self.sample_rate as f64)),
             packet_timestamp: sample_timestamp,
             prev_dropped_packets: self.dropped_packets,
@@ -386,8 +386,8 @@ impl<T: Depacketizer> SampleBuilder<T> {
 
     /// Compiles pushed RTP packets into media samples and then
     /// returns the next valid sample (or None if no sample is compiled).
-    pub fn pop(&mut self) -> Option<Sample> {
-        let _ = self.build_sample(false);
+    pub fn pop(&mut self, now: Instant) -> Option<Sample> {
+        let _ = self.build_sample(now, false);
 
         if self.prepared.empty() {
             return None;
@@ -400,8 +400,8 @@ impl<T: Depacketizer> SampleBuilder<T> {
     /// Compiles pushed RTP packets into media samples and then
     /// returns the next valid sample with its associated RTP timestamp (or `None` if
     /// no sample is compiled).
-    pub fn pop_with_timestamp(&mut self) -> Option<(Sample, u32)> {
-        if let Some(sample) = self.pop() {
+    pub fn pop_with_timestamp(&mut self, now: Instant) -> Option<(Sample, u32)> {
+        if let Some(sample) = self.pop(now) {
             let timestamp = sample.packet_timestamp;
             Some((sample, timestamp))
         } else {

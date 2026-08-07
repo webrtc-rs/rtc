@@ -13,8 +13,8 @@ use rtc::peer_connection::configuration::media_engine::{
 };
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCTrackEvent;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -216,7 +216,7 @@ async fn run(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // For now, this example only demonstrates the peer connection setup
     let mut rtp_sender_ids = HashMap::new();
@@ -263,7 +263,7 @@ async fn run(
     println!("Offer received: {}", offer);
 
     // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -284,7 +284,7 @@ async fn run(
     let answer = peer_connection.create_answer(None)?;
 
     // Sets the LocalDescription
-    peer_connection.set_local_description(answer)?;
+    peer_connection.set_local_description(Instant::now(), answer)?;
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description() {
@@ -350,7 +350,7 @@ async fn run(
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, mut rtp_packet) => {
                     let receiver_id = track_id2_receiver_id
@@ -418,7 +418,7 @@ async fn run(
                         .last()
                         .ok_or(Error::ErrSenderWithNoSSRCs)?;
                     debug!("sending rtp packet with media_ssrc={}", media_ssrc);
-                    rtp_sender.write_rtp(rtp_packet)?;
+                    rtp_sender.write_rtp(Instant::now(), rtp_packet)?;
                 }
                 RTCMessage::RtcpPacket(_, _) => {
                     // Read incoming RTCP packets
@@ -456,7 +456,7 @@ async fn run(
             res = message_rx.recv() => {
                 match res {
                     Ok(message) => {
-                        peer_connection.handle_write(message)?;
+                        peer_connection.handle_write(TaggedRTCMessage { now: Instant::now(), message: message })?;
                     }
                     Err(err) => {
                         eprintln!("write_rx error: {}", err);
@@ -467,7 +467,7 @@ async fn run(
             res = event_rx.recv() => {
                 match res {
                     Ok(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     Err(err) => {
                         eprintln!("event_rx error: {}", err);
@@ -490,7 +490,7 @@ async fn run(
                             .ok_or(Error::ErrRTPReceiverNotExisted)?;
 
                         debug!("sending PLI rtcp packet with media_ssrc={}", media_ssrc);
-                        rtp_receiver.write_rtcp(vec![Box::new(PictureLossIndication{
+                        rtp_receiver.write_rtcp(Instant::now(), vec![Box::new(PictureLossIndication{
                                         sender_ssrc: 0,
                                         media_ssrc,
                                 })])?;

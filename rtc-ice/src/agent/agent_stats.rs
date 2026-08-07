@@ -112,10 +112,16 @@ pub struct CandidatePairStats {
     pub consent_expired_timestamp: Instant,
 }
 
-impl Default for CandidatePairStats {
-    fn default() -> Self {
+impl CandidatePairStats {
+    /// An empty stats record stamped at `now`.
+    ///
+    /// This replaces `Default`: every field here is a timestamp, and a `Default` impl cannot be
+    /// handed one — it would have to reach for the clock, which is what §3.1(c) of the design
+    /// removes. A `getStats` report taken under a virtual clock must read in virtual time
+    /// throughout, or it is more confusing than no report at all.
+    pub fn new(now: Instant) -> Self {
         Self {
-            timestamp: Instant::now(),
+            timestamp: now,
             local_candidate_id: String::new(),
             remote_candidate_id: String::new(),
             state: CandidatePairState::default(),
@@ -124,11 +130,11 @@ impl Default for CandidatePairStats {
             packets_received: 0,
             bytes_sent: 0,
             bytes_received: 0,
-            last_packet_sent_timestamp: Instant::now(),
-            last_packet_received_timestamp: Instant::now(),
-            first_request_timestamp: Instant::now(),
-            last_request_timestamp: Instant::now(),
-            last_response_timestamp: Instant::now(),
+            last_packet_sent_timestamp: now,
+            last_packet_received_timestamp: now,
+            first_request_timestamp: now,
+            last_request_timestamp: now,
+            last_response_timestamp: now,
             total_round_trip_time: 0.0,
             current_round_trip_time: 0.0,
             available_outgoing_bitrate: 0.0,
@@ -141,7 +147,7 @@ impl Default for CandidatePairStats {
             retransmissions_received: 0,
             retransmissions_sent: 0,
             consent_requests_sent: 0,
-            consent_expired_timestamp: Instant::now(),
+            consent_expired_timestamp: now,
         }
     }
 }
@@ -194,10 +200,12 @@ pub struct CandidateStats {
     pub deleted: bool,
 }
 
-impl Default for CandidateStats {
-    fn default() -> Self {
+impl CandidateStats {
+    /// An empty stats record stamped at `now`. Replaces `Default`, for the reason given on
+    /// [`CandidatePairStats::new`].
+    pub fn new(now: Instant) -> Self {
         Self {
-            timestamp: Instant::now(),
+            timestamp: now,
             id: String::new(),
             network_type: NetworkType::default(),
             ip: String::new(),
@@ -213,11 +221,11 @@ impl Default for CandidateStats {
 
 impl Agent {
     /// Returns a list of candidate pair stats.
-    pub fn get_candidate_pairs_stats(&self) -> Vec<CandidatePairStats> {
+    pub fn get_candidate_pairs_stats(&self, now: Instant) -> Vec<CandidatePairStats> {
         let mut res = Vec::with_capacity(self.candidate_pairs.len());
         for cp in &self.candidate_pairs {
             let stat = CandidatePairStats {
-                timestamp: Instant::now(),
+                timestamp: now,
                 local_candidate_id: self.local_candidates[cp.local_index].id().to_string(),
                 remote_candidate_id: self.remote_candidates[cp.remote_index].id().to_string(),
                 state: cp.state,
@@ -231,7 +239,7 @@ impl Agent {
                 // RTT tracking (convert Duration to seconds as f64)
                 total_round_trip_time: cp.total_round_trip_time.as_secs_f64(),
                 current_round_trip_time: cp.current_round_trip_time.as_secs_f64(),
-                ..CandidatePairStats::default()
+                ..CandidatePairStats::new(now)
             };
             res.push(stat);
         }
@@ -239,11 +247,11 @@ impl Agent {
     }
 
     /// Returns a list of local candidates stats.
-    pub fn get_local_candidates_stats(&self) -> Vec<CandidateStats> {
+    pub fn get_local_candidates_stats(&self, now: Instant) -> Vec<CandidateStats> {
         let mut res = Vec::with_capacity(self.local_candidates.len());
         for c in &self.local_candidates {
             let stat = CandidateStats {
-                timestamp: Instant::now(),
+                timestamp: now,
                 id: c.id().to_string(),
                 network_type: c.network_type(),
                 ip: c.address().to_owned(),
@@ -253,7 +261,7 @@ impl Agent {
                 // URL string
                 relay_protocol: "udp".to_owned(),
                 // Deleted bool
-                ..CandidateStats::default()
+                ..CandidateStats::new(now)
             };
             res.push(stat);
         }
@@ -261,11 +269,11 @@ impl Agent {
     }
 
     /// Returns a list of remote candidates stats.
-    pub fn get_remote_candidates_stats(&self) -> Vec<CandidateStats> {
+    pub fn get_remote_candidates_stats(&self, now: Instant) -> Vec<CandidateStats> {
         let mut res = Vec::with_capacity(self.remote_candidates.len());
         for c in &self.remote_candidates {
             let stat = CandidateStats {
-                timestamp: Instant::now(),
+                timestamp: now,
                 id: c.id().to_string(),
                 network_type: c.network_type(),
                 ip: c.address().to_owned(),
@@ -275,7 +283,7 @@ impl Agent {
                 // URL string
                 relay_protocol: "udp".to_owned(),
                 // Deleted bool
-                ..CandidateStats::default()
+                ..CandidateStats::new(now)
             };
             res.push(stat);
         }

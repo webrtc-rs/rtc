@@ -149,7 +149,11 @@ fn main() {
 
     let (ch, assoc) = client
         .endpoint
-        .connect(ClientConfig::new(TransportConfig::default()), server_addr)
+        .connect(
+            Instant::now(),
+            ClientConfig::new(TransportConfig::default()),
+            server_addr,
+        )
         .unwrap();
     client.handle = Some(ch);
     client.assoc = Some(assoc);

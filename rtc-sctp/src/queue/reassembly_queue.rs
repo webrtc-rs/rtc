@@ -5,7 +5,6 @@ use shared::error::{Error, Result};
 
 use bytes::{Bytes, BytesMut};
 use std::collections::VecDeque;
-use std::time::Instant;
 
 /// A chunk of data from the stream
 #[derive(Debug, PartialEq)]
@@ -25,7 +24,9 @@ pub struct Chunks {
     pub chunks: Vec<ChunkPayloadData>,
     offset: usize,
     index: usize,
-    timestamp: Instant,
+    /// Arrival order, used only to decide which of two ready messages came first.
+    /// A counter rather than an instant: this is sequencing, not time.
+    arrival: u64,
 }
 
 impl Chunks {
@@ -117,6 +118,7 @@ impl Chunks {
     }
 
     pub(crate) fn new(
+        arrival: u64,
         ssn: u16,
         ppi: PayloadProtocolIdentifier,
         chunks: Vec<ChunkPayloadData>,
@@ -127,7 +129,7 @@ impl Chunks {
             chunks,
             offset: 0,
             index: 0,
-            timestamp: Instant::now(),
+            arrival,
         }
     }
 
@@ -203,6 +205,9 @@ pub(crate) struct ReassemblyQueue {
     pub(crate) unordered: VecDeque<Chunks>,
     pub(crate) unordered_chunks: Vec<ChunkPayloadData>,
     pub(crate) n_bytes: usize,
+    /// Monotonic counter stamped onto each reassembled message so `read` can tell which of a
+    /// ready ordered and a ready unordered message arrived first.
+    next_arrival: u64,
 }
 
 impl ReassemblyQueue {
@@ -219,6 +224,7 @@ impl ReassemblyQueue {
             unordered: VecDeque::new(),
             unordered_chunks: vec![],
             n_bytes: 0,
+            next_arrival: 0,
         }
     }
 
@@ -265,7 +271,8 @@ impl ReassemblyQueue {
 
             // If not found, create a new chunkSet and insert it in SSN order
             // (this branch is only reached for ordered chunks).
-            let mut cset = Chunks::new(ssn, chunk.payload_type, vec![]);
+            let mut cset = Chunks::new(self.next_arrival, ssn, chunk.payload_type, vec![]);
+            self.next_arrival += 1;
             let ok = cset.push(chunk);
             self.ordered.insert(idx, cset);
 
@@ -321,7 +328,9 @@ impl ReassemblyQueue {
             .unordered_chunks
             .drain(start_idx as usize..(start_idx as usize) + n_chunks)
             .collect();
-        Some(Chunks::new(0, chunks[0].payload_type, chunks))
+        let arrival = self.next_arrival;
+        self.next_arrival += 1;
+        Some(Chunks::new(arrival, 0, chunks[0].payload_type, chunks))
     }
 
     pub(crate) fn is_readable(&self) -> bool {
@@ -365,7 +374,7 @@ impl ReassemblyQueue {
             self.readable_unordered_chunks(),
             self.readable_ordered_chunks(),
         ) {
-            if unordered_chunks.timestamp < ordered_chunks.timestamp {
+            if unordered_chunks.arrival < ordered_chunks.arrival {
                 self.unordered.pop_front().unwrap()
             } else {
                 if ordered_chunks.ssn == self.next_ssn {

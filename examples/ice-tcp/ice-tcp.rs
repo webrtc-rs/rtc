@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -250,7 +250,7 @@ async fn run_main_loop(
             }
 
             // Poll reads (data channel messages)
-            while let Some(message) = pc.poll_read() {
+            while let Some(TaggedRTCMessage { message, .. }) = pc.poll_read() {
                 match message {
                     RTCMessage::RtpPacket(_, _) => {}
                     RTCMessage::RtcpPacket(_, _) => {}
@@ -268,7 +268,7 @@ async fn run_main_loop(
                 if Instant::now().duration_since(last_send) >= Duration::from_secs(3) {
                     if let Some(mut dc) = pc.data_channel(channel_id) {
                         let message = chrono::Local::now().to_string();
-                        if let Err(e) = dc.send_text(message) {
+                        if let Err(e) = dc.send_text(Instant::now(), message) {
                             println!(
                                 "{} - DataChannel closed, stopping send loop: {}",
                                 chrono::Local::now().format("%H:%M:%S"),
@@ -395,12 +395,12 @@ async fn run_main_loop(
 
                                 .build();
 
-                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)  .with_setting_engine(setting_engine).build()?;
+                            let mut pc = RTCPeerConnectionBuilder::new().with_configuration(config)  .with_setting_engine(setting_engine).build(Instant::now())?;
                             println!("Created peer connection");
 
                             // Set remote description
                             println!("Setting remote description {}", offer);
-                            pc.set_remote_description(offer)?;
+                            pc.set_remote_description(Instant::now(), offer)?;
 
                             // Create TCP passive candidate using the same IP
                             let candidate = CandidateHostConfig {
@@ -423,7 +423,7 @@ async fn run_main_loop(
                             // Create and set answer - includes the TCP candidate in SDP
                             let answer = pc.create_answer(None)?;
                             println!("Answer with TCP candidate: {}", answer);
-                            pc.set_local_description(answer.clone())?;
+                            pc.set_local_description(Instant::now(), answer.clone())?;
 
                             // Send answer back via HTTP
                             let _ = response_tx.send(answer);

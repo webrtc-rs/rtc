@@ -6,6 +6,7 @@ use crate::peer_connection::transport::ice::candidate::{
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::statistics::stats::ice_candidate::RTCIceCandidateStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use shared::time::SystemInstant;
 use std::time::Instant;
 
 /// Accumulated ICE candidate statistics.
@@ -47,7 +48,7 @@ impl IceCandidateAccumulator {
     pub fn snapshot(&self, now: Instant, id: &str, is_local: bool) -> RTCIceCandidateStats {
         RTCIceCandidateStats {
             stats: RTCStats {
-                timestamp: now,
+                timestamp: SystemInstant::now(now),
                 typ: if is_local {
                     RTCStatsType::LocalCandidate
                 } else {
@@ -85,6 +86,7 @@ impl IceCandidateAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::accumulator::assert_stamped_at;
 
     #[test]
     fn test_default() {
@@ -124,7 +126,7 @@ mod tests {
             "RTCIceCandidate_host_udp_192.168.1.100_50000"
         );
         assert_eq!(stats.stats.typ, RTCStatsType::LocalCandidate);
-        assert_eq!(stats.stats.timestamp, now);
+        assert_stamped_at(stats.stats.timestamp, now);
         assert_eq!(stats.transport_id, "RTCTransport_0");
         assert_eq!(stats.address, Some("192.168.1.100".to_string()));
         assert_eq!(stats.port, 50000);

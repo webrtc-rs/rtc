@@ -17,7 +17,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
@@ -62,7 +62,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     let mut offer_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(offer_config)
         .with_setting_engine(offer_setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created offer peer connection");
 
     // Create data channel on offer side
@@ -90,7 +90,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Offer peer created offer");
 
     // Set local description on offer
-    offer_pc.set_local_description(offer.clone())?;
+    offer_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("Offer peer set local description {}", offer);
 
     // Create answer peer
@@ -111,12 +111,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     let mut answer_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(answer_config)
         .with_setting_engine(answer_setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created answer peer connection");
 
     // Set remote description on answer (the offer)
     log::info!("Answer peer set remote description {}", offer);
-    answer_pc.set_remote_description(offer)?;
+    answer_pc.set_remote_description(Instant::now(), offer)?;
 
     // Add local candidate for answer peer
     let answer_candidate = CandidateHostConfig {
@@ -138,12 +138,12 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
     log::info!("Answer peer created answer");
 
     // Set local description on answer
-    answer_pc.set_local_description(answer.clone())?;
+    answer_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("Answer peer set local description {}", answer);
 
     // Set remote description on answer
     log::info!("Offer peer set remote description {}", answer);
-    offer_pc.set_remote_description(answer)?;
+    offer_pc.set_remote_description(Instant::now(), answer)?;
 
     // Add remote candidates (these are actually local candidates for the remote peer)
     // In sansio API, we add the remote peer's local candidate as our remote candidate
@@ -223,7 +223,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = offer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = offer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -277,7 +277,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = answer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = answer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -291,7 +291,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
                     if !echo_sent {
                         if let Some(mut dc) = answer_pc.data_channel(channel_id) {
                             log::info!("Answer echoing: '{}'", ECHO_MESSAGE);
-                            dc.send_text(ECHO_MESSAGE.to_string())?;
+                            dc.send_text(Instant::now(), ECHO_MESSAGE.to_string())?;
                             echo_sent = true;
                         }
                     }
@@ -304,7 +304,7 @@ async fn test_offer_answer_rtc_to_rtc() -> Result<()> {
         if offer_connected && offer_dc_id.is_some() && !message_sent {
             if let Some(mut dc) = offer_pc.data_channel(offer_dc_id.unwrap()) {
                 log::info!("Offer sending message: '{}'", TEST_MESSAGE);
-                dc.send_text(TEST_MESSAGE.to_string())?;
+                dc.send_text(Instant::now(), TEST_MESSAGE.to_string())?;
                 message_sent = true;
             }
         }

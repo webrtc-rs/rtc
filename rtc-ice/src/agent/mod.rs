@@ -26,7 +26,7 @@ use log::{debug, error, info, trace, warn};
 use mdns::{Mdns, QueryId};
 use sansio::Protocol;
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use stun::attributes::*;
@@ -57,17 +57,6 @@ pub(crate) struct BindingRequest {
     pub(crate) is_use_candidate: bool,
 }
 
-impl Default for BindingRequest {
-    fn default() -> Self {
-        Self {
-            timestamp: Instant::now(),
-            transaction_id: TransactionId::default(),
-            destination: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-            is_use_candidate: false,
-        }
-    }
-}
-
 #[derive(Default, Clone)]
 /// The ICE credentials for one side of a session, exchanged in SDP.
 pub struct Credentials {
@@ -81,6 +70,13 @@ pub struct Credentials {
 pub(crate) struct UfragPwd {
     pub(crate) local_credentials: Credentials,
     pub(crate) remote_credentials: Option<Credentials>,
+    /// Credentials generated for an ICE restart that has not been applied yet.
+    ///
+    /// JSEP requires `createOffer` to be free of side effects, so the offer advertises these
+    /// while the live session keeps authenticating with `local_credentials`. They are installed
+    /// by [`Agent::apply_restart`] when the local description is set. If the offer is discarded,
+    /// they are simply dropped and the existing session is undisturbed.
+    pub(crate) pending_local_credentials: Option<Credentials>,
 }
 
 fn assert_inbound_username(m: &Message, expected_username: &str) -> Result<()> {
@@ -119,6 +115,20 @@ pub enum Event {
     /// Emitted when the ICE role switches due to a role conflict (RFC 8445 §7.3.1.1).
     /// The bool is `true` if the agent is now controlling, `false` if now controlled.
     RoleChange(bool),
+}
+
+/// An [`Event`] together with the instant its condition was observed at.
+///
+/// The agent's events are produced inside `handle_read` / `handle_timeout` / `close`, all of
+/// which know the time, but they are consumed from `poll_event`, which does not. Carrying the
+/// instant in the payload means the consumer is *told* when the condition happened rather than
+/// having to retain an instant of its own and guess — the same channel `TaggedBytesMut` already
+/// provides on the read path.
+pub struct TaggedEvent {
+    /// When the condition this event reports was observed.
+    pub now: Instant,
+    /// The event itself.
+    pub event: Event,
 }
 
 /// Represents the ICE agent.
@@ -186,14 +196,21 @@ pub struct Agent {
     pub(crate) urls: Vec<Url>,
 
     pub(crate) write_outs: VecDeque<TaggedBytesMut>,
-    pub(crate) event_outs: VecDeque<Event>,
+    pub(crate) event_outs: VecDeque<TaggedEvent>,
 }
 
 impl Agent {
     /// Creates a new Agent.
     ///
     /// The crypto provider is supplied by the caller; this crate never resolves a default.
+    /// Builds an agent whose clock starts at `now`.
+    ///
+    /// `now` is a constructor argument rather than an `AgentConfig` field because it is a value
+    /// consumed once at construction, not a setting that persists for the agent's lifetime — and
+    /// because `Instant` has no `Default`, so a config field would force `AgentConfig` to drop
+    /// `#[derive(Default)]` and break every `..Default::default()` in its 31 call sites.
     pub fn new(
+        now: Instant,
         config: Arc<AgentConfig>,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self> {
@@ -210,6 +227,7 @@ impl Agent {
 
         let mdns_mode = config.multicast_dns_mode;
         let mdns = create_multicast_dns(
+            now,
             mdns_mode,
             &mdns_local_name,
             &config.multicast_dns_local_ip,
@@ -246,7 +264,7 @@ impl Agent {
             is_controlling: config.is_controlling,
             lite: config.lite,
 
-            start_time: Instant::now(),
+            start_time: now,
 
             nominated_pair: None,
             selected_pair: None,
@@ -323,9 +341,9 @@ impl Agent {
             } else {
                 config.check_interval
             },
-            last_consent_sent: Instant::now(),
-            checking_duration: Instant::now(),
-            last_checking_time: Instant::now(),
+            last_consent_sent: now,
+            checking_duration: now,
+            last_checking_time: now,
             force_candidate_contact: false,
             last_connection_state: ConnectionState::Unspecified,
 
@@ -353,8 +371,12 @@ impl Agent {
         };
 
         // Restart is also used to initialize the agent for the first time
-        if let Err(err) = agent.restart(config.local_ufrag.clone(), config.local_pwd.clone(), false)
-        {
+        if let Err(err) = agent.restart(
+            now,
+            config.local_ufrag.clone(),
+            config.local_pwd.clone(),
+            false,
+        ) {
             let _ = agent.close();
             return Err(err);
         }
@@ -464,7 +486,7 @@ impl Agent {
             }
 
             if let Some(mdns_conn) = &mut self.mdns {
-                let query_id = mdns_conn.query(c.address());
+                let query_id = mdns_conn.schedule_query(c.address());
                 self.mdns_queries.insert(query_id, c);
             }
 
@@ -520,8 +542,17 @@ impl Agent {
     }
 
     /// Returns the local credentials.
+    /// The credentials to advertise, which is what SDP generation wants.
+    ///
+    /// Returns credentials staged by [`Agent::generate_restart_credentials`] when an ICE restart
+    /// is pending, so an offer carries the new ufrag/pwd. Inbound STUN validation deliberately
+    /// does *not* go through here — it reads `local_credentials` directly, so the live session
+    /// keeps working until [`Agent::apply_restart`] installs the new pair.
     pub fn get_local_credentials(&self) -> &Credentials {
-        &self.ufrag_pwd.local_credentials
+        self.ufrag_pwd
+            .pending_local_credentials
+            .as_ref()
+            .unwrap_or(&self.ufrag_pwd.local_credentials)
     }
 
     /// Whether this agent is the controlling one, which decides nomination.
@@ -544,10 +575,10 @@ impl Agent {
     /// Whether a non-STUN datagram on `transport` should be accepted as media.
     ///
     /// Guards against accepting media from an address that has not passed a connectivity check.
-    pub fn is_valid_non_stun_traffic(&mut self, transport: TransportContext) -> bool {
+    pub fn is_valid_non_stun_traffic(&mut self, now: Instant, transport: TransportContext) -> bool {
         self.find_local_candidate(transport.local_addr, transport.transport_protocol)
             .is_some()
-            && self.validate_non_stun_traffic(transport.peer_addr)
+            && self.validate_non_stun_traffic(now, transport.peer_addr)
     }
 
     fn get_timeout_interval(&self) -> Duration {
@@ -610,6 +641,7 @@ impl Agent {
     /// start connectivity checks
     pub fn start_connectivity_checks(
         &mut self,
+        now: Instant,
         is_controlling: bool,
         remote_ufrag: String,
         remote_pwd: String,
@@ -620,9 +652,9 @@ impl Agent {
         );
         self.set_remote_credentials(remote_ufrag, remote_pwd)?;
         self.is_controlling = is_controlling;
-        self.start();
+        self.start(now);
 
-        self.update_connection_state(ConnectionState::Checking);
+        self.update_connection_state(Some(now), ConnectionState::Checking);
         self.request_connectivity_check();
 
         Ok(())
@@ -630,11 +662,20 @@ impl Agent {
 
     /// Restarts the ICE Agent with the provided ufrag/pwd
     /// If no ufrag/pwd is provided the Agent will generate one itself.
-    pub fn restart(
+    /// Stages new local credentials for an ICE restart, without disturbing the live session.
+    ///
+    /// This is the half of an ICE restart that an offerer needs *before* generating SDP: the offer
+    /// must carry the new ufrag/pwd. It deliberately does not touch `local_credentials`,
+    /// candidate pairs, or connection state, because JSEP requires `createOffer` to be free of
+    /// side effects — and because inbound STUN is still being validated against the current
+    /// credentials until the local description is applied.
+    ///
+    /// Empty `ufrag` / `pwd` are filled from the crypto provider's RNG. Call
+    /// [`Agent::apply_restart`] to install them.
+    pub fn generate_restart_credentials(
         &mut self,
         mut ufrag: String,
         mut pwd: String,
-        keep_local_candidates: bool,
     ) -> Result<()> {
         if ufrag.is_empty() {
             ufrag = generate_ufrag_with_random(self.crypto_provider.random())?;
@@ -650,26 +691,60 @@ impl Agent {
             return Err(Error::ErrLocalPwdInsufficientBits);
         }
 
-        // Clear all agent needed to take back to fresh state
-        self.ufrag_pwd.local_credentials.ufrag = ufrag;
-        self.ufrag_pwd.local_credentials.pwd = pwd;
+        self.ufrag_pwd.pending_local_credentials = Some(Credentials { ufrag, pwd });
+
+        Ok(())
+    }
+
+    /// Whether [`Agent::generate_restart_credentials`] has staged a restart that is not yet applied.
+    pub fn has_pending_restart(&self) -> bool {
+        self.ufrag_pwd.pending_local_credentials.is_some()
+    }
+
+    /// Applies a staged ICE restart, tearing down the old session and starting a new one at `now`.
+    ///
+    /// Installs the credentials staged by [`Agent::generate_restart_credentials`], if any, then
+    /// discards the remote credentials, pending binding requests, candidate pairs and selected
+    /// pair, and restarts the agent's timers. With nothing staged, the current credentials are
+    /// kept and only the session is restarted.
+    pub fn apply_restart(&mut self, now: Instant, keep_local_candidates: bool) -> Result<()> {
+        if let Some(credentials) = self.ufrag_pwd.pending_local_credentials.take() {
+            self.ufrag_pwd.local_credentials = credentials;
+        }
         self.ufrag_pwd.remote_credentials = None;
 
         self.pending_binding_requests = vec![];
 
         self.candidate_pairs = vec![];
 
-        self.set_selected_pair(None);
+        self.set_selected_pair(Some(now), None);
         self.delete_all_candidates(keep_local_candidates);
-        self.start();
+        self.start(now);
 
         // Restart is used by NewAgent. Accept/Connect should be used to move to checking
         // for new Agents
         if self.connection_state != ConnectionState::New {
-            self.update_connection_state(ConnectionState::Checking);
+            self.update_connection_state(Some(now), ConnectionState::Checking);
         }
 
         Ok(())
+    }
+
+    /// Generates and immediately applies an ICE restart.
+    ///
+    /// Equivalent to [`Agent::generate_restart_credentials`] followed by
+    /// [`Agent::apply_restart`]. A JSEP-conformant offerer wants the two halves separately —
+    /// credentials at `createOffer`, application at `setLocalDescription` — but this remains the
+    /// right call for anything that restarts in one step.
+    pub fn restart(
+        &mut self,
+        now: Instant,
+        ufrag: String,
+        pwd: String,
+        keep_local_candidates: bool,
+    ) -> Result<()> {
+        self.generate_restart_credentials(ufrag, pwd)?;
+        self.apply_restart(now, keep_local_candidates)
     }
 
     /// Returns the local candidates.
@@ -701,23 +776,27 @@ impl Agent {
                 .unwrap_or_else(|| Duration::from_secs(0))
                 > self.disconnected_timeout + self.failed_timeout
             {
-                self.update_connection_state(ConnectionState::Failed);
+                self.update_connection_state(Some(now), ConnectionState::Failed);
                 self.last_connection_state = self.connection_state;
                 return;
             }
         }
 
-        self.contact_candidates();
+        self.contact_candidates(now);
 
         self.last_connection_state = self.connection_state;
         self.last_checking_time = now;
     }
 
-    pub(crate) fn update_connection_state(&mut self, new_state: ConnectionState) {
+    pub(crate) fn update_connection_state(
+        &mut self,
+        now: Option<Instant>,
+        new_state: ConnectionState,
+    ) {
         if self.connection_state != new_state {
             // Connection has gone to failed, release all gathered candidates
             if new_state == ConnectionState::Failed {
-                self.set_selected_pair(None);
+                self.set_selected_pair(now, None);
                 self.delete_all_candidates(false);
             }
 
@@ -727,12 +806,16 @@ impl Agent {
                 new_state
             );
             self.connection_state = new_state;
-            self.event_outs
-                .push_back(Event::ConnectionStateChange(new_state));
+            if let Some(now) = now {
+                self.event_outs.push_back(TaggedEvent {
+                    now,
+                    event: Event::ConnectionStateChange(new_state),
+                });
+            }
         }
     }
 
-    pub(crate) fn set_selected_pair(&mut self, selected_pair: Option<usize>) {
+    pub(crate) fn set_selected_pair(&mut self, now: Option<Instant>, selected_pair: Option<usize>) {
         if let Some(pair_index) = selected_pair {
             trace!(
                 "[{}]: Set selected candidate pair: {:?}",
@@ -743,21 +826,25 @@ impl Agent {
             self.candidate_pairs[pair_index].nominated = true;
             self.selected_pair = Some(pair_index);
 
-            self.update_connection_state(ConnectionState::Connected);
+            self.update_connection_state(now, ConnectionState::Connected);
 
             // Notify when the selected pair changes
             let candidate_pair = &self.candidate_pairs[pair_index];
-            self.event_outs
-                .push_back(Event::SelectedCandidatePairChange(
-                    Box::new(self.local_candidates[candidate_pair.local_index].clone()),
-                    Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
-                ));
+            if let Some(now) = now {
+                self.event_outs.push_back(TaggedEvent {
+                    now,
+                    event: Event::SelectedCandidatePairChange(
+                        Box::new(self.local_candidates[candidate_pair.local_index].clone()),
+                        Box::new(self.remote_candidates[candidate_pair.remote_index].clone()),
+                    ),
+                });
+            }
         } else {
             self.selected_pair = None;
         }
     }
 
-    pub(crate) fn ping_all_candidates(&mut self) {
+    pub(crate) fn ping_all_candidates(&mut self, now: Instant) {
         let mut pairs: Vec<(usize, usize)> = vec![];
 
         let name = self.get_name().to_string();
@@ -800,7 +887,7 @@ impl Agent {
         }
 
         for (local, remote) in pairs {
-            self.ping_candidate(local, remote);
+            self.ping_candidate(now, local, remote);
         }
     }
 
@@ -826,15 +913,21 @@ impl Agent {
 
     /// Checks if the selected pair is (still) valid.
     /// Note: the caller should hold the agent lock.
-    pub(crate) fn validate_selected_pair(&mut self) -> bool {
+    /// Re-evaluates the selected pair's liveness as of `now`.
+    ///
+    /// `now` comes from the caller so that this decision and the keepalive decision below are
+    /// made against the same instant as the `contact(now)` that reached them.
+    pub(crate) fn validate_selected_pair(&mut self, now: Instant) -> bool {
         let (valid, disconnected_time) = {
             self.selected_pair.as_ref().map_or_else(
                 || (false, Duration::from_secs(0)),
                 |&pair_index| {
                     let remote_index = self.candidate_pairs[pair_index].remote_index;
 
-                    let disconnected_time = Instant::now()
-                        .duration_since(self.remote_candidates[remote_index].last_received());
+                    let last_received = self.remote_candidates[remote_index]
+                        .last_received()
+                        .unwrap_or(self.start_time);
+                    let disconnected_time = now.saturating_duration_since(last_received);
                     (true, disconnected_time)
                 },
             )
@@ -850,13 +943,13 @@ impl Agent {
             if total_time_to_failure != Duration::from_secs(0)
                 && disconnected_time > total_time_to_failure
             {
-                self.update_connection_state(ConnectionState::Failed);
+                self.update_connection_state(Some(now), ConnectionState::Failed);
             } else if self.disconnected_timeout != Duration::from_secs(0)
                 && disconnected_time > self.disconnected_timeout
             {
-                self.update_connection_state(ConnectionState::Disconnected);
+                self.update_connection_state(Some(now), ConnectionState::Disconnected);
             } else {
-                self.update_connection_state(ConnectionState::Connected);
+                self.update_connection_state(Some(now), ConnectionState::Connected);
             }
         }
 
@@ -865,7 +958,7 @@ impl Agent {
 
     /// Sends STUN Binding Requests to the selected pair at `keepalive_interval` to
     /// maintain consent freshness (RFC 7675).
-    pub(crate) fn check_keepalive(&mut self) {
+    pub(crate) fn check_keepalive(&mut self, now: Instant) {
         let (local_index, remote_index, pair_index) = {
             self.selected_pair
                 .as_ref()
@@ -878,11 +971,11 @@ impl Agent {
         if let (Some(local_index), Some(remote_index), Some(pair_index)) =
             (local_index, remote_index, pair_index)
             && self.keepalive_interval != Duration::from_secs(0)
-            && self.last_consent_sent.elapsed() >= self.keepalive_interval
+            && now.saturating_duration_since(self.last_consent_sent) >= self.keepalive_interval
         {
-            self.last_consent_sent = Instant::now();
+            self.last_consent_sent = now;
             self.candidate_pairs[pair_index].on_consent_request_sent();
-            self.ping_candidate(local_index, remote_index);
+            self.ping_candidate(now, local_index, remote_index);
         }
     }
 
@@ -955,6 +1048,7 @@ impl Agent {
 
     pub(crate) fn send_binding_request(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -966,10 +1060,10 @@ impl Agent {
             self.remote_candidates[remote_index],
         );
 
-        self.invalidate_pending_binding_requests(Instant::now());
+        self.invalidate_pending_binding_requests(now);
 
         self.pending_binding_requests.push(BindingRequest {
-            timestamp: Instant::now(),
+            timestamp: now,
             transaction_id: m.transaction_id,
             destination: self.remote_candidates[remote_index].addr(),
             is_use_candidate: m.contains(ATTR_USE_CANDIDATE),
@@ -980,11 +1074,12 @@ impl Agent {
             self.candidate_pairs[pair_index].on_request_sent();
         }
 
-        self.send_stun(m, local_index, remote_index);
+        self.send_stun(now, m, local_index, remote_index);
     }
 
     pub(crate) fn send_binding_success(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -1021,7 +1116,7 @@ impl Agent {
             if let Some(pair_index) = self.find_pair(local_index, remote_index) {
                 self.candidate_pairs[pair_index].on_response_sent();
             }
-            self.send_stun(&out, local_index, remote_index);
+            self.send_stun(now, &out, local_index, remote_index);
         }
     }
 
@@ -1029,6 +1124,7 @@ impl Agent {
     /// RFC 8445 Section 7.3.1.1
     pub(crate) fn send_role_conflict_error(
         &mut self,
+        now: Instant,
         m: &Message,
         local_index: usize,
         remote_index: usize,
@@ -1067,13 +1163,13 @@ impl Agent {
                 self.local_candidates[local_index],
                 self.remote_candidates[remote_index]
             );
-            self.send_stun(&out, local_index, remote_index);
+            self.send_stun(now, &out, local_index, remote_index);
         }
     }
 
     /// Switches the ICE agent role and recomputes all candidate pair priorities.
     /// RFC 8445 Section 7.3.1.1
-    pub(crate) fn switch_role(&mut self) {
+    pub(crate) fn switch_role(&mut self, now: Instant) {
         self.is_controlling = !self.is_controlling;
 
         // Recompute priorities for all candidate pairs
@@ -1091,8 +1187,10 @@ impl Agent {
             self.candidate_pairs.len()
         );
 
-        self.event_outs
-            .push_back(Event::RoleChange(self.is_controlling));
+        self.event_outs.push_back(TaggedEvent {
+            now,
+            event: Event::RoleChange(self.is_controlling),
+        });
     }
 
     /// Removes pending binding requests that are over `maxBindingRequestTimeout` old Let HTO be the
@@ -1131,9 +1229,10 @@ impl Agent {
     /// destination, If the bindingRequest was valid remove it from our pending cache.
     pub(crate) fn handle_inbound_binding_success(
         &mut self,
+        now: Instant,
         id: TransactionId,
     ) -> Option<BindingRequest> {
-        self.invalidate_pending_binding_requests(Instant::now());
+        self.invalidate_pending_binding_requests(now);
 
         let pending_binding_requests = &mut self.pending_binding_requests;
         for i in 0..pending_binding_requests.len() {
@@ -1194,7 +1293,7 @@ impl Agent {
                 if m.typ.class == CLASS_REQUEST {
                     // Send 487 Role Conflict error
                     if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
-                        self.send_role_conflict_error(m, local_index, remote_index);
+                        self.send_role_conflict_error(now, m, local_index, remote_index);
                     }
 
                     // Compare tiebreakers - if ours is smaller, we switch to controlled
@@ -1203,7 +1302,7 @@ impl Agent {
                             "[{}]: Switching from controlling to controlled due to role conflict (smaller tiebreaker)",
                             self.get_name()
                         );
-                        self.switch_role();
+                        self.switch_role(now);
                     }
                 }
                 // Continue processing the message after handling role conflict
@@ -1237,7 +1336,7 @@ impl Agent {
             if m.typ.class == CLASS_REQUEST {
                 // Send 487 Role Conflict error
                 if let Some(remote_index) = self.find_remote_candidate(remote_addr) {
-                    self.send_role_conflict_error(m, local_index, remote_index);
+                    self.send_role_conflict_error(now, m, local_index, remote_index);
                 }
 
                 // Compare tiebreakers - if ours is larger, we switch to controlling
@@ -1246,7 +1345,7 @@ impl Agent {
                         "[{}]: Switching from controlled to controlling due to role conflict (larger tiebreaker)",
                         self.get_name()
                     );
-                    self.switch_role();
+                    self.switch_role(now);
                 }
             }
             // Continue processing the message after handling role conflict
@@ -1368,12 +1467,12 @@ impl Agent {
             );
 
             if let Some(remote_index) = &remote_candidate_index {
-                self.handle_binding_request(m, local_index, *remote_index);
+                self.handle_binding_request(now, m, local_index, *remote_index);
             }
         }
 
         if let Some(remote_index) = remote_candidate_index {
-            self.remote_candidates[remote_index].seen(false);
+            self.remote_candidates[remote_index].seen(now, false);
         }
 
         Ok(())
@@ -1381,15 +1480,25 @@ impl Agent {
 
     // Processes non STUN traffic from a remote candidate, and returns true if it is an actual
     // remote candidate.
-    pub(crate) fn validate_non_stun_traffic(&mut self, remote_addr: SocketAddr) -> bool {
+    pub(crate) fn validate_non_stun_traffic(
+        &mut self,
+        now: Instant,
+        remote_addr: SocketAddr,
+    ) -> bool {
         self.find_remote_candidate(remote_addr)
             .is_some_and(|remote_index| {
-                self.remote_candidates[remote_index].seen(false);
+                self.remote_candidates[remote_index].seen(now, false);
                 true
             })
     }
 
-    pub(crate) fn send_stun(&mut self, msg: &Message, local_index: usize, remote_index: usize) {
+    pub(crate) fn send_stun(
+        &mut self,
+        now: Instant,
+        msg: &Message,
+        local_index: usize,
+        remote_index: usize,
+    ) {
         let peer_addr = self.remote_candidates[remote_index].addr();
         // RFC 8445 §6.1.2: checks for a (server/peer-)reflexive candidate must
         // be sent from its base, the bound local socket the candidate was
@@ -1402,7 +1511,7 @@ impl Agent {
         };
 
         self.write_outs.push_back(TaggedBytesMut {
-            now: Instant::now(),
+            now,
             transport: TransportContext {
                 local_addr,
                 peer_addr,
@@ -1412,7 +1521,7 @@ impl Agent {
             message: BytesMut::from(&msg.raw[..]),
         });
 
-        self.local_candidates[local_index].seen(true);
+        self.local_candidates[local_index].seen(now, true);
     }
 
     fn handle_inbound_candidate_msg(
@@ -1439,7 +1548,7 @@ impl Agent {
                 self.handle_inbound(msg.now, &mut m, local_index, msg.transport.peer_addr)
             }
         } else {
-            if !self.validate_non_stun_traffic(msg.transport.peer_addr) {
+            if !self.validate_non_stun_traffic(msg.now, msg.transport.peer_addr) {
                 warn!(
                     "[{}]: Discarded message, not a valid remote candidate from {}",
                     self.get_name(),

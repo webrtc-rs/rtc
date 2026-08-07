@@ -759,7 +759,27 @@ fn test_poll_timeout_returns_earliest() {
     chain.bind_local_stream(&video_stream_info(0x11111111));
     chain.bind_remote_stream(&video_stream_info(0x22222222));
 
-    // The timeout should be scheduled
-    let timeout = chain.poll_timeout();
-    assert!(timeout.is_some(), "Should have a scheduled timeout");
+    // Binding a stream alone schedules nothing: each report timer is armed from the instant of
+    // the first packet it actually sees, so a bound-but-silent stream asks for no wake-up.
+    assert_eq!(
+        chain.poll_timeout(),
+        None,
+        "no traffic yet, so nothing should be scheduled"
+    );
+
+    let base = Instant::now();
+    chain
+        .handle_write(create_rtp_packet_with_time(base, 0x11111111, 1, 3000, 100))
+        .unwrap();
+    chain
+        .handle_read(create_rtp_packet_with_time(base, 0x22222222, 1, 3000, 100))
+        .unwrap();
+
+    // Both are armed now, and the chain reports the earlier of the two — the sender report,
+    // whose interval is the shorter.
+    assert_eq!(
+        chain.poll_timeout(),
+        Some(base + sr_interval),
+        "poll_timeout must return the earliest of the chained timers"
+    );
 }

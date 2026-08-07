@@ -7,7 +7,7 @@ use super::RTCStats;
 use ::serde::{Deserialize, Serialize};
 use ice::candidate::candidate_pair::CandidatePairState;
 use shared::serde::instant_to_epoch;
-use std::time::Instant;
+use shared::time::SystemInstant;
 
 /// The state of an ICE candidate pair.
 ///
@@ -93,11 +93,11 @@ pub struct RTCIceCandidatePairStats {
 
     /// Timestamp of the last packet sent using this candidate pair.
     #[serde(with = "instant_to_epoch")]
-    pub last_packet_sent_timestamp: Instant,
+    pub last_packet_sent_timestamp: SystemInstant,
 
     /// Timestamp of the last packet received using this candidate pair.
     #[serde(with = "instant_to_epoch")]
-    pub last_packet_received_timestamp: Instant,
+    pub last_packet_received_timestamp: SystemInstant,
 
     /// Total round trip time in seconds for all STUN requests.
     ///

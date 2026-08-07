@@ -16,12 +16,11 @@ pub(crate) struct ReceiverStream {
     /// packets are indexed with `& index_mask` instead of `% (size * ...)`, which
     /// the compiler would otherwise lower to a hardware division on every packet.
     index_mask: usize,
-    started: bool,
     seq_num_cycles: u16,
     last_seq_num: u16,
     last_report_seq_num: u16,
     last_rtp_time_rtp: u32,
-    last_rtp_time_time: Instant,
+    last_rtp_time_time: Option<Instant>,
     jitter: f64,
     last_sender_report: u32,
     last_sender_report_time: Option<Instant>,
@@ -39,12 +38,11 @@ impl ReceiverStream {
             packets: vec![0u64; DEFAULT_SIZE],
             size: DEFAULT_SIZE,
             index_mask: DEFAULT_SIZE * PACKETS_PER_ENTRY - 1,
-            started: false,
             seq_num_cycles: 0,
             last_seq_num: 0,
             last_report_seq_num: 0,
             last_rtp_time_rtp: 0,
-            last_rtp_time_time: Instant::now(),
+            last_rtp_time_time: None,
             jitter: 0.0,
             last_sender_report: 0,
             last_sender_report_time: None,
@@ -70,15 +68,7 @@ impl ReceiverStream {
     pub(crate) fn process_rtp(&mut self, now: Instant, pkt: &rtp::packet::Packet) {
         let seq = pkt.header.sequence_number;
 
-        if !self.started {
-            // first frame
-            self.started = true;
-            self.set_received(seq);
-            self.last_seq_num = seq;
-            self.last_report_seq_num = seq.wrapping_sub(1);
-            self.last_rtp_time_rtp = pkt.header.timestamp;
-            self.last_rtp_time_time = now;
-        } else {
+        if let Some(last_rtp_time_time) = self.last_rtp_time_time {
             // following frames
             self.set_received(seq);
 
@@ -103,13 +93,18 @@ impl ReceiverStream {
 
             // compute jitter
             // https://tools.ietf.org/html/rfc3550#page-39
-            let d = now.duration_since(self.last_rtp_time_time).as_secs_f64() * self.clock_rate
+            let d = now.duration_since(last_rtp_time_time).as_secs_f64() * self.clock_rate
                 - (pkt.header.timestamp as f64 - self.last_rtp_time_rtp as f64);
             self.jitter += (d.abs() - self.jitter) / 16.0;
-
-            self.last_rtp_time_rtp = pkt.header.timestamp;
-            self.last_rtp_time_time = now;
+        } else {
+            // first frame
+            self.set_received(seq);
+            self.last_seq_num = seq;
+            self.last_report_seq_num = seq.wrapping_sub(1);
         }
+
+        self.last_rtp_time_rtp = pkt.header.timestamp;
+        self.last_rtp_time_time = Some(now);
     }
 
     pub(crate) fn process_sender_report(

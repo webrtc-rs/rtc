@@ -13,7 +13,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
-use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent};
+use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::state::RTCSignalingState;
@@ -459,7 +459,7 @@ async fn run(
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -583,7 +583,7 @@ async fn run(
                     Some(PeerConnectionCommand::SetRemoteDescription(offer, response_tx)) => {
                         // Set the remote SessionDescription
                         println!("Received Offer={}", offer);
-                        if let Err(err) = peer_connection.set_remote_description(offer) {
+                        if let Err(err) = peer_connection.set_remote_description(Instant::now(), offer) {
                             let _ = response_tx.send(Err(err.into()));
                             continue;
                         }
@@ -599,7 +599,7 @@ async fn run(
 
                         // Sets the LocalDescription
                         println!("Created Answer={}", answer);
-                        if let Err(err) = peer_connection.set_local_description(answer.clone()) {
+                        if let Err(err) = peer_connection.set_local_description(Instant::now(), answer.clone()) {
                             let _ = response_tx.send(Err(err.into()));
                             continue;
                         }
@@ -689,7 +689,7 @@ async fn run(
                             .map(|codec| codec.payload_type)
                             .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
                         debug!("sending rtp packet with media_ssrc={}", packet.header.ssrc);
-                        rtp_sender.write_rtp(packet)?;
+                        rtp_sender.write_rtp(Instant::now(), packet)?;
                     }
                     None => {
                         eprintln!("message_rx.recv() is closed");
@@ -700,7 +700,7 @@ async fn run(
             res = event_rx.recv() => {
                 match res {
                     Some(event) => {
-                        peer_connection.handle_event(event)?;
+                        peer_connection.handle_event(TaggedRTCEvent { now: Instant::now(), event: event })?;
                     }
                     None => {
                         eprintln!("event_rx.recv() is closed");
@@ -754,6 +754,7 @@ async fn stream_video(
     println!("play video from disk file {video_file_name}");
 
     let mut packetizer = rtp::packetizer::new_packetizer(
+        Instant::now(),
         RTP_OUTBOUND_MTU,
         codec.payload_type,
         ssrc,
@@ -799,7 +800,7 @@ async fn stream_video(
 
         let sample_duration = Duration::from_millis(40);
         let samples = (sample_duration.as_secs_f64() * codec.rtp_codec.clock_rate as f64) as u32;
-        let packets = packetizer.packetize(&frame.freeze(), samples)?;
+        let packets = packetizer.packetize(Instant::now(), &frame.freeze(), samples)?;
         for packet in packets {
             if video_message_tx
                 .send((video_sender_id, packet))

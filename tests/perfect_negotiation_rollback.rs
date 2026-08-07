@@ -24,13 +24,14 @@ use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
 use rtc::sansio::Protocol;
+use std::time::Instant;
 
 fn media_pc() -> RTCPeerConnection {
     let mut me = MediaEngine::default();
     me.register_default_codecs().unwrap();
     rtc::peer_connection::RTCPeerConnectionBuilder::new()
         .with_media_engine(me)
-        .build()
+        .build(Instant::now())
         .unwrap()
 }
 
@@ -92,7 +93,9 @@ fn polite_peer_glare_recovery_with_local_offer_rollback() {
         .add_track(track(RtpCodecKind::Video, "polite", 11111))
         .unwrap();
     let polite_offer = polite.create_offer(None).unwrap();
-    polite.set_local_description(polite_offer).unwrap();
+    polite
+        .set_local_description(Instant::now(), polite_offer)
+        .unwrap();
     drain_events(&mut polite);
 
     // Impolite peer: add audio track, offer (glare).
@@ -102,11 +105,13 @@ fn polite_peer_glare_recovery_with_local_offer_rollback() {
         .unwrap();
     let impolite_offer = impolite.create_offer(None).unwrap();
     impolite
-        .set_local_description(impolite_offer.clone())
+        .set_local_description(Instant::now(), impolite_offer.clone())
         .unwrap();
 
     // Polite peer yields: roll back its own offer, then accept the impolite peer's offer.
-    polite.set_local_description(rollback()).unwrap();
+    polite
+        .set_local_description(Instant::now(), rollback())
+        .unwrap();
     drain_events(&mut polite);
 
     // RFC 8829 Section 5.7: rollback sets the pending local description to null.
@@ -115,7 +120,9 @@ fn polite_peer_glare_recovery_with_local_offer_rollback() {
         "rollback must clear the pending local description"
     );
 
-    polite.set_remote_description(impolite_offer).unwrap();
+    polite
+        .set_remote_description(Instant::now(), impolite_offer)
+        .unwrap();
     let answer = polite.create_answer(None).unwrap();
 
     // The answer covers only the impolite peer's single audio m= section. The rolled-back video
@@ -131,7 +138,9 @@ fn polite_peer_glare_recovery_with_local_offer_rollback() {
         "the rolled-back video track must not appear in the answer"
     );
 
-    polite.set_local_description(answer).unwrap();
+    polite
+        .set_local_description(Instant::now(), answer)
+        .unwrap();
     drain_events(&mut polite);
 
     // The polite peer's added track survived the rollback (a track was attached via add_track)
@@ -173,10 +182,12 @@ fn glare_recovery_with_remote_offer_rollback() {
     let remote_offer = remote.create_offer(None).unwrap();
 
     // Apply the remote offer (creates a remote-originated audio transceiver), then roll it back.
-    pc.set_remote_description(remote_offer).unwrap();
+    pc.set_remote_description(Instant::now(), remote_offer)
+        .unwrap();
     drain_events(&mut pc);
 
-    pc.set_remote_description(rollback()).unwrap();
+    pc.set_remote_description(Instant::now(), rollback())
+        .unwrap();
     drain_events(&mut pc);
 
     // RFC 8829 Section 5.7: rollback sets the pending remote description to null.

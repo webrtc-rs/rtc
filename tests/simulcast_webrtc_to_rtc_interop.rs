@@ -30,7 +30,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -255,12 +255,12 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Set the remote description (offer from webrtc)
     log::info!("RTC set remote description offer {}", rtc_offer);
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -283,7 +283,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
     log::info!("RTC created answer {}", answer);
 
     // Set the local description
-    rtc_pc.set_local_description(answer)?;
+    rtc_pc.set_local_description(Instant::now(), answer)?;
 
     // Get the answer to send back to webrtc
     let rtc_answer = rtc_pc
@@ -338,7 +338,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
             "Starting to send samples on all simulcast layers (webrtc will add RID extensions)"
         );
 
-        let start_time = std::time::SystemTime::now();
+        let start_time = std::time::SystemTime::now(); // Exemption: usage in #test code
 
         for i in 0..30u32 {
             let timestamp = start_time + Duration::from_millis(i as u64 * 33); // ~30fps
@@ -464,7 +464,7 @@ async fn test_simulcast_webrtc_to_rtc() -> Result<()> {
         }
 
         // Poll read - receive application messages
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(track_id, rtp_packet) => {
                     // Get the receiver for this track

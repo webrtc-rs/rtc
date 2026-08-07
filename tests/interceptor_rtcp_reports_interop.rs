@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -114,7 +114,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection with custom interceptor registry");
 
     // Create output track
@@ -154,7 +154,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
     let offer = rtc_pc.create_offer(None)?;
     log::info!("RTC created offer");
 
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("RTC set local description");
 
     // Create webrtc peer
@@ -211,7 +211,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
 
     let rtc_answer =
         rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp)?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Run event loop and verify behavior
     let rtc_socket = Arc::new(socket);
@@ -262,7 +262,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
         }
 
         // Process reads
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtpPacket(_track_id, rtp_packet) = message {
                 let count = received_packets_clone.fetch_add(1, Ordering::SeqCst) + 1;
                 log::info!(
@@ -322,7 +322,7 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
                 log::info!("RTC sent RTP packet #{}", packets_sent);
             }
@@ -443,7 +443,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     let output_track = MediaStreamTrack::new(
         "test-stream".to_string(),
@@ -476,7 +476,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
     rtc_pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
 
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     let webrtc_pc = create_webrtc_peer().await?;
 
@@ -512,7 +512,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
 
     let rtc_answer =
         rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp)?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     let rtc_socket = Arc::new(socket);
     let mut buf = vec![0u8; 2000];
@@ -604,7 +604,7 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
             }
 
@@ -725,7 +725,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection with default interceptors");
 
     let output_track = MediaStreamTrack::new(
@@ -759,7 +759,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
     rtc_pc.add_local_candidate(RTCIceCandidate::from(&candidate).to_json()?)?;
 
     let offer = rtc_pc.create_offer(None)?;
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
 
     let webrtc_pc = create_webrtc_peer().await?;
 
@@ -809,7 +809,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
 
     let rtc_answer =
         rtc::peer_connection::sdp::RTCSessionDescription::answer(answer_with_candidates.sdp)?;
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     let rtc_socket = Arc::new(socket);
     let mut buf = vec![0u8; 2000];
@@ -839,7 +839,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             if let RTCMessage::RtpPacket(_, _) = message {
                 received_packets_clone.fetch_add(1, Ordering::SeqCst);
             }
@@ -892,7 +892,7 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
                 payload: bytes::Bytes::from(dummy_frame.clone()),
             };
 
-            if rtp_sender.write_rtp(packet).is_ok() {
+            if rtp_sender.write_rtp(Instant::now(), packet).is_ok() {
                 packets_sent += 1;
                 log::info!("RTC sent RTP packet #{}", packets_sent);
             }

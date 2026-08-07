@@ -4,6 +4,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
+use std::time::Instant;
 
 #[test]
 fn default_offer_sdp_contains_no_ulpfec() {
@@ -14,7 +15,7 @@ fn default_offer_sdp_contains_no_ulpfec() {
     let mut pc = RTCPeerConnectionBuilder::new()
         .with_configuration(RTCConfigurationBuilder::new().build())
         .with_media_engine(me)
-        .build()
+        .build(Instant::now())
         .expect("build peer connection");
     pc.add_transceiver_from_kind(
         RtpCodecKind::Video,

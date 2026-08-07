@@ -11,6 +11,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
+use rtc::peer_connection::message::TaggedRTCMessage;
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceServer;
@@ -130,7 +131,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
 
     // Bind to local UDP socket
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -138,7 +139,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
     println!("RTP forwarder listening on {}", local_addr);
 
     // Set remote description (offer)
-    peer_connection.set_remote_description(offer)?;
+    peer_connection.set_remote_description(Instant::now(), offer)?;
 
     // Add video track
     let video_ssrc = rand::random::<u32>();
@@ -184,7 +185,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
 
     let answer = peer_connection.create_answer(None)?;
     println!("Created Answer={}", answer);
-    peer_connection.set_local_description(answer.clone())?;
+    peer_connection.set_local_description(Instant::now(), answer.clone())?;
 
     // Output the answer
     let json_str = serde_json::to_string(&answer)?;
@@ -236,7 +237,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
         }
 
         // Poll for outgoing RTCP (we don't need to handle incoming RTP/RTCP here)
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 rtc::peer_connection::message::RTCMessage::RtpPacket(_, _) => {
                     // We're only sending, not receiving
@@ -337,7 +338,7 @@ async fn run_peer_connection(offer: RTCSessionDescription, rtp_listener: UdpSock
                                     })
                                     .map(|codec| codec.payload_type)
                                     .ok_or(Error::ErrRTPTransceiverCodecUnsupported)?;
-                                if let Err(err) = sender.write_rtp(rtp_packet) {
+                                if let Err(err) = sender.write_rtp(Instant::now(), rtp_packet) {
                                     error!("Failed to write RTP packet: {}", err);
                                 }
                             }

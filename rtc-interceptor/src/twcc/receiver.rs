@@ -185,9 +185,7 @@ impl<P: Interceptor> TwccReceiverInterceptor<P> {
 
     #[overrides]
     fn poll_timeout(&mut self) -> Option<Self::Time> {
-        let inner_timeout = self.inner.poll_timeout();
-
-        match (self.next_timeout, inner_timeout) {
+        match (self.next_timeout, self.inner.poll_timeout()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),

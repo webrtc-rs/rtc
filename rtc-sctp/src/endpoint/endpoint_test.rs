@@ -331,7 +331,10 @@ impl Pair {
 
     /// Just start connecting the client
     pub fn begin_connect(&mut self, config: ClientConfig) -> AssociationHandle {
-        let (client_ch, client_conn) = self.client.connect(config, self.server.addr).unwrap();
+        let (client_ch, client_conn) = self
+            .client
+            .connect(self.time, config, self.server.addr)
+            .unwrap();
         self.client.associations.insert(client_ch, client_conn);
         client_ch
     }

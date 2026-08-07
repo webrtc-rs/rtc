@@ -25,7 +25,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCIceConnectionState;
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
 
     // Create an offer to send to the other process
     let offer = peer_connection.create_offer(None)?;
-    peer_connection.set_local_description(offer.clone())?;
+    peer_connection.set_local_description(Instant::now(), offer.clone())?;
     println!("[Offer] set_local_description {}", offer);
 
     // Create channel for HTTP server to send commands to event loop
@@ -267,7 +267,7 @@ async fn main() -> Result<()> {
     let body_bytes = hyper::body::to_bytes(resp.into_body()).await?;
     let answer: RTCSessionDescription = serde_json::from_slice(&body_bytes)?;
     println!("[Offer] Received answer {}", answer);
-    peer_connection.set_remote_description(answer)?;
+    peer_connection.set_remote_description(Instant::now(), answer)?;
 
     // Send local candidate
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -331,7 +331,7 @@ async fn main() -> Result<()> {
         }
 
         // Poll reads (data channel messages)
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -372,7 +372,7 @@ async fn main() -> Result<()> {
             if Instant::now().duration_since(last_send) >= Duration::from_secs(3) {
                 if let Some(mut dc) = peer_connection.data_channel(channel_id) {
                     let message = format!("[Offer] {}", chrono::Local::now());
-                    if let Err(e) = dc.send_text(message) {
+                    if let Err(e) = dc.send_text(Instant::now(), message) {
                         println!("[Offer] DataChannel send error: {}", e);
                         data_channel_id = None;
                     }
@@ -458,7 +458,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Command::SetRemoteDescription(sdp) => {
-                        if let Err(e) = peer_connection.set_remote_description(sdp) {
+                        if let Err(e) = peer_connection.set_remote_description(Instant::now(), sdp) {
                             error!("Failed to set remote description: {}", e);
                         }
                     }

@@ -28,6 +28,7 @@
 //! ## Quick Start - Generate and Use Certificate
 //!
 //! ```
+//! # use std::time::Instant;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::certificate::RTCCertificate;
@@ -50,7 +51,7 @@
 //!             .with_certificates(vec![certificate])
 //!             .build()
 //!     )
-//!     .build()?;
+//!     .build(Instant::now())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -169,7 +170,7 @@
 //!
 //! # fn example(dtls_cert: dtls::crypto::Certificate) -> Result<(), Box<dyn std::error::Error>> {
 //! // Use certificate from hardware security module or external source
-//! let expires = SystemTime::now() + Duration::from_secs(365 * 86400); // 1 year
+//! let expires = SystemTime::now() + Duration::from_secs(365 * 86400); // Exemption: usage in #doctest code
 //! let certificate = RTCCertificate::from_existing(dtls_cert, expires);
 //!
 //! // Certificate is ready to use in WebRTC connections
@@ -318,6 +319,7 @@ use shared::error::{Error, Result};
 /// ## Using with RTCConfiguration
 ///
 /// ```no_run
+/// # use std::time::Instant;
 /// # use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// # use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 /// # use rtc::peer_connection::certificate::RTCCertificate;
@@ -339,7 +341,7 @@ use shared::error::{Error, Result};
 ///             .with_certificates(vec![certificate])
 ///             .build()
 ///     )
-///     .build()?;
+///     .build(Instant::now())?;
 /// # Ok(())
 /// # }
 /// ```
@@ -543,7 +545,7 @@ impl RTCCertificate {
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// # let provider = crypto::default_provider()?;
     /// // Use an externally managed certificate
-    /// let expires = SystemTime::now() + Duration::from_secs(86400 * 30); // 30 days
+    /// let expires = SystemTime::now() + Duration::from_secs(86400 * 30); // Exemption: usage in #doctest code
     /// let certificate = RTCCertificate::from_existing(dtls_cert, expires);
     ///
     /// // Certificate is ready to use
@@ -691,8 +693,7 @@ fn crypto_error(error: crypto::CryptoError) -> Error {
 
 fn certificate_expiration(not_after: impl Into<SystemTime>) -> SystemTime {
     if cfg!(target_arch = "arm") {
-        // Workaround for issue overflow when adding duration to instant on armv7.
-        SystemTime::now().add(Duration::from_secs(172800))
+        SystemTime::now().add(Duration::from_secs(172800)) // Exemption: wall-clock is correct here to workaround for overflow issue when adding duration to instant on armv7.
     } else {
         not_after.into()
     }
@@ -896,7 +897,7 @@ mod test {
                 .map_err(|e| Error::Other(e.to_string()))?,
         )?;
 
-        let now = SystemTime::now();
+        let now = SystemTime::now(); // Exemption: usage in #test code
         assert!(cert.expires.duration_since(now).is_ok());
 
         Ok(())

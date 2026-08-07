@@ -20,12 +20,29 @@ pub struct SystemInstant {
 
 impl SystemInstant {
     /// Captures the current monotonic instant together with the current wall-clock time.
-    pub fn now() -> Self {
+    pub fn now(now: Instant) -> Self {
         Self {
-            instant: Instant::now(),
+            instant: now,
             duration_since_unix_epoch: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0)),
+        }
+    }
+
+    /// Only used for deserialization
+    pub fn from_epoch(duration_since_unix_epoch: Duration) -> Self {
+        let system_now = SystemTime::now(); // Exemption: wall-clock is correct here to deserialization only
+        let instant_now = Instant::now(); // Exemption: Instant-now is correct here to deserialization only
+
+        let duration_since_approx = system_now
+            .duration_since(UNIX_EPOCH + duration_since_unix_epoch)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+
+        let instant = instant_now - duration_since_approx;
+
+        Self {
+            instant,
+            duration_since_unix_epoch,
         }
     }
 

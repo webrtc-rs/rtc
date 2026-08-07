@@ -4,7 +4,7 @@
 use mdns::Mdns;
 use mdns::MdnsConfig;
 use std::net::{IpAddr, Ipv4Addr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use shared::error::Result;
@@ -34,6 +34,7 @@ pub(crate) fn generate_multicast_dns_name() -> String {
 }
 
 pub(crate) fn create_multicast_dns(
+    now: Instant,
     mdns_mode: MulticastDnsMode,
     mdns_local_name: &str,
     mdns_local_ip: &Option<IpAddr>,
@@ -62,7 +63,7 @@ pub(crate) fn create_multicast_dns(
         config = config.with_query_timeout(*query_timeout);
     }
 
-    let mdns_server = Mdns::new(config);
+    let mdns_server = Mdns::new(now, config);
 
     Ok(Some(mdns_server))
 }

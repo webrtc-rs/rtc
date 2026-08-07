@@ -207,7 +207,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Create 3 tracks for simulcast layers with RIDs
@@ -266,7 +266,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
     log::info!("RTC created offer {}", offer);
 
     // Set local description on rtc
-    rtc_pc.set_local_description(offer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), offer.clone())?;
     log::info!("RTC set local description");
 
     // Convert rtc offer to webrtc offer
@@ -300,7 +300,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
 
     // Set remote description on rtc
     log::info!("RTC set remote description {}", rtc_answer);
-    rtc_pc.set_remote_description(rtc_answer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_answer)?;
 
     // Run event loops
     let rtc_socket = Arc::new(socket);
@@ -438,7 +438,7 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
                     payload: bytes::Bytes::from(dummy_frame.clone()),
                 };
 
-                if let Err(e) = rtp_sender.write_rtp(packet) {
+                if let Err(e) = rtp_sender.write_rtp(Instant::now(), packet) {
                     log::debug!("Failed to send RTP on {}: {}", rid, e);
                 }
                 sequence_number += 1;

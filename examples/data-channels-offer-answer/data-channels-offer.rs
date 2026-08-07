@@ -18,7 +18,7 @@ use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
@@ -161,14 +161,14 @@ async fn main() -> Result<()> {
     // Create a new RTCPeerConnection
     let mut peer_connection = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
-        .build()?;
+        .build(Instant::now())?;
 
     // Create a datachannel with label 'data'
     let _ = peer_connection.create_data_channel("data", None)?;
 
     // Create an offer to send to the other process
     let offer = peer_connection.create_offer(None)?;
-    peer_connection.set_local_description(offer.clone())?;
+    peer_connection.set_local_description(Instant::now(), offer.clone())?;
 
     // Get local candidates
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        while let Some(message) = peer_connection.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -291,7 +291,7 @@ async fn main() -> Result<()> {
                 if let Some(mut dc) = peer_connection.data_channel(channel_id) {
                     let message = math_rand_alpha(15);
                     println!("Sending '{}'", message);
-                    let _ = dc.send_text(message);
+                    let _ = dc.send_text(Instant::now(), message);
                     last_send = Instant::now();
                 }
             }
@@ -323,7 +323,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Command::SetRemoteDescription(sdp) => {
-                        if let Err(e) = peer_connection.set_remote_description(sdp) {
+                        if let Err(e) = peer_connection.set_remote_description(Instant::now(), sdp) {
                             eprintln!("Failed to set remote description: {}", e);
                         } else {
                             println!("Remote description set successfully");

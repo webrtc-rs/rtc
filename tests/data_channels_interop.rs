@@ -23,7 +23,7 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig};
 
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -130,12 +130,12 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     let mut rtc_pc = RTCPeerConnectionBuilder::new()
         .with_configuration(config)
         .with_setting_engine(setting_engine)
-        .build()?;
+        .build(Instant::now())?;
     log::info!("Created RTC peer connection");
 
     // Set remote description (the offer from webrtc)
     log::info!("RTC set remote description {}", rtc_offer);
-    rtc_pc.set_remote_description(rtc_offer)?;
+    rtc_pc.set_remote_description(Instant::now(), rtc_offer)?;
 
     // Add local candidate for rtc peer
     let candidate = CandidateHostConfig {
@@ -158,7 +158,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
     log::info!("RTC created answer");
 
     // Set local description on rtc peer
-    rtc_pc.set_local_description(answer.clone())?;
+    rtc_pc.set_local_description(Instant::now(), answer.clone())?;
     log::info!("RTC set local description {}", answer);
 
     // Convert rtc answer to webrtc SDP
@@ -235,7 +235,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
             }
         }
 
-        while let Some(message) = rtc_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = rtc_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {}
                 RTCMessage::RtcpPacket(_, _) => {}
@@ -258,7 +258,7 @@ async fn test_data_channel_rtc_to_webrtc() -> Result<()> {
 
                     // Echo back
                     log::info!("RTC echoing message back: '{}'", msg_str);
-                    dc.send_text(msg_str)?;
+                    dc.send_text(Instant::now(), msg_str)?;
                 }
                 _ => {}
             }

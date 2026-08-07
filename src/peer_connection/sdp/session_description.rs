@@ -387,11 +387,12 @@ impl RTCSessionDescription {
     /// # Examples
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// use rtc::peer_connection::sdp::{RTCSessionDescription, RTCSdpType};
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let mut pc = RTCPeerConnectionBuilder::new().build()?;
+    /// # let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
     /// // Create a rollback description (typically with empty SDP)
     /// let rollback = RTCSessionDescription::rollback(None)?;
     /// assert_eq!(rollback.sdp_type, RTCSdpType::Rollback);
@@ -399,7 +400,7 @@ impl RTCSessionDescription {
     ///
     /// // Use case: Polite peer rolling back local offer on collision
     /// // (assumes peer is currently in HaveLocalOffer state)
-    /// pc.set_local_description(rollback)?;
+    /// pc.set_local_description(Instant::now(), rollback)?;
     /// // Now back in Stable state, ready to accept remote offer
     /// # Ok(())
     /// # }

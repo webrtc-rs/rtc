@@ -17,7 +17,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
-use rtc::peer_connection::message::RTCMessage;
+use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
@@ -59,7 +59,7 @@ fn build_video_only_peer(
         .with_configuration(RTCConfigurationBuilder::new().build())
         .with_setting_engine(setting_engine)
         .with_media_engine(media_engine)
-        .build()
+        .build(Instant::now())
         .map_err(Into::into)
 }
 
@@ -137,8 +137,8 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
         "media-only offer should not contain an application m-line:\n{}",
         offer.sdp
     );
-    offerer_pc.set_local_description(offer.clone())?;
-    answerer_pc.set_remote_description(offer)?;
+    offerer_pc.set_local_description(Instant::now(), offer.clone())?;
+    answerer_pc.set_remote_description(Instant::now(), offer)?;
 
     let answer = answerer_pc.create_answer(None)?;
     assert!(
@@ -149,8 +149,8 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
         "media-only answer should not contain an application m-line:\n{}",
         answer.sdp
     );
-    answerer_pc.set_local_description(answer.clone())?;
-    offerer_pc.set_remote_description(answer)?;
+    answerer_pc.set_local_description(Instant::now(), answer.clone())?;
+    offerer_pc.set_remote_description(Instant::now(), answer)?;
 
     let mut offerer_buf = vec![0u8; 2000];
     let mut answerer_buf = vec![0u8; 2000];
@@ -225,13 +225,13 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
             }
         }
 
-        while let Some(message) = offerer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = offerer_pc.poll_read() {
             if let RTCMessage::DataChannelMessage(_, _) = message {
                 unexpected_data_channel_messages += 1;
             }
         }
 
-        while let Some(message) = answerer_pc.poll_read() {
+        while let Some(TaggedRTCMessage { message, .. }) = answerer_pc.poll_read() {
             match message {
                 RTCMessage::RtpPacket(_, _) => {
                     rtp_packets_received += 1;
@@ -258,17 +258,20 @@ async fn test_media_only_negotiation_does_not_start_sctp() -> Result<()> {
                 .first()
                 .map(|codec| codec.payload_type)
                 .unwrap_or(96);
-            rtp_sender.write_rtp(rtp::packet::Packet {
-                header: rtp::header::Header {
-                    version: 2,
-                    payload_type,
-                    sequence_number: rtp_packets_sent,
-                    timestamp: rtp_packets_sent as u32 * 3000,
-                    ssrc,
-                    ..Default::default()
+            rtp_sender.write_rtp(
+                Instant::now(),
+                rtp::packet::Packet {
+                    header: rtp::header::Header {
+                        version: 2,
+                        payload_type,
+                        sequence_number: rtp_packets_sent,
+                        timestamp: rtp_packets_sent as u32 * 3000,
+                        ssrc,
+                        ..Default::default()
+                    },
+                    payload: bytes::Bytes::from(dummy_frame.clone()),
                 },
-                payload: bytes::Bytes::from(dummy_frame.clone()),
-            })?;
+            )?;
         }
 
         if rtp_packets_received >= total_threshold {
