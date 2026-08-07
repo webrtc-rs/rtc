@@ -17,11 +17,35 @@ use shared::error::{Error, Result};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct DataChannelHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
+
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// `poll_write` drains each channel's outbound queue, and a message can still be sitting
+    /// there from an earlier `handle_*` — the datachannel layer buffers when SCTP back-pressures
+    /// it. Stamping those with the instant of the input that caused them is the right answer;
+    /// this field is what a `poll_*` has instead of a parameter.
+    now: Instant,
+}
+
+impl DataChannelHandlerContext {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self {
+            read_outs: VecDeque::new(),
+            write_outs: VecDeque::new(),
+            event_outs: VecDeque::new(),
+            now,
+        }
+    }
+
+    /// Records the newest instant a caller has supplied. See the design's §9.3 for why there is
+    /// no monotonicity assert alongside the `max`.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
+    }
 }
 
 /// DataChannelHandler implements DataChannel Protocol handling
@@ -60,6 +84,9 @@ impl<'a>
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
+        self.ctx.observe(now);
+
         if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
                 "recv SCTP DataChannelMessage from {:?}",
@@ -169,7 +196,7 @@ impl<'a>
             while let Some(data_channel_message) = data_channel.poll_write() {
                 debug!("send data channel message from handle_read");
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext::default(),
                     message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                 });
@@ -187,6 +214,9 @@ impl<'a>
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
+        let now = msg.now;
+        self.ctx.observe(now);
+
         if let RTCMessageInternal::Dtls(DTLSMessage::DataChannel(message)) = msg.message {
             debug!("send application message {:?}", msg.transport.peer_addr);
 
@@ -226,7 +256,7 @@ impl<'a>
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from handle_write");
                     self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: Instant::now(),
+                        now,
                         transport: TransportContext::default(),
                         message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                     });
@@ -251,7 +281,7 @@ impl<'a>
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from poll_write");
                     self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: Instant::now(),
+                        now: self.ctx.now,
                         transport: TransportContext::default(),
                         message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
                     });
@@ -351,7 +381,8 @@ impl<'a>
         self.ctx.event_outs.pop_front()
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<()> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        self.ctx.observe(now);
         Ok(())
     }
 

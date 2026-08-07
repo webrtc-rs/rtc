@@ -20,7 +20,6 @@ use shared::{TransportContext, TransportMessage};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-#[derive(Default)]
 pub(crate) struct SctpHandlerContext {
     pub(crate) sctp_transport: RTCSctpTransport,
 
@@ -34,21 +33,39 @@ pub(crate) struct SctpHandlerContext {
     // chunks are processed before one flush, so the ack machine coalesces them into
     // ONE SACK (1st arms Delay, 2nd+ stay Immediate until flushed) instead of one
     // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
-    // cost. `last_now` carries the newest timestamp seen into that flush.
+    // cost. `now` carries the newest timestamp seen into that flush.
     flush_dirty: bool,
-    last_now: Option<Instant>,
+
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// This is the one place in the core that genuinely needs a retained instant: the flush is
+    /// armed by a `handle_*` but executed by the next `poll_write`, and `flush_transmits` does
+    /// real time-dependent work there — retransmit timers, congestion window, SACK scheduling.
+    /// It was `Option<Instant>` with an `unwrap_or_else(Instant::now)` fallback only because
+    /// nothing seeded it; that fallback was taken on **every client connection**, for the flush
+    /// that emits the INIT chunk. Seeding at construction makes the `Option` unnecessary.
+    now: Instant,
 }
 
 impl SctpHandlerContext {
-    pub(crate) fn new(sctp_transport: RTCSctpTransport) -> Self {
+    pub(crate) fn new(now: Instant, sctp_transport: RTCSctpTransport) -> Self {
         Self {
             sctp_transport,
             read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             flush_dirty: false,
-            last_now: None,
+            now,
         }
+    }
+
+    /// Records the newest instant a caller has supplied.
+    ///
+    /// `max` rather than assignment, and without a monotonicity assert: an outbound message
+    /// carries the instant of the input that *caused* it, so `handle_write` can legitimately be
+    /// handed one older than the newest seen. See the design's §9.3.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
     }
 }
 
@@ -306,7 +323,7 @@ impl<'a>
 
             // Ingest done — mark dirty so poll_write runs the single flush.
             self.ctx.flush_dirty = true;
-            self.ctx.last_now = Some(now);
+            self.ctx.observe(now);
         } else {
             // Bypass
             debug!("bypass sctp read {:?}", msg.transport.peer_addr);
@@ -422,7 +439,7 @@ impl<'a>
 
             // Ingest done — mark dirty so poll_write runs the single flush.
             self.ctx.flush_dirty = true;
-            self.ctx.last_now = Some(now);
+            self.ctx.observe(now);
         } else {
             // Bypass
             debug!("Bypass sctp write {:?}", msg.transport.peer_addr);
@@ -436,8 +453,7 @@ impl<'a>
         // iteration before serving queued outbound.
         if self.ctx.flush_dirty {
             self.ctx.flush_dirty = false;
-            let now = self.ctx.last_now.unwrap_or_else(Instant::now);
-            self.flush_transmits(now);
+            self.flush_transmits(self.ctx.now);
         }
         self.ctx.write_outs.pop_front()
     }
@@ -446,7 +462,7 @@ impl<'a>
         // The event's instant arms the deferred flush below, so `poll_write` can stamp the
         // client INIT with the time the handshake completed rather than the wall clock.
         let now = evt.now;
-        self.ctx.last_now = Some(now.max(self.ctx.last_now.unwrap_or(now)));
+        self.ctx.observe(now);
 
         // DTLSHandshakeComplete is not terminated here since SRTP handler needs it
         let dtls_complete = matches!(&evt.event, RTCEventInternal::DTLSHandshakeComplete(_, _));
@@ -550,7 +566,7 @@ impl<'a>
 
         // Timer processed — mark dirty so poll_write runs the single flush.
         self.ctx.flush_dirty = true;
-        self.ctx.last_now = Some(now);
+        self.ctx.observe(now);
 
         Ok(())
     }
@@ -868,6 +884,7 @@ mod tests {
 
     /// Wrap an established client endpoint + association in a handler context.
     fn client_ctx(
+        now: Instant,
         client_ep: Endpoint,
         ch: AssociationHandle,
         conn: Association,
@@ -878,7 +895,7 @@ mod tests {
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch, conn);
-        SctpHandlerContext::new(transport)
+        SctpHandlerContext::new(now, transport)
     }
 
     // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
@@ -906,13 +923,14 @@ mod tests {
     // *before* removal, or the peer would never learn the association closed.
     #[test]
     fn handle_timeout_flushes_final_packet_before_drain() {
+        let now = Instant::now();
         let e = establish();
         let mut client_conn = e.client_conn;
         client_conn
             .shutdown()
             .expect("shutdown from Established queues Drained + SHUTDOWN");
 
-        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
 
         {
@@ -967,7 +985,7 @@ mod tests {
         assert!(!ack_dgrams.is_empty(), "server replies SHUTDOWN_ACK");
 
         // Feed SHUTDOWN_ACK to the client HANDLER via handle_read.
-        let mut ctx = client_ctx(e.client_ep, e.client_ch, client_conn);
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
         {
             let mut handler = SctpHandler::new(&mut ctx);
@@ -1005,6 +1023,7 @@ mod tests {
     // B's DATA here too; this test rejects that.
     #[test]
     fn teardown_flush_targets_only_the_draining_association() {
+        let now = Instant::now();
         let (client_ep, ch_a, mut conn_a, ch_b, mut conn_b) = establish_two();
 
         // A: graceful shutdown -> Drained + a pending SHUTDOWN.
@@ -1027,7 +1046,7 @@ mod tests {
         transport.sctp_endpoint = Some(client_ep);
         transport.sctp_associations.insert(ch_a, conn_a);
         transport.sctp_associations.insert(ch_b, conn_b);
-        let mut ctx = SctpHandlerContext::new(transport);
+        let mut ctx = SctpHandlerContext::new(now, transport);
 
         {
             let mut handler = SctpHandler::new(&mut ctx);
@@ -1071,9 +1090,9 @@ mod tests {
 
     // Design §3.7's worked example. The client INIT is queued by `connect` inside
     // `handle_event` and emitted by the *next* `poll_write` — so before C3-01 gave the event
-    // channel a timestamp, `last_now` was still `None` at that point and the flush fell back
-    // to `Instant::now()`. That was not a defensive branch: it was the path taken on every
-    // client connection. Now the INIT is stamped from the event that armed it.
+    // channel a timestamp, the retained instant was still unset at that point and the flush
+    // fell back to `Instant::now()`. That was not a defensive branch: it was the path taken on
+    // every client connection. Now the INIT is stamped from the event that armed it.
     #[test]
     fn client_init_flush_is_stamped_from_the_event_that_armed_it() {
         let base = Instant::now();
@@ -1090,10 +1109,11 @@ mod tests {
             None,
         ));
         transport.sctp_transport_config = Some(TransportConfig::default());
-        let mut ctx = SctpHandlerContext::new(transport);
+        let mut ctx = SctpHandlerContext::new(t(0), transport);
 
-        // No inbound SCTP has been seen, so nothing but the event can supply an instant.
-        assert!(ctx.last_now.is_none());
+        // No inbound SCTP has been seen, so nothing but the event has moved the retained
+        // instant off its construction seed.
+        assert_eq!(ctx.now, t(0));
 
         {
             let mut handler = SctpHandler::new(&mut ctx);
@@ -1105,8 +1125,8 @@ mod tests {
                 .expect("handle_event");
         }
         assert_eq!(
-            ctx.last_now,
-            Some(t(7)),
+            ctx.now,
+            t(7),
             "the event's instant must arm the deferred flush"
         );
 
@@ -1127,5 +1147,91 @@ mod tests {
                 "the INIT carries the instant of the event that caused it, not the wall clock"
             );
         }
+    }
+
+    // C4-04 replaced `last_now: Option<Instant>` + `unwrap_or_else(Instant::now)` with a
+    // construction-seeded `now: Instant`. The *point* of the deferred flush is batching — N
+    // inbound DATA chunks ingested before one flush, so the ack machine coalesces them into a
+    // single SACK instead of one per two packets. Nothing in the suite pinned that invariant,
+    // and the workspace has no SCTP throughput benchmark to measure it with, so this asserts it
+    // structurally: a burst of reads must arm the flush once and produce one flush's worth of
+    // output, not one per packet.
+    #[test]
+    fn a_burst_of_reads_produces_one_flush_not_one_per_packet() {
+        let base = Instant::now();
+        let t = |millis| base + Duration::from_millis(millis);
+
+        let e = establish();
+        let mut server_conn = e.server_conn;
+        let server_ch = e.server_ch;
+        let mut ctx = client_ctx(t(0), e.client_ep, e.client_ch, e.client_conn);
+
+        // Server sends several DATA chunks; each becomes its own inbound datagram.
+        let mut stream = server_conn
+            .open_stream(1, PayloadProtocolIdentifier::Binary)
+            .expect("open stream");
+        for i in 0..4u8 {
+            stream
+                .write_chunk_with_ppi(
+                    &Bytes::from(vec![i; 1024]),
+                    PayloadProtocolIdentifier::Binary,
+                )
+                .expect("queue DATA");
+        }
+        let dgrams = drain_transmits(&mut server_conn, t(0));
+        assert!(
+            dgrams.len() >= 2,
+            "the burst must be more than one datagram to be worth batching, got {}",
+            dgrams.len()
+        );
+        let _ = server_ch;
+
+        // Ingest the whole burst. Every read arms the flush; none performs it.
+        {
+            let mut handler = SctpHandler::new(&mut ctx);
+            for (i, d) in dgrams.iter().enumerate() {
+                handler
+                    .handle_read(TaggedRTCMessageInternal {
+                        now: t(i as u64),
+                        transport: TransportContext {
+                            local_addr: client_addr(),
+                            peer_addr: server_addr(),
+                            transport_protocol: TransportProtocol::UDP,
+                            ecn: None,
+                        },
+                        message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&d[..]))),
+                    })
+                    .expect("handle_read");
+            }
+        }
+        assert!(
+            ctx.write_outs.is_empty(),
+            "ingest must not flush: that is what makes the SACKs coalesce"
+        );
+        assert_eq!(
+            ctx.now,
+            t(dgrams.len() as u64 - 1),
+            "the retained instant is the newest of the burst, which is what stamps the flush"
+        );
+
+        // One poll_write runs the single flush for the whole burst.
+        let flushed = {
+            let mut handler = SctpHandler::new(&mut ctx);
+            let mut out = vec![];
+            while let Some(msg) = handler.poll_write() {
+                out.push(msg);
+            }
+            out
+        };
+        assert!(
+            !flushed.is_empty(),
+            "the flush must emit the coalesced SACK"
+        );
+        assert!(
+            flushed.len() < dgrams.len(),
+            "batching must emit fewer datagrams than it ingested ({} in, {} out)",
+            dgrams.len(),
+            flushed.len()
+        );
     }
 }

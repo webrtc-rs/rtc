@@ -122,12 +122,16 @@ impl Endpoint {
     }
 
     /// Process stop remote
-    pub fn stop(&mut self, remote: SocketAddr) -> Option<DTLSConn> {
+    ///
+    /// `now` stamps the close_notify this queues. Like [`Self::connect`], the instant is a
+    /// parameter rather than something the endpoint samples: it owns no sockets and reads no
+    /// clock.
+    pub fn stop(&mut self, now: Instant, remote: SocketAddr) -> Option<DTLSConn> {
         if let Some(conn) = self.connections.get_mut(&remote) {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: remote,
@@ -142,12 +146,14 @@ impl Endpoint {
     }
 
     /// Process close
-    pub fn close(&mut self) -> Result<()> {
+    ///
+    /// `now` stamps the close_notify queued for every live association.
+    pub fn close(&mut self, now: Instant) -> Result<()> {
         for (remote_addr, conn) in self.connections.iter_mut() {
             conn.close();
             while let Some(payload) = conn.outgoing_raw_packet() {
                 self.transmits.push_back(TransportMessage {
-                    now: Instant::now(),
+                    now,
                     transport: TransportContext {
                         local_addr: self.local_addr,
                         peer_addr: *remote_addr,

@@ -47,11 +47,17 @@ ALLOWLIST = Path("docs/sans-io-deterministic-time-allowlist.txt")
 SOURCE_ROOTS = ["src"]
 SOURCE_GLOB = "rtc-*/src"
 
-# `SystemInstant::now()` is listed so the NTP baselines are visible in the allow-list as
-# deliberate choices rather than sites nobody looked at.
+# Matched *without* requiring the call parentheses, because a clock read does not need them:
+# `unwrap_or_else(Instant::now)` passes the constructor as a function value and reads the ambient
+# clock exactly as `Instant::now()` does. An earlier version of this pattern anchored on `\(\)`
+# and missed `handler/sctp.rs`'s deferred-flush fallback for the whole of C1-C3.
+#
+# `\b` before `Instant` is load-bearing: it stops `Instant::now` matching inside
+# `SystemInstant::now`, which is the *injected* form — it takes the caller's monotonic instant
+# and only reads the system clock, and is allow-listed once, in `rtc-shared/src/time.rs`.
 CLOCK_READS = re.compile(
-    r"\bInstant::now\(\)"
-    r"|\bSystemTime::now\(\)"
+    r"\bInstant::now\b"
+    r"|\bSystemTime::now\b"
     r"|\bSystemInstant::now\(\)"
     r"|\.elapsed\(\)"
 )

@@ -445,3 +445,53 @@ where
         flatten_errs(close_errs)
     }
 }
+
+#[cfg(test)]
+mod handler_test {
+    use super::*;
+    use crate::data_channel::message::RTCDataChannelMessage;
+    use crate::peer_connection::RTCPeerConnectionBuilder;
+    use bytes::BytesMut;
+    use sansio::Protocol;
+    use std::time::Duration;
+
+    /// The instant the application supplies on `handle_write` is the one the core stamps the
+    /// resulting internal message with — not a reading the core took for itself. Before C3-03
+    /// the public `Win` was a bare `RTCMessage`, so this entry point had no time source and
+    /// stamped `Instant::now()`.
+    #[test]
+    fn handle_write_stamps_from_the_caller_not_the_clock() {
+        let base = Instant::now();
+        let t = |secs| base + Duration::from_secs(secs);
+
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(t(0))
+            .expect("a default peer connection builds");
+
+        pc.handle_write(TaggedRTCMessage {
+            now: t(5),
+            message: RTCMessage::DataChannelMessage(
+                1,
+                RTCDataChannelMessage {
+                    is_string: true,
+                    data: BytesMut::from(&b"hello"[..]),
+                },
+            ),
+        })
+        .expect("handle_write queues the message");
+
+        let queued = pc
+            .pipeline_context
+            .endpoint_handler_context
+            .write_outs
+            .front()
+            .expect("the message reaches the endpoint handler");
+
+        assert_eq!(
+            queued.now,
+            t(5),
+            "the internal message carries the caller's instant, not an ambient reading"
+        );
+        assert_ne!(queued.now, t(0), "and not the construction instant either");
+    }
+}
