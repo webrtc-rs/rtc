@@ -11,13 +11,13 @@ use datachannel::message::Message;
 use datachannel::message::message_channel_threshold::DataChannelThreshold;
 use log::{debug, warn};
 use sctp::{
-    AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent, Event,
-    Payload, PayloadProtocolIdentifier, StreamEvent,
+    Association, AssociationEvent, AssociationHandle, ClientConfig, DatagramEvent, EndpointEvent,
+    Event, Payload, PayloadProtocolIdentifier, StreamEvent, StreamId,
 };
 use shared::error::{Error, Result};
 use shared::marshal::Unmarshal;
 use shared::{TransportContext, TransportMessage};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 pub(crate) struct SctpHandlerContext {
@@ -35,6 +35,30 @@ pub(crate) struct SctpHandlerContext {
     // SACK per two packets — cutting sendto/recvfrom and amortizing per-iteration
     // cost. `now` carries the newest timestamp seen into that flush.
     flush_dirty: bool,
+
+    /// Streams left with unread data because the pipeline backlog was over its bound.
+    ///
+    /// This set is what makes bounded draining safe. `StreamEvent::Readable` is
+    /// **edge-triggered** — `association/mod.rs` emits it from `handle_data` when a *new* DATA
+    /// chunk arrives, and from ForwardTSN; it is never re-emitted merely because unread data
+    /// remains. So a handler that stops mid-stream gets no further notification, and the
+    /// moment back-pressure works the peer stops sending, so no new chunk arrives, so no new
+    /// `Readable` fires: **the stream would deadlock exactly when the feature engages.**
+    /// Remembering the stream here, and retrying from `handle_read`/`handle_timeout`, is the
+    /// level-triggered re-arm that closes that hole.
+    pending_readable: HashSet<(AssociationHandle, StreamId)>,
+
+    /// Transport context of the most recent inbound datagram, **per association**.
+    ///
+    /// A resumed drain has no triggering packet to copy this from. A single `last_transport`
+    /// would be wrong the moment the endpoint carries more than one association — and it can:
+    /// `sctp_associations` is a map, and `establish_two()` in the tests builds exactly that
+    /// case. Messages resumed for association A would then be stamped with B's peer address.
+    ///
+    /// Keyed by association because the 5-tuple is a property of the association, not of the
+    /// stream. An association with no entry has never received a datagram, so it cannot have
+    /// parked data either.
+    association_transport: HashMap<AssociationHandle, TransportContext>,
 
     /// The newest instant a caller has supplied, seeded at construction.
     ///
@@ -55,6 +79,8 @@ impl SctpHandlerContext {
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             flush_dirty: false,
+            pending_readable: HashSet::new(),
+            association_transport: HashMap::new(),
             now,
         }
     }
@@ -69,14 +95,155 @@ impl SctpHandlerContext {
     }
 }
 
+/// How many undelivered inbound messages the pipeline may hold before this handler stops
+/// draining SCTP's reassembly queues.
+///
+/// Draining unconditionally is what defeats SCTP's own flow control: bytes left in a
+/// reassembly queue are what `get_my_receiver_window_credit()` subtracts from
+/// `max_receive_buffer_size`, and that credit is advertised as `a_rwnd` in every SACK. Empty
+/// the queue on arrival and `a_rwnd` never falls, so the peer is never told to slow down and
+/// the backlog reappears — unbounded — further up the pipeline. Leaving messages in the
+/// reassembly queue is not a leak; it is the mechanism.
+///
+/// The bound is a message count, so the bytes held depend on message size; SCTP's own
+/// `max_receive_buffer_size` (1 MiB by default, `SettingEngine::set_sctp_max_receive_buffer_size`)
+/// is the byte-denominated bound underneath it and is what the peer actually sees.
+pub(crate) const SCTP_PIPELINE_READ_BACKLOG_LIMIT: usize = 256;
+
 /// SctpHandler implements SCTP Protocol handling
 pub(crate) struct SctpHandler<'a> {
     ctx: &'a mut SctpHandlerContext,
+    /// Undelivered messages already sitting in `pipeline_context.read_outs`.
+    ///
+    /// Passed in rather than read from `ctx` because **this handler's own `read_outs` is not
+    /// where the backlog forms**: the pipeline drains it into `intermediate_routs` inside the
+    /// same `handle_read` call, so it is empty again by the time anything could observe it.
+    /// Bounding against it would be a no-op. The queue that actually grows when the
+    /// application stops consuming is the pipeline's, one hop downstream.
+    downstream_backlog: usize,
 }
 
 impl<'a> SctpHandler<'a> {
-    pub(crate) fn new(ctx: &'a mut SctpHandlerContext) -> Self {
-        SctpHandler { ctx }
+    pub(crate) fn new(ctx: &'a mut SctpHandlerContext, downstream_backlog: usize) -> Self {
+        SctpHandler {
+            ctx,
+            downstream_backlog,
+        }
+    }
+
+    /// How many more messages may be pulled out of SCTP before the pipeline is over its bound.
+    fn read_budget(&self) -> usize {
+        SCTP_PIPELINE_READ_BACKLOG_LIMIT
+            .saturating_sub(self.downstream_backlog)
+            .saturating_sub(self.ctx.read_outs.len())
+    }
+
+    /// Drain one stream while budget allows, recording it as pending if data is left behind.
+    ///
+    /// Returns the messages read. The budget is checked **before** each `read_sctp()` because
+    /// that call consumes a message: testing afterwards would mean having already taken the
+    /// thing there was no room for.
+    fn drain_stream(
+        ctx_pending: &mut HashSet<(AssociationHandle, StreamId)>,
+        conn: &mut Association,
+        ch: AssociationHandle,
+        id: StreamId,
+        max_len: usize,
+        budget: &mut usize,
+        messages: &mut Vec<SctpMessage>,
+    ) -> Result<()> {
+        let mut stream = conn.stream(id)?;
+        loop {
+            if *budget == 0 {
+                // Leave the rest in the reassembly queue: that is what shrinks `a_rwnd`.
+                ctx_pending.insert((ch, id));
+                return Ok(());
+            }
+            let Some(chunks) = stream.read_sctp()? else {
+                ctx_pending.remove(&(ch, id));
+                return Ok(());
+            };
+            // Reassemble straight into the delivered buffer: one copy instead of the
+            // scratch-buffer round-trip (`max_len` preserves the max-message-size bound
+            // `read()` enforced via `ErrShortBuffer`).
+            let payload = chunks.to_payload(max_len)?;
+            messages.push(SctpMessage::Inbound(DataChannelMessage {
+                association_handle: ch.0,
+                stream_id: id,
+                ppi: chunks.ppi,
+                payload,
+                negotiated: false,
+            }));
+            *budget -= 1;
+        }
+    }
+
+    /// Retry streams parked by a full pipeline. The level-triggered half of the drain.
+    fn resume_pending_reads(&mut self, now: Instant) -> Result<()> {
+        if self.ctx.pending_readable.is_empty() {
+            return Ok(());
+        }
+        let mut budget = self.read_budget();
+        if budget == 0 {
+            return Ok(());
+        }
+
+        let max_len = self.ctx.sctp_transport.internal_buffer.len();
+        let mut pending: Vec<(AssociationHandle, StreamId)> =
+            self.ctx.pending_readable.iter().copied().collect();
+        pending.sort_unstable();
+
+        let mut drained_any = false;
+        for (ch, id) in pending {
+            if budget == 0 {
+                break;
+            }
+            let Some(transport) = self.ctx.association_transport.get(&ch).copied() else {
+                // Never received a datagram, so it cannot have parked data.
+                self.ctx.pending_readable.remove(&(ch, id));
+                continue;
+            };
+            let Some(conn) = self.ctx.sctp_transport.sctp_associations.get_mut(&ch) else {
+                // The association went away while parked; nothing to resume. Unreachable in
+                // practice — the two sites that remove an association clear both maps with it
+                // — so this drops the transport entry too rather than leaving the one map to
+                // outlive the other.
+                self.ctx.pending_readable.remove(&(ch, id));
+                self.ctx.association_transport.remove(&ch);
+                continue;
+            };
+
+            // Drained per association, and stamped with *that* association's 5-tuple: a
+            // shared batch would let one association's messages inherit another's transport.
+            let mut messages = vec![];
+            Self::drain_stream(
+                &mut self.ctx.pending_readable,
+                conn,
+                ch,
+                id,
+                max_len,
+                &mut budget,
+                &mut messages,
+            )?;
+
+            for message in messages {
+                if let SctpMessage::Inbound(message) = message {
+                    drained_any = true;
+                    self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                        now,
+                        transport,
+                        message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)),
+                    });
+                }
+            }
+        }
+
+        if drained_any {
+            // Reading drops bytes out of the reassembly queue, which raises the
+            // receiver-window credit — the peer only learns that from a SACK, so flush.
+            self.ctx.flush_dirty = true;
+        }
+        Ok(())
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -136,6 +303,12 @@ impl<'a>
                 return Ok(());
             }
 
+            // Both are read before `sctp_transport` is split up below, which would otherwise
+            // conflict with the borrow of `sctp_associations`.
+            let max_len = self.ctx.sctp_transport.internal_buffer.len();
+            let mut budget = self.read_budget();
+            let mut inbound_transport = None;
+
             let (sctp_endpoint, sctp_associations) = (
                 self.ctx
                     .sctp_transport
@@ -153,6 +326,9 @@ impl<'a>
                 msg.transport.ecn,
                 dtls_message.freeze(), //TODO: switch API Bytes to BytesMut
             ) {
+                // `ch` is the association this datagram belongs to — the only safe key for
+                // remembering its 5-tuple.
+                inbound_transport = Some((ch, msg.transport));
                 match event {
                     DatagramEvent::NewAssociation(conn) => {
                         sctp_associations.insert(ch, conn);
@@ -205,22 +381,17 @@ impl<'a>
                                 });
                             }
                             Event::Stream(StreamEvent::Readable { id }) => {
-                                let mut stream = conn.stream(id)?;
-                                while let Some(chunks) = stream.read_sctp()? {
-                                    // Reassemble straight into the delivered buffer:
-                                    // one copy instead of the scratch-buffer round-trip
-                                    // (`internal_buffer.len()` preserves the max-message
-                                    // -size bound `read()` enforced via `ErrShortBuffer`).
-                                    let max_len = self.ctx.sctp_transport.internal_buffer.len();
-                                    let payload = chunks.to_payload(max_len)?;
-                                    messages.push(SctpMessage::Inbound(DataChannelMessage {
-                                        association_handle: ch.0,
-                                        stream_id: id,
-                                        ppi: chunks.ppi,
-                                        payload,
-                                        negotiated: false,
-                                    }));
-                                }
+                                // Bounded: what is not read stays in the reassembly queue,
+                                // which is what lowers `a_rwnd` and throttles the peer.
+                                Self::drain_stream(
+                                    &mut self.ctx.pending_readable,
+                                    conn,
+                                    *ch,
+                                    id,
+                                    max_len,
+                                    &mut budget,
+                                    &mut messages,
+                                )?;
                             }
                             Event::Stream(StreamEvent::BufferedAmountLow { id }) => {
                                 debug!(
@@ -289,6 +460,10 @@ impl<'a>
                 for (ch, event) in endpoint_events {
                     sctp_endpoint.handle_event(ch, event); // handle drain event
                     sctp_associations.remove(&ch);
+                    // Drop the per-association bookkeeping with it, or a long-lived endpoint
+                    // accumulates entries for associations that no longer exist.
+                    self.ctx.association_transport.remove(&ch);
+                    self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
                 }
             }
 
@@ -321,6 +496,16 @@ impl<'a>
                 }
             }
 
+            if let Some((ch, transport)) = inbound_transport
+                && self.ctx.sctp_transport.sctp_associations.contains_key(&ch)
+            {
+                self.ctx.association_transport.insert(ch, transport);
+            }
+
+            // The application may have drained while this packet was in flight, so retry
+            // anything parked before giving up until the retry timer.
+            self.resume_pending_reads(now)?;
+
             // Ingest done — mark dirty so poll_write runs the single flush.
             self.ctx.flush_dirty = true;
             self.ctx.observe(now);
@@ -333,6 +518,21 @@ impl<'a>
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+        // Top up from streams parked by back-pressure. This is exactly when capacity has
+        // appeared — somebody is asking for data, so the pipeline ahead has drained — and it
+        // needs no timer, no invented interval and no influence on `poll_timeout`.
+        //
+        // It is also the level-triggered half of the bounded drain. `StreamEvent::Readable`
+        // is edge-triggered: it fires on a *new* DATA chunk, never because unread data
+        // remains. The moment back-pressure works the peer stops sending, so nothing arrives
+        // to re-trigger the drain — without this the stream would deadlock precisely when the
+        // feature engages.
+        if self.ctx.read_outs.is_empty() && !self.ctx.pending_readable.is_empty() {
+            let now = self.ctx.now;
+            if let Err(err) = self.resume_pending_reads(now) {
+                warn!("failed to resume parked SCTP streams: {}", err);
+            }
+        }
         self.ctx.read_outs.pop_front()
     }
 
@@ -548,6 +748,8 @@ impl<'a>
         for (ch, event) in endpoint_events {
             sctp_endpoint.handle_event(ch, event); // handle drain event
             sctp_associations.remove(&ch);
+            self.ctx.association_transport.remove(&ch);
+            self.ctx.pending_readable.retain(|(pch, _)| *pch != ch);
         }
 
         for transmit in transmits {
@@ -917,6 +1119,285 @@ mod tests {
             .collect()
     }
 
+    const CT_SACK: u8 = 3;
+
+    /// The advertised receiver window (`a_rwnd`) from the first flushed SACK.
+    ///
+    /// Asserting on the wire rather than on the association's internal credit: `a_rwnd` is
+    /// what the peer actually reads, and `get_my_receiver_window_credit()` is `pub(crate)` to
+    /// the `sctp` crate anyway. Layout is RFC 4960 §3.3.4 — 12-byte common header, then the
+    /// 4-byte chunk header, then a 4-byte Cumulative TSN Ack, then `a_rwnd`.
+    fn flushed_sack_a_rwnd(flushed: &[TaggedRTCMessageInternal]) -> Option<u32> {
+        flushed.iter().find_map(|m| match &m.message {
+            RTCMessageInternal::Dtls(DTLSMessage::Raw(raw))
+                if raw.len() >= 24 && raw[12] == CT_SACK =>
+            {
+                Some(u32::from_be_bytes([raw[20], raw[21], raw[22], raw[23]]))
+            }
+            _ => None,
+        })
+    }
+
+    /// Feed `dgrams` to a client handler with the given downstream backlog, flush, and return
+    /// the resulting context.
+    fn run_client(
+        now: Instant,
+        e: Established,
+        dgrams: Vec<Bytes>,
+        backlog: usize,
+    ) -> (SctpHandlerContext, Vec<TaggedRTCMessageInternal>) {
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        let mut flushed = vec![];
+        let mut handler = SctpHandler::new(&mut ctx, backlog);
+        for dgram in dgrams {
+            handler.handle_read(raw_read(now, dgram)).expect("read");
+        }
+        // The first DATA arms a *delayed* ack, so without letting that timer expire there is
+        // no SACK to read `a_rwnd` from. Harmless in the parked case: the backlog is still
+        // over the bound there, so the resume finds no budget and changes nothing.
+        handler
+            .handle_timeout(now + Duration::from_millis(500))
+            .expect("delayed-ack timer");
+        // `poll_write` *pops*: collect, or the evidence is thrown away.
+        while let Some(m) = handler.poll_write() {
+            flushed.push(m);
+        }
+        (ctx, flushed)
+    }
+
+    /// Push `count` messages from the server onto `stream_id` and return the datagrams the
+    /// client must receive. Returns raw wire bytes so the test drives the real
+    /// `handle_read` path rather than poking handler internals.
+    fn server_datagrams_carrying(
+        e: &mut Established,
+        stream_id: StreamId,
+        count: usize,
+        now: Instant,
+    ) -> Vec<Bytes> {
+        {
+            let mut stream = e
+                .server_conn
+                .open_stream(stream_id, PayloadProtocolIdentifier::Binary)
+                .expect("open server stream");
+            for i in 0..count {
+                stream
+                    .write_sctp(
+                        &Bytes::from(vec![i as u8; 64]),
+                        PayloadProtocolIdentifier::Binary,
+                    )
+                    .expect("server write");
+            }
+        }
+        while e.server_conn.poll().is_some() {}
+        drain_transmits(&mut e.server_conn, now)
+    }
+
+    fn raw_read(now: Instant, dgram: Bytes) -> TaggedRTCMessageInternal {
+        TaggedRTCMessageInternal {
+            now,
+            transport: TransportContext {
+                local_addr: client_addr(),
+                peer_addr: server_addr(),
+                ecn: None,
+                transport_protocol: TransportProtocol::UDP,
+            },
+            message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&dgram[..]))),
+        }
+    }
+
+    /// With the pipeline already at its bound, inbound DATA must be left in the reassembly
+    /// queue rather than pulled into the pipeline — and the peer must be *told*, by the only
+    /// channel SCTP has for saying so: a smaller `a_rwnd` in the SACK.
+    ///
+    /// Draining unconditionally is exactly what defeats this. The bytes sitting in the
+    /// reassembly queue are what `max_receive_buffer_size` is measured against, so emptying
+    /// it on arrival keeps `a_rwnd` pinned at maximum however far behind the application is.
+    #[test]
+    fn a_full_pipeline_parks_the_stream_and_shrinks_the_advertised_window() {
+        let now = Instant::now();
+
+        // Same traffic, two identical associations: one allowed to drain, one at the bound.
+        let mut e_free = establish();
+        let free_dgrams = server_datagrams_carrying(&mut e_free, 1, 8, now);
+        let mut e_full = establish();
+        let full_dgrams = server_datagrams_carrying(&mut e_full, 1, 8, now);
+        assert!(!full_dgrams.is_empty(), "server produced no DATA");
+
+        let (ctx_free, flushed_free) = run_client(now, e_free, free_dgrams, 0);
+        let (ctx_full, flushed_full) =
+            run_client(now, e_full, full_dgrams, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+
+        assert!(
+            !ctx_free.read_outs.is_empty(),
+            "control: an empty pipeline must receive the messages"
+        );
+        assert!(
+            ctx_free.pending_readable.is_empty(),
+            "control: nothing should be parked when there is room"
+        );
+
+        assert!(
+            ctx_full.read_outs.is_empty(),
+            "a full pipeline must not be handed more messages, got {}",
+            ctx_full.read_outs.len()
+        );
+        assert!(
+            !ctx_full.pending_readable.is_empty(),
+            "the stream must be remembered, or the edge-triggered Readable is lost forever"
+        );
+
+        let free = flushed_sack_a_rwnd(&flushed_free).expect("control flushed no SACK");
+        let full = flushed_sack_a_rwnd(&flushed_full).expect("parked run flushed no SACK");
+        assert!(
+            full < free,
+            "undrained bytes must shrink the window advertised to the peer: \
+             parked a_rwnd {full} should be below drained a_rwnd {free}"
+        );
+    }
+
+    /// **The deadlock this feature would otherwise create.**
+    ///
+    /// `StreamEvent::Readable` is edge-triggered: `association/mod.rs` emits it when a *new*
+    /// DATA chunk arrives, never because unread data remains. So the moment back-pressure
+    /// works — the peer throttled, no new chunk coming — a stream parked mid-drain would
+    /// never be revisited, and the connection would stall exactly when the feature engaged.
+    ///
+    /// This drives `handle_timeout` with **no new inbound datagram** and requires the parked
+    /// data to come through anyway.
+    #[test]
+    fn a_parked_stream_resumes_without_a_new_inbound_chunk() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+        }
+        assert!(ctx.read_outs.is_empty(), "precondition: nothing drained");
+        assert!(!ctx.pending_readable.is_empty(), "precondition: parked");
+
+        // The application drains, so the pipeline has room again. Nothing else happens: no
+        // packet arrives, and the peer — correctly throttled — sends nothing. The only call
+        // is the one the pipeline makes when it wants data.
+        let resumed = {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            handler.poll_read()
+        };
+
+        assert!(
+            resumed.is_some(),
+            "parked stream never resumed — this is the edge-triggered Readable deadlock: \
+             the peer is throttled so no new chunk will arrive to re-trigger the drain"
+        );
+        assert!(
+            ctx.pending_readable.is_empty(),
+            "a fully drained stream must stop being remembered"
+        );
+    }
+
+    /// A resumed drain must be stamped with **its own** association's 5-tuple.
+    ///
+    /// The first version of this kept a single `last_transport` — the most recent inbound
+    /// datagram's context — and reused it for every resumed message. With more than one
+    /// association on the endpoint (which `sctp_associations` being a map allows, and
+    /// `establish_two` exercises) that hands association A's messages association B's peer
+    /// address, because whichever datagram arrived last wins.
+    #[test]
+    fn a_resumed_drain_uses_its_own_associations_transport() {
+        let now = Instant::now();
+
+        // Two associations to two different peers, each carrying parked data.
+        let mut e_a = establish();
+        let a_dgrams = server_datagrams_carrying(&mut e_a, 1, 4, now);
+        let mut e_b = establish();
+        let b_dgrams = server_datagrams_carrying(&mut e_b, 1, 4, now);
+
+        let peer_a = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7001);
+        let peer_b = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7002);
+
+        let mut ctx = client_ctx(now, e_a.client_ep, e_a.client_ch, e_a.client_conn);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            for dgram in a_dgrams {
+                let mut msg = raw_read(now, dgram);
+                msg.transport.peer_addr = peer_a;
+                handler.handle_read(msg).expect("read A");
+            }
+        }
+        assert!(!ctx.pending_readable.is_empty(), "A must be parked");
+
+        // A datagram from a *different* peer arrives afterwards. Under the old single
+        // `last_transport` this is the value A's resumed messages would inherit.
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            for dgram in b_dgrams {
+                let mut msg = raw_read(now, dgram);
+                msg.transport.peer_addr = peer_b;
+                // Belongs to no association on this endpoint; under the old single
+                // `last_transport` it would still have overwritten it.
+                let _ = handler.handle_read(msg);
+            }
+        }
+
+        // Now let A resume, through the path that actually resumes it.
+        let mut resumed = vec![];
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            while let Some(msg) = handler.poll_read() {
+                resumed.push(msg);
+            }
+        }
+
+        assert!(!resumed.is_empty(), "A never resumed");
+        for msg in &resumed {
+            assert_eq!(
+                msg.transport.peer_addr, peer_a,
+                "a resumed message must carry its own association's peer address, not \
+                 whichever datagram happened to arrive most recently"
+            );
+        }
+    }
+
+    /// `poll_timeout` must stay silent about parked streams.
+    ///
+    /// Reporting a deadline for them was tried and reverted. The only instant available here
+    /// is the *retained* one, which is always in the past relative to the caller's clock, and
+    /// a caller that computes `deadline - now` gets zero. `tests/ice_tcp_active_passive.rs`
+    /// treats a zero delay as "handle the timeout and `continue`", skipping its socket reads
+    /// — so a past deadline starved the connection of I/O for the test's full 30 s budget and
+    /// no data-channel message was ever delivered.
+    #[test]
+    fn poll_timeout_reports_nothing_for_a_parked_stream() {
+        let now = Instant::now();
+        let mut e = establish();
+        let dgrams = server_datagrams_carrying(&mut e, 1, 8, now);
+
+        let mut ctx = client_ctx(now, e.client_ep, e.client_ch, e.client_conn);
+        {
+            let mut handler = SctpHandler::new(&mut ctx, SCTP_PIPELINE_READ_BACKLOG_LIMIT);
+            for dgram in dgrams {
+                handler.handle_read(raw_read(now, dgram)).expect("read");
+            }
+        }
+        assert!(!ctx.pending_readable.is_empty(), "precondition: parked");
+
+        // With room, and with none: neither may produce a deadline at or before `now`.
+        for backlog in [0, SCTP_PIPELINE_READ_BACKLOG_LIMIT] {
+            let mut handler = SctpHandler::new(&mut ctx, backlog);
+            if let Some(eto) = handler.poll_timeout() {
+                assert!(
+                    eto > now,
+                    "a parked stream must not put a past deadline in front of the caller \
+                     (backlog {backlog}): callers read that as zero delay and skip their I/O"
+                );
+            }
+        }
+    }
+
     // handle_timeout teardown-safety block: a graceful shutdown queues both the
     // `Drained` endpoint event AND the final SHUTDOWN datagram. handle_timeout
     // collects the drain (removing the association) and must flush the SHUTDOWN
@@ -934,7 +1415,7 @@ mod tests {
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
 
         {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             handler
                 .handle_timeout(Instant::now())
                 .expect("handle_timeout");
@@ -988,7 +1469,7 @@ mod tests {
         let mut ctx = client_ctx(now, e.client_ep, e.client_ch, client_conn);
         assert_eq!(ctx.sctp_transport.sctp_associations.len(), 1);
         {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             for d in ack_dgrams {
                 let msg = TaggedRTCMessageInternal {
                     now,
@@ -1049,7 +1530,7 @@ mod tests {
         let mut ctx = SctpHandlerContext::new(now, transport);
 
         {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             handler
                 .handle_timeout(Instant::now())
                 .expect("handle_timeout");
@@ -1116,7 +1597,7 @@ mod tests {
         assert_eq!(ctx.now, t(0));
 
         {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now: t(7),
@@ -1131,7 +1612,7 @@ mod tests {
         );
 
         let flushed = {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             let mut out = vec![];
             while let Some(msg) = handler.poll_write() {
                 out.push(msg);
@@ -1188,7 +1669,7 @@ mod tests {
 
         // Ingest the whole burst. Every read arms the flush; none performs it.
         {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             for (i, d) in dgrams.iter().enumerate() {
                 handler
                     .handle_read(TaggedRTCMessageInternal {
@@ -1216,7 +1697,7 @@ mod tests {
 
         // One poll_write runs the single flush for the whole burst.
         let flushed = {
-            let mut handler = SctpHandler::new(&mut ctx);
+            let mut handler = SctpHandler::new(&mut ctx, 0);
             let mut out = vec![];
             while let Some(msg) = handler.poll_write() {
                 out.push(msg);
