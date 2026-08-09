@@ -416,7 +416,7 @@ impl RTCCertificate {
     /// Builds a self-signed certificate around an existing provider-owned signing key.
     ///
     /// Use this when the key already exists — imported from PKCS#8 with
-    /// [`RTCCrypto::import_signing_key`](crypto::RTCCrypto::import_signing_key), or held by an
+    /// [`RTCCrypto::import_signing_key`], or held by an
     /// HSM/KMS — and a fresh self-signed X.509 wrapper is needed. Use
     /// [`generate`](Self::generate) instead when the provider should create the key too.
     ///
