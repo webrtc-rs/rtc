@@ -490,8 +490,8 @@ impl Client {
     ///
     /// The realm is *not* re-negotiated. It was learned from the server's 401 during the
     /// first `Allocate`, and a credential rotation keeps the same server, so it still
-    /// applies. Follow this with [`Relay::refresh`] so the server sees the new credential
-    /// before the allocation would otherwise expire.
+    /// applies. Follow this with [`Self::refresh_allocations`] so the server sees the new
+    /// credential before the allocation would otherwise expire.
     ///
     /// [RFC 5766 §6.2]: https://datatracker.ietf.org/doc/html/rfc5766#section-6.2
     pub fn update_credentials(&mut self, username: String, password: String) {
