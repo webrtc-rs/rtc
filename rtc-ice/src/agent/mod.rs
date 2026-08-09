@@ -1,13 +1,13 @@
 //! The Sans-I/O ICE agent.
 //!
-//! An [`Agent`](crate::agent::Agent) is given local and remote candidates and inbound datagrams; it produces the
+//! An [`Agent`] is given local and remote candidates and inbound datagrams; it produces the
 //! connectivity checks to send, the state transitions to report, and eventually a selected
 //! candidate pair. It owns no sockets and no clock — the caller drives time with
 //! `handle_timeout`.
 //!
 //! Two roles exist: the controlling agent nominates the pair that will carry media, the
 //! controlled agent accepts that choice. Which side controls is decided by which offered, and the
-//! two must not agree — see [`Credentials`](crate::agent::Credentials) and [`Agent::set_role`](crate::agent::Agent::set_role).
+//! two must not agree — see [`Credentials`] and [`Agent::set_role`].
 #[cfg(test)]
 mod agent_test;
 

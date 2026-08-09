@@ -2,11 +2,11 @@
 //!
 //! Using a relay takes three steps: Allocate to obtain a public address, CreatePermission for
 //! each peer you intend to exchange data with, and then Send/Data indications (or a bound channel)
-//! to move bytes. Each step is a STUN transaction, so every [`Event`](crate::client::Event) carries the
+//! to move bytes. Each step is a STUN transaction, so every [`Event`] carries the
 //! transaction id of the request it answers.
 //!
-//! The three address kinds are easy to confuse: [`RelayedAddr`](crate::client::RelayedAddr) is what peers send to,
-//! [`ReflexiveAddr`](crate::client::ReflexiveAddr) is how the server sees this client, and [`PeerAddr`](crate::client::PeerAddr) is the far end.
+//! The three address kinds are easy to confuse: [`RelayedAddr`] is what peers send to,
+//! [`ReflexiveAddr`] is how the server sees this client, and [`PeerAddr`] is the far end.
 #[cfg(test)]
 mod client_test;
 

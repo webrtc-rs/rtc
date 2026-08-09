@@ -42,7 +42,7 @@ pub const MDNS_DEST_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(MDNS_MULTICAST
 
 /// Unique identifier for tracking mDNS queries.
 ///
-/// Each call to [`Mdns::query()`] returns a unique ID that can be used to:
+/// Each call to [`Mdns::query_now()`] returns a unique ID that can be used to:
 /// - Track which query was answered in [`MdnsEvent::QueryAnswered`]
 /// - Cancel a pending query with [`Mdns::cancel_query()`]
 /// - Check if a query is still pending with [`Mdns::is_query_pending()`]
@@ -206,7 +206,7 @@ pub enum MdnsEvent {
 ///
 /// # Query Lifecycle
 ///
-/// 1. Call [`Mdns::query()`] with the hostname to resolve
+/// 1. Call [`Mdns::query_now()`] with the hostname to resolve
 /// 2. Retrieve the query packet from [`poll_write()`](sansio::Protocol::poll_write)
 /// 3. Send the packet to the mDNS multicast address
 /// 4. When responses arrive, pass them to [`handle_read()`](sansio::Protocol::handle_read)
@@ -390,7 +390,7 @@ impl Mdns {
     ///
     /// # Arguments
     ///
-    /// * `query_id` - The ID returned by [`query()`](Self::query)
+    /// * `query_id` - The ID returned by [`query_now()`](Self::query_now)
     ///
     /// # Example
     ///
@@ -417,7 +417,7 @@ impl Mdns {
     ///
     /// # Arguments
     ///
-    /// * `query_id` - The ID returned by [`query()`](Self::query)
+    /// * `query_id` - The ID returned by [`query_now()`](Self::query_now)
     ///
     /// # Returns
     ///
@@ -786,7 +786,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
 
     /// Handle write requests (not used).
     ///
-    /// Queries are initiated via the [`query()`](Mdns::query) method instead
+    /// Queries are initiated via the [`query_now()`](Mdns::query_now) method instead
     /// of through this interface.
     fn handle_write(&mut self, _msg: ()) -> Result<()> {
         Ok(())
@@ -799,7 +799,7 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Mdns {
     /// in `packet.transport.peer_addr` (typically 224.0.0.251:5353).
     ///
     /// Packets are queued when:
-    /// - A query is started with [`query()`](Mdns::query)
+    /// - A query is started with [`query_now()`](Mdns::query_now)
     /// - A query retry is triggered by `handle_timeout()`
     /// - A response is generated for a matching question
     ///

@@ -19,7 +19,8 @@
 //!   RTCP, SDP, DTLS and SCTP.
 //! * [`error`] — the crate-wide [`Error`](error::Error) enum and `Result` alias, re-exported
 //!   by the higher-level crates so callers import from one place.
-//! * [`crypto`], [`replay_detector`] — primitives shared by DTLS and SRTP.
+//! * [`replay_detector`] — replay protection shared by DTLS and SRTP. (Cryptography
+//!   itself lives in the separate `rtc-crypto` crate, behind `RTCCryptoProvider`.)
 //! * [`tcp_framing`] — RFC 4571 length-prefixed framing, for ICE-TCP candidates.
 //! * [`ifaces`] — local interface enumeration used during ICE candidate gathering.
 //!
