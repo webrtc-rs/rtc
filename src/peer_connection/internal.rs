@@ -148,11 +148,11 @@ where
             srtp_handler_context: SrtpHandlerContext::default(),
             interceptor_handler_context: InterceptorHandlerContext::default(),
             endpoint_handler_context: EndpointHandlerContext::default(),
-            read_outs: VecDeque::new(),
+            media_read_outs: VecDeque::new(),
+            data_read_outs: VecDeque::new(),
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
-            data_channel_read_backlog: 0,
         };
 
         Ok(Self {
