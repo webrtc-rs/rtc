@@ -24,6 +24,17 @@ const PERM_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 // The Permission Lifetime MUST be 300 seconds (= 5 minutes).
 const PERM_LIFETIME: Duration = Duration::from_secs(300);
 const MAX_RETRY_ATTEMPTS: u16 = 3;
+/// Smallest step the allocation-refresh timer may advance by.
+///
+/// The timer advances by a fixed cadence from its own previous value, which keeps the refresh
+/// schedule drift-free. That only works while the step is positive. `lifetime` is assigned
+/// straight from the server's LIFETIME attribute, and a refresh carrying `LIFETIME=0` — how
+/// RFC 5766 deallocates, and what [`Relay::close`] sends — makes `lifetime / 2` zero. The timer
+/// then freezes on an already-expired instant and `poll_timeout` reports that same instant
+/// forever. A caller that treats an expired deadline as "handle it and go round again" spins
+/// on it without ever reaching its socket reads, which is
+/// [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862).
+const MIN_ALLOC_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 // RelayState is a set of params use by Relay
 pub(crate) struct RelayState {
@@ -123,7 +134,10 @@ impl Relay<'_> {
             self.client.relays.get_mut(&self.relayed_addr)
         {
             let refresh_alloc_timer = if relay.refresh_alloc_timer <= now {
-                relay.refresh_alloc_timer = relay.refresh_alloc_timer.add(relay.lifetime / 2);
+                // Floored so the timer always moves. A zero step would leave it pinned to an
+                // instant already in the past — see `MIN_ALLOC_REFRESH_INTERVAL`.
+                let step = (relay.lifetime / 2).max(MIN_ALLOC_REFRESH_INTERVAL);
+                relay.refresh_alloc_timer = relay.refresh_alloc_timer.add(step);
                 Some(relay.lifetime)
             } else {
                 None
@@ -372,7 +386,8 @@ impl Relay<'_> {
     }
 
     pub(super) fn handle_refresh_allocation_response(&mut self, res: Message) -> Result<()> {
-        if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+        let mut released = false;
+        let result = if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if res.typ.class == CLASS_ERROR_RESPONSE {
                 let mut code = ErrorCodeAttribute::default();
                 let result = code.get_from(&res);
@@ -393,11 +408,24 @@ impl Relay<'_> {
                 relay.lifetime = updated_lifetime.0;
                 debug!("updated lifetime: {} seconds", relay.lifetime.as_secs());
 
+                // A zero lifetime is the server confirming deallocation — the reply to the
+                // refresh `close()` sends. The allocation no longer exists, so neither should
+                // the relay: leaving it in the map means it keeps reporting refresh deadlines
+                // for something that is gone, and keeps trying to refresh it.
+                released = relay.lifetime.is_zero();
+
                 Ok(())
             }
         } else {
             Err(Error::ErrConnClosed)
+        };
+
+        if released {
+            self.client.relays.remove(&self.relayed_addr);
+            debug!("allocation released; relay {} dropped", self.relayed_addr);
         }
+
+        result
     }
 
     pub(super) fn refresh_permissions(&mut self) -> Result<()> {
