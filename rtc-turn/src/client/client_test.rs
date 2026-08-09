@@ -251,3 +251,209 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
 
     client.close()
 }
+
+/// A relay whose lifetime has gone to zero must not hand the caller a deadline that never
+/// advances.
+///
+/// This is the root cause behind [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862).
+/// `Relay::handle_timeout` advances the allocation timer by adding to the timer's **own**
+/// previous value rather than to `now`:
+///
+/// ```ignore
+/// relay.refresh_alloc_timer = relay.refresh_alloc_timer.add(relay.lifetime / 2);
+/// ```
+///
+/// so the step size is `lifetime / 2`. `lifetime` is assigned straight from the server's
+/// LIFETIME attribute on every refresh response, with no floor — and `Relay::close` refreshes
+/// with `LIFETIME=0`, which is how RFC 5766 deallocates. Once the server echoes that back the
+/// step becomes zero, the timer is frozen, and because nothing ever removes the entry from
+/// `client.relays` the relay keeps reporting it forever.
+///
+/// The peer-connection driver treats an expired deadline as "handle it and loop again", so a
+/// frozen expired deadline is an unbounded hot loop — starving the very `Close` that triggered
+/// it. That matches the report: cleanup never completes and the process will not exit.
+#[test]
+fn test_zero_lifetime_relay_does_not_freeze_its_deadline() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+        },
+        test_crypto_provider(),
+    )?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+        ),
+    );
+
+    // What the server's response to `close()`'s LIFETIME=0 refresh does.
+    client.relays.get_mut(&relayed_addr).unwrap().lifetime = Duration::from_secs(0);
+
+    // Drive past both timers, exactly as the driver does: read the deadline, handle it,
+    // read again. The deadline must move, or the caller is told to act on the same instant
+    // forever.
+    let mut previous = client.relay(relayed_addr)?.poll_timeout();
+    for iteration in 0..10 {
+        let now = t(1000 + iteration);
+        client.relay(relayed_addr)?.handle_timeout(now);
+        let next = client.relay(relayed_addr)?.poll_timeout();
+
+        assert!(
+            next != previous || next.is_none(),
+            "iteration {iteration}: deadline did not advance ({previous:?} -> {next:?}) while \
+             `now` is {:?} past it. The driver reads this as a zero delay, calls handle_timeout \
+             and loops — forever.",
+            now.saturating_duration_since(previous.unwrap_or(now)),
+        );
+        previous = next;
+    }
+
+    Ok(())
+}
+
+/// A server confirming deallocation must leave no relay behind.
+///
+/// `close()` refreshes the allocation with `LIFETIME=0`; the server echoes that back to confirm
+/// the allocation is gone. Before the fix for
+/// [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862) the response handler stored the
+/// zero and nothing else — the entry stayed in `client.relays` forever, still reporting refresh
+/// deadlines for an allocation that no longer existed, and still trying to refresh it.
+///
+/// Flooring the refresh step stops the *hot loop*; only removing the relay stops the dead
+/// allocation. Both are needed, and this covers the second.
+#[test]
+fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+        },
+        test_crypto_provider(),
+    )?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+        ),
+    );
+    assert!(client.relay(relayed_addr)?.poll_timeout().is_some());
+
+    // What the TURN server sends back when it honours `close()`'s LIFETIME=0 refresh.
+    let mut res = Message::new();
+    res.build(&[
+        Box::new(TransactionId::new()),
+        Box::new(MessageType::new(METHOD_REFRESH, CLASS_SUCCESS_RESPONSE)),
+        Box::new(crate::proto::lifetime::Lifetime(Duration::from_secs(0))),
+    ])?;
+
+    client
+        .relay(relayed_addr)?
+        .handle_refresh_allocation_response(res)?;
+
+    assert!(
+        !client.relays.contains_key(&relayed_addr),
+        "a deallocated allocation must not stay in the relay map — it would keep reporting \
+         refresh deadlines and keep trying to refresh something that no longer exists"
+    );
+
+    Ok(())
+}
+
+/// An Allocate success response carrying `LIFETIME=0` is rejected, not accepted as a
+/// degenerate allocation.
+///
+/// RFC 5766 §6.2 has the server take `min(client proposed, server maximum)` and fall back to
+/// the *default* lifetime (600 s) whenever that does not exceed it, so a successful Allocate
+/// never returns a lifetime below the default — zero is a protocol violation. Zero is
+/// meaningful only on the Refresh path (§7), where it means the allocation was deleted.
+///
+/// Accepting it would insert a `RelayState` whose `refresh_alloc_timer` is `now.add(0)` —
+/// already expired at construction — for an allocation that does not exist. That relay then
+/// reports an expired refresh deadline forever, which is the hot loop in
+/// [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862), reached here without any
+/// close being involved.
+#[test]
+fn test_zero_lifetime_allocate_response_is_an_error() -> Result<()> {
+    let base = Instant::now();
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+        },
+        test_crypto_provider(),
+    )?;
+
+    let mut res = Message::new();
+    res.build(&[
+        Box::new(TransactionId::new()),
+        Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_SUCCESS_RESPONSE)),
+        Box::new(RelayedAddress {
+            ip: "127.0.0.1".parse().unwrap(),
+            port: 50000,
+        }),
+        Box::new(crate::proto::lifetime::Lifetime(Duration::from_secs(0))),
+    ])?;
+
+    client.handle_allocate_response(
+        base,
+        res,
+        TransactionType::AllocateRequest(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+    )?;
+
+    assert!(
+        client.relays.is_empty(),
+        "a zero-lifetime Allocate response must not create a relay — the allocation does not \
+         exist, and the relay would report an already-expired refresh deadline forever"
+    );
+
+    match client.poll_event() {
+        Some(Event::AllocateError(_, _)) => Ok(()),
+        other => {
+            panic!("expected AllocateError for a zero-lifetime Allocate response, got {other:?}")
+        }
+    }
+}

@@ -657,6 +657,30 @@ impl Client {
                 let mut lifetime = Lifetime::default();
                 lifetime.get_from(&response)?;
 
+                // A zero lifetime here is a protocol violation, not a degenerate allocation.
+                // RFC 5766 §6.2 has the server take `min(client proposed, server maximum)` and
+                // fall back to the *default* lifetime (600 s) whenever that computation does
+                // not exceed it — so the value returned by a successful Allocate is never
+                // below the default, and certainly never zero. Zero is meaningful only on the
+                // Refresh path (§7), where it means "allocation deleted".
+                //
+                // Accepting it would build a `RelayState` whose `refresh_alloc_timer` is
+                // `now.add(0)` — expired the instant it is created — for an allocation that is
+                // already gone. That relay then reports an expired refresh deadline forever,
+                // which is what a caller polling deadlines hot-loops on. See
+                // [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862).
+                if lifetime.0.is_zero() {
+                    self.events.push_back(Event::AllocateError(
+                        response.transaction_id,
+                        Error::Other(
+                            "Allocate success response carried LIFETIME=0; RFC 5766 §6.2 \
+                             requires at least the default lifetime"
+                                .to_owned(),
+                        ),
+                    ));
+                    return Ok(());
+                }
+
                 self.relays.insert(
                     relayed_addr,
                     RelayState::new(
