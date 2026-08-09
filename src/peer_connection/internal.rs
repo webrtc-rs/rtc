@@ -152,6 +152,7 @@ where
             write_outs: VecDeque::new(),
             event_outs: VecDeque::new(),
             stats: RTCStatsAccumulator::default(),
+            data_channel_read_backlog: 0,
         };
 
         Ok(Self {

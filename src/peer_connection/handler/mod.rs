@@ -117,6 +117,23 @@ pub(crate) struct PipelineContext {
 
     // Statistics accumulator
     pub(crate) stats: RTCStatsAccumulator,
+
+    /// How many of `read_outs` are `RTCMessage::DataChannelMessage`.
+    ///
+    /// The SCTP handler bounds its drain against this, and it must **not** be
+    /// `read_outs.len()`: that queue also carries RTP and RTCP, which on a media connection
+    /// dwarf the data-channel traffic. Using the total would let a video flood stop the SCTP
+    /// handler draining its reassembly queues and throttle the peer's *data channels* — a
+    /// connection whose data-channel consumer is perfectly healthy would be slowed down by
+    /// unrelated media.
+    ///
+    /// Maintained incrementally rather than counted on demand because `get_sctp_handler` runs
+    /// on the per-datagram path, where an O(len) scan of a media backlog is not free.
+    ///
+    /// Exactly two places may touch it, and they must stay mirror images: the push in
+    /// `handle_read` and the pop in `poll_read`. Drift either way decays the bound into
+    /// permanent throttling or none at all.
+    pub(crate) data_channel_read_backlog: usize,
 }
 
 impl<I> RTCPeerConnection<I>
@@ -153,7 +170,15 @@ where
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
-        SctpHandler::new(&mut self.pipeline_context.sctp_handler_context)
+        // The SCTP handler bounds how much it pulls out of the reassembly queues against what
+        // the application has not yet consumed. That backlog lives here, not in the handler's
+        // own `read_outs` — the pipeline empties that within a single `handle_read` — and it
+        // counts *data-channel* messages only, so unrelated media cannot throttle SCTP.
+        let downstream_backlog = self.pipeline_context.data_channel_read_backlog;
+        SctpHandler::new(
+            &mut self.pipeline_context.sctp_handler_context,
+            downstream_backlog,
+        )
     }
 
     pub(crate) fn get_datachannel_handler(&mut self) -> DataChannelHandler<'_> {
@@ -248,6 +273,9 @@ where
             if let Some(rtc_message) = rtc_message {
                 // The instant travels with the message: the application learns when the packet
                 // was observed at the socket, not when it happened to drain it.
+                if matches!(rtc_message, RTCMessage::DataChannelMessage(..)) {
+                    self.pipeline_context.data_channel_read_backlog += 1;
+                }
                 self.pipeline_context.read_outs.push_back(TaggedRTCMessage {
                     now: msg.now,
                     message: rtc_message,
@@ -259,7 +287,15 @@ where
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        self.pipeline_context.read_outs.pop_front()
+        let msg = self.pipeline_context.read_outs.pop_front()?;
+        if matches!(msg.message, RTCMessage::DataChannelMessage(..)) {
+            debug_assert!(self.pipeline_context.data_channel_read_backlog > 0);
+            self.pipeline_context.data_channel_read_backlog = self
+                .pipeline_context
+                .data_channel_read_backlog
+                .saturating_sub(1);
+        }
+        Some(msg)
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
@@ -454,6 +490,51 @@ mod handler_test {
     use bytes::BytesMut;
     use sansio::Protocol;
     use std::time::Duration;
+
+    /// `poll_read` must decrement `data_channel_read_backlog` for exactly the messages
+    /// `handle_read` incremented it for, and no others.
+    ///
+    /// This is the pop half of the invariant the SCTP back-pressure bound rests on. If the
+    /// two halves ever disagree the counter drifts, and the bound decays into either
+    /// permanent throttling (count too high) or none at all (count too low). A pop that
+    /// decremented for media would underflow — `-= 1` on `0` panics in debug builds — which
+    /// is what this would catch.
+    #[test]
+    fn poll_read_decrements_the_backlog_for_data_channel_messages_only() {
+        let base = Instant::now();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(base)
+            .expect("build peer connection");
+
+        // Stand in for what `handle_read` would have queued: media outnumbering data, which
+        // is the shape that made `read_outs.len()` the wrong signal in the first place.
+        let mut expected_backlog = 0usize;
+        for i in 0..10 {
+            let message = if i % 5 == 0 {
+                expected_backlog += 1;
+                RTCMessage::DataChannelMessage(0, RTCDataChannelMessage::default())
+            } else {
+                RTCMessage::RtpPacket(Default::default(), ::rtp::packet::Packet::default())
+            };
+            pc.pipeline_context
+                .read_outs
+                .push_back(TaggedRTCMessage { now: base, message });
+        }
+        pc.pipeline_context.data_channel_read_backlog = expected_backlog;
+        assert_eq!(expected_backlog, 2, "fixture sanity");
+
+        let mut drained = 0;
+        while pc.poll_read().is_some() {
+            drained += 1;
+        }
+
+        assert_eq!(drained, 10, "every message must be handed over");
+        assert_eq!(
+            pc.pipeline_context.data_channel_read_backlog, 0,
+            "a fully drained pipeline must report no data-channel backlog, or SCTP stays \
+             throttled forever"
+        );
+    }
 
     /// The instant the application supplies on `handle_write` is the one the core stamps the
     /// resulting internal message with — not a reading the core took for itself. Before C3-03
