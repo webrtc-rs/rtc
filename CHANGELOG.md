@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MIME_TYPE_ULP_FEC`, which remains public. **This changes the default offer's SDP**: payload
   type 116 is no longer present. ULPFEC will return to the defaults once receive-side recovery
   is implemented.
+- Upgrade `nix` to the newer version that allow compile `ohos` targets.
 
 ### Deprecated
 
