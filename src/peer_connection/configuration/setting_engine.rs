@@ -369,18 +369,15 @@ impl SettingEngine {
         self.crypto_provider.as_ref()
     }
 
+    /// Set crypto provider on this engine.
+    #[doc(hidden)]
+    pub fn set_crypto_provider(&mut self, crypto_provider: Arc<dyn RTCCryptoProvider>) {
+        self.crypto_provider = Some(crypto_provider);
+    }
+
     /// Returns the multicast DNS configuration.
     pub fn multicast_dns(&self) -> &MulticastDNS {
         &self.multicast_dns
-    }
-
-    /// Returns the configured receive MTU, or the default if not set.
-    pub(crate) fn get_receive_mtu(&self) -> usize {
-        if self.receive_mtu != 0 {
-            self.receive_mtu
-        } else {
-            RECEIVE_MTU
-        }
     }
 }
 
