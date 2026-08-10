@@ -1,6 +1,8 @@
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
+use crate::peer_connection::transport::ice::candidate_pair::RTCIceCandidatePair;
+use crate::peer_connection::transport::ice::component::RTCIceComponent;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
 use crate::peer_connection::transport::ice::state::RTCIceTransportState;
@@ -15,6 +17,7 @@ use std::time::Instant;
 pub(crate) mod candidate;
 pub(crate) mod candidate_pair;
 pub(crate) mod candidate_type;
+pub(crate) mod component;
 pub(crate) mod parameters;
 pub(crate) mod protocol;
 pub(crate) mod role;
@@ -70,6 +73,57 @@ impl RTCIceTransport {
             self.agent.get_local_credentials().ufrag.as_str(),
             self.agent.get_local_credentials().pwd.as_str(),
         )
+    }
+
+    /// W3C `RTCIceTransport.getRemoteParameters()`: the remote ICE parameters received via
+    /// `setRemoteDescription`.
+    ///
+    /// `None` if they have not been received yet. Note the difference from
+    /// [`Self::get_remote_user_credentials`], which reports absent credentials as a pair of empty
+    /// strings — a caller cannot tell those from a peer that genuinely sent empty ones, and the
+    /// spec is explicit that this returns null.
+    pub(crate) fn get_remote_parameters(&self) -> Option<RTCIceParameters> {
+        let (username_fragment, password) = self.get_remote_user_credentials();
+        if username_fragment.is_empty() && password.is_empty() {
+            return None;
+        }
+
+        Some(RTCIceParameters {
+            username_fragment: username_fragment.to_string(),
+            password: password.to_string(),
+            ice_lite: false,
+        })
+    }
+
+    /// W3C `RTCIceTransport.gatheringState`.
+    ///
+    /// The spec types this as `RTCIceGathererState`, a second enum whose values are identical to
+    /// `RTCIceGatheringState`'s (`new`/`gathering`/`complete`). This crate carries one enum for
+    /// both.
+    pub(crate) fn gathering_state(&self) -> RTCIceGatheringState {
+        self.ice_gathering_state
+    }
+
+    /// W3C `RTCIceTransport.component`.
+    ///
+    /// Always [`RTCIceComponent::Rtp`]. RTCP multiplexing is required here — `RTCRtcpMuxPolicy`
+    /// has the single value `"require"` — and for a muxed transport the spec itself specifies this
+    /// value, so it is conformance rather than a simplification.
+    pub(crate) fn component(&self) -> RTCIceComponent {
+        RTCIceComponent::Rtp
+    }
+
+    /// W3C `RTCIceTransport.getSelectedCandidatePair()`.
+    ///
+    /// `None` until ICE has nominated a pair.
+    pub(crate) fn get_selected_candidate_pair(&self) -> Option<RTCIceCandidatePair> {
+        let (local, remote) = self.agent.get_selected_candidate_pair()?;
+        Some(RTCIceCandidatePair::new(local.into(), remote.into()))
+    }
+
+    /// W3C `RTCIceTransport.getRemoteCandidates()`: the remote candidates received so far.
+    pub(crate) fn get_remote_candidates(&self) -> Vec<RTCIceCandidate> {
+        RTCIceTransport::rtc_ice_candidates_from_ice_candidates(self.agent.get_remote_candidates())
     }
 
     /// Returns the remote user credentials.
@@ -193,5 +247,78 @@ impl RTCIceTransport {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transport() -> RTCIceTransport {
+        let crypto_provider =
+            crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
+        RTCIceTransport::new(Instant::now(), AgentConfig::default(), crypto_provider)
+            .expect("ice transport")
+    }
+
+    // W3C types this `RTCIceGathererState`; this crate carries the structurally identical
+    // `RTCIceGatheringState` for both. The field was already assigned by the negotiation paths —
+    // only the accessor was missing.
+    #[test]
+    fn gathering_state_reports_the_tracked_field() {
+        let mut ice_transport = transport();
+        assert_eq!(RTCIceGatheringState::New, ice_transport.gathering_state());
+
+        ice_transport.ice_gathering_state = RTCIceGatheringState::Gathering;
+        assert_eq!(
+            RTCIceGatheringState::Gathering,
+            ice_transport.gathering_state()
+        );
+
+        ice_transport.ice_gathering_state = RTCIceGatheringState::Complete;
+        assert_eq!(
+            RTCIceGatheringState::Complete,
+            ice_transport.gathering_state()
+        );
+    }
+
+    // The spec is explicit that this returns null before the remote description supplies
+    // credentials. `get_remote_user_credentials()` reports that case as a pair of empty strings,
+    // which a caller cannot distinguish from a peer that sent empty ones.
+    #[test]
+    fn remote_parameters_are_none_until_credentials_arrive() {
+        let mut ice_transport = transport();
+        assert_eq!(("", ""), ice_transport.get_remote_user_credentials());
+        assert!(
+            ice_transport.get_remote_parameters().is_none(),
+            "no remote description has been applied"
+        );
+
+        ice_transport
+            .set_remote_credentials(
+                "remoteUfrag".to_owned(),
+                "remotePasswordThatIsLongEnough".to_owned(),
+            )
+            .expect("set remote credentials");
+
+        let params = ice_transport
+            .get_remote_parameters()
+            .expect("credentials have been applied");
+        assert_eq!("remoteUfrag", params.username_fragment);
+        assert_eq!("remotePasswordThatIsLongEnough", params.password);
+    }
+
+    // Under required RTCP multiplexing the spec itself specifies "rtp" for a transport carrying
+    // both, so this is conformance rather than a stand-in.
+    #[test]
+    fn component_is_rtp_under_rtcp_mux() {
+        assert_eq!(RTCIceComponent::Rtp, transport().component());
+    }
+
+    #[test]
+    fn selected_candidate_pair_and_remote_candidates_are_empty_before_ice_runs() {
+        let ice_transport = transport();
+        assert!(ice_transport.get_selected_candidate_pair().is_none());
+        assert!(ice_transport.get_remote_candidates().is_empty());
     }
 }

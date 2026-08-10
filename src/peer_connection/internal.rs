@@ -16,6 +16,7 @@ use crate::peer_connection::transport::ice::candidate::{
     RTCIceCandidate, rtc_ice_candidates_from_ice_candidates,
 };
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
+use crate::peer_connection::transport::sctp::SCTP_MAX_CHANNELS;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
@@ -980,8 +981,15 @@ where
 
         // Create map of ids so we can compare without double-looping each time.
         let ids: HashSet<RTCDataChannelId> = self.data_channels.keys().cloned().collect();
-        let max = self.sctp_transport().max_channels();
-        while id < max - 1 {
+        // The negotiated stream count bounds data channel ids, but only once it is known: a
+        // channel may be created before the association exists, and until it connects there is
+        // nothing to bound against. This matches W3C §6.1.1.3, which applies the limit at the
+        // connected procedure rather than at creation.
+        let max = self
+            .sctp_transport()
+            .max_channels()
+            .unwrap_or(SCTP_MAX_CHANNELS);
+        while id < max.saturating_sub(1) {
             if ids.contains(&id) {
                 id += 2;
             } else {
