@@ -36,6 +36,7 @@
 //!     stun_serv_addr: String::new(), // optional: only for Binding requests
 //!     software: String::new(),
 //!     rto_in_ms: 0, // 0 selects the default retransmission timeout
+//!     allocation_refresh_interval_cap: None,
 //! };
 //! assert_eq!(config.turn_serv_addr, "turn.example.com:3478");
 //! ```

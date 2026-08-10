@@ -35,12 +35,20 @@ const MAX_RETRY_ATTEMPTS: u16 = 3;
 /// [webrtc#862](https://github.com/webrtc-rs/webrtc/issues/862).
 const MIN_ALLOC_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
+fn allocation_refresh_interval(lifetime: Duration, interval_cap: Option<Duration>) -> Duration {
+    let half_lifetime = lifetime / 2;
+    interval_cap
+        .map_or(half_lifetime, |cap| half_lifetime.min(cap))
+        .max(MIN_ALLOC_REFRESH_INTERVAL)
+}
+
 // RelayState is a set of params use by Relay
 pub(crate) struct RelayState {
     pub(crate) relayed_addr: RelayedAddr,
     pub(crate) long_term_integrity_key: Vec<u8>,
     pub(crate) nonce: Nonce,
     pub(crate) lifetime: Duration,
+    allocation_refresh_interval_cap: Option<Duration>,
     perm_map: HashMap<SocketAddr, Permission>,
     refresh_alloc_timer: Instant,
     refresh_perms_timer: Instant,
@@ -53,6 +61,7 @@ impl RelayState {
         long_term_integrity_key: Vec<u8>,
         nonce: Nonce,
         lifetime: Duration,
+        allocation_refresh_interval_cap: Option<Duration>,
     ) -> Self {
         debug!("initial lifetime: {} seconds", lifetime.as_secs());
 
@@ -61,8 +70,12 @@ impl RelayState {
             long_term_integrity_key,
             nonce,
             lifetime,
+            allocation_refresh_interval_cap,
             perm_map: HashMap::new(),
-            refresh_alloc_timer: now.add(lifetime / 2),
+            refresh_alloc_timer: now.add(allocation_refresh_interval(
+                lifetime,
+                allocation_refresh_interval_cap,
+            )),
             refresh_perms_timer: now.add(PERM_REFRESH_INTERVAL),
         }
     }
@@ -142,7 +155,10 @@ impl Relay<'_> {
             let refresh_alloc_timer = if relay.refresh_alloc_timer <= now {
                 // Floored so the timer always moves. A zero step would leave it pinned to an
                 // instant already in the past — see `MIN_ALLOC_REFRESH_INTERVAL`.
-                let step = (relay.lifetime / 2).max(MIN_ALLOC_REFRESH_INTERVAL);
+                let step = allocation_refresh_interval(
+                    relay.lifetime,
+                    relay.allocation_refresh_interval_cap,
+                );
                 relay.refresh_alloc_timer = relay.refresh_alloc_timer.add(step);
                 Some(relay.lifetime)
             } else {

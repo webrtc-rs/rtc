@@ -187,6 +187,7 @@ async fn run_main_loop(
         realm: turn_realm.to_string(),
         software: String::new(),
         rto_in_ms: 0,
+        allocation_refresh_interval_cap: None,
     };
 
     // An application is the outside caller, so it selects the crypto provider explicitly.
