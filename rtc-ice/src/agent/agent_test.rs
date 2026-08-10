@@ -2974,6 +2974,70 @@ fn test_query_only_agent_queries_mdns_remote_candidate() -> Result<()> {
     Ok(())
 }
 
+/// A terminal ICE agent must not keep advertising its last connectivity-check deadline.
+///
+/// `contact` intentionally returns without updating `last_checking_time` after the agent fails.
+/// If `poll_timeout` continues to derive a deadline from that value, every call after failure
+/// returns the same instant in the past and a Sans-I/O driver can spin indefinitely.
+#[test]
+fn test_failed_agent_stops_and_restart_resumes_connectivity_check_timer() -> Result<()> {
+    let base = Instant::now();
+    let mut agent = Agent::new(
+        base,
+        Arc::new(AgentConfig {
+            multicast_dns_mode: crate::mdns::MulticastDnsMode::Disabled,
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
+
+    agent.start_connectivity_checks(
+        base,
+        true,
+        "remote-ufrag".to_owned(),
+        "remote-password".to_owned(),
+    )?;
+    agent.update_connection_state(
+        Some(base + Duration::from_secs(190)),
+        ConnectionState::Failed,
+    );
+
+    assert_eq!(
+        agent.poll_timeout(),
+        None,
+        "a failed agent has no more connectivity checks to schedule"
+    );
+    agent.handle_timeout(base + Duration::from_secs(191))?;
+    assert_eq!(
+        agent.poll_timeout(),
+        None,
+        "handling time after failure must not recreate the stale deadline"
+    );
+
+    let restart_time = base + Duration::from_secs(200);
+    agent.apply_restart(restart_time, true)?;
+    agent.start_connectivity_checks(
+        restart_time,
+        true,
+        "new-remote-ufrag".to_owned(),
+        "new-remote-password".to_owned(),
+    )?;
+
+    assert!(
+        agent.poll_timeout().is_some(),
+        "an ICE restart must resume connectivity-check scheduling"
+    );
+
+    agent.close()?;
+    assert_eq!(
+        agent.poll_timeout(),
+        None,
+        "a closed agent has no more connectivity checks to schedule"
+    );
+
+    Ok(())
+}
+
 /// Regression test: connectivity checks for a server-reflexive local candidate
 /// must be tagged with the candidate's base (the bound host socket), not the
 /// NAT-mapped srflx address (RFC 8445 §6.1.2). Drivers that route outbound
