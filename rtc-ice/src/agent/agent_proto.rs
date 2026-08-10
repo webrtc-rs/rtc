@@ -137,7 +137,11 @@ impl sansio::Protocol<TaggedBytesMut, (), ()> for Agent {
             None
         };
 
-        let ice_timeout = if self.ufrag_pwd.remote_credentials.is_some() {
+        let ice_timeout = if self.ufrag_pwd.remote_credentials.is_some()
+            && !matches!(
+                self.connection_state,
+                ConnectionState::Failed | ConnectionState::Closed
+            ) {
             if self.force_candidate_contact {
                 // A connectivity check was requested; ask the driver to call
                 // `handle_timeout` as soon as possible. `last_checking_time` is in the
