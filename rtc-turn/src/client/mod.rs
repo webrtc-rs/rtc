@@ -132,6 +132,12 @@ pub struct ClientConfig {
     pub software: String,
     /// The initial retransmission timeout in milliseconds; each retry doubles it.
     pub rto_in_ms: u64,
+    /// Optional upper bound for the interval between allocation Refresh requests.
+    ///
+    /// By default, allocations are refreshed at half the lifetime advertised by the server.
+    /// A shorter cap can also keep the client-to-server NAT mapping active when an allocation
+    /// waits without carrying application traffic. Values below one second are rounded up.
+    pub allocation_refresh_interval_cap: Option<Duration>,
 }
 
 /// Client is a STUN client
@@ -148,6 +154,7 @@ pub struct Client {
     tr_map: TransactionMap,
     binding_mgr: BindingManager,
     rto_in_ms: u64,
+    allocation_refresh_interval_cap: Option<Duration>,
 
     relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
@@ -194,6 +201,7 @@ impl Client {
             } else {
                 DEFAULT_RTO_IN_MS
             },
+            allocation_refresh_interval_cap: config.allocation_refresh_interval_cap,
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -694,6 +702,7 @@ impl Client {
                         )?,
                         nonce,
                         lifetime.0,
+                        self.allocation_refresh_interval_cap,
                     ),
                 );
                 self.events.push_back(Event::AllocateResponse(

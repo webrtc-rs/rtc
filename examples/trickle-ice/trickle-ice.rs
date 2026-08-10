@@ -284,6 +284,7 @@ async fn run_main_loop(cli: Cli) -> Result<()> {
                     realm: cli.turn_realm.to_string(),
                     software: String::new(),
                     rto_in_ms: 0,
+                    allocation_refresh_interval_cap: None,
                 };
 
                 let mut client = TurnClient::new(cfg, crypto::default_provider()?)?;

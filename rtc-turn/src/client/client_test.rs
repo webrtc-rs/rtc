@@ -22,6 +22,7 @@ fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
             realm: String::new(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;
@@ -43,6 +44,7 @@ fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> 
             realm: String::new(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;
@@ -192,6 +194,7 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
             realm: "realm".to_owned(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;
@@ -207,6 +210,7 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
             vec![0u8; 16],
             Nonce::new(ATTR_NONCE, "nonce".to_owned()),
             lifetime,
+            None,
         ),
     );
 
@@ -252,6 +256,68 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
     client.close()
 }
 
+/// Applications may refresh an otherwise idle allocation more frequently than half its server
+/// lifetime so the client-to-server NAT mapping does not sit idle for several minutes.
+#[test]
+fn test_allocation_refresh_interval_cap_is_applied() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: Some(Duration::from_secs(30)),
+        },
+        test_crypto_provider(),
+    )?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    let mut response = Message::new();
+    response.build(&[
+        Box::new(TransactionId::new()),
+        Box::new(MessageType::new(METHOD_ALLOCATE, CLASS_SUCCESS_RESPONSE)),
+        Box::new(RelayedAddress {
+            ip: relayed_addr.ip(),
+            port: relayed_addr.port(),
+        }),
+        Box::new(crate::proto::lifetime::Lifetime(Duration::from_secs(600))),
+    ])?;
+    client.handle_allocate_response(
+        base,
+        response,
+        TransactionType::AllocateRequest(Nonce::new(ATTR_NONCE, "nonce".to_owned())),
+    )?;
+
+    for expected_secs in [30, 60, 90, 120, 150, 180] {
+        assert_eq!(
+            client.relay(relayed_addr)?.poll_timeout(),
+            Some(t(expected_secs))
+        );
+        client.relay(relayed_addr)?.handle_timeout(t(expected_secs));
+
+        let transmit = client
+            .poll_write()
+            .expect("the configured cadence must emit an allocation Refresh");
+        let mut message = Message::new();
+        message.raw = transmit.message.to_vec();
+        message.decode()?;
+        assert_eq!(message.typ.method, METHOD_REFRESH);
+    }
+
+    assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(210)));
+
+    client.close()
+}
+
 /// A relay whose lifetime has gone to zero must not hand the caller a deadline that never
 /// advances.
 ///
@@ -289,6 +355,7 @@ fn test_zero_lifetime_relay_does_not_freeze_its_deadline() -> Result<()> {
             realm: "realm".to_owned(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;
@@ -302,6 +369,7 @@ fn test_zero_lifetime_relay_does_not_freeze_its_deadline() -> Result<()> {
             vec![0u8; 16],
             Nonce::new(ATTR_NONCE, "nonce".to_owned()),
             Duration::from_secs(600),
+            None,
         ),
     );
 
@@ -357,6 +425,7 @@ fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
             realm: "realm".to_owned(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;
@@ -370,6 +439,7 @@ fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
             vec![0u8; 16],
             Nonce::new(ATTR_NONCE, "nonce".to_owned()),
             Duration::from_secs(600),
+            None,
         ),
     );
     assert!(client.relay(relayed_addr)?.poll_timeout().is_some());
@@ -423,6 +493,7 @@ fn test_zero_lifetime_allocate_response_is_an_error() -> Result<()> {
             realm: "realm".to_owned(),
             software: "TEST SOFTWARE".to_owned(),
             rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
         },
         test_crypto_provider(),
     )?;

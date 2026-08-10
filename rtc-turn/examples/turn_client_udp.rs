@@ -92,6 +92,7 @@ fn main() -> Result<()> {
         realm: realm.to_string(),
         software: String::new(),
         rto_in_ms: 0,
+        allocation_refresh_interval_cap: None,
     };
 
     // An application selects the crypto provider; library code never resolves a default.
