@@ -270,7 +270,7 @@ impl SctpMaxMessageSize {
     /// Returns the message size as `usize`.
     pub fn as_usize(&self) -> usize {
         match self {
-            Self::Bounded(result) => *result as usize,
+            Self::Bounded(result) => (*result).min(Self::MAX_MESSAGE_SIZE) as usize,
             Self::Unbounded => Self::MAX_MESSAGE_SIZE as usize,
         }
     }

@@ -280,17 +280,18 @@ use crate::peer_connection::state::peer_connection_state::{
     NegotiationNeededState, RTCPeerConnectionState,
 };
 use crate::peer_connection::state::signaling_state::{RTCSignalingState, StateChangeOp};
+use crate::peer_connection::transport::RTCSctpTransport;
 use crate::peer_connection::transport::dtls::fingerprint::RTCDtlsFingerprint;
 use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{
     DEFAULT_DTLS_ROLE_ANSWER, DEFAULT_DTLS_ROLE_OFFER, RTCDtlsRole,
 };
-use crate::peer_connection::transport::dtls::{RTCDtlsTransport, RTCDtlsTransportConfig};
-use crate::peer_connection::transport::ice::RTCIceTransport;
+use crate::peer_connection::transport::dtls::{DtlsTransport, RTCDtlsTransportConfig};
+use crate::peer_connection::transport::ice::IceTransport;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidateInit;
 use crate::peer_connection::transport::ice::parameters::RTCIceParameters;
 use crate::peer_connection::transport::ice::role::RTCIceRole;
-use crate::peer_connection::transport::sctp::RTCSctpTransport;
+use crate::peer_connection::transport::sctp::SctpTransport;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -2233,6 +2234,33 @@ where
         }
     }
 
+    /// The SCTP transport over which data channels are carried.
+    ///
+    /// `None` until SCTP has been negotiated — that is, until a description establishing an
+    /// SCTP association has been applied by both sides. A connection carrying only media never
+    /// has one.
+    ///
+    /// This is the **only** transport accessor on `RTCPeerConnection`, matching the W3C
+    /// interface, which exposes `sctp` and nothing else. The DTLS and ICE transports are
+    /// reached by walking from here (or from a sender or receiver):
+    ///
+    /// ```text
+    /// pc.sctp()?.transport().ice_transport()
+    /// ```
+    ///
+    /// ## Specifications
+    ///
+    /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-sctp)
+    pub fn sctp(&self) -> Option<RTCSctpTransport<'_, I>> {
+        if self.sctp_transport().is_started {
+            Some(RTCSctpTransport {
+                peer_connection: self,
+            })
+        } else {
+            None
+        }
+    }
+
     /// rtp_sender provides the access to RTCRtpSender object with the given id
     pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_, I>>
     where
@@ -2355,7 +2383,10 @@ where
 mod tests {
     use super::*;
     use crate::data_channel::state::RTCDataChannelState;
+    use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
     use crate::peer_connection::configuration::setting_engine::SettingEngineBuilder;
+    use crate::peer_connection::transport::RTCIceComponent;
+    use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
     use sctp::AssociationHandle;
 
     #[test]
@@ -2383,6 +2414,190 @@ mod tests {
                 "input {input} should clamp up to the 1500-byte floor"
             );
         }
+    }
+
+    // The graph the spec exposes: `pc.sctp` is the only way in, and the rest is walked.
+    #[test]
+    fn sctp_is_none_until_sctp_is_negotiated() {
+        let pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        assert!(
+            pc.sctp().is_none(),
+            "nothing has been negotiated, so there is no SCTP transport to expose"
+        );
+    }
+
+    #[test]
+    fn the_transport_graph_is_walkable_and_ids_identify() {
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        // `start()` is what negotiation calls once both descriptions carry an m=application
+        // section; it is the predicate `sctp()` keys off.
+        pc.sctp_transport_mut()
+            .start(
+                RTCDtlsRole::Client,
+                crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+
+        let sctp = pc.sctp().expect("SCTP is negotiated");
+        let dtls = sctp.transport();
+        let ice = dtls.ice_transport();
+
+        // Three transports, three identities.
+        assert_ne!(sctp.id(), dtls.id());
+        assert_ne!(dtls.id(), ice.id());
+        assert_ne!(sctp.id(), ice.id());
+
+        // Ids are stored, not minted per call: walking twice yields the same identity.
+        let dtls_again = pc.sctp().unwrap().transport();
+        assert_eq!(dtls.id(), dtls_again.id());
+        assert_eq!(ice.id(), dtls_again.ice_transport().id());
+
+        // The default configuration caps messages at 64 KiB and the peer advertised no limit,
+        // so the negotiated value is this endpoint's cap.
+        assert_eq!(Some(65536), sctp.max_message_size());
+        // No association yet, so no negotiated stream count.
+        assert_eq!(None, sctp.max_channels());
+        assert_eq!(RTCIceComponent::Rtp, ice.component());
+    }
+
+    // W3C types `maxMessageSize` `unrestricted double` so that an implementation with no limit
+    // can report +Infinity. This one always has a limit — the working buffer is a real
+    // allocation — so a configuration naming no limit resolves to the implementation ceiling,
+    // and the value reported is the value enforced.
+    #[test]
+    fn max_message_size_with_no_configured_limit_reports_the_ceiling() {
+        let setting_engine = SettingEngineBuilder::new()
+            .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(0))
+            .build();
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .with_setting_engine(setting_engine)
+            .build(Instant::now())
+            .unwrap();
+        pc.sctp_transport_mut()
+            .start(
+                RTCDtlsRole::Client,
+                crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+
+        assert_eq!(
+            Some(SctpMaxMessageSize::MAX_MESSAGE_SIZE),
+            pc.sctp().expect("negotiated").max_message_size()
+        );
+    }
+
+    // `RTCRtpSender.transport` / `RTCRtpReceiver.transport` come from the per-object
+    // `[[SenderTransport]]` / `[[ReceiverTransport]]` slots, filled when the transceiver is
+    // associated by negotiation. Before that the spec reports null.
+    #[test]
+    fn sender_and_receiver_transport_are_none_until_the_transceiver_is_associated() {
+        let mut pc = media_pc();
+        // `add_track` creates a sendrecv transceiver, so this one has both a sender and a
+        // receiver while still being unassociated.
+        let track = MediaStreamTrack::new(
+            "stream".to_owned(),
+            "track".to_owned(),
+            "label".to_owned(),
+            RtpCodecKind::Audio,
+            vec![],
+        );
+        let sender_id = pc.add_track(track).expect("add track");
+        let receiver_id = RTCRtpReceiverId::from(sender_id.0);
+
+        assert!(pc.rtp_transceivers[sender_id.0].mid().is_none());
+        assert!(
+            pc.rtp_sender(sender_id)
+                .expect("sender")
+                .transport()
+                .is_none(),
+            "an unassociated sender has a null transport"
+        );
+        assert!(
+            pc.rtp_receiver(receiver_id)
+                .expect("receiver")
+                .transport()
+                .is_none(),
+            "an unassociated receiver has a null transport"
+        );
+
+        // Applying a local offer associates the transceiver. This is the offerer's window: a mid
+        // exists, but no answer has arrived so DTLS has not started — and a browser reports a
+        // transport here, which is why the predicate is association rather than "DTLS is up".
+        let offer = pc.create_offer(None).expect("create offer");
+        pc.set_local_description(Instant::now(), offer)
+            .expect("set local description");
+        assert!(pc.rtp_transceivers[sender_id.0].mid().is_some());
+        assert!(
+            !pc.dtls_transport().is_started(),
+            "no answer yet, so DTLS has not been brought up"
+        );
+
+        let sender_transport_id = pc
+            .rtp_sender(sender_id)
+            .expect("sender")
+            .transport()
+            .expect("an associated sender has a transport")
+            .id();
+        let receiver_transport_id = pc
+            .rtp_receiver(receiver_id)
+            .expect("receiver")
+            .transport()
+            .expect("an associated receiver has a transport")
+            .id();
+
+        // Under bundling both directions share one DTLS transport, as the spec says...
+        assert_eq!(sender_transport_id, receiver_transport_id);
+        // ...and it is the same transport the rest of the graph names.
+        assert_eq!(sender_transport_id, pc.dtls_transport().id);
+        // Its state is `New` until the handshake begins: a transport that exists but has not
+        // connected, exactly as a browser reports in this window.
+        assert_eq!(RTCDtlsTransportState::New, pc.dtls_transport().state());
+    }
+
+    // Two connections must never report the same transport as each other's. This is the case a
+    // per-connection counter or a small-integer scheme gets wrong.
+    #[test]
+    fn transports_of_two_peer_connections_are_never_equal() {
+        let mut ids = vec![];
+        for _ in 0..2 {
+            let mut pc = RTCPeerConnectionBuilder::new()
+                .build(Instant::now())
+                .unwrap();
+            pc.sctp_transport_mut()
+                .start(
+                    RTCDtlsRole::Client,
+                    crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities {
+                        max_message_size: 0,
+                    },
+                    5000,
+                    5000,
+                )
+                .expect("start");
+            let sctp = pc.sctp().expect("SCTP is negotiated");
+            ids.push((
+                sctp.id(),
+                sctp.transport().id(),
+                sctp.transport().ice_transport().id(),
+            ));
+        }
+
+        let (a_sctp, a_dtls, a_ice) = ids[0];
+        let (b_sctp, b_dtls, b_ice) = ids[1];
+        assert_ne!(a_sctp, b_sctp);
+        assert_ne!(a_dtls, b_dtls);
+        assert_ne!(a_ice, b_ice);
     }
 
     #[test]

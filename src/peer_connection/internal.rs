@@ -17,6 +17,7 @@ use crate::peer_connection::transport::ice::candidate::{
 };
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use crate::peer_connection::transport::sctp::SCTP_MAX_CHANNELS;
+use crate::peer_connection::transport::{RTCTransportId, TransportKind};
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
     RTCRtpCodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
@@ -26,6 +27,7 @@ use crate::rtp_transceiver::{PayloadType, RTCRtpTransceiverDirection, RTCRtpTran
 use crate::statistics::accumulator::IceCandidateAccumulator;
 use ::sdp::description::session::*;
 use ::sdp::util::ConnectionRole;
+use rand::RngExt;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
@@ -108,12 +110,25 @@ where
             ..Default::default()
         };
 
+        // One random nonce per peer connection, combined with a per-transport discriminator to
+        // form the three `RTCTransportId`s. Drawn here rather than from a process-wide counter:
+        // a counter is ambient state, and `rtc` may be used many times over in one process.
+        // Randomness is what keeps two connections' transports from comparing equal — see
+        // `RTCTransportId`.
+        let transport_id_nonce: u64 = rand::rng().random();
+        let ice_transport_id = RTCTransportId::new(transport_id_nonce, TransportKind::Ice);
+        let dtls_transport_id = RTCTransportId::new(transport_id_nonce, TransportKind::Dtls);
+        let sctp_transport_id = RTCTransportId::new(transport_id_nonce, TransportKind::Sctp);
+
         // Create the ICE transport
-        let ice_transport = RTCIceTransport::new(now, agent_config, crypto_provider.clone())?;
+        let ice_transport =
+            IceTransport::new(now, agent_config, crypto_provider.clone(), ice_transport_id)?;
 
         // Create the DTLS transport
         let certificates = configuration.certificates.drain(..).collect();
-        let dtls_transport = RTCDtlsTransport::new(RTCDtlsTransportConfig {
+        let dtls_transport = DtlsTransport::new(RTCDtlsTransportConfig {
+            id: dtls_transport_id,
+            ice_transport_id,
             certificates,
             answering_dtls_role: setting_engine.answering_dtls_role,
             srtp_protection_profiles: setting_engine.srtp_protection_profiles.clone(),
@@ -127,9 +142,11 @@ where
         })?;
 
         // Create the SCTP transport
-        let sctp_transport = RTCSctpTransport::new(
+        let sctp_transport = SctpTransport::new(
             setting_engine.sctp_max_message_size,
             setting_engine.sctp_max_receive_buffer_size,
+            sctp_transport_id,
+            dtls_transport_id,
         );
 
         // Create Pipeline Context
@@ -633,27 +650,27 @@ where
         );
     }
 
-    pub(crate) fn ice_transport(&self) -> &RTCIceTransport {
+    pub(crate) fn ice_transport(&self) -> &IceTransport {
         &self.pipeline_context.ice_handler_context.ice_transport
     }
 
-    pub(crate) fn ice_transport_mut(&mut self) -> &mut RTCIceTransport {
+    pub(crate) fn ice_transport_mut(&mut self) -> &mut IceTransport {
         &mut self.pipeline_context.ice_handler_context.ice_transport
     }
 
-    pub(crate) fn dtls_transport(&self) -> &RTCDtlsTransport {
+    pub(crate) fn dtls_transport(&self) -> &DtlsTransport {
         &self.pipeline_context.dtls_handler_context.dtls_transport
     }
 
-    pub(crate) fn dtls_transport_mut(&mut self) -> &mut RTCDtlsTransport {
+    pub(crate) fn dtls_transport_mut(&mut self) -> &mut DtlsTransport {
         &mut self.pipeline_context.dtls_handler_context.dtls_transport
     }
 
-    pub(crate) fn sctp_transport(&self) -> &RTCSctpTransport {
+    pub(crate) fn sctp_transport(&self) -> &SctpTransport {
         &self.pipeline_context.sctp_handler_context.sctp_transport
     }
 
-    pub(crate) fn sctp_transport_mut(&mut self) -> &mut RTCSctpTransport {
+    pub(crate) fn sctp_transport_mut(&mut self) -> &mut SctpTransport {
         &mut self.pipeline_context.sctp_handler_context.sctp_transport
     }
 
@@ -949,8 +966,8 @@ where
                 RTCPeerConnectionState::New
             } else if (self.ice_transport().ice_connection_state == RTCIceConnectionState::New || self.ice_transport().ice_connection_state == RTCIceConnectionState::Checking) ||
                 (self.dtls_transport().state == RTCDtlsTransportState::New || self.dtls_transport().state == RTCDtlsTransportState::Connecting) {
-                // None of the previous states apply and any RTCIceTransport is in the "new" or "checking" state or
-                // any RTCDtlsTransport is in the "new" or "connecting" state.
+                // None of the previous states apply and any IceTransport is in the "new" or "checking" state or
+                // any DtlsTransport is in the "new" or "connecting" state.
                 RTCPeerConnectionState::Connecting
             } else if (self.ice_transport().ice_connection_state == RTCIceConnectionState::Connected || self.ice_transport().ice_connection_state == RTCIceConnectionState::Completed || self.ice_transport().ice_connection_state == RTCIceConnectionState::Closed) &&
                 (self.dtls_transport().state == RTCDtlsTransportState::Connected || self.dtls_transport().state == RTCDtlsTransportState::Closed) {

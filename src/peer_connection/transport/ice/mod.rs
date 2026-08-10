@@ -1,5 +1,6 @@
 use crate::peer_connection::state::ice_connection_state::RTCIceConnectionState;
 use crate::peer_connection::state::ice_gathering_state::RTCIceGatheringState;
+use crate::peer_connection::transport::RTCTransportId;
 use crate::peer_connection::transport::ice::candidate::RTCIceCandidate;
 use crate::peer_connection::transport::ice::candidate_pair::RTCIceCandidatePair;
 use crate::peer_connection::transport::ice::component::RTCIceComponent;
@@ -26,24 +27,28 @@ pub(crate) mod state;
 
 /// ICETransport allows an application access to information about the ICE
 /// transport over which packets are sent and received.
-pub(crate) struct RTCIceTransport {
+pub(crate) struct IceTransport {
     pub(crate) agent: Agent,
+
+    pub(crate) id: RTCTransportId,
 
     pub(crate) ice_gathering_state: RTCIceGatheringState,
     pub(crate) ice_connection_state: RTCIceConnectionState,
 }
 
-impl RTCIceTransport {
-    /// creates a new RTCIceTransport
+impl IceTransport {
+    /// creates a new IceTransport
     pub(crate) fn new(
         now: Instant,
         agent_config: AgentConfig,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
+        id: RTCTransportId,
     ) -> Result<Self> {
         let agent = Agent::new(now, Arc::new(agent_config), crypto_provider)?;
 
-        Ok(RTCIceTransport {
+        Ok(IceTransport {
             agent,
+            id,
             ice_gathering_state: RTCIceGatheringState::New,
             ice_connection_state: RTCIceConnectionState::default(),
         })
@@ -62,7 +67,7 @@ impl RTCIceTransport {
 
     /// get_local_candidates returns the sequence of valid local candidates associated with the ICEGatherer.
     pub(crate) fn get_local_candidates(&self) -> Result<Vec<RTCIceCandidate>> {
-        Ok(RTCIceTransport::rtc_ice_candidates_from_ice_candidates(
+        Ok(IceTransport::rtc_ice_candidates_from_ice_candidates(
             self.agent.get_local_candidates(),
         ))
     }
@@ -75,7 +80,7 @@ impl RTCIceTransport {
         )
     }
 
-    /// W3C `RTCIceTransport.getRemoteParameters()`: the remote ICE parameters received via
+    /// W3C `IceTransport.getRemoteParameters()`: the remote ICE parameters received via
     /// `setRemoteDescription`.
     ///
     /// `None` if they have not been received yet. Note the difference from
@@ -95,7 +100,7 @@ impl RTCIceTransport {
         })
     }
 
-    /// W3C `RTCIceTransport.gatheringState`.
+    /// W3C `IceTransport.gatheringState`.
     ///
     /// The spec types this as `RTCIceGathererState`, a second enum whose values are identical to
     /// `RTCIceGatheringState`'s (`new`/`gathering`/`complete`). This crate carries one enum for
@@ -104,7 +109,7 @@ impl RTCIceTransport {
         self.ice_gathering_state
     }
 
-    /// W3C `RTCIceTransport.component`.
+    /// W3C `IceTransport.component`.
     ///
     /// Always [`RTCIceComponent::Rtp`]. RTCP multiplexing is required here — `RTCRtcpMuxPolicy`
     /// has the single value `"require"` — and for a muxed transport the spec itself specifies this
@@ -113,7 +118,7 @@ impl RTCIceTransport {
         RTCIceComponent::Rtp
     }
 
-    /// W3C `RTCIceTransport.getSelectedCandidatePair()`.
+    /// W3C `IceTransport.getSelectedCandidatePair()`.
     ///
     /// `None` until ICE has nominated a pair.
     pub(crate) fn get_selected_candidate_pair(&self) -> Option<RTCIceCandidatePair> {
@@ -121,9 +126,9 @@ impl RTCIceTransport {
         Some(RTCIceCandidatePair::new(local.into(), remote.into()))
     }
 
-    /// W3C `RTCIceTransport.getRemoteCandidates()`: the remote candidates received so far.
+    /// W3C `IceTransport.getRemoteCandidates()`: the remote candidates received so far.
     pub(crate) fn get_remote_candidates(&self) -> Vec<RTCIceCandidate> {
-        RTCIceTransport::rtc_ice_candidates_from_ice_candidates(self.agent.get_remote_candidates())
+        IceTransport::rtc_ice_candidates_from_ice_candidates(self.agent.get_remote_candidates())
     }
 
     /// Returns the remote user credentials.
@@ -252,13 +257,25 @@ impl RTCIceTransport {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+
+    /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
+    fn test_transport_id(kind: TransportKind) -> RTCTransportId {
+        RTCTransportId::new(0xabcd_ef01_2345_6789, kind)
+    }
     use super::*;
 
-    fn transport() -> RTCIceTransport {
+    fn transport() -> IceTransport {
         let crypto_provider =
             crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
-        RTCIceTransport::new(Instant::now(), AgentConfig::default(), crypto_provider)
-            .expect("ice transport")
+        IceTransport::new(
+            Instant::now(),
+            AgentConfig::default(),
+            crypto_provider,
+            test_transport_id(TransportKind::Ice),
+        )
+        .expect("ice transport")
     }
 
     // W3C types this `RTCIceGathererState`; this crate carries the structurally identical

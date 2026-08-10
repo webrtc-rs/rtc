@@ -9,7 +9,7 @@ use std::fmt;
 /// * [MDN]
 /// * [W3C]
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceTransport/component
+/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/IceTransport/component
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicecomponent
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -18,7 +18,7 @@ pub enum RTCIceComponent {
     ///
     /// This is the only component this implementation reports: RTCP multiplexing is required
     /// (`RTCRtcpMuxPolicy` has the single value `"require"`), and the spec says of a muxed
-    /// transport that "a single `RTCIceTransport` transports both RTP and RTCP and `component` is
+    /// transport that "a single `IceTransport` transports both RTP and RTCP and `component` is
     /// set to `rtp`".
     #[default]
     #[serde(rename = "rtp")]

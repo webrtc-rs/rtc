@@ -3,7 +3,7 @@ use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
-use crate::peer_connection::transport::dtls::RTCDtlsTransport;
+use crate::peer_connection::transport::dtls::DtlsTransport;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
 use crate::statistics::accumulator::{CertificateStatsAccumulator, RTCStatsAccumulator};
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub(crate) struct DtlsHandlerContext {
-    pub(crate) dtls_transport: RTCDtlsTransport,
+    pub(crate) dtls_transport: DtlsTransport,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
@@ -30,7 +30,7 @@ pub(crate) struct DtlsHandlerContext {
 }
 
 impl DtlsHandlerContext {
-    pub(crate) fn new(dtls_transport: RTCDtlsTransport) -> Self {
+    pub(crate) fn new(dtls_transport: DtlsTransport) -> Self {
         Self {
             dtls_transport,
             read_outs: VecDeque::new(),
@@ -67,7 +67,7 @@ impl<'a> DtlsHandler<'a> {
             .transport
             .on_dtls_state_changed(RTCDtlsTransportState::Connected);
 
-        // Retain the peer's chain for `RTCDtlsTransport::get_remote_certificates()`. The stats
+        // Retain the peer's chain for `DtlsTransport::get_remote_certificates()`. The stats
         // registration below keeps only a fingerprint-derived id, which is not reversible.
         self.ctx.dtls_transport.remote_certificates = peer_certificates.to_vec();
 
@@ -459,13 +459,21 @@ impl<'a> DtlsHandler<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+
+    /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
+    fn test_transport_id(kind: TransportKind) -> RTCTransportId {
+        RTCTransportId::new(0xabcd_ef01_2345_6789, kind)
+    }
 
     #[test]
     fn timeout_before_dtls_starts_is_a_noop() {
         let provider =
             crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
-        let transport = RTCDtlsTransport::new(
+        let transport = DtlsTransport::new(
             crate::peer_connection::transport::dtls::RTCDtlsTransportConfig {
+                id: test_transport_id(TransportKind::Dtls),
+                ice_transport_id: test_transport_id(TransportKind::Ice),
                 certificates: vec![],
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],
@@ -491,8 +499,10 @@ mod tests {
     fn handshake_completion_retains_the_peer_certificate_chain() -> Result<()> {
         let provider =
             crypto::default_provider().expect("a built-in crypto provider is enabled for tests");
-        let transport = RTCDtlsTransport::new(
+        let transport = DtlsTransport::new(
             crate::peer_connection::transport::dtls::RTCDtlsTransportConfig {
+                id: test_transport_id(TransportKind::Dtls),
+                ice_transport_id: test_transport_id(TransportKind::Ice),
                 certificates: vec![],
                 answering_dtls_role: Default::default(),
                 srtp_protection_profiles: vec![],

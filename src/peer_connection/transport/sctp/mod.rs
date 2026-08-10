@@ -1,4 +1,5 @@
 use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+use crate::peer_connection::transport::RTCTransportId;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::sctp::capabilities::SCTPTransportCapabilities;
 use crate::peer_connection::transport::sctp::state::RTCSctpTransportState;
@@ -13,12 +14,18 @@ pub(crate) mod state;
 /// The stream-count ceiling used when no negotiated value is available yet.
 ///
 /// Not the spec's `maxChannels` — that is the negotiated minimum, reported by
-/// [`RTCSctpTransport::max_channels`]. This is only the "no constraint known" fallback.
+/// [`SctpTransport::max_channels`]. This is only the "no constraint known" fallback.
 pub(crate) const SCTP_MAX_CHANNELS: u16 = u16::MAX;
 
 /// SCTPTransport provides details about the SCTP transport.
-#[derive(Default)]
-pub(crate) struct RTCSctpTransport {
+///
+/// Not `Default`: `id` and `dtls_transport_id` identify *this* connection's transports, and a
+/// default-constructed id would compare equal across connections — the one thing
+/// [`RTCTransportId`] must never do. Nothing constructed one this way.
+pub(crate) struct SctpTransport {
+    pub(crate) id: RTCTransportId,
+    pub(crate) dtls_transport_id: RTCTransportId,
+
     pub(crate) sctp_endpoint: Option<::sctp::Endpoint>,
     pub(crate) sctp_transport_config: Option<::sctp::TransportConfig>,
     pub(crate) sctp_associations: HashMap<AssociationHandle, Association>,
@@ -43,12 +50,16 @@ pub(crate) struct RTCSctpTransport {
     pub(crate) internal_buffer: Vec<u8>,
 }
 
-impl RTCSctpTransport {
+impl SctpTransport {
     pub(crate) fn new(
         max_message_size: SctpMaxMessageSize,
         max_receive_buffer_size: Option<u32>,
+        id: RTCTransportId,
+        dtls_transport_id: RTCTransportId,
     ) -> Self {
         Self {
+            id,
+            dtls_transport_id,
             sctp_endpoint: None,
             sctp_transport_config: None,
             sctp_associations: HashMap::new(),
@@ -81,7 +92,7 @@ impl RTCSctpTransport {
         self.sctp_associations.values().next()
     }
 
-    /// W3C `RTCSctpTransport.state`.
+    /// W3C `SctpTransport.state`.
     ///
     /// Derived from the association rather than tracked separately: the previous `state` field was
     /// assigned once at construction and never updated or read, so any getter over it would have
@@ -95,19 +106,22 @@ impl RTCSctpTransport {
         }
     }
 
-    /// W3C `RTCSctpTransport.maxMessageSize`, in bytes.
+    /// W3C `SctpTransport.maxMessageSize`, in bytes.
     ///
     /// `None` until the association has been negotiated, at which point it is the reconciliation of
     /// this endpoint's configured ceiling with the peer's `max-message-size` SDP attribute
-    /// ([RFC 8841 §6]). The caller maps this to the spec's `unrestricted double`: [`u32::MAX`] is
-    /// the "neither side imposes a limit" case, which the spec represents as positive infinity.
+    /// ([RFC 8841 §6]).
+    ///
+    /// Always finite. The spec types the attribute `unrestricted double` so that an
+    /// implementation with no limit can report positive infinity; this one always has a limit,
+    /// because the value also sizes a real allocation — see `start()`.
     ///
     /// [RFC 8841 §6]: https://datatracker.ietf.org/doc/html/rfc8841#section-6
     pub(crate) fn max_message_size(&self) -> Option<u32> {
         self.negotiated_max_message_size
     }
 
-    /// W3C `RTCSctpTransport.maxChannels`: the minimum of the negotiated inbound and outbound
+    /// W3C `SctpTransport.maxChannels`: the minimum of the negotiated inbound and outbound
     /// stream counts.
     ///
     /// `None` until the association reaches the connected state, matching the spec's "this
@@ -131,10 +145,24 @@ impl RTCSctpTransport {
         }
         self.is_started = true;
 
-        let max_message_size = RTCSctpTransport::calc_message_size(
-            remote_caps.max_message_size,
-            self.max_message_size.as_usize() as u32,
-        );
+        // W3C §6.1.1.2 defines `canSendSize` as what this endpoint can actually send, and allows
+        // 0 only when the implementation "can handle messages of any size". This one cannot: the
+        // working buffer below is a real allocation, so the ceiling is `MAX_MESSAGE_SIZE`. A
+        // configured 0 therefore resolves to that ceiling rather than to "unlimited".
+        //
+        // Without this, `calc_message_size(0, 0)` yields `u32::MAX` and the two lines below try to
+        // allocate a 4 GiB buffer and configure an unbounded message size — an OOM waiting for the
+        // first peer that advertises no limit. Reporting `u32::MAX` while enforcing something far
+        // smaller would be worse than either: `maxMessageSize` is a promise to the application
+        // about what it may pass to `send()`, so the value reported and the value enforced have to
+        // be the same one.
+        let can_send_size = match self.max_message_size.as_usize() as u32 {
+            0 => SctpMaxMessageSize::MAX_MESSAGE_SIZE,
+            configured => configured,
+        };
+        let max_message_size =
+            SctpTransport::calc_message_size(remote_caps.max_message_size, can_send_size);
+
         // This is the spec's [[MaxMessageSize]] slot. It was previously computed here, used to size
         // the buffer and the transport config, and then discarded, which left nothing for
         // `maxMessageSize` to report.
@@ -173,13 +201,25 @@ impl RTCSctpTransport {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+
+    /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
+    fn test_transport_id(kind: TransportKind) -> RTCTransportId {
+        RTCTransportId::new(0xabcd_ef01_2345_6789, kind)
+    }
     use super::*;
 
     fn started_transport(
         configured: SctpMaxMessageSize,
         remote_max_message_size: u32,
-    ) -> RTCSctpTransport {
-        let mut transport = RTCSctpTransport::new(configured, None);
+    ) -> SctpTransport {
+        let mut transport = SctpTransport::new(
+            configured,
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .start(
                 RTCDtlsRole::Client,
@@ -208,24 +248,45 @@ mod tests {
         assert_eq!(Some(16384), transport.max_message_size());
     }
 
-    // Neither side imposes a limit. The core reports u32::MAX here; the public accessor maps
-    // that to the spec's positive infinity.
+    // Neither side names a limit. This implementation still has one — the working buffer is a
+    // real allocation — so `canSendSize` resolves to `MAX_MESSAGE_SIZE` rather than to
+    // "unlimited" (W3C §6.1.1.2 allows 0 only for an implementation that can handle any size).
+    // Reporting `u32::MAX` here would promise the application 4 GiB messages and then allocate a
+    // 256 KiB buffer.
     #[test]
-    fn max_message_size_is_unbounded_when_neither_side_limits() {
+    fn no_limit_on_either_side_resolves_to_the_implementation_ceiling() {
         let transport = started_transport(SctpMaxMessageSize::Bounded(0), 0);
-        assert_eq!(Some(u32::MAX), transport.max_message_size());
+        assert_eq!(
+            Some(SctpMaxMessageSize::MAX_MESSAGE_SIZE),
+            transport.max_message_size()
+        );
+        assert_eq!(
+            SctpMaxMessageSize::MAX_MESSAGE_SIZE as usize,
+            transport.internal_buffer.len(),
+            "the reported size and the buffer actually allocated must be the same number"
+        );
     }
 
     #[test]
     fn max_message_size_is_none_before_start() {
-        let transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         assert_eq!(None, transport.max_message_size());
     }
 
     // No association yet: the spec's initial state, and nothing to report for maxChannels.
     #[test]
     fn state_and_max_channels_before_any_association() {
-        let transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         assert_eq!(RTCSctpTransportState::Connecting, transport.state());
         assert_eq!(None, transport.max_channels());
     }
@@ -235,7 +296,12 @@ mod tests {
     // never-updated `state` field got wrong.
     #[test]
     fn state_follows_a_closed_association() {
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .sctp_associations
             .insert(AssociationHandle(0), Association::default());
@@ -251,7 +317,12 @@ mod tests {
     // can assert the configured (or default) receive-buffer size flowed through `start()`.
     #[test]
     fn start_applies_configured_receive_buffer_size() {
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), Some(200_000));
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            Some(200_000),
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .start(
                 RTCDtlsRole::Client,
@@ -273,7 +344,12 @@ mod tests {
 
     #[test]
     fn start_without_override_uses_default_receive_buffer_size() {
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .start(
                 RTCDtlsRole::Client,

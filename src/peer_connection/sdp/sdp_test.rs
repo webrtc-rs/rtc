@@ -5,7 +5,7 @@ use super::*;
 use crate::api::APIBuilder;
 use crate::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8};
 use crate::api::setting_engine::SettingEngine;
-use crate::dtls_transport::RTCDtlsTransport;
+use crate::dtls_transport::DtlsTransport;
 use crate::dtls_transport::dtls_role::DEFAULT_DTLS_ROLE_OFFER;
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::rtp_transceiver::rtp_sender::RTCRtpSender;
@@ -623,7 +623,7 @@ async fn test_media_description_fingerprints() -> Result<()> {
     let kp = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
     let certificate = RTCCertificate::from_key_pair(kp)?;
 
-    let transport = Arc::new(RTCDtlsTransport::default());
+    let transport = Arc::new(DtlsTransport::default());
 
     let video_receiver = Arc::new(api.new_rtp_receiver(
         RTPCodecType::Video,
@@ -701,7 +701,7 @@ async fn test_media_description_fingerprints() -> Result<()> {
                 RTCRtpSender::new(
                     Some(track),
                     RTPCodecType::Video,
-                    Arc::new(RTCDtlsTransport::default()),
+                    Arc::new(DtlsTransport::default()),
                     Arc::clone(&api.media_engine),
                     Arc::clone(&api.setting_engine),
                     Arc::clone(&interceptor),
@@ -732,7 +732,7 @@ async fn test_populate_sdp() -> Result<()> {
 
         let api = APIBuilder::new().with_media_engine(me).build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
 
         let receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
@@ -841,7 +841,7 @@ async fn test_populate_sdp() -> Result<()> {
 
         let api = APIBuilder::new().with_media_engine(me).build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
         let receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
             Arc::clone(&transport),
@@ -934,7 +934,7 @@ async fn test_populate_sdp() -> Result<()> {
 
         let api = APIBuilder::new().with_media_engine(me).build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
         let receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
             Arc::clone(&transport),
@@ -1002,7 +1002,7 @@ async fn test_populate_sdp() -> Result<()> {
 
         let api = APIBuilder::new().with_media_engine(me).build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
 
         let video_receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
@@ -1098,7 +1098,7 @@ async fn test_populate_sdp() -> Result<()> {
 
         let api = APIBuilder::new().with_media_engine(me).build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
         let receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
             Arc::clone(&transport),
@@ -1184,7 +1184,7 @@ async fn test_populate_sdp() -> Result<()> {
             .with_setting_engine(se.clone())
             .build();
         let interceptor = api.interceptor_registry.build("")?;
-        let transport = Arc::new(RTCDtlsTransport::default());
+        let transport = Arc::new(DtlsTransport::default());
         let receiver = Arc::new(api.new_rtp_receiver(
             RTPCodecType::Video,
             Arc::clone(&transport),
@@ -1331,7 +1331,7 @@ async fn test_populate_sdp_reject() -> Result<()> {
 
     let api = APIBuilder::new().with_media_engine(me).build();
     let interceptor = api.interceptor_registry.build("")?;
-    let transport = Arc::new(RTCDtlsTransport::default());
+    let transport = Arc::new(DtlsTransport::default());
     let video_receiver = Arc::new(api.new_rtp_receiver(
         RTPCodecType::Video,
         Arc::clone(&transport),
