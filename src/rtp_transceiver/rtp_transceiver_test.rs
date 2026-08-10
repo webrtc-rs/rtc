@@ -3,7 +3,7 @@ use portable_atomic::AtomicUsize;
 use super::*;
 use crate::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8, MIME_TYPE_VP9};
 use crate::api::APIBuilder;
-use crate::dtls_transport::RTCDtlsTransport;
+use crate::dtls_transport::DtlsTransport;
 use crate::peer_connection::configuration::RTCConfiguration;
 use crate::peer_connection::peer_connection_test::{close_pair_now, create_vnet_pair};
 
@@ -20,7 +20,7 @@ async fn test_rtp_transceiver_set_codec_preferences() -> Result<()> {
 
     let api = APIBuilder::new().with_media_engine(m).build();
     let interceptor = api.interceptor_registry.build("")?;
-    let transport = Arc::new(RTCDtlsTransport::default());
+    let transport = Arc::new(DtlsTransport::default());
     let receiver = Arc::new(api.new_rtp_receiver(
         RTPCodecType::Video,
         Arc::clone(&transport),

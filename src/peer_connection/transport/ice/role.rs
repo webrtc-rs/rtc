@@ -9,7 +9,7 @@ use std::fmt;
 /// * [MDN]
 /// * [W3C]
 ///
-/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceTransport/role
+/// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/IceTransport/role
 /// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicerole
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

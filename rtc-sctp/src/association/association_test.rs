@@ -388,6 +388,60 @@ fn handle_init_test(name: &str, initial_state: AssociationState, expect_err: boo
     assert!(a.use_forward_tsn, "{} should be set to true", name);
 }
 
+// W3C `RTCSctpTransport.maxChannels` is the minimum of the negotiated inbound and outbound
+// stream counts, and is null until the association is established. `handle_init` is where the
+// negotiation happens: the peer's advertised counts narrow this endpoint's configured ones.
+#[test]
+fn test_assoc_negotiated_max_streams() -> Result<()> {
+    let mut a = create_association(TransportConfig::default());
+
+    // Before the handshake completes the two counts still hold the *configured* limits, which
+    // were never agreed with anyone. Reporting them would overstate the association.
+    assert!(a.is_handshaking());
+    assert_eq!(
+        None,
+        a.negotiated_max_streams(),
+        "a handshaking association has negotiated nothing yet"
+    );
+
+    a.set_state(AssociationState::Closed);
+    let pkt = Packet {
+        common_header: CommonHeader {
+            source_port: 5001,
+            destination_port: 5002,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut init = ChunkInit {
+        initial_tsn: 1234,
+        num_outbound_streams: 1001,
+        num_inbound_streams: 1002,
+        initiate_tag: 5678,
+        advertised_receiver_window_credit: 512 * 1024,
+        ..Default::default()
+    };
+    init.set_supported_extensions();
+    a.handle_init(&pkt, &init)?;
+
+    // `handle_init` narrowed the counts to 1001 outbound / 1002 inbound (see
+    // `handle_init_test`), but the handshake is still in flight.
+    assert_eq!(
+        None,
+        a.negotiated_max_streams(),
+        "still handshaking after INIT, so still nothing to report"
+    );
+
+    a.handshake_completed = true;
+    assert_eq!(
+        Some(1001),
+        a.negotiated_max_streams(),
+        "the smaller of 1001 outbound and 1002 inbound"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn test_assoc_handle_init() -> Result<()> {
     handle_init_test("normal", AssociationState::Closed, false);

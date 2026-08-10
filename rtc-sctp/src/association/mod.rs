@@ -564,6 +564,28 @@ impl Association {
         !self.handshake_completed
     }
 
+    /// The number of streams negotiated for this association: the smaller of the inbound and
+    /// outbound counts the two endpoints agreed on in INIT/INIT ACK.
+    ///
+    /// `None` while the association is still handshaking. Before the peer's INIT (or INIT ACK) has
+    /// been processed, the two counts still hold this endpoint's *configured* limits rather than
+    /// anything agreed, so reporting them would overstate what the association can carry.
+    ///
+    /// This is what [RFC 8831] data channels are limited by, and what W3C
+    /// `RTCSctpTransport.maxChannels` reports.
+    ///
+    /// [RFC 8831]: https://datatracker.ietf.org/doc/html/rfc8831
+    pub fn negotiated_max_streams(&self) -> Option<u16> {
+        if self.is_handshaking() {
+            None
+        } else {
+            Some(
+                self.my_max_num_inbound_streams
+                    .min(self.my_max_num_outbound_streams),
+            )
+        }
+    }
+
     /// Whether the Association is closed
     ///
     /// Closed Associations cannot transport any further data. An association becomes closed when

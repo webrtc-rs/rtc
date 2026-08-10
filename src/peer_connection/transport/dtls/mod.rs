@@ -1,5 +1,6 @@
 use crate::peer_connection::certificate::RTCCertificate;
 use crate::peer_connection::configuration::setting_engine::ReplayProtection;
+use crate::peer_connection::transport::RTCTransportId;
 use crate::peer_connection::transport::dtls::parameters::RTCDtlsParameters;
 use crate::peer_connection::transport::dtls::role::{DEFAULT_DTLS_ROLE_ANSWER, RTCDtlsRole};
 use crate::peer_connection::transport::dtls::state::RTCDtlsTransportState;
@@ -33,7 +34,10 @@ pub(crate) fn default_srtp_protection_profiles() -> Vec<SrtpProtectionProfile> {
 /// transport over which RTP and RTCP packets are sent and received by
 /// RTPSender and RTPReceiver, as well other data such as SCTP packets sent
 /// and received by data channels.
-pub(crate) struct RTCDtlsTransport {
+pub(crate) struct DtlsTransport {
+    pub(crate) id: RTCTransportId,
+    pub(crate) ice_transport_id: RTCTransportId,
+
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
     pub(crate) dtls_role: RTCDtlsRole,
     pub(crate) dtls_handshake_config: Option<Arc<::dtls::config::HandshakeConfig>>,
@@ -41,6 +45,13 @@ pub(crate) struct RTCDtlsTransport {
 
     pub(crate) state: RTCDtlsTransportState,
     pub(crate) certificates: Vec<RTCCertificate>,
+
+    // The peer's certificate chain in DER form, retained at handshake completion so
+    // `get_remote_certificates()` has something to return. Previously the bytes reached
+    // `update_dtls_stats_from_profile`, were hex-encoded into `RTCCertificateStats`, and then
+    // dropped; only the derived fingerprint id survived, which cannot be turned back into a
+    // certificate.
+    pub(crate) remote_certificates: Vec<Vec<u8>>,
 
     // From SettingEngine
     pub(crate) answering_dtls_role: RTCDtlsRole,
@@ -54,6 +65,8 @@ pub(crate) struct RTCDtlsTransport {
 }
 
 pub(crate) struct RTCDtlsTransportConfig {
+    pub(crate) id: RTCTransportId,
+    pub(crate) ice_transport_id: RTCTransportId,
     pub(crate) certificates: Vec<RTCCertificate>,
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
@@ -64,9 +77,11 @@ pub(crate) struct RTCDtlsTransportConfig {
     pub(crate) crypto_provider: Arc<dyn RTCCryptoProvider>,
 }
 
-impl RTCDtlsTransport {
+impl DtlsTransport {
     pub(crate) fn new(config: RTCDtlsTransportConfig) -> Result<Self> {
         let RTCDtlsTransportConfig {
+            id,
+            ice_transport_id,
             mut certificates,
             answering_dtls_role,
             srtp_protection_profiles,
@@ -95,11 +110,14 @@ impl RTCDtlsTransport {
         };
 
         Ok(Self {
+            id,
+            ice_transport_id,
             dtls_role: RTCDtlsRole::Auto,
             dtls_handshake_config: None,
             dtls_endpoint: None,
             state: RTCDtlsTransportState::New,
             certificates,
+            remote_certificates: vec![],
 
             answering_dtls_role,
             srtp_protection_profiles,
@@ -113,6 +131,28 @@ impl RTCDtlsTransport {
 
     pub(crate) fn state_change(&mut self, state: RTCDtlsTransportState) {
         self.state = state;
+    }
+
+    /// Whether negotiation has brought this transport up — i.e. `start()` has built its
+    /// endpoint. The struct itself is constructed with the peer connection, so this is the
+    /// closer analogue of "the DTLS transport exists" in the protocol sense.
+    pub(crate) fn is_started(&self) -> bool {
+        self.dtls_endpoint.is_some()
+    }
+
+    /// W3C `DtlsTransport.state`.
+    ///
+    /// The field has carried this value all along; only the setter (`state_change`) existed.
+    pub(crate) fn state(&self) -> RTCDtlsTransportState {
+        self.state
+    }
+
+    /// W3C `DtlsTransport.getRemoteCertificates()`: the peer's certificate chain, DER-encoded.
+    ///
+    /// Empty until the DTLS handshake completes. DER is the analogue of the browser's
+    /// `sequence<ArrayBuffer>`.
+    pub(crate) fn get_remote_certificates(&self) -> &[Vec<u8>] {
+        &self.remote_certificates
     }
 
     fn derive_role(&self, ice_role: RTCIceRole, remote_dtls_role: RTCDtlsRole) -> RTCDtlsRole {
@@ -308,6 +348,13 @@ mod tests {
 
     use super::*;
     use crate::peer_connection::configuration::setting_engine::ReplayProtection;
+    use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+
+    /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
+    fn test_transport_id(kind: TransportKind) -> RTCTransportId {
+        RTCTransportId::new(0xabcd_ef01_2345_6789, kind)
+    }
+
     use crypto::{AeadAlgorithm, CryptoAlgorithm, RTCCrypto, RTCRandom};
 
     struct MissingAes128Gcm;
@@ -337,8 +384,10 @@ mod tests {
         }
     }
 
-    fn transport(dtls_cipher_suites: Vec<CipherSuiteId>) -> RTCDtlsTransport {
-        RTCDtlsTransport::new(RTCDtlsTransportConfig {
+    fn transport(dtls_cipher_suites: Vec<CipherSuiteId>) -> DtlsTransport {
+        DtlsTransport::new(RTCDtlsTransportConfig {
+            id: test_transport_id(TransportKind::Dtls),
+            ice_transport_id: test_transport_id(TransportKind::Ice),
             certificates: vec![],
             answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
             srtp_protection_profiles: vec![],
@@ -356,6 +405,38 @@ mod tests {
             role: RTCDtlsRole::Client,
             fingerprints: vec![],
         }
+    }
+
+    // W3C `DtlsTransport.state`. Only the setter existed before; the field it writes was
+    // never readable from outside the crate's internals.
+    #[test]
+    fn state_reports_what_state_change_wrote() {
+        let mut transport = transport(vec![]);
+        assert_eq!(RTCDtlsTransportState::New, transport.state());
+
+        transport.state_change(RTCDtlsTransportState::Connecting);
+        assert_eq!(RTCDtlsTransportState::Connecting, transport.state());
+
+        transport.state_change(RTCDtlsTransportState::Connected);
+        assert_eq!(RTCDtlsTransportState::Connected, transport.state());
+    }
+
+    // W3C `DtlsTransport.getRemoteCertificates()`. The handshake path hands the peer's DER
+    // chain to `update_dtls_stats_from_profile`, which hex-encodes it into `RTCCertificateStats`
+    // and keeps only a fingerprint-derived id; the bytes themselves now have somewhere to live.
+    #[test]
+    fn remote_certificates_are_empty_until_the_handshake_supplies_them() {
+        let mut transport = transport(vec![]);
+        assert!(
+            transport.get_remote_certificates().is_empty(),
+            "nothing has been negotiated yet"
+        );
+
+        // What the handshake path assigns.
+        let peer_chain = vec![vec![0x30, 0x82, 0x01, 0x0a], vec![0x30, 0x82, 0x02, 0x0b]];
+        transport.remote_certificates = peer_chain.clone();
+
+        assert_eq!(peer_chain, transport.get_remote_certificates());
     }
 
     #[test]
@@ -412,7 +493,9 @@ mod tests {
         });
 
         let build = |profiles| {
-            RTCDtlsTransport::new(RTCDtlsTransportConfig {
+            DtlsTransport::new(RTCDtlsTransportConfig {
+                id: test_transport_id(TransportKind::Dtls),
+                ice_transport_id: test_transport_id(TransportKind::Ice),
                 certificates: vec![certificate.clone()],
                 answering_dtls_role: DEFAULT_DTLS_ROLE_ANSWER,
                 srtp_protection_profiles: profiles,

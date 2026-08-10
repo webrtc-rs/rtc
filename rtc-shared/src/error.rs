@@ -2146,6 +2146,12 @@ pub enum Error {
     /// RTPTransceiver not existed.
     #[error("RTPTransceiver not existed")]
     ErrRTPTransceiverNotExisted,
+    /// SCTPTransport not existed.
+    #[error("SCTPTransport not existed")]
+    ErrSCTPTransportNotExisted,
+    /// DTLSTransport not existed.
+    #[error("DTLSTransport not existed")]
+    ErrDTLSTransportNotExisted,
     /// ErrRTPSenderTrackNil.
     #[error("errRTPSenderTrackNil")]
     ErrRTPTransceiverCannotChangeMid,

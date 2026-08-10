@@ -752,6 +752,11 @@ impl Agent {
         &self.local_candidates
     }
 
+    /// The remote candidates this agent has been given, in the order they were added.
+    pub fn get_remote_candidates(&self) -> &[Candidate] {
+        &self.remote_candidates
+    }
+
     fn contact(&mut self, now: Instant) {
         // Consume any pending deferred-check request now that we are running one.
         // Reset before the early returns below so a failed/settled agent does not

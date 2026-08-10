@@ -4,7 +4,7 @@ use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
 };
-use crate::peer_connection::transport::sctp::RTCSctpTransport;
+use crate::peer_connection::transport::sctp::SctpTransport;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use datachannel::message::Message;
@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 pub(crate) struct SctpHandlerContext {
-    pub(crate) sctp_transport: RTCSctpTransport,
+    pub(crate) sctp_transport: SctpTransport,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
@@ -72,7 +72,7 @@ pub(crate) struct SctpHandlerContext {
 }
 
 impl SctpHandlerContext {
-    pub(crate) fn new(now: Instant, sctp_transport: RTCSctpTransport) -> Self {
+    pub(crate) fn new(now: Instant, sctp_transport: SctpTransport) -> Self {
         Self {
             sctp_transport,
             read_outs: VecDeque::new(),
@@ -820,12 +820,18 @@ mod tests {
 
     use super::*;
     use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+    use crate::peer_connection::transport::{RTCTransportId, TransportKind};
     use bytes::Bytes;
     use sansio::Protocol;
     use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
     use shared::TransportProtocol;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
+
+    /// A fixed nonce keeps test ids deterministic while still distinguishing the kinds.
+    fn test_transport_id(kind: TransportKind) -> RTCTransportId {
+        RTCTransportId::new(0xabcd_ef01_2345_6789, kind)
+    }
 
     fn client_addr() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4444)
@@ -1091,7 +1097,12 @@ mod tests {
         ch: AssociationHandle,
         conn: Association,
     ) -> SctpHandlerContext {
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .internal_buffer
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
@@ -1520,7 +1531,12 @@ mod tests {
             })
             .expect("queue DATA on B");
 
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .internal_buffer
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);
@@ -1579,7 +1595,12 @@ mod tests {
         let base = Instant::now();
         let t = |secs| base + Duration::from_secs(secs);
 
-        let mut transport = RTCSctpTransport::new(SctpMaxMessageSize::default(), None);
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
         transport
             .internal_buffer
             .resize(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE as usize, 0);

@@ -190,6 +190,7 @@ use crate::media_stream::MediaStreamId;
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
+use crate::peer_connection::transport::RTCDtlsTransport;
 use crate::rtp_transceiver::RTCRtpSenderId;
 use interceptor::{Interceptor, NoopInterceptor};
 use log::trace;
@@ -238,6 +239,40 @@ impl<I> RTCRtpSender<'_, I>
 where
     I: Interceptor,
 {
+    /// The DTLS transport over which this sender's RTP packets are sent.
+    ///
+    /// ## Nullability
+    ///
+    /// `None` until this sender's transceiver has been associated by negotiation. The spec
+    /// sources this from the `[[SenderTransport]]` slot, which is per-sender and is filled while
+    /// applying a local or remote description — so the predicate is that transceiver's mid, not
+    /// a connection-wide flag.
+    ///
+    /// Deliberately *not* keyed on whether the DTLS endpoint has been built: an offerer
+    /// associates its transceivers at `setLocalDescription`, before the answer starts DTLS, and a
+    /// browser reports a transport there too. The handle simply reports
+    /// [`RTCDtlsTransportState::New`](crate::peer_connection::transport::RTCDtlsTransportState)
+    /// until the handshake begins.
+    ///
+    /// Under bundling every sender and receiver shares one transport, so all of these compare
+    /// equal by [`id()`](crate::peer_connection::transport::RTCDtlsTransport::id).
+    ///
+    /// ## Specifications
+    ///
+    /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-transport)
+    pub fn transport(&self) -> Option<RTCDtlsTransport<'_, I>> {
+        // `[[SenderTransport]]` is assigned when this sender's transceiver is associated by
+        // negotiation — the point at which the transceiver acquires a mid. Before that the slot
+        // is null, which is what the spec means by "prior to construction of the
+        // `RTCDtlsTransport` object".
+        self.peer_connection.rtp_transceivers[self.id.0]
+            .mid()
+            .as_ref()?;
+
+        Some(RTCDtlsTransport {
+            peer_connection: self.peer_connection,
+        })
+    }
     /// Returns the media track being sent by this sender.
     pub fn track(&self) -> &MediaStreamTrack {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized and

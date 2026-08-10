@@ -3,7 +3,7 @@ use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, STUNMessage, TaggedRTCMessageInternal,
 };
-use crate::peer_connection::transport::ice::RTCIceTransport;
+use crate::peer_connection::transport::ice::IceTransport;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use crate::statistics::stats::ice_candidate_pair::RTCStatsIceCandidatePairState;
 use log::{debug, trace};
@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 pub(crate) struct IceHandlerContext {
-    pub(crate) ice_transport: RTCIceTransport,
+    pub(crate) ice_transport: IceTransport,
 
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
     pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
@@ -28,7 +28,7 @@ pub(crate) struct IceHandlerContext {
 }
 
 impl IceHandlerContext {
-    pub(crate) fn new(ice_transport: RTCIceTransport) -> Self {
+    pub(crate) fn new(ice_transport: IceTransport) -> Self {
         Self {
             ice_transport,
 
