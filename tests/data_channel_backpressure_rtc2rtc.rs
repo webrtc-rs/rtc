@@ -26,7 +26,7 @@
 use anyhow::Result;
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -70,8 +70,9 @@ async fn build_peer(
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let addr = socket.local_addr()?;
 
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(role)?;
+    let setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(role)
+        .build();
 
     let mut pc = RTCPeerConnectionBuilder::new()
         .with_configuration(RTCConfigurationBuilder::new().build())

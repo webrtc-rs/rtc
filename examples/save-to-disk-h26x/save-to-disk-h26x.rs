@@ -17,7 +17,7 @@ use rtc::peer_connection::configuration::interceptor_registry::register_default_
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_H264, MIME_TYPE_HEVC, MIME_TYPE_OPUS, MediaEngine,
 };
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -152,12 +152,13 @@ async fn run(
     let socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let local_addr = socket.local_addr()?;
 
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(if is_client {
-        RTCDtlsRole::Client
-    } else {
-        RTCDtlsRole::Server
-    })?;
+    let setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(if is_client {
+            RTCDtlsRole::Client
+        } else {
+            RTCDtlsRole::Server
+        })
+        .build();
 
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();

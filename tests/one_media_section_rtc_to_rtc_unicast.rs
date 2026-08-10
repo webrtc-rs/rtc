@@ -16,7 +16,7 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
@@ -54,8 +54,9 @@ async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
     let answerer_local_addr = answerer_socket.local_addr()?;
     log::info!("Answerer bound to {}", answerer_local_addr);
 
-    let mut answerer_setting_engine = SettingEngine::default();
-    answerer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
+    let answerer_setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Server)
+        .build();
 
     let mut answerer_media_engine = MediaEngine::default();
 
@@ -107,8 +108,9 @@ async fn test_one_media_section_rtc_to_rtc_unicast() -> Result<()> {
     let offerer_local_addr = offerer_socket.local_addr()?;
     log::info!("Offerer bound to {}", offerer_local_addr);
 
-    let mut offerer_setting_engine = SettingEngine::default();
-    offerer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
+    let offerer_setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Server)
+        .build();
 
     let mut offerer_media_engine = MediaEngine::default();
     offerer_media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;

@@ -46,7 +46,7 @@ pub(crate) struct RTCDtlsTransport {
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
     /// Empty means "use the `dtls` crate's default set" (see
-    /// [`SettingEngine::set_dtls_cipher_suites`](crate::peer_connection::configuration::setting_engine::SettingEngine::set_dtls_cipher_suites)).
+    /// [`SettingEngineBuilder::with_dtls_cipher_suites`](crate::peer_connection::configuration::setting_engine::SettingEngineBuilder::with_dtls_cipher_suites)).
     pub(crate) dtls_cipher_suites: Vec<CipherSuiteId>,
     pub(crate) allow_insecure_verification_algorithm: bool,
     pub(crate) disable_certificate_fingerprint_verification: bool,

@@ -15,7 +15,7 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
@@ -36,8 +36,9 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 fn build_video_only_peer(
     role: RTCDtlsRole,
 ) -> Result<rtc::peer_connection::RTCPeerConnection<impl rtc::interceptor::Interceptor>> {
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(role)?;
+    let setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(role)
+        .build();
 
     let mut media_engine = MediaEngine::default();
     media_engine.register_codec(

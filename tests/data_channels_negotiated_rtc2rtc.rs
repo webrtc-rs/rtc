@@ -11,7 +11,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use rtc::data_channel::RTCDataChannelInit;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -50,8 +50,9 @@ impl PeerRunner {
         let offer_socket = UdpSocket::bind("127.0.0.1:0").await?;
         let offer_local_addr = offer_socket.local_addr()?;
 
-        let mut offer_setting_engine = SettingEngine::default();
-        offer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
+        let offer_setting_engine = SettingEngineBuilder::new()
+            .with_answering_dtls_role(RTCDtlsRole::Server)
+            .build();
 
         let offer_config = RTCConfigurationBuilder::new()
             .with_ice_servers(vec![RTCIceServer {
@@ -82,8 +83,9 @@ impl PeerRunner {
         let answer_socket = UdpSocket::bind("127.0.0.1:0").await?;
         let answer_local_addr = answer_socket.local_addr()?;
 
-        let mut answer_setting_engine = SettingEngine::default();
-        answer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+        let answer_setting_engine = SettingEngineBuilder::new()
+            .with_answering_dtls_role(RTCDtlsRole::Client)
+            .build();
 
         let answer_config = RTCConfigurationBuilder::new()
             .with_ice_servers(vec![RTCIceServer {

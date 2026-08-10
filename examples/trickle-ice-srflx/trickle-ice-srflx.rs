@@ -15,7 +15,7 @@ use hyper::{Body, Method, Response, Server, StatusCode};
 use ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use log::{error, info, trace};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -353,8 +353,9 @@ async fn run_main_loop() -> Result<()> {
                                     WsMessage::Offer(offer) => {
                                         println!("Received offer, creating peer connection");
 
-                                        let mut setting_engine = SettingEngine::default();
-                                        setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
+                                        let setting_engine = SettingEngineBuilder::new()
+                                            .with_answering_dtls_role(RTCDtlsRole::Server)
+                                            .build();
 
                                         let config = RTCConfigurationBuilder::new()
                                             .with_ice_servers(vec![RTCIceServer {

@@ -14,7 +14,7 @@ use rtc::ice::mdns::MulticastDnsMode;
 use rtc::mdns::{MDNS_PORT, MulticastSocket};
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::{RTCEvent, RTCPeerConnectionEvent, TaggedRTCEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -141,23 +141,25 @@ async fn run(
     let pc_udp_socket = UdpSocket::bind(format!("{host}:{port}")).await?;
     let pc_local_addr = pc_udp_socket.local_addr()?;
 
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(if is_client {
-        RTCDtlsRole::Client
-    } else {
-        RTCDtlsRole::Server
-    })?;
+    let mut builder = SettingEngineBuilder::new()
+        .with_answering_dtls_role(if is_client {
+            RTCDtlsRole::Client
+        } else {
+            RTCDtlsRole::Server
+        })
+        .with_multicast_dns_timeout(Some(Duration::from_secs(10)));
 
-    setting_engine.set_multicast_dns_timeout(Some(Duration::from_secs(10)));
-    if query_only {
-        setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryOnly);
+    builder = if query_only {
+        builder.with_multicast_dns_mode(MulticastDnsMode::QueryOnly)
     } else {
-        setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryAndGather);
-        setting_engine
-            .set_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string());
-        // In below Add local host candidate, this pc_local_addr will be hided with "webrtc-rs-hides-local-ip-by-mdns.local"
-        setting_engine.set_multicast_dns_local_ip(Some(pc_local_addr.ip()));
-    }
+        builder
+            .with_multicast_dns_mode(MulticastDnsMode::QueryAndGather)
+            .with_multicast_dns_local_name("webrtc-rs-hides-local-ip-by-mdns.local".to_string())
+            // In below Add local host candidate, this pc_local_addr will be hided with "webrtc-rs-hides-local-ip-by-mdns.local"
+            .with_multicast_dns_local_ip(Some(pc_local_addr.ip()))
+    };
+
+    let setting_engine = builder.build();
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

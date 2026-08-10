@@ -2167,9 +2167,6 @@ pub enum Error {
     /// Invalid Media Section Track Index.
     #[error("invalid Media Section Track Index")]
     ErrSDPMediaSectionTrackInvalid,
-    /// Set_answering_dtlsrole must DTLSRoleClient or DTLSRoleServer.
-    #[error("set_answering_dtlsrole must DTLSRoleClient or DTLSRoleServer")]
-    ErrSettingEngineSetAnsweringDTLSRole,
     /// Can't rollback from stable state.
     #[error("can't rollback from stable state")]
     ErrSignalingStateCannotRollback,

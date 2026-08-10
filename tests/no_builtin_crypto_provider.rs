@@ -14,7 +14,7 @@ fn peer_connection_without_a_provider_returns_actionable_error() {
         "unexpected error: {message}"
     );
     assert!(
-        message.contains("SettingEngine::set_crypto_provider"),
+        message.contains("SettingEngineBuilder::with_crypto_provider"),
         "error must explain how to configure a provider: {message}"
     );
 }

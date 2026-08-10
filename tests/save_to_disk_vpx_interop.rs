@@ -18,7 +18,7 @@ use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::event::RTCTrackEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -139,8 +139,9 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+    let setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Client)
+        .build();
 
     // Create a MediaEngine object to configure the supported codec
     let mut media_engine = MediaEngine::default();

@@ -25,8 +25,9 @@ use crate::track::track_local::track_local_static_sample::TrackLocalStaticSample
 
 #[tokio::test]
 async fn test_rtp_sender_replace_track() -> Result<()> {
-    let mut s = SettingEngine::default();
-    s.disable_srtp_replay_protection(true);
+    let s = SettingEngineBuilder::new()
+        .disable_srtp_replay_protection(true)
+        .build();
 
     let mut m = MediaEngine::default();
     m.register_default_codecs()?;
