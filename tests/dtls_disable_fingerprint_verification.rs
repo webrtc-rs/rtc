@@ -1,4 +1,4 @@
-//! Regression test for `SettingEngine::disable_certificate_fingerprint_verification`.
+//! Regression test for `SettingEngineBuilder::disable_certificate_fingerprint_verification`.
 //!
 //! The setter existed but the flag was never plumbed into `RTCDtlsTransport`, so the
 //! DTLS handshake always installed the fingerprint-matching `verify_peer_certificate`
@@ -16,7 +16,7 @@
 
 use anyhow::Result;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::{SettingEngine, SettingEngineBuilder};
 use rtc::peer_connection::transport::{
     CandidateConfig, CandidateHostConfig, RTCDtlsRole, RTCIceCandidate,
 };
@@ -110,14 +110,16 @@ fn with_placeholder_fingerprint(sdp: &str) -> String {
 /// `disable_verification` selects whether the answerer opts out of fingerprint
 /// checking; everything else is identical between the two tests.
 async fn handshake_with_mismatched_fingerprint(disable_verification: bool) -> Result<bool> {
-    let mut offer_setting_engine = SettingEngine::default();
-    offer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+    let offer_setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Client)
+        .build();
     let mut offer = Peer::new(offer_setting_engine).await?;
 
     // The answerer takes the DTLS server role, mirroring a WebRTC-Direct listener.
-    let mut answer_setting_engine = SettingEngine::default();
-    answer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
-    answer_setting_engine.disable_certificate_fingerprint_verification(disable_verification);
+    let answer_setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Server)
+        .with_disable_certificate_fingerprint_verification(disable_verification)
+        .build();
     let mut answer = Peer::new(answer_setting_engine).await?;
 
     // A data channel is needed for the m-line that carries the DTLS parameters.

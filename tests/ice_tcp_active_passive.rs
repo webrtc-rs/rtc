@@ -14,7 +14,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -51,11 +51,12 @@ impl TcpPeerRunner {
         let passive_local_addr = tcp_listener.local_addr()?;
 
         // Configure offer peer with TCP active candidate
-        let mut offer_setting_engine = SettingEngine::default();
-        offer_setting_engine.set_network_types(vec![
-            ice::network_type::NetworkType::Tcp4,
-            ice::network_type::NetworkType::Tcp6,
-        ]);
+        let offer_setting_engine = SettingEngineBuilder::new()
+            .with_network_types(vec![
+                ice::network_type::NetworkType::Tcp4,
+                ice::network_type::NetworkType::Tcp6,
+            ])
+            .build();
 
         let offer_config = RTCConfigurationBuilder::new().build();
 
@@ -80,12 +81,13 @@ impl TcpPeerRunner {
         offer_pc.add_local_candidate(RTCIceCandidate::from(&offer_candidate).to_json()?)?;
 
         // Configure answer peer with TCP passive candidate
-        let mut answer_setting_engine = SettingEngine::default();
-        answer_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
-        answer_setting_engine.set_network_types(vec![
-            ice::network_type::NetworkType::Tcp4,
-            ice::network_type::NetworkType::Tcp6,
-        ]);
+        let answer_setting_engine = SettingEngineBuilder::new()
+            .with_answering_dtls_role(RTCDtlsRole::Client)
+            .with_network_types(vec![
+                ice::network_type::NetworkType::Tcp4,
+                ice::network_type::NetworkType::Tcp6,
+            ])
+            .build();
 
         let answer_config = RTCConfigurationBuilder::new().build();
 

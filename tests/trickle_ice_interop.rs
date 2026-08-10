@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -75,10 +75,11 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 fn create_rtc_peer_config(
     is_answerer: bool,
 ) -> Result<rtc::peer_connection::RTCPeerConnection<impl Interceptor>> {
-    let mut setting_engine = SettingEngine::default();
+    let mut builder = SettingEngineBuilder::new();
     if is_answerer {
-        setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+        builder = builder.with_answering_dtls_role(RTCDtlsRole::Client);
     }
+    let setting_engine = builder.build();
 
     // No ICE servers - local only
     let config = RTCConfigurationBuilder::new().build();

@@ -42,7 +42,7 @@ where
         configuration.validate()?;
 
         // The one place in `rtc` that resolves a default crypto provider. The application
-        // either supplies one through `SettingEngine::set_crypto_provider` — which is also how
+        // either supplies one through `SettingEngineBuilder::with_crypto_provider` — which is also how
         // a wrapper crate injects a provider it resolved itself — or gets the feature-selected
         // built-in here, once, at construction. Everything downstream —
         // ICE, DTLS, SRTP, STUN, certificates — receives it explicitly, so no library code
@@ -51,7 +51,7 @@ where
             Some(crypto_provider) => crypto_provider,
             None => crypto::default_provider().map_err(|error| {
                 Error::Crypto(format!(
-                    "peer connection requires a crypto provider: {error}; configure one with SettingEngine::set_crypto_provider"
+                    "peer connection requires a crypto provider: {error}; configure one with SettingEngineBuilder::with_crypto_provider"
                 ))
             })?,
         };

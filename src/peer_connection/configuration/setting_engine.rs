@@ -19,18 +19,18 @@
 //! ## Configuring ICE timeouts for unstable networks
 //!
 //! ```
-//! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+//! use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 //! use std::time::Duration;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut setting_engine = SettingEngine::default();
-//!
 //! // Increase timeouts for mobile or unstable networks
-//! setting_engine.set_ice_timeouts(
-//!     Some(Duration::from_secs(10)),  // disconnected_timeout (default: 5s)
-//!     Some(Duration::from_secs(30)),  // failed_timeout (default: 25s)
-//!     Some(Duration::from_secs(3)),   // keep_alive_interval (default: 2s)
-//! );
+//! let setting_engine = SettingEngineBuilder::new()
+//!     .with_ice_timeouts(
+//!         Some(Duration::from_secs(10)),  // disconnected_timeout (default: 5s)
+//!         Some(Duration::from_secs(30)),  // failed_timeout (default: 25s)
+//!         Some(Duration::from_secs(3)),   // keep_alive_interval (default: 2s)
+//!     )
+//!     .build();
 //!
 //! // Use with RTCConfiguration
 //! // let mut config = RTCConfiguration::default();
@@ -42,18 +42,18 @@
 //! ## Setting up 1:1 NAT for cloud deployments
 //!
 //! ```
-//! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+//! use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 //! use rtc::peer_connection::transport::RTCIceCandidateType;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut setting_engine = SettingEngine::default();
-//!
 //! // Configure for AWS EC2 instance with Elastic IP
 //! // Private IP: 10.0.1.5, Public IP: 54.123.45.67
-//! setting_engine.set_nat_1to1_ips(
-//!     vec!["54.123.45.67".to_string()],
-//!     RTCIceCandidateType::Host, // Use public IP for host candidates
-//! );
+//! let setting_engine = SettingEngineBuilder::new()
+//!     .with_nat_1to1_ips(
+//!         vec!["54.123.45.67".to_string()],
+//!         RTCIceCandidateType::Host, // Use public IP for host candidates
+//!     )
+//!     .build();
 //!
 //! // This tells ICE to advertise the public IP instead of the private one
 //! # Ok(())
@@ -63,15 +63,15 @@
 //! ## Configuring replay protection for security-critical applications
 //!
 //! ```
-//! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+//! use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut setting_engine = SettingEngine::default();
-//!
 //! // Increase replay protection window sizes
-//! setting_engine.set_dtls_replay_protection_window(128);  // DTLS anti-replay
-//! setting_engine.set_srtp_replay_protection_window(256);  // SRTP anti-replay
-//! setting_engine.set_srtcp_replay_protection_window(128); // SRTCP anti-replay
+//! let setting_engine = SettingEngineBuilder::new()
+//!     .with_dtls_replay_protection_window(128)  // DTLS anti-replay
+//!     .with_srtp_replay_protection_window(256)  // SRTP anti-replay
+//!     .with_srtcp_replay_protection_window(128) // SRTCP anti-replay
+//!     .build();
 //!
 //! // Larger windows protect against more packet reordering but use more memory
 //! # Ok(())
@@ -81,14 +81,14 @@
 //! ## Restricting network types for controlled environments
 //!
 //! ```
-//! use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+//! use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 //! use ice::network_type::NetworkType;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut setting_engine = SettingEngine::default();
-//!
 //! // Only gather IPv4 UDP candidates (no IPv6, no TCP)
-//! setting_engine.set_network_types(vec![NetworkType::Udp4]);
+//! let setting_engine = SettingEngineBuilder::new()
+//!     .with_network_types(vec![NetworkType::Udp4])
+//!     .build();
 //!
 //! // This reduces candidate gathering time and SDP size
 //! # Ok(())
@@ -118,7 +118,6 @@ use ice::network_type::NetworkType;
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
 use ice::mdns::MulticastDnsMode;
-use shared::error::{Error, Result};
 use std::time::Duration;
 
 /// Equal to UDP MTU
@@ -305,21 +304,20 @@ impl Default for SctpMaxMessageSize {
 /// ## Basic usage with RTCConfiguration
 ///
 /// ```
-/// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+/// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 /// use std::time::Duration;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut setting_engine = SettingEngine::default();
-///
-/// // Configure timeouts
-/// setting_engine.set_ice_timeouts(
-///     Some(Duration::from_secs(10)),
-///     Some(Duration::from_secs(30)),
-///     Some(Duration::from_secs(3)),
-/// );
-///
-/// // Enable loopback for testing
-/// setting_engine.set_include_loopback_candidate(true);
+/// let setting_engine = SettingEngineBuilder::new()
+///     // Configure timeouts
+///     .with_ice_timeouts(
+///         Some(Duration::from_secs(10)),
+///         Some(Duration::from_secs(30)),
+///         Some(Duration::from_secs(3)),
+///     )
+///     // Enable loopback for testing
+///     .with_include_loopback_candidate(true)
+///     .build();
 ///
 /// // Use with peer connection configuration
 /// // let api = APIBuilder::new().with_setting_engine(setting_engine).build();
@@ -342,11 +340,6 @@ pub struct SettingEngine {
     pub(crate) answering_dtls_role: RTCDtlsRole,
     pub(crate) disable_certificate_fingerprint_verification: bool,
     pub(crate) allow_insecure_verification_algorithm: bool,
-
-    //BufferFactory                             :func(packetType packetio.BufferPacketType, ssrc uint32) io.ReadWriteCloser,
-    //iceTCPMux                                 :ice.TCPMux,?
-    //iceProxyDialer                            :proxy.Dialer,?
-    //TODO: pub(crate) udp_network: UDPNetwork,
     pub(crate) disable_media_engine_copy: bool,
     pub(crate) disable_media_engine_multiple_codecs: bool,
     pub(crate) srtp_protection_profiles: Vec<SrtpProtectionProfile>,
@@ -363,15 +356,6 @@ pub struct SettingEngine {
 }
 
 impl SettingEngine {
-    /// Selects the cryptographic provider used by peer connections built with this setting engine.
-    ///
-    /// The provider is resolved once at peer-connection construction and shared with ICE, DTLS,
-    /// SRTP, certificate, and fingerprint operations. Different peer connections may select
-    /// different providers in the same process.
-    pub fn set_crypto_provider(&mut self, provider: Arc<dyn RTCCryptoProvider>) {
-        self.crypto_provider = Some(provider);
-    }
-
     /// The crypto provider configured on this engine, if any.
     ///
     /// `None` means no provider has been set, so building a peer connection will resolve the
@@ -379,10 +363,15 @@ impl SettingEngine {
     ///
     /// Callers assembling additional components around a peer connection — an async wrapper's
     /// TURN client, for instance — read the provider from here and pass it to
-    /// [`set_crypto_provider`](Self::set_crypto_provider) before building, so the whole
+    /// [`with_crypto_provider`](SettingEngineBuilder::with_crypto_provider) before building, so the whole
     /// connection provably shares one provider instead of resolving a second.
     pub fn crypto_provider(&self) -> Option<&Arc<dyn RTCCryptoProvider>> {
         self.crypto_provider.as_ref()
+    }
+
+    /// Returns the multicast DNS configuration.
+    pub fn multicast_dns(&self) -> &MulticastDNS {
+        &self.multicast_dns
     }
 
     /// Returns the configured receive MTU, or the default if not set.
@@ -392,6 +381,34 @@ impl SettingEngine {
         } else {
             RECEIVE_MTU
         }
+    }
+}
+
+/// Fluent builder for [`SettingEngine`].
+///
+/// Mirrors [`RTCConfigurationBuilder`](crate::peer_connection::configuration::RTCConfigurationBuilder),
+/// so a peer connection is configured in one style throughout rather than switching between a
+/// fluent builder and a sequence of `&mut self` setters.
+///
+/// [`build`](Self::build) is infallible: every setting is either always valid or normalised on
+/// the way in, so there is no failure mode to report.
+#[derive(Default)]
+pub struct SettingEngineBuilder(SettingEngine);
+
+impl SettingEngineBuilder {
+    /// A builder with every setting at its default.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Selects the cryptographic provider used by peer connections built with this setting engine.
+    ///
+    /// The provider is resolved once at peer-connection construction and shared with ICE, DTLS,
+    /// SRTP, certificate, and fingerprint operations. Different peer connections may select
+    /// different providers in the same process.
+    pub fn with_crypto_provider(mut self, provider: Arc<dyn RTCCryptoProvider>) -> Self {
+        self.0.crypto_provider = Some(provider);
+        self
     }
 
     /// Overrides the default SRTP protection profiles.
@@ -407,21 +424,22 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use dtls::extension::extension_use_srtp::SrtpProtectionProfile;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Use specific SRTP profile
-    /// setting_engine.set_srtp_protection_profiles(vec![
-    ///     SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
-    /// ]);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_srtp_protection_profiles(vec![
+    ///         SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+    ///     ])
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_srtp_protection_profiles(&mut self, profiles: Vec<SrtpProtectionProfile>) {
-        self.srtp_protection_profiles = profiles
+    pub fn with_srtp_protection_profiles(mut self, profiles: Vec<SrtpProtectionProfile>) -> Self {
+        self.0.srtp_protection_profiles = profiles;
+        self
     }
 
     /// Restricts the DTLS cipher suites offered during the handshake.
@@ -438,22 +456,23 @@ impl SettingEngine {
     ///
     /// ```
     /// use dtls::cipher_suite::CipherSuiteId;
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
-    /// let mut setting_engine = SettingEngine::default();
-    ///
-    /// setting_engine.set_dtls_cipher_suites(vec![
-    ///     CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
-    ///     CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
-    ///     CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
-    /// ]);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_dtls_cipher_suites(vec![
+    ///         CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
+    ///         CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
+    ///         CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
+    ///     ])
+    ///     .build();
     /// ```
     ///
     /// The order is a preference order. Every suite named must be one the `dtls` crate
     /// implements, or building the transport fails with `ErrInvalidCipherSuite`; a list
     /// that filters down to nothing usable fails with `ErrNoAvailableCipherSuites`.
-    pub fn set_dtls_cipher_suites(&mut self, cipher_suites: Vec<CipherSuiteId>) {
-        self.dtls_cipher_suites = cipher_suites
+    pub fn with_dtls_cipher_suites(mut self, cipher_suites: Vec<CipherSuiteId>) -> Self {
+        self.0.dtls_cipher_suites = cipher_suites;
+        self
     }
 
     /// Configures ICE timeout behavior for connection health monitoring.
@@ -473,18 +492,18 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use std::time::Duration;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Conservative settings for mobile networks
-    /// setting_engine.set_ice_timeouts(
-    ///     Some(Duration::from_secs(10)),  // Longer before disconnected
-    ///     Some(Duration::from_secs(40)),  // Longer before failed
-    ///     Some(Duration::from_secs(5)),   // Less frequent keepalives
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_ice_timeouts(
+    ///         Some(Duration::from_secs(10)),  // Longer before disconnected
+    ///         Some(Duration::from_secs(40)),  // Longer before failed
+    ///         Some(Duration::from_secs(5)),   // Less frequent keepalives
+    ///     )
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -492,15 +511,16 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8445 §16 - Timers](https://datatracker.ietf.org/doc/html/rfc8445#section-16)
-    pub fn set_ice_timeouts(
-        &mut self,
+    pub fn with_ice_timeouts(
+        mut self,
         disconnected_timeout: Option<Duration>,
         failed_timeout: Option<Duration>,
         keep_alive_interval: Option<Duration>,
-    ) {
-        self.timeout.ice_disconnected_timeout = disconnected_timeout;
-        self.timeout.ice_failed_timeout = failed_timeout;
-        self.timeout.ice_keepalive_interval = keep_alive_interval;
+    ) -> Self {
+        self.0.timeout.ice_disconnected_timeout = disconnected_timeout;
+        self.0.timeout.ice_failed_timeout = failed_timeout;
+        self.0.timeout.ice_keepalive_interval = keep_alive_interval;
+        self
     }
 
     /// Configures ICE connection attempt behavior, including number of connection attempts
@@ -512,13 +532,14 @@ impl SettingEngine {
     ///
     /// * `check_interval` - The delay between each connection attempt (default: 200 ms)
     /// * `max_binding_requests` - Maximum number of connection attempts per candidate (default: 7)
-    pub fn set_ice_connection_attempts(
-        &mut self,
+    pub fn with_ice_connection_attempts(
+        mut self,
         check_interval: Option<Duration>,
         max_binding_requests: Option<u16>,
-    ) {
-        self.timeout.ice_check_interval = check_interval;
-        self.timeout.ice_max_binding_requests = max_binding_requests
+    ) -> Self {
+        self.0.timeout.ice_check_interval = check_interval;
+        self.0.timeout.ice_max_binding_requests = max_binding_requests;
+        self
     }
 
     /// Sets minimum wait time before accepting host candidates.
@@ -526,8 +547,9 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `t` - Minimum wait duration, or `None` for immediate acceptance
-    pub fn set_host_acceptance_min_wait(&mut self, t: Option<Duration>) {
-        self.timeout.ice_host_acceptance_min_wait = t;
+    pub fn with_host_acceptance_min_wait(mut self, t: Option<Duration>) -> Self {
+        self.0.timeout.ice_host_acceptance_min_wait = t;
+        self
     }
 
     /// Sets minimum wait time before accepting server reflexive candidates.
@@ -537,8 +559,9 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `t` - Minimum wait duration, or `None` for immediate acceptance
-    pub fn set_srflx_acceptance_min_wait(&mut self, t: Option<Duration>) {
-        self.timeout.ice_srflx_acceptance_min_wait = t;
+    pub fn with_srflx_acceptance_min_wait(mut self, t: Option<Duration>) -> Self {
+        self.0.timeout.ice_srflx_acceptance_min_wait = t;
+        self
     }
 
     /// Sets minimum wait time before accepting peer reflexive candidates.
@@ -548,8 +571,9 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `t` - Minimum wait duration, or `None` for immediate acceptance
-    pub fn set_prflx_acceptance_min_wait(&mut self, t: Option<Duration>) {
-        self.timeout.ice_prflx_acceptance_min_wait = t;
+    pub fn with_prflx_acceptance_min_wait(mut self, t: Option<Duration>) -> Self {
+        self.0.timeout.ice_prflx_acceptance_min_wait = t;
+        self
     }
 
     /// Sets minimum wait time before accepting relay candidates.
@@ -559,16 +583,17 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `t` - Minimum wait duration, or `None` for immediate acceptance
-    pub fn set_relay_acceptance_min_wait(&mut self, t: Option<Duration>) {
-        self.timeout.ice_relay_acceptance_min_wait = t;
+    pub fn with_relay_acceptance_min_wait(mut self, t: Option<Duration>) -> Self {
+        self.0.timeout.ice_relay_acceptance_min_wait = t;
+        self
     }
 
     /*todo:
     /// set_udp_network allows ICE traffic to come through Ephemeral or UDPMux.
     /// UDPMux drastically simplifying deployments where ports will need to be opened/forwarded.
     /// UDPMux should be started prior to creating PeerConnections.
-    pub fn set_udp_network(&mut self, udp_network: UDPNetwork) {
-        self.udp_network = udp_network;
+    pub fn with_udp_network(mut self, udp_network: UDPNetwork) -> Self {
+        self.0.udp_network = udp_network;
     }*/
 
     /// Configures ICE Lite mode.
@@ -584,13 +609,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Enable ICE Lite for a publicly accessible server
-    /// setting_engine.set_lite(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_lite(true)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -598,8 +623,9 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8445 §2.7 - Lite Implementation](https://datatracker.ietf.org/doc/html/rfc8445#section-2.7)
-    pub fn set_lite(&mut self, lite: bool) {
-        self.candidates.ice_lite = lite;
+    pub fn with_lite(mut self, lite: bool) -> Self {
+        self.0.candidates.ice_lite = lite;
+        self
     }
 
     /// Restricts candidate gathering to specific network types.
@@ -615,25 +641,25 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use ice::network_type::NetworkType;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Only use IPv4 UDP (most common case)
-    /// setting_engine.set_network_types(vec![NetworkType::Udp4]);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_network_types(vec![NetworkType::Udp4])
+    ///     .build();
     ///
     /// // Or allow both IPv4 and IPv6 UDP
-    /// setting_engine.set_network_types(vec![
-    ///     NetworkType::Udp4,
-    ///     NetworkType::Udp6,
-    /// ]);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_network_types(vec![NetworkType::Udp4, NetworkType::Udp6])
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_network_types(&mut self, candidate_types: Vec<NetworkType>) {
-        self.candidates.ice_network_types = candidate_types;
+    pub fn with_network_types(mut self, candidate_types: Vec<NetworkType>) -> Self {
+        self.0.candidates.ice_network_types = candidate_types;
+        self
     }
 
     /*todo:
@@ -641,16 +667,18 @@ impl SettingEngine {
     /// This can be used to exclude certain network interfaces from ICE. Which may be
     /// useful if you know a certain interface will never succeed, or if you wish to reduce
     /// the amount of information you wish to expose to the remote peer
-    pub fn set_interface_filter(&mut self, filter: InterfaceFilterFn) {
-        self.candidates.interface_filter = Arc::new(Some(filter));
+    pub fn with_interface_filter(mut self, filter: InterfaceFilterFn) -> Self {
+        self.0.candidates.interface_filter = Arc::new(Some(filter));
+        self
     }
+
 
     /// set_ip_filter sets the filtering functions when gathering ICE candidates
     /// This can be used to exclude certain ip from ICE. Which may be
     /// useful if you know a certain ip will never succeed, or if you wish to reduce
     /// the amount of information you wish to expose to the remote peer
-    pub fn set_ip_filter(&mut self, filter: IpFilterFn) {
-        self.candidates.ip_filter = Arc::new(Some(filter));
+    pub fn with_ip_filter(mut self, filter: IpFilterFn) -> Self {
+        self.0.candidates.ip_filter = Arc::new(Some(filter));
     }*/
 
     /// Configures 1:1 NAT IP mapping for cloud deployments.
@@ -668,23 +696,25 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use rtc::peer_connection::transport::RTCIceCandidateType;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // AWS EC2: Private IP 10.0.1.5, Elastic IP 54.123.45.67
-    /// setting_engine.set_nat_1to1_ips(
-    ///     vec!["54.123.45.67".to_string()],
-    ///     RTCIceCandidateType::Host,
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_nat_1to1_ips(
+    ///         vec!["54.123.45.67".to_string()],
+    ///         RTCIceCandidateType::Host,
+    ///     )
+    ///     .build();
     ///
     /// // Or use Srflx to keep private IP available
-    /// setting_engine.set_nat_1to1_ips(
-    ///     vec!["54.123.45.67".to_string()],
-    ///     RTCIceCandidateType::Srflx,
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_nat_1to1_ips(
+    ///         vec!["54.123.45.67".to_string()],
+    ///         RTCIceCandidateType::Srflx,
+    ///     )
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -695,9 +725,14 @@ impl SettingEngine {
     /// - With `Srflx` type, both private and public IPs are available
     /// - Cannot use STUN servers when using `Srflx` type
     /// - Cannot use with mDNS when using `Host` type
-    pub fn set_nat_1to1_ips(&mut self, ips: Vec<String>, candidate_type: RTCIceCandidateType) {
-        self.candidates.nat_1to1_ips = ips;
-        self.candidates.nat_1to1_ip_candidate_type = candidate_type;
+    pub fn with_nat_1to1_ips(
+        mut self,
+        ips: Vec<String>,
+        candidate_type: RTCIceCandidateType,
+    ) -> Self {
+        self.0.candidates.nat_1to1_ips = ips;
+        self.0.candidates.nat_1to1_ip_candidate_type = candidate_type;
+        self
     }
 
     /// Sets the DTLS role to use when answering an offer.
@@ -721,14 +756,14 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use rtc::peer_connection::transport::RTCDtlsRole;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Force this peer to always act as DTLS client when answering
-    /// setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_answering_dtls_role(RTCDtlsRole::Client)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -736,40 +771,40 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8842 - DTLS for WebRTC](https://datatracker.ietf.org/doc/html/rfc8842)
-    pub fn set_answering_dtls_role(&mut self, role: RTCDtlsRole) -> Result<()> {
-        if role != RTCDtlsRole::Client && role != RTCDtlsRole::Server {
-            return Err(Error::ErrSettingEngineSetAnsweringDTLSRole);
-        }
-
-        self.answering_dtls_role = role;
-        Ok(())
+    pub fn with_answering_dtls_role(mut self, role: RTCDtlsRole) -> Self {
+        // Deliberately unvalidated. `Unspecified` and `Auto` are not errors here: both
+        // consumers already handle them — `to_connection_role()` maps `Unspecified` to
+        // `ConnectionRole::Unspecified`, which the answer path detects and replaces with
+        // `DEFAULT_DTLS_ROLE_ANSWER`, and the role-selection `match` falls through to the
+        // ICE-derived default. Rejecting them contradicted behaviour that already worked.
+        self.0.answering_dtls_role = role;
+        self
     }
 
     /// Sets the timeout for multicast DNS resolution.
-    pub fn set_multicast_dns_timeout(&mut self, timeout: Option<Duration>) {
-        self.multicast_dns.timeout = timeout;
+    pub fn with_multicast_dns_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.0.multicast_dns.timeout = timeout;
+        self
     }
 
     /// set_ice_multicast_dns_mode controls if ice queries and generates mDNS ICE Candidates
-    pub fn set_multicast_dns_mode(&mut self, multicast_dns_mode: MulticastDnsMode) {
-        self.multicast_dns.mode = multicast_dns_mode
+    pub fn with_multicast_dns_mode(mut self, multicast_dns_mode: MulticastDnsMode) -> Self {
+        self.0.multicast_dns.mode = multicast_dns_mode;
+        self
     }
 
     /// set_ice_multicast_dns_host_name sets a static HostName to be used by ice instead of generating one on startup
     /// This should only be used for a single PeerConnection. Having multiple PeerConnections with the same HostName will cause
     /// undefined behavior
-    pub fn set_multicast_dns_local_name(&mut self, local_name: String) {
-        self.multicast_dns.local_name = local_name;
+    pub fn with_multicast_dns_local_name(mut self, local_name: String) -> Self {
+        self.0.multicast_dns.local_name = local_name;
+        self
     }
 
     /// Sets the local IP address to use for multicast DNS.
-    pub fn set_multicast_dns_local_ip(&mut self, local_ip: Option<IpAddr>) {
-        self.multicast_dns.local_ip = local_ip;
-    }
-
-    /// Returns the multicast DNS configuration.
-    pub fn multicast_dns(&self) -> &MulticastDNS {
-        &self.multicast_dns
+    pub fn with_multicast_dns_local_ip(mut self, local_ip: Option<IpAddr>) -> Self {
+        self.0.multicast_dns.local_ip = local_ip;
+        self
     }
 
     /// Sets static ICE credentials for reproducible sessions.
@@ -786,16 +821,16 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Set static credentials for reproducible testing
-    /// setting_engine.set_ice_credentials(
-    ///     "test_ufrag".to_string(),
-    ///     "test_password".to_string(),
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_ice_credentials(
+    ///         "test_ufrag".to_string(),
+    ///         "test_password".to_string(),
+    ///     )
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -804,9 +839,10 @@ impl SettingEngine {
     ///
     /// Only use static credentials in controlled environments. Random credentials
     /// provide better security for production deployments.
-    pub fn set_ice_credentials(&mut self, username_fragment: String, password: String) {
-        self.candidates.username_fragment = username_fragment;
-        self.candidates.password = password;
+    pub fn with_ice_credentials(mut self, username_fragment: String, password: String) -> Self {
+        self.0.candidates.username_fragment = username_fragment;
+        self.0.candidates.password = password;
+        self
     }
 
     /// Disables DTLS certificate fingerprint verification.
@@ -821,18 +857,19 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Only for testing/debugging!
-    /// setting_engine.disable_certificate_fingerprint_verification(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_disable_certificate_fingerprint_verification(true)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disable_certificate_fingerprint_verification(&mut self, is_disabled: bool) {
-        self.disable_certificate_fingerprint_verification = is_disabled;
+    pub fn with_disable_certificate_fingerprint_verification(mut self, is_disabled: bool) -> Self {
+        self.0.disable_certificate_fingerprint_verification = is_disabled;
+        self
     }
 
     /// Allows insecure signature verification algorithms.
@@ -845,8 +882,9 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `is_allowed` - `true` to allow insecure algorithms, `false` to disallow
-    pub fn allow_insecure_verification_algorithm(&mut self, is_allowed: bool) {
-        self.allow_insecure_verification_algorithm = is_allowed;
+    pub fn with_allow_insecure_verification_algorithm(mut self, is_allowed: bool) -> Self {
+        self.0.allow_insecure_verification_algorithm = is_allowed;
+        self
     }
 
     /// Sets the DTLS replay protection window size.
@@ -862,13 +900,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Increase window for high-latency or reordering networks
-    /// setting_engine.set_dtls_replay_protection_window(128);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_dtls_replay_protection_window(128)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -876,8 +914,9 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 6347 §4.1.2.6 - Anti-Replay](https://datatracker.ietf.org/doc/html/rfc6347#section-4.1.2.6)
-    pub fn set_dtls_replay_protection_window(&mut self, n: usize) {
-        self.replay_protection.dtls = n;
+    pub fn with_dtls_replay_protection_window(mut self, n: usize) -> Self {
+        self.0.replay_protection.dtls = n;
+        self
     }
 
     /// Sets the SRTP replay protection window size.
@@ -892,13 +931,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Standard size for most applications
-    /// setting_engine.set_srtp_replay_protection_window(256);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_srtp_replay_protection_window(256)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -906,8 +945,9 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 3711 §3.3.2 - Replay Protection](https://datatracker.ietf.org/doc/html/rfc3711#section-3.3.2)
-    pub fn set_srtp_replay_protection_window(&mut self, n: usize) {
-        self.replay_protection.srtp = n;
+    pub fn with_srtp_replay_protection_window(mut self, n: usize) -> Self {
+        self.0.replay_protection.srtp = n;
+        self
     }
 
     /// Sets the SRTCP replay protection window size.
@@ -922,18 +962,19 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Smaller window sufficient for RTCP
-    /// setting_engine.set_srtcp_replay_protection_window(64);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_srtcp_replay_protection_window(64)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_srtcp_replay_protection_window(&mut self, n: usize) {
-        self.replay_protection.srtcp = n;
+    pub fn with_srtcp_replay_protection_window(mut self, n: usize) -> Self {
+        self.0.replay_protection.srtcp = n;
+        self
     }
 
     /// Allows gathering of loopback candidates.
@@ -949,13 +990,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Enable for certain VM configurations
-    /// setting_engine.set_include_loopback_candidate(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_include_loopback_candidate(true)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -964,8 +1005,9 @@ impl SettingEngine {
     ///
     /// This is non-standard behavior per [RFC 8445 §5.1.1.1](https://www.rfc-editor.org/rfc/rfc8445#section-5.1.1.1).
     /// Use with caution.
-    pub fn set_include_loopback_candidate(&mut self, allow_loopback: bool) {
-        self.candidates.include_loopback_candidate = allow_loopback;
+    pub fn with_include_loopback_candidate(mut self, allow_loopback: bool) -> Self {
+        self.0.candidates.include_loopback_candidate = allow_loopback;
+        self
     }
 
     /// Controls where DTLS fingerprints are placed in SDP.
@@ -981,29 +1023,30 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Use media-level fingerprints for better compatibility
-    /// setting_engine.set_sdp_media_level_fingerprints(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_sdp_media_level_fingerprints(true)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_sdp_media_level_fingerprints(&mut self, sdp_media_level_fingerprints: bool) {
-        self.sdp_media_level_fingerprints = sdp_media_level_fingerprints;
+    pub fn with_sdp_media_level_fingerprints(mut self, sdp_media_level_fingerprints: bool) -> Self {
+        self.0.sdp_media_level_fingerprints = sdp_media_level_fingerprints;
+        self
     }
 
     // SetICETCPMux enables ICE-TCP when set to a non-nil value. Make sure that
     // NetworkTypeTCP4 or NetworkTypeTCP6 is enabled as well.
     //pub fn SetICETCPMux(&mut self, tcpMux ice.TCPMux) {
-    //    self.iceTCPMux = tcpMux
+    //    self.0.iceTCPMux = tcpMux
     //}
 
     // SetICEProxyDialer sets the proxy dialer interface based on golang.org/x/net/proxy.
     //pub fn SetICEProxyDialer(&mut self, d proxy.Dialer) {
-    //    self.iceProxyDialer = d
+    //    self.0.iceProxyDialer = d
     //}
 
     /// Prevents the MediaEngine from being copied for each PeerConnection.
@@ -1019,13 +1062,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Share MediaEngine across connections
-    /// setting_engine.disable_media_engine_copy(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_disable_media_engine_copy(true)
+    ///     .build();
     ///
     /// // Warning: Don't share MediaEngine between multiple PeerConnections
     /// // unless you understand the implications
@@ -1037,8 +1080,9 @@ impl SettingEngine {
     ///
     /// When disabled, ensure you don't share the same MediaEngine between
     /// multiple PeerConnections unless you specifically intend to do so.
-    pub fn disable_media_engine_copy(&mut self, is_disabled: bool) {
-        self.disable_media_engine_copy = is_disabled;
+    pub fn with_disable_media_engine_copy(mut self, is_disabled: bool) -> Self {
+        self.0.disable_media_engine_copy = is_disabled;
+        self
     }
 
     /// Disables negotiating different codecs for different media sections.
@@ -1054,13 +1098,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Force same codecs for all media sections
-    /// setting_engine.disable_media_engine_multiple_codecs(true);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_disable_media_engine_multiple_codecs(true)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -1068,8 +1112,9 @@ impl SettingEngine {
     /// # Deprecation Note
     ///
     /// This setting is targeted for removal in a future release (4.2.0 or later).
-    pub fn disable_media_engine_multiple_codecs(&mut self, is_disabled: bool) {
-        self.disable_media_engine_multiple_codecs = is_disabled;
+    pub fn with_disable_media_engine_multiple_codecs(mut self, is_disabled: bool) -> Self {
+        self.0.disable_media_engine_multiple_codecs = is_disabled;
+        self
     }
 
     /// Sets the MTU size for the receive buffer.
@@ -1084,21 +1129,24 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Use larger MTU for jumbo frames
-    /// setting_engine.set_receive_mtu(9000);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_receive_mtu(9000)
+    ///     .build();
     ///
     /// // Or use default
-    /// setting_engine.set_receive_mtu(0);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_receive_mtu(0)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_receive_mtu(&mut self, receive_mtu: usize) {
-        self.receive_mtu = receive_mtu;
+    pub fn with_receive_mtu(mut self, receive_mtu: usize) -> Self {
+        self.0.receive_mtu = receive_mtu;
+        self
     }
 
     /// Sets a custom MID (media stream ID) generator function.
@@ -1114,15 +1162,13 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Generate MIDs with a custom prefix
-    /// setting_engine.set_mid_generator(|max_mid| {
-    ///     format!("custom_{}", max_mid + 1)
-    /// });
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_mid_generator(|max_mid| format!("custom_{}", max_mid + 1))
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -1136,8 +1182,12 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8843 - MID](https://datatracker.ietf.org/doc/html/rfc8843)
-    pub fn set_mid_generator(&mut self, f: impl Fn(isize) -> String + Send + Sync + 'static) {
-        self.mid_generator = Some(Arc::new(f));
+    pub fn with_mid_generator(
+        mut self,
+        f: impl Fn(isize) -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.0.mid_generator = Some(Arc::new(f));
+        self
     }
 
     /// Sets the maximum message size for SCTP data channels.
@@ -1152,23 +1202,27 @@ impl SettingEngine {
     /// # Examples
     ///
     /// ```
-    /// use rtc::peer_connection::configuration::setting_engine::{SettingEngine, SctpMaxMessageSize};
+    /// use rtc::peer_connection::configuration::setting_engine::{
+    ///     SctpMaxMessageSize, SettingEngineBuilder,
+    /// };
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    ///
     /// // Use default 64KB
-    /// setting_engine.set_sctp_max_message_size(
-    ///     SctpMaxMessageSize::Bounded(SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE)
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(
+    ///         SctpMaxMessageSize::DEFAULT_MESSAGE_SIZE,
+    ///     ))
+    ///     .build();
     ///
     /// // Or allow larger messages
-    /// setting_engine.set_sctp_max_message_size(
-    ///     SctpMaxMessageSize::Bounded(256 * 1024) // 256KB
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_sctp_max_message_size(SctpMaxMessageSize::Bounded(256 * 1024)) // 256KB
+    ///     .build();
     ///
     /// // Or unbounded (uses MAX_MESSAGE_SIZE internally)
-    /// setting_engine.set_sctp_max_message_size(SctpMaxMessageSize::Unbounded);
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_sctp_max_message_size(SctpMaxMessageSize::Unbounded)
+    ///     .build();
     /// # Ok(())
     /// # }
     /// ```
@@ -1176,8 +1230,9 @@ impl SettingEngine {
     /// # See Also
     ///
     /// - [RFC 8841 §6.1 - max-message-size](https://datatracker.ietf.org/doc/html/rfc8841#section-6.1)
-    pub fn set_sctp_max_message_size(&mut self, max_message_size: SctpMaxMessageSize) {
-        self.sctp_max_message_size = max_message_size;
+    pub fn with_sctp_max_message_size(mut self, max_message_size: SctpMaxMessageSize) -> Self {
+        self.0.sctp_max_message_size = max_message_size;
+        self
     }
 
     /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes.
@@ -1192,12 +1247,12 @@ impl SettingEngine {
     /// bytes**; smaller values (including `0`) are raised to that floor here, because a
     /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
     /// association never establishes. The window should also be **≥ the largest SCTP
-    /// message this endpoint will receive** ([`Self::set_sctp_max_message_size`], default
+    /// message this endpoint will receive** ([`SettingEngineBuilder::with_sctp_max_message_size`], default
     /// 64 KiB): a buffer smaller than one message cannot hold it for reassembly, so a
     /// full-size inbound message would stall that receive direction. `0` here is *not*
     /// "unbounded" (unlike some other knobs) — to keep the default window, leave this
     /// unset (the default is `INITIAL_RECV_BUF_SIZE`, 1 MiB).
-    pub fn set_sctp_max_receive_buffer_size(&mut self, size: u32) {
+    pub fn with_sctp_max_receive_buffer_size(mut self, size: u32) -> Self {
         // RFC 4960 §6 (User Data Transfer) forbids advertising an initial a_rwnd below
         // 1500 bytes ("An SCTP receiver MUST be able to receive a minimum of 1500 bytes in
         // one SCTP packet. This means that an SCTP endpoint MUST NOT indicate less than
@@ -1211,7 +1266,9 @@ impl SettingEngine {
                  {MIN_SCTP_RECEIVE_BUFFER_SIZE} bytes"
             );
         }
-        self.sctp_max_receive_buffer_size = Some(size.max(MIN_SCTP_RECEIVE_BUFFER_SIZE));
+
+        self.0.sctp_max_receive_buffer_size = Some(size.max(MIN_SCTP_RECEIVE_BUFFER_SIZE));
+        self
     }
 
     /// Controls whether to ignore RID pause signals for receiving transceivers.
@@ -1222,8 +1279,9 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `ignore_rid_pause_for_recv` - `true` to ignore pause signals, `false` to honor them
-    pub fn set_ignore_rid_pause_for_recv(&mut self, ignore_rid_pause_for_recv: bool) {
-        self.ignore_rid_pause_for_recv = ignore_rid_pause_for_recv;
+    pub fn with_ignore_rid_pause_for_recv(mut self, ignore_rid_pause_for_recv: bool) -> Self {
+        self.0.ignore_rid_pause_for_recv = ignore_rid_pause_for_recv;
+        self
     }
 
     /// Controls whether to ignore SSRC attribute in SDP's sendonly or sendrecv for simulcast
@@ -1231,11 +1289,17 @@ impl SettingEngine {
     /// # Parameters
     ///
     /// * `write_ssrc_attributes_for_simulcast` - `true` to write, `false` to ignore
-    pub fn set_write_ssrc_attributes_for_simulcast(
-        &mut self,
+    pub fn with_write_ssrc_attributes_for_simulcast(
+        mut self,
         write_ssrc_attributes_for_simulcast: bool,
-    ) {
-        self.write_ssrc_attributes_for_simulcast = write_ssrc_attributes_for_simulcast;
+    ) -> Self {
+        self.0.write_ssrc_attributes_for_simulcast = write_ssrc_attributes_for_simulcast;
+        self
+    }
+
+    /// Finalises the settings.
+    pub fn build(self) -> SettingEngine {
+        self.0
     }
 }
 

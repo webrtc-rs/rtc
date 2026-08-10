@@ -106,7 +106,7 @@ impl SctpHandlerContext {
 /// reassembly queue is not a leak; it is the mechanism.
 ///
 /// The bound is a message count, so the bytes held depend on message size; SCTP's own
-/// `max_receive_buffer_size` (1 MiB by default, `SettingEngine::set_sctp_max_receive_buffer_size`)
+/// `max_receive_buffer_size` (1 MiB by default, `SettingEngineBuilder::with_sctp_max_receive_buffer_size`)
 /// is the byte-denominated bound underneath it and is what the peer actually sees.
 pub(crate) const SCTP_PIPELINE_READ_BACKLOG_LIMIT: usize = 256;
 

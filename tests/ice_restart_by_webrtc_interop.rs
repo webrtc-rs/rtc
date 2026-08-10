@@ -14,7 +14,7 @@ use tokio::time::timeout;
 
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -149,8 +149,9 @@ async fn test_ice_restart_interop() -> Result<()> {
     let rtc_local_addr = rtc_socket.local_addr()?;
     log::info!("RTC peer bound to {}", rtc_local_addr);
 
-    let mut rtc_setting_engine = SettingEngine::default();
-    rtc_setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+    let rtc_setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Client)
+        .build();
 
     let rtc_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

@@ -28,7 +28,7 @@ use rtc::interceptor::Registry;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
@@ -85,8 +85,9 @@ async fn create_webrtc_peer_video_only() -> Result<Arc<WebrtcPeerConnection>> {
 /// Audio codecs are NOT registered, so audio tracks will be rejected
 fn create_rtc_peer_config_video_only()
 -> Result<RTCPeerConnection<impl rtc::interceptor::Interceptor>> {
-    let mut setting_engine = SettingEngine::default();
-    setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+    let setting_engine = SettingEngineBuilder::new()
+        .with_answering_dtls_role(RTCDtlsRole::Client)
+        .build();
 
     // Only register video codec - no audio!
     let mut media_engine = MediaEngine::default();

@@ -22,7 +22,7 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
@@ -163,10 +163,11 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 fn create_rtc_peer_config_with_rtcp_forwarder(
     is_answerer: bool,
 ) -> Result<RTCPeerConnection<impl Interceptor>> {
-    let mut setting_engine = SettingEngine::default();
+    let mut builder = SettingEngineBuilder::new();
     if is_answerer {
-        setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
+        builder = builder.with_answering_dtls_role(RTCDtlsRole::Client);
     }
+    let setting_engine = builder.build();
 
     let mut media_engine = MediaEngine::default();
     let video_codec = RTCRtpCodecParameters {

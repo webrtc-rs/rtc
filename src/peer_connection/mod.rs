@@ -521,16 +521,17 @@ where
     /// ```
     /// # use std::time::Instant;
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
-    /// use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     /// use std::time::Duration;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut setting_engine = SettingEngine::default();
-    /// setting_engine.set_ice_timeouts(
-    ///     Some(Duration::from_secs(30)),
-    ///     Some(Duration::from_secs(60)),
-    ///     Some(Duration::from_millis(100)),
-    /// );
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_ice_timeouts(
+    ///         Some(Duration::from_secs(30)),
+    ///         Some(Duration::from_secs(60)),
+    ///         Some(Duration::from_millis(100)),
+    ///     )
+    ///     .build();
     ///
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_setting_engine(setting_engine)
@@ -2354,12 +2355,14 @@ where
 mod tests {
     use super::*;
     use crate::data_channel::state::RTCDataChannelState;
+    use crate::peer_connection::configuration::setting_engine::SettingEngineBuilder;
     use sctp::AssociationHandle;
 
     #[test]
     fn with_sctp_receive_buffer_size_sets_and_clamps() {
-        let mut setting_engine = SettingEngine::default();
-        setting_engine.set_sctp_max_receive_buffer_size(200_000);
+        let setting_engine = SettingEngineBuilder::new()
+            .with_sctp_max_receive_buffer_size(200_000)
+            .build();
 
         let builder = RTCPeerConnectionBuilder::new().with_setting_engine(setting_engine);
         assert_eq!(
@@ -2370,8 +2373,9 @@ mod tests {
         // Values below the RFC 4960 §6 floor (1500 bytes), including 0, are clamped up so
         // they cannot break the SCTP handshake.
         for input in [0u32, 500, 1499] {
-            let mut setting_engine = SettingEngine::default();
-            setting_engine.set_sctp_max_receive_buffer_size(input);
+            let setting_engine = SettingEngineBuilder::new()
+                .with_sctp_max_receive_buffer_size(input)
+                .build();
             let builder = RTCPeerConnectionBuilder::new().with_setting_engine(setting_engine);
             assert_eq!(
                 builder.setting_engine.sctp_max_receive_buffer_size,

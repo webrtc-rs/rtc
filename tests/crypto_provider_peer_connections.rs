@@ -16,7 +16,7 @@ use rtc::crypto::{
 };
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::state::RTCPeerConnectionState;
@@ -265,8 +265,9 @@ impl Peer {
         };
         let mut media_engine = MediaEngine::default();
         media_engine.register_codec(codec.clone(), RtpCodecKind::Video)?;
-        let mut setting_engine = SettingEngine::default();
-        setting_engine.set_crypto_provider(provider);
+        let setting_engine = SettingEngineBuilder::new()
+            .with_crypto_provider(provider)
+            .build();
         let mut pc = RTCPeerConnectionBuilder::new()
             .with_setting_engine(setting_engine)
             .with_media_engine(media_engine)

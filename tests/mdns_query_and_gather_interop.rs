@@ -22,7 +22,7 @@ use tokio::time::timeout;
 use rtc::ice::mdns::MulticastDnsMode;
 use rtc::mdns::{MDNS_PORT, MulticastSocket};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -89,23 +89,24 @@ fn create_rtc_peer_with_mdns(
     mdns_mode: MulticastDnsMode,
     is_answerer: bool,
 ) -> Result<RtcPeerConnection> {
-    let mut setting_engine = SettingEngine::default();
-
-    if is_answerer {
-        setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
-    } else {
-        setting_engine.set_answering_dtls_role(RTCDtlsRole::Server)?;
-    }
-
-    // Configure mDNS
-    setting_engine.set_multicast_dns_timeout(Some(Duration::from_secs(10)));
-    setting_engine.set_multicast_dns_mode(mdns_mode);
+    let mut builder = SettingEngineBuilder::new()
+        .with_answering_dtls_role(if is_answerer {
+            RTCDtlsRole::Client
+        } else {
+            RTCDtlsRole::Server
+        })
+        // Configure mDNS
+        .with_multicast_dns_timeout(Some(Duration::from_secs(10)))
+        .with_multicast_dns_mode(mdns_mode);
 
     if mdns_mode == MulticastDnsMode::QueryAndGather {
         // In QueryAndGather mode, hide the local IP behind mDNS name
-        setting_engine.set_multicast_dns_local_name(MDNS_LOCAL_NAME.to_string());
-        setting_engine.set_multicast_dns_local_ip(Some(local_addr.ip()));
+        builder = builder
+            .with_multicast_dns_local_name(MDNS_LOCAL_NAME.to_string())
+            .with_multicast_dns_local_ip(Some(local_addr.ip()));
     }
+
+    let setting_engine = builder.build();
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

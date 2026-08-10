@@ -17,7 +17,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::setting_engine::SettingEngine;
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -384,12 +384,13 @@ async fn main() -> Result<()> {
                             };
                             local_addr = Some(SocketAddr::new(candidate_ip, tcp_local.port()));
 
-                            let mut setting_engine = SettingEngine::default();
-                            setting_engine.set_answering_dtls_role(RTCDtlsRole::Client)?;
-                            setting_engine.set_network_types(vec![
-                                ice::network_type::NetworkType::Tcp4,
-                                ice::network_type::NetworkType::Tcp6,
-                            ]);
+                            let setting_engine = SettingEngineBuilder::new()
+                                .with_answering_dtls_role(RTCDtlsRole::Client)
+                                .with_network_types(vec![
+                                    ice::network_type::NetworkType::Tcp4,
+                                    ice::network_type::NetworkType::Tcp6,
+                                ])
+                                .build();
 
                             let config = RTCConfigurationBuilder::new()
                                 .build();
