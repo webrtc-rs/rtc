@@ -729,6 +729,7 @@ where
     last_answer: String,
 
     ice_restart_requested: Option<RTCOfferOptions>,
+    ice_restart_generation: u64,
     negotiation_needed_state: NegotiationNeededState,
     is_negotiation_ongoing: bool,
 }
@@ -1781,6 +1782,15 @@ where
     /// See [restartIce](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-restartice)
     pub fn restart_ice(&mut self) {
         self.ice_restart_requested = Some(RTCOfferOptions { ice_restart: true });
+    }
+
+    /// Returns the number of ICE restarts applied to this peer connection.
+    ///
+    /// Wrappers that own the network sockets can compare this value before and
+    /// after an operation to detect implicit restarts, such as an answerer
+    /// applying an offer with new remote ICE credentials.
+    pub fn ice_restart_generation(&self) -> u64 {
+        self.ice_restart_generation
     }
 
     /// Returns the current configuration of this peer connection.

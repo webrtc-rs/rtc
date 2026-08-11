@@ -195,6 +195,7 @@ where
             last_offer: String::new(),
             last_answer: String::new(),
             ice_restart_requested: None,
+            ice_restart_generation: 0,
             negotiation_needed_state: NegotiationNeededState::Empty,
             is_negotiation_ongoing: false,
         })
@@ -1290,8 +1291,13 @@ where
             .setting_engine
             .candidates
             .discard_local_candidates_during_ice_restart;
+        let restart_staged = self.ice_transport().has_pending_restart();
         self.ice_transport_mut()
-            .apply_restart(now, keep_local_candidates)
+            .apply_restart(now, keep_local_candidates)?;
+        if restart_staged {
+            self.ice_restart_generation = self.ice_restart_generation.wrapping_add(1);
+        }
+        Ok(())
     }
 
     pub(super) fn start_transports(
