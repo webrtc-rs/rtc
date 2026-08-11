@@ -293,6 +293,7 @@ impl Default for SctpMaxMessageSize {
 /// # Configuration Categories
 ///
 /// - **Timeout**: ICE connection health monitoring and keepalive
+/// - **TURN**: Allocation maintenance behavior
 /// - **Candidates**: NAT traversal, network filtering, ICE credentials
 /// - **Replay Protection**: Anti-replay window sizes for DTLS/SRTP/SRTCP
 /// - **DTLS**: Certificate verification and role selection
@@ -333,6 +334,7 @@ impl Default for SctpMaxMessageSize {
 pub struct SettingEngine {
     pub(crate) crypto_provider: Option<Arc<dyn RTCCryptoProvider>>,
     pub(crate) timeout: Timeout,
+    pub(crate) turn_allocation_refresh_interval_cap: Option<Duration>,
     pub(crate) candidates: Candidates,
     pub(crate) multicast_dns: MulticastDNS,
     pub(crate) replay_protection: ReplayProtection,
@@ -378,6 +380,14 @@ impl SettingEngine {
     /// Returns the multicast DNS configuration.
     pub fn multicast_dns(&self) -> &MulticastDNS {
         &self.multicast_dns
+    }
+
+    /// Returns the configured maximum interval between TURN allocation Refresh requests.
+    ///
+    /// `None` preserves the TURN client's default cadence of half the lifetime advertised by
+    /// the server.
+    pub fn turn_allocation_refresh_interval_cap(&self) -> Option<Duration> {
+        self.turn_allocation_refresh_interval_cap
     }
 }
 
@@ -469,6 +479,16 @@ impl SettingEngineBuilder {
     /// that filters down to nothing usable fails with `ErrNoAvailableCipherSuites`.
     pub fn with_dtls_cipher_suites(mut self, cipher_suites: Vec<CipherSuiteId>) -> Self {
         self.0.dtls_cipher_suites = cipher_suites;
+        self
+    }
+
+    /// Caps the interval between TURN allocation Refresh requests.
+    ///
+    /// By default, TURN allocations are refreshed at half the lifetime advertised by the server.
+    /// A shorter cap can keep an otherwise idle client-to-server NAT mapping active. Values below
+    /// one second are rounded up by the TURN client.
+    pub fn with_turn_allocation_refresh_interval_cap(mut self, cap: Duration) -> Self {
+        self.0.turn_allocation_refresh_interval_cap = Some(cap);
         self
     }
 
@@ -1314,6 +1334,24 @@ mod tests {
         assert_eq!(
             SettingEngine::default().multicast_dns.mode,
             MulticastDnsMode::QueryOnly
+        );
+    }
+
+    #[test]
+    fn test_turn_allocation_refresh_interval_cap() {
+        assert_eq!(
+            SettingEngine::default().turn_allocation_refresh_interval_cap(),
+            None
+        );
+
+        let cap = Duration::from_secs(30);
+        let setting_engine = SettingEngineBuilder::new()
+            .with_turn_allocation_refresh_interval_cap(cap)
+            .build();
+
+        assert_eq!(
+            setting_engine.turn_allocation_refresh_interval_cap(),
+            Some(cap)
         );
     }
 }
