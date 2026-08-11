@@ -243,9 +243,9 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
     msg.decode()?;
     assert_eq!(msg.typ.method, METHOD_REFRESH);
 
-    // Both timers advance by a fixed step from where they were, rather than being recomputed
-    // against the wall clock: permissions are next again at 360s, the allocation at 600s.
-    assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(360)));
+    // The late permission refresh at t(299) is rescheduled from the time it was handled, so its
+    // next deadline is t(419). The allocation remains due at t(600).
+    assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(419)));
 
     client.relay(relayed_addr)?.handle_timeout(t(600));
     let transmit = client
@@ -314,6 +314,56 @@ fn test_allocation_refresh_interval_cap_is_applied() -> Result<()> {
     }
 
     assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(210)));
+
+    client.close()
+}
+
+/// Handling an overdue relay timer once must put every refreshed deadline back in the future.
+/// A runtime may be suspended for longer than several refresh intervals on a mobile platform;
+/// replaying each missed interval makes a Sans-I/O driver spin through historical deadlines.
+#[test]
+fn test_overdue_relay_refreshes_are_rescheduled_from_now() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
+        },
+        test_crypto_provider(),
+    )?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+
+    let resumed_at = t(1000);
+    client.relay(relayed_addr)?.handle_timeout(resumed_at);
+
+    assert_eq!(
+        client.relay(relayed_addr)?.poll_timeout(),
+        Some(t(1120)),
+        "one timeout pass must move the permission and allocation deadlines past now"
+    );
 
     client.close()
 }
