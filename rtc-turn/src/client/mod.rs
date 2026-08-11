@@ -24,7 +24,7 @@ use bytes::BytesMut;
 use crypto::RTCCryptoProvider;
 use log::{debug, trace};
 use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -132,6 +132,29 @@ pub struct ClientConfig {
     pub software: String,
     /// The initial retransmission timeout in milliseconds; each retry doubles it.
     pub rto_in_ms: u64,
+    /// Optional upper bound for the interval between allocation Refresh requests.
+    ///
+    /// By default, allocations are refreshed at half the lifetime advertised by the server.
+    /// A shorter cap can also keep the client-to-server NAT mapping active when an allocation
+    /// waits without carrying application traffic. Values below one second are rounded up.
+    pub allocation_refresh_interval_cap: Option<Duration>,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            stun_serv_addr: "".to_string(),
+            turn_serv_addr: "".to_string(),
+            local_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            transport_protocol: Default::default(),
+            username: "".to_string(),
+            password: "".to_string(),
+            realm: "".to_string(),
+            software: "".to_string(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
+        }
+    }
 }
 
 /// Client is a STUN client
@@ -148,6 +171,7 @@ pub struct Client {
     tr_map: TransactionMap,
     binding_mgr: BindingManager,
     rto_in_ms: u64,
+    allocation_refresh_interval_cap: Option<Duration>,
 
     relays: HashMap<RelayedAddr, RelayState>,
     transmits: VecDeque<TransportMessage<BytesMut>>,
@@ -194,6 +218,7 @@ impl Client {
             } else {
                 DEFAULT_RTO_IN_MS
             },
+            allocation_refresh_interval_cap: config.allocation_refresh_interval_cap,
             relays: HashMap::new(),
             transmits: VecDeque::new(),
             events: VecDeque::new(),
@@ -694,6 +719,7 @@ impl Client {
                         )?,
                         nonce,
                         lifetime.0,
+                        self.allocation_refresh_interval_cap,
                     ),
                 );
                 self.events.push_back(Event::AllocateResponse(
