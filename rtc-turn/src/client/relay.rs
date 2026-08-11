@@ -130,30 +130,29 @@ impl Relay<'_> {
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
-        let (refresh_alloc_timer, refresh_perms_timer) = if let Some(relay) =
-            self.client.relays.get_mut(&self.relayed_addr)
-        {
-            let refresh_alloc_timer = if relay.refresh_alloc_timer <= now {
-                // Floored so the timer always moves. A zero step would leave it pinned to an
-                // instant already in the past — see `MIN_ALLOC_REFRESH_INTERVAL`.
-                let step = (relay.lifetime / 2).max(MIN_ALLOC_REFRESH_INTERVAL);
-                relay.refresh_alloc_timer = relay.refresh_alloc_timer.add(step);
-                Some(relay.lifetime)
-            } else {
-                None
-            };
+        let (refresh_alloc_timer, refresh_perms_timer) =
+            if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
+                let refresh_alloc_timer = if relay.refresh_alloc_timer <= now {
+                    // Floored so the timer always moves. A zero step would leave it pinned to an
+                    // instant already in the past — see `MIN_ALLOC_REFRESH_INTERVAL`.
+                    let step = (relay.lifetime / 2).max(MIN_ALLOC_REFRESH_INTERVAL);
+                    relay.refresh_alloc_timer = now.add(step);
+                    Some(relay.lifetime)
+                } else {
+                    None
+                };
 
-            let refresh_perms_timer = if relay.refresh_perms_timer <= now {
-                relay.refresh_perms_timer = relay.refresh_perms_timer.add(PERM_REFRESH_INTERVAL);
-                true
-            } else {
-                false
-            };
+                let refresh_perms_timer = if relay.refresh_perms_timer <= now {
+                    relay.refresh_perms_timer = now.add(PERM_REFRESH_INTERVAL);
+                    true
+                } else {
+                    false
+                };
 
-            (refresh_alloc_timer, refresh_perms_timer)
-        } else {
-            (None, false)
-        };
+                (refresh_alloc_timer, refresh_perms_timer)
+            } else {
+                (None, false)
+            };
 
         if let Some(lifetime) = refresh_alloc_timer {
             let _ = self.refresh_allocation(lifetime);

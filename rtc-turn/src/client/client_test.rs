@@ -160,3 +160,47 @@ fn test_client_with_stun_send_binding_request_to_timeout() -> Result<()> {
 
     client.close()
 }
+
+/// Handling an overdue relay timer once must put every refreshed deadline back in the future.
+/// A runtime may be suspended for longer than several refresh intervals on a mobile platform;
+/// replaying each missed interval makes a Sans-I/O driver spin through historical deadlines.
+#[test]
+fn test_overdue_relay_refreshes_are_rescheduled_from_now() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(ClientConfig {
+        stun_serv_addr: String::new(),
+        turn_serv_addr: "127.0.0.1:3478".to_owned(),
+        local_addr: udp_socket.local_addr()?,
+        transport_protocol: TransportProtocol::UDP,
+        username: "user".to_owned(),
+        password: "pass".to_owned(),
+        realm: "realm".to_owned(),
+        software: "TEST SOFTWARE".to_owned(),
+        rto_in_ms: 0,
+    })?;
+
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            relayed_addr,
+            MessageIntegrity::new_short_term_integrity("password".to_owned()),
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+        ),
+    );
+
+    let resumed_at = t(1000);
+    client.relay(relayed_addr)?.handle_timeout(resumed_at);
+
+    assert_eq!(
+        client.relay(relayed_addr)?.poll_timeout(),
+        Some(t(1120)),
+        "one timeout pass must move the permission and allocation deadlines past now"
+    );
+
+    client.close()
+}
