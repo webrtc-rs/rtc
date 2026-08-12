@@ -167,6 +167,7 @@ use std::fmt;
 pub use ice::candidate::{
     CandidateConfig, CandidateHostConfig, CandidatePeerReflexiveConfig, CandidateRelayConfig,
     CandidateServerReflexiveConfig, RTCIceCandidate, RTCIceCandidateInit,
+    RTCIceServerTransportProtocol, RTCIceTcpCandidateType,
 };
 pub use ice::candidate_pair::RTCIceCandidatePair;
 pub use ice::candidate_type::RTCIceCandidateType;
