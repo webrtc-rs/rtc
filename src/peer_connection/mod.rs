@@ -2566,6 +2566,60 @@ mod tests {
         assert_eq!(RTCDtlsTransportState::New, pc.dtls_transport().state());
     }
 
+    // `with_discard_local_candidates_during_ice_restart` has to reach `apply_restart`, not just
+    // land in the struct. Applying a restart with it set must empty the local candidates the
+    // agent had gathered; with it unset they survive.
+    //
+    // This is the setting that makes a socket-rebinding ICE restart work (webrtc#868): retained
+    // candidates name addresses nothing is bound to any more, so checks written for them go
+    // nowhere and the restarted generation never leaves `Checking`.
+    #[test]
+    fn discard_local_candidates_during_ice_restart_reaches_apply_restart() {
+        fn restart_with(discard: bool) -> usize {
+            let setting_engine = SettingEngineBuilder::new()
+                .with_discard_local_candidates_during_ice_restart(discard)
+                .build();
+            let mut pc = RTCPeerConnectionBuilder::new()
+                .with_setting_engine(setting_engine)
+                .build(Instant::now())
+                .unwrap();
+
+            // Gather one host candidate so there is something to keep or drop.
+            pc.add_local_candidate(RTCIceCandidateInit {
+                candidate: "candidate:1 1 udp 2130706431 127.0.0.1 5000 typ host".to_owned(),
+                ..Default::default()
+            })
+            .expect("add local candidate");
+            assert_eq!(
+                1,
+                pc.ice_transport().get_local_candidates().unwrap().len(),
+                "precondition: the agent holds the gathered candidate"
+            );
+
+            pc.ice_transport_mut()
+                .generate_restart_credentials(
+                    "newufrag".to_owned(),
+                    "newpasswordlongenough".to_owned(),
+                )
+                .expect("stage restart");
+            pc.apply_ice_restart(Instant::now())
+                .expect("apply ice restart");
+
+            pc.ice_transport().get_local_candidates().unwrap().len()
+        }
+
+        assert_eq!(
+            0,
+            restart_with(true),
+            "with discard enabled the stale generation's candidates are dropped"
+        );
+        assert_eq!(
+            1,
+            restart_with(false),
+            "the default keeps them, which is the pre-existing behaviour"
+        );
+    }
+
     // Two connections must never report the same transport as each other's. This is the case a
     // per-connection counter or a small-integer scheme gets wrong.
     #[test]

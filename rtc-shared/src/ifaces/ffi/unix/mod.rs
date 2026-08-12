@@ -6,12 +6,9 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 fn ss_to_netsa(ss: &SockaddrStorage) -> Option<SocketAddr> {
     match ss.family() {
-        Some(AddressFamily::Inet) => ss.as_sockaddr_in().map(|sin| {
-            SocketAddr::V4(SocketAddrV4::new(
-                std::net::Ipv4Addr::from(sin.ip()),
-                sin.port(),
-            ))
-        }),
+        Some(AddressFamily::Inet) => ss
+            .as_sockaddr_in()
+            .map(|sin| SocketAddr::V4(SocketAddrV4::new(sin.ip(), sin.port()))),
         Some(AddressFamily::Inet6) => ss.as_sockaddr_in6().map(|sin6| {
             SocketAddr::V6(SocketAddrV6::new(
                 sin6.ip(),
