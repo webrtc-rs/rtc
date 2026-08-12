@@ -389,6 +389,21 @@ impl SettingEngine {
     pub fn turn_allocation_refresh_interval_cap(&self) -> Option<Duration> {
         self.turn_allocation_refresh_interval_cap
     }
+
+    /// Whether an ICE restart discards the local candidates gathered by the previous generation.
+    ///
+    /// Set through
+    /// [`with_discard_local_candidates_during_ice_restart`](SettingEngineBuilder::with_discard_local_candidates_during_ice_restart),
+    /// where the reasoning lives.
+    ///
+    /// Read by the layer that owns the sockets, because the two decisions are one decision.
+    /// Discarding the old candidates is only necessary when the transport under them is being
+    /// replaced, and replacing that transport is only safe when the candidates naming it are
+    /// discarded — so an async wrapper treats this as "the sockets are replaced on restart" and
+    /// rebinds them, rather than exposing a second switch the two halves could disagree on.
+    pub fn discard_local_candidates_during_ice_restart(&self) -> bool {
+        self.candidates.discard_local_candidates_during_ice_restart
+    }
 }
 
 /// Fluent builder for [`SettingEngine`].
@@ -1024,6 +1039,50 @@ impl SettingEngineBuilder {
     /// Use with caution.
     pub fn with_include_loopback_candidate(mut self, allow_loopback: bool) -> Self {
         self.0.candidates.include_loopback_candidate = allow_loopback;
+        self
+    }
+
+    /// Discards previously gathered local candidates when an ICE restart is applied.
+    ///
+    /// By default the restarted generation keeps its local candidates, which avoids re-gathering
+    /// addresses that are usually still valid. [RFC 8445 §9] describes a restart as flushing all
+    /// state except the roles and gathering anew, so keeping them is an optimisation rather than
+    /// the specified behaviour — it is sound only while the underlying sockets outlive the
+    /// restart.
+    ///
+    /// Set this when they do not. If the transport rebinds its sockets as part of recovery — for
+    /// example an application that replaces its UDP sockets after the platform invalidated them —
+    /// the retained candidates name addresses nothing is bound to any more. Connectivity checks
+    /// are then written for a local address with no socket behind it and silently go nowhere, so
+    /// the restarted generation exchanges credentials successfully and never leaves `Checking`.
+    ///
+    /// # Parameters
+    ///
+    /// * `discard` - `true` to drop local candidates on restart, `false` (default) to keep them
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Pairs with a transport that rebinds its sockets during ICE restart.
+    /// let setting_engine = SettingEngineBuilder::new()
+    ///     .with_discard_local_candidates_during_ice_restart(true)
+    ///     .build();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [RFC 8445 §9 - ICE Restarts](https://www.rfc-editor.org/rfc/rfc8445#section-9)
+    ///
+    /// [RFC 8445 §9]: https://www.rfc-editor.org/rfc/rfc8445#section-9
+    pub fn with_discard_local_candidates_during_ice_restart(mut self, discard: bool) -> Self {
+        self.0
+            .candidates
+            .discard_local_candidates_during_ice_restart = discard;
         self
     }
 
