@@ -776,10 +776,11 @@ impl Agent {
             }
 
             // We have been in checking longer then Disconnect+Failed timeout, set the connection to Failed
-            if now
-                .checked_duration_since(self.checking_duration)
-                .unwrap_or_else(|| Duration::from_secs(0))
-                > self.disconnected_timeout + self.failed_timeout
+            if self.failed_timeout != ZERO_DURATION
+                && now
+                    .checked_duration_since(self.checking_duration)
+                    .unwrap_or_else(|| Duration::from_secs(0))
+                    > self.disconnected_timeout + self.failed_timeout
             {
                 self.update_connection_state(Some(now), ConnectionState::Failed);
                 self.last_connection_state = self.connection_state;

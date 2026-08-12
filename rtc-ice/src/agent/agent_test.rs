@@ -2038,6 +2038,32 @@ fn test_lite_lifecycle() -> Result<()> {
 }
 */
 
+#[test]
+fn test_zero_failed_timeout_keeps_checking_agent_recoverable() -> Result<()> {
+    let base = Instant::now();
+    let mut agent = Agent::new(
+        base,
+        Arc::new(AgentConfig {
+            disconnected_timeout: Some(Duration::from_secs(5)),
+            failed_timeout: Some(Duration::ZERO),
+            ..Default::default()
+        }),
+        test_crypto_provider(),
+    )?;
+
+    agent.connection_state = ConnectionState::Checking;
+    agent.last_connection_state = ConnectionState::Checking;
+    agent.checking_duration = base;
+    agent.contact(base + Duration::from_secs(3600));
+
+    assert_eq!(
+        agent.connection_state,
+        ConnectionState::Checking,
+        "a zero failed timeout is documented to disable the terminal transition"
+    );
+    Ok(())
+}
+
 /// Test role conflict when both agents are controlling
 /// RFC 8445 Section 7.3.1.1 - Agent with smaller tiebreaker should switch to controlled
 #[test]
@@ -2819,8 +2845,8 @@ fn test_handle_inbound_request_defers_failing_connectivity_check() -> Result<()>
     use sansio::Protocol as _;
 
     let cfg = AgentConfig {
-        disconnected_timeout: Some(Duration::from_secs(0)),
-        failed_timeout: Some(Duration::from_secs(0)),
+        disconnected_timeout: Some(Duration::from_secs(1)),
+        failed_timeout: Some(Duration::from_secs(1)),
         ..Default::default()
     };
     let mut a = Agent::new(Instant::now(), Arc::new(cfg), test_crypto_provider())?;
