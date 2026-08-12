@@ -12,17 +12,26 @@ pub use ice::candidate::{
     candidate_server_reflexive::CandidateServerReflexiveConfig,
 };
 
+/// The role an ICE-TCP candidate takes when a pair is checked (RFC 6544 §4.5).
+///
+/// Carried by [`RTCIceCandidate::tcp_type`]; meaningless for UDP candidates, which leave it
+/// [`Unspecified`](RTCIceTcpCandidateType::Unspecified).
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum RTCIceTcpCandidateType {
+    /// Not a TCP candidate, or the type was absent.
     #[default]
     Unspecified,
 
+    /// Opens the connection. Its port is the discard placeholder 9, not a bound one, since an
+    /// active candidate listens on nothing.
     #[serde(rename = "active")]
     Active,
 
+    /// Accepts the connection; its port is the local listener's.
     #[serde(rename = "passive")]
     Passive,
 
+    /// Both ends open simultaneously.
     #[serde(rename = "so")]
     SimultaneousOpen,
 }
@@ -39,6 +48,7 @@ impl From<TcpType> for RTCIceTcpCandidateType {
 }
 
 impl RTCIceTcpCandidateType {
+    /// Converts to the ICE agent's own representation.
     pub fn to_ice(self) -> TcpType {
         match self {
             RTCIceTcpCandidateType::Unspecified => TcpType::Unspecified,
@@ -49,15 +59,22 @@ impl RTCIceTcpCandidateType {
     }
 }
 
+/// The protocol used to reach the STUN/TURN server that produced a candidate.
+///
+/// Carried by [`RTCIceCandidate::relay_protocol`]; only meaningful for relay candidates.
 #[derive(Default, PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum RTCIceServerTransportProtocol {
+    /// Not a relay candidate, or the protocol was absent.
     #[default]
     Unspecified,
 
+    /// Reached over UDP.
     #[serde(rename = "udp")]
     Udp,
+    /// Reached over TCP.
     #[serde(rename = "tcp")]
     Tcp,
+    /// Reached over TLS.
     #[serde(rename = "tls")]
     Tls,
 }
