@@ -2709,4 +2709,50 @@ mod tests {
             "audio transceiver must be re-associated for the follow-up offer"
         );
     }
+
+    // `set_discard_local_candidates_during_ice_restart` has to reach the restart, not just land in
+    // the struct. Restarting with it set must empty the local candidates the agent had gathered;
+    // with it unset they survive.
+    //
+    // This is the setting that makes a socket-rebinding ICE restart work (webrtc#868): retained
+    // candidates name addresses nothing is bound to any more, so checks written for them go
+    // nowhere and the restarted generation never leaves `Checking`.
+    #[test]
+    fn discard_local_candidates_during_ice_restart_reaches_ice_restart() {
+        fn restart_with(discard: bool) -> usize {
+            let mut setting_engine = SettingEngine::default();
+            setting_engine.set_discard_local_candidates_during_ice_restart(discard);
+            let mut pc = RTCPeerConnectionBuilder::new()
+                .with_setting_engine(setting_engine)
+                .build()
+                .unwrap();
+
+            // Gather one host candidate so there is something to keep or drop.
+            pc.add_local_candidate(RTCIceCandidateInit {
+                candidate: "candidate:1 1 udp 2130706431 127.0.0.1 5000 typ host".to_owned(),
+                ..Default::default()
+            })
+            .expect("add local candidate");
+            assert_eq!(
+                1,
+                pc.ice_transport().get_local_candidates().unwrap().len(),
+                "precondition: the agent holds the gathered candidate"
+            );
+
+            pc.ice_restart().expect("ice restart");
+
+            pc.ice_transport().get_local_candidates().unwrap().len()
+        }
+
+        assert_eq!(
+            0,
+            restart_with(true),
+            "with discard enabled the stale generation's candidates are dropped"
+        );
+        assert_eq!(
+            1,
+            restart_with(false),
+            "by default the candidates survive the restart"
+        );
+    }
 }
