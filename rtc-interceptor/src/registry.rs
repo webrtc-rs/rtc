@@ -18,6 +18,96 @@
 //!
 //! Results in: C wraps B wraps A wraps NoopInterceptor
 //! ```
+//!
+//! # The chain contract
+//!
+//! Interceptors that only transform the packet in front of them compose in any order. The ones
+//! that **delay** a packet (a jitter buffer, a pacer) or **generate** one (an RTCP report, a FEC
+//! repair packet, a recovered packet) do not: for those, where the packet re-enters the chain is
+//! a correctness property, not a preference. This section is the contract they are written
+//! against. It is verified by `tests/chain_order.rs`, which is where to look for what each rule
+//! means in practice.
+//!
+//! ## Rule 1 — a local `poll_*` queue is terminal
+//!
+//! `handle_*` and `poll_*` both walk **outer → inner**. An interceptor that returns a packet from
+//! its own queue in `poll_read`/`poll_write` returns it *instead of* delegating inward, so that
+//! packet **never passes through `inner`**:
+//!
+//! ```text
+//! poll_write: C ──▶ B ──▶ A ──▶ Noop
+//!                  └── B returns its own queued packet here;
+//!                      A never sees it.
+//! ```
+//!
+//! That is the right shape for a packet whose processing is complete — an RTCP Sender Report is
+//! generated fully formed and nothing further downstream needs to touch it. It is the wrong shape
+//! for a packet that still needs the rest of the chain.
+//!
+//! ## Rule 2 — re-inject through `inner` when processing must continue
+//!
+//! A packet released later but still needing downstream work is handed to
+//! `inner.handle_read(pkt)` / `inner.handle_write(pkt)` and collected afterwards from the
+//! delegating `poll_*`. It then traverses every layer below exactly once, in the same order a
+//! live packet would.
+//!
+//! | Situation | Route | Why |
+//! |---|---|---|
+//! | RTCP report generated on a timer | local queue (terminal) | complete when built; nothing below acts on it |
+//! | Retransmission answering a NACK | local queue (terminal) | already went through the chain when first sent |
+//! | Packet released by a jitter buffer | `inner.handle_read` | downstream receive processing has not run yet |
+//! | Packet recovered by FEC | `inner.handle_read` | it is a media packet the rest of the chain has never seen |
+//! | FEC repair packet being sent | `inner.handle_write` | still needs the outbound layers below |
+//! | Packet released by the pacer | `inner.handle_write` | must pick up send-time state at the release instant |
+//!
+//! **Exactly once** is the part worth testing. Re-injecting and *also* queueing locally delivers
+//! the packet twice; queueing locally when downstream work was required silently skips layers.
+//! Neither shows up as a compile error.
+//!
+//! ## Rule 3 — record departure at release, not at enqueue
+//!
+//! [`TaggedPacket::now`](shared::transport::TransportMessage::now) is a timestamp on the packet,
+//! and a delaying interceptor must **replace** it with the instant it actually releases the
+//! packet before handing it inward. Anything below that records departure — a send history
+//! feeding congestion control — otherwise attributes the interceptor's own buffering delay to
+//! the network, which is exactly the measurement congestion control must not get wrong.
+//!
+//! The same applies on the read side: a packet released by a jitter buffer carries the instant it
+//! was released, not the instant it arrived, once it re-enters the chain.
+//!
+//! ## Rule 4 — default relative order
+//!
+//! Listed outermost first, which is the order each packet meets them. `Registry::with` adds
+//! **innermost first**, so a registry builds this list bottom-up.
+//!
+//! ```text
+//!            write (application → network)          read (network → application)
+//!            ────────────────────────────           ───────────────────────────
+//! outermost  pacing                                 FEC decode / recover
+//!            FEC encode (repair packets)            jitter buffer
+//!            RTCP reports (SR)                      NACK generator
+//!            NACK responder (retransmit buffer)     RTCP reports (RR)
+//!            TWCC sender (tags seq numbers)         TWCC receiver (records arrivals)
+//! innermost  rtpfb / send history                   rtpfb / feedback ingest
+//! ```
+//!
+//! The constraints that fix these positions, as opposed to the ones that are conventional:
+//!
+//! - **Pacing is outermost on write.** Everything below it must observe the release instant
+//!   (rule 3), so nothing that timestamps or records a packet may sit above it.
+//! - **Send history is innermost on write.** It records what actually left, after every layer
+//!   that may rewrite the packet — including the TWCC sequence number it is keyed by.
+//! - **FEC decode is outermost on read.** A recovered packet has to look to every other
+//!   interceptor exactly like a packet that arrived normally, so recovery happens before anything
+//!   below inspects sequence numbers.
+//! - **The jitter buffer sits below FEC and above the NACK generator.** Recovery gets its chance
+//!   before a gap is declared, and the buffer's depth is what bounds how long a retransmission
+//!   stays useful.
+//! - **TWCC receiver is innermost on read**, recording arrival after the packet set is final —
+//!   including packets FEC recovered.
+//!
+//! Interceptors outside these groups compose freely. When adding one that delays or generates,
+//! state its required position and which rule fixes it.
 
 use crate::noop::NoopInterceptor;
 use crate::{BoxedInterceptor, Interceptor};
