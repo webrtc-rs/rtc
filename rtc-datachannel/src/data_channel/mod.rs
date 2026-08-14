@@ -78,6 +78,9 @@ pub struct DataChannel {
     read_outs: VecDeque<DataChannelMessage>,
     write_outs: VecDeque<DataChannelMessage>,
 
+    /// Whether the DCEP handshake for this channel has completed.
+    handshake_complete: bool,
+
     // stats
     messages_sent: usize,
     messages_received: usize,
@@ -129,6 +132,11 @@ impl DataChannel {
             negotiated: config.negotiated,
         });
 
+        // Out-of-band `negotiated` channels have no handshake, so they are
+        // handshake-complete immediately. In-band channels stay incomplete until
+        // `handle_dcep` processes the peer's `DATA_CHANNEL_ACK`.
+        data_channel.handshake_complete = config.negotiated;
+
         Ok(data_channel)
     }
 
@@ -160,6 +168,10 @@ impl DataChannel {
         let mut data_channel = DataChannel::new(config, association_handle, stream_id);
 
         data_channel.write_data_channel_ack()?;
+
+        // The remote side's OPEN has been processed and the ACK is written out,
+        // so the handshake is complete.
+        data_channel.handshake_complete = true;
 
         Ok(data_channel)
     }
@@ -199,6 +211,15 @@ impl DataChannel {
         &self.config
     }
 
+    /// Whether the DCEP handshake for this channel has completed.
+    ///
+    /// For a locally-created in-band channel this becomes `true` only when the peer's
+    /// `DATA_CHANNEL_ACK` is received; for a remote channel it is `true` from `accept()`;
+    /// for an out-of-band `negotiated` channel it is `true` from `dial()`.
+    pub fn is_handshake_complete(&self) -> bool {
+        self.handshake_complete
+    }
+
     fn handle_dcep<B>(&mut self, data: &mut B) -> Result<()>
     where
         B: Buf,
@@ -214,6 +235,8 @@ impl DataChannel {
             }
             Message::DataChannelAck(_) => {
                 debug!("Received DATA_CHANNEL_ACK");
+                // The initiator's DCEP handshake is complete.
+                self.handshake_complete = true;
             }
             _ => {
                 return Err(Error::InvalidMessageType(msg.message_type() as u8));
@@ -442,6 +465,8 @@ impl sansio::Protocol<DataChannelMessage, DataChannelMessage, ()> for DataChanne
         // a corresponding notification to the application layer that the reset
         // has been performed.  Streams are available for reuse after a reset
         // has been performed.
+        // Closing resets the handshake-complete flag.
+        self.handshake_complete = false;
         self.write_data_channel_close()
     }
 }

@@ -5,6 +5,7 @@ use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
 use shared::error::Result;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub(crate) struct RTCDataChannelInternal {
@@ -26,6 +27,14 @@ pub(crate) struct RTCDataChannelInternal {
     /// for synchronous send back-pressure.
     pub(crate) outstanding_bytes: usize,
 
+    /// Deadline by which an in-band channel's DCEP handshake must complete.
+    /// Set when the channel is dialed; cleared on handshake completion or close.
+    pub(crate) handshake_deadline: Option<Instant>,
+
+    /// Set when the DCEP handshake times out and `OnClose` has already been
+    /// emitted. Prevents `SCTPStreamClosed` from emitting/counting a second close.
+    pub(crate) close_emitted: bool,
+
     pub(crate) data_channel: Option<::datachannel::data_channel::DataChannel>,
 }
 
@@ -43,6 +52,8 @@ impl Default for RTCDataChannelInternal {
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
             outstanding_bytes: 0,
+            handshake_deadline: None,
+            close_emitted: false,
             data_channel: None,
         }
     }
@@ -63,6 +74,8 @@ impl RTCDataChannelInternal {
             buffered_amount_high_threshold: u32::MAX,
             buffered_amount_low_threshold: 0,
             outstanding_bytes: 0,
+            handshake_deadline: None,
+            close_emitted: false,
             data_channel: None,
         }
     }
@@ -90,7 +103,15 @@ impl RTCDataChannelInternal {
         data_channel.set_buffered_amount_high_threshold(self.buffered_amount_high_threshold)?;
 
         self.data_channel = Some(data_channel);
-        self.ready_state = RTCDataChannelState::Open;
+
+        // An in-band channel stays `Connecting` until the peer's `DATA_CHANNEL_ACK`
+        // is processed in `DataChannelHandler::handle_read`. An out-of-band
+        // `negotiated` channel has no DCEP handshake, so it is open immediately.
+        self.ready_state = if self.negotiated {
+            RTCDataChannelState::Open
+        } else {
+            RTCDataChannelState::Connecting
+        };
 
         Ok(())
     }
@@ -137,6 +158,7 @@ impl RTCDataChannelInternal {
         if let Some(data_channel) = self.data_channel.as_mut() {
             data_channel.close()?;
         }
+        self.handshake_deadline = None;
         self.ready_state = RTCDataChannelState::Closed;
         Ok(())
     }

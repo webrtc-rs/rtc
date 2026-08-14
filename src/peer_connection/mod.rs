@@ -2674,7 +2674,11 @@ mod tests {
             .next()
             .expect("data channel must be stored internally");
         assert!(internal.data_channel.is_some());
-        assert_eq!(internal.ready_state, RTCDataChannelState::Open);
+        assert_eq!(
+            internal.ready_state,
+            RTCDataChannelState::Connecting,
+            "a dialed in-band channel stays Connecting until its DATA_CHANNEL_ACK arrives"
+        );
     }
 
     // ---- Rollback (RFC 8829, Section 5.7) ----

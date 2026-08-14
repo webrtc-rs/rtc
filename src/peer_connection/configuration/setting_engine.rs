@@ -167,6 +167,22 @@ pub struct Timeout {
     pub ice_relay_acceptance_min_wait: Option<Duration>,
 }
 
+/// Data-channel configuration for in-band channels.
+#[derive(Clone)]
+pub struct DataChannel {
+    /// Maximum time to wait for a peer's `DATA_CHANNEL_ACK` before failing an
+    /// in-band data channel. `None` disables the timeout.
+    pub dcep_handshake_timeout: Option<Duration>,
+}
+
+impl Default for DataChannel {
+    fn default() -> Self {
+        Self {
+            dcep_handshake_timeout: Some(Duration::from_secs(30)),
+        }
+    }
+}
+
 /// MulticastDNS configuration for mDNS.
 #[derive(Clone)]
 pub struct MulticastDNS {
@@ -334,6 +350,7 @@ impl Default for SctpMaxMessageSize {
 pub struct SettingEngine {
     pub(crate) crypto_provider: Option<Arc<dyn RTCCryptoProvider>>,
     pub(crate) timeout: Timeout,
+    pub(crate) data_channel: DataChannel,
     pub(crate) turn_allocation_refresh_interval_cap: Option<Duration>,
     pub(crate) candidates: Candidates,
     pub(crate) multicast_dns: MulticastDNS,
@@ -552,6 +569,17 @@ impl SettingEngineBuilder {
         self.0.timeout.ice_disconnected_timeout = disconnected_timeout;
         self.0.timeout.ice_failed_timeout = failed_timeout;
         self.0.timeout.ice_keepalive_interval = keep_alive_interval;
+        self
+    }
+
+    /// Configures the DCEP handshake timeout for in-band data channels.
+    ///
+    /// # Parameters
+    ///
+    /// * `timeout` - Maximum time to wait for the peer's `DATA_CHANNEL_ACK`,
+    ///   or `None` to disable the timeout.
+    pub fn with_dcep_handshake_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.0.data_channel.dcep_handshake_timeout = timeout;
         self
     }
 
