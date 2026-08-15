@@ -84,8 +84,8 @@
 //!            write (application → network)          read (network → application)
 //!            ────────────────────────────           ───────────────────────────
 //! outermost  pacing                                 FEC decode / recover
-//!            FEC encode (repair packets)            jitter buffer
-//!            RTCP reports (SR)                      NACK generator
+//!            FEC encode (repair packets)            NACK generator
+//!            RTCP reports (SR)                      jitter buffer
 //!            NACK responder (retransmit buffer)     RTCP reports (RR)
 //!            TWCC sender (tags seq numbers)         TWCC receiver (records arrivals)
 //! innermost  rtpfb / send history                   rtpfb / feedback ingest
@@ -100,9 +100,18 @@
 //! - **FEC decode is outermost on read.** A recovered packet has to look to every other
 //!   interceptor exactly like a packet that arrived normally, so recovery happens before anything
 //!   below inspects sequence numbers.
-//! - **The jitter buffer sits below FEC and above the NACK generator.** Recovery gets its chance
-//!   before a gap is declared, and the buffer's depth is what bounds how long a retransmission
-//!   stays useful.
+//! - **The NACK generator sits above the jitter buffer.** Loss has to be detected from *arrivals*.
+//!   A generator below the buffer sees a packet only once it is released, so it cannot notice a
+//!   gap until a whole depth after the packet went missing, and every NACK it sends is late by
+//!   that much. (This corrects the order first written here, which had them the other way round;
+//!   `tests/jitter_buffer_nack_depth.rs` measures the cost.)
+//! - **The jitter buffer sits below FEC.** Recovery gets its chance before the buffer has to
+//!   decide whether to wait for a gap, and a recovered packet is then indistinguishable from one
+//!   that arrived normally.
+//! - **The buffer's depth bounds how long a retransmission stays useful.** A depth shallower than
+//!   NACK detection plus the round trip means every retransmission arrives after its position has
+//!   been played past. The two are deliberately *not* coupled — see
+//!   [`JitterBufferBuilder::with_depth`](crate::JitterBufferBuilder::with_depth).
 //! - **TWCC receiver is innermost on read**, recording arrival after the packet set is final —
 //!   including packets FEC recovered.
 //!

@@ -77,8 +77,25 @@ impl<P> JitterBufferBuilder<P> {
 
     /// How long a packet is held to absorb arrival-time variation.
     ///
-    /// This is the delay the buffer adds, and the window within which a retransmission is still
-    /// useful — see the note on NACK in the crate documentation.
+    /// # Its relationship with NACK
+    ///
+    /// This is the delay the buffer adds, and it is also the window in which a retransmission is
+    /// still useful. A lost packet cannot come back before
+    ///
+    /// ```text
+    ///     detection (up to one NACK interval) + round trip + the sender's response
+    /// ```
+    ///
+    /// has elapsed, and the buffer plays a position out one depth after that position is due. So
+    /// **a depth shallower than that sum means every retransmission arrives too late** — its slot
+    /// has already been played past, so it is dropped rather than emitted out of order, and the
+    /// NACK traffic was spent for nothing.
+    ///
+    /// The two are deliberately not coupled: a mechanism for the jitter buffer and the NACK
+    /// generator to negotiate would tie together interceptors that are otherwise independent, and
+    /// an application that configures both can honour the inequality itself.
+    /// `tests/jitter_buffer_nack_depth.rs` holds it to that — the same loss recovered under a
+    /// depth chosen to accommodate it and lost under one chosen not to.
     pub fn with_depth(mut self, depth: Duration) -> Self {
         self.depth = depth;
         self
