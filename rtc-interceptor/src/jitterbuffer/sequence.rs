@@ -57,6 +57,41 @@ impl SequenceExtender {
     }
 }
 
+/// Extends `u32` RTP timestamps into a monotonically increasing 64-bit space.
+///
+/// The same nearest-cycle rule as [`SequenceExtender`], over a 32-bit space. Timestamps need it
+/// for the same reason sequence numbers do: playout deadlines are derived by subtracting one
+/// timestamp from another, and across a wrap the raw difference is off by a full cycle — which at
+/// 90 kHz is a deadline about 13 hours wrong.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TimestampExtender {
+    highest: Option<u64>,
+}
+
+impl TimestampExtender {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Extend `timestamp` relative to the highest one seen.
+    pub(crate) fn extend(&mut self, timestamp: u32) -> u64 {
+        let Some(highest) = self.highest else {
+            let extended = u64::from(timestamp);
+            self.highest = Some(extended);
+            return extended;
+        };
+
+        let previous = (highest & 0xFFFF_FFFF) as u32;
+        let distance = i64::from(timestamp.wrapping_sub(previous) as i32);
+        let extended = (highest as i64 + distance).max(0) as u64;
+
+        if extended > highest {
+            self.highest = Some(extended);
+        }
+        extended
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

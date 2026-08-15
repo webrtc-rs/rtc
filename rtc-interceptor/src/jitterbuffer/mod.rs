@@ -20,4 +20,5 @@
 //!
 //! - [RFC 3550](https://datatracker.ietf.org/doc/html/rfc3550) - RTP, sequence numbers and jitter
 pub(crate) mod buffer;
+pub(crate) mod receiver;
 pub(crate) mod sequence;
