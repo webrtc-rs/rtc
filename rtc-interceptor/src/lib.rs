@@ -216,11 +216,19 @@ use std::time::Instant;
 mod noop;
 mod registry;
 
+pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
 pub(crate) mod report;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use jitterbuffer::buffer::{
+    JitterBuffer, JitterBufferStats, Rejected, State as JitterBufferState,
+};
+pub use jitterbuffer::receiver::{
+    DEFAULT_CAPACITY as JITTER_BUFFER_DEFAULT_CAPACITY,
+    DEFAULT_DEPTH as JITTER_BUFFER_DEFAULT_DEPTH, JitterBufferBuilder, JitterBufferInterceptor,
+};
 pub use nack::{
     generator::{NackGeneratorBuilder, NackGeneratorInterceptor},
     responder::{NackResponderBuilder, NackResponderInterceptor},

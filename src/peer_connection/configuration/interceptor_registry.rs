@@ -11,17 +11,35 @@
 //!
 //! # Interceptor Chain Architecture
 //!
-//! Interceptors form a processing chain where each interceptor wraps the next:
+//! Interceptors form a processing chain where each interceptor wraps the next. Interceptors
+//! added later wrap those added earlier, so **the last one added is the outermost**.
+//!
+//! Unlike the peer connection's own pipeline, an interceptor chain has **no direction concept**:
+//! `handle_read`, `handle_write` and `poll_*` all walk outer → inner. The outermost interceptor
+//! sees a packet first whether it is inbound or outbound; "inbound" and "outbound" are properties
+//! of the packet, not of the traversal order.
+//!
+//! [`register_default_interceptors`] composes this chain, listed outermost first:
 //!
 //! ```text
-//! Application
-//!     ↓ write (outgoing RTP)
-//! [TWCC Receiver] → [Sender Report] → [NACK Responder] → [NACK Generator] → Network
-//!     ↑ read (incoming RTP)
+//!   outermost   [TWCC Receiver]     records arrivals, emits TransportLayerCC
+//!               [Sender Report]     emits SR, filters hop-by-hop RTCP
+//!               [Receiver Report]   emits RR from inbound RTP statistics
+//!               [NACK Responder]    buffers sent RTP, retransmits on NACK
+//!   innermost   [NACK Generator]    detects gaps in inbound RTP, emits NACK
+//!                     ↓
+//!               [Noop]              chain terminal
 //! ```
 //!
-//! The order matters: interceptors added later wrap those added earlier,
-//! meaning they process outgoing packets first and incoming packets last.
+//! Both a read and a write enter at TWCC Receiver and descend; neither traversal is reversed.
+//!
+//! When adding an interceptor that **delays** a packet (jitter buffer, pacer) or **generates**
+//! one (FEC repair, a recovered packet), its position stops being a preference and becomes a
+//! correctness property. The rules that govern it — when a packet may be returned from a local
+//! `poll_*` queue, when it must be re-injected through `inner`, and why a delayed packet must
+//! carry its release instant — are documented on the
+//! [interceptor registry](crate::interceptor::Registry) and verified by the interceptor crate's
+//! `tests/chain_order.rs`.
 //!
 //! # Quick Start
 //!
@@ -626,5 +644,48 @@ pub(crate) fn create_stream_info(
         channels: codec.channels,
         sdp_fmtp_line: codec.sdp_fmtp_line.clone(),
         rtcp_feedback: feedbacks,
+    }
+}
+
+#[cfg(test)]
+mod chain_order_tests {
+    use super::*;
+
+    /// The module documentation states the default chain's order outermost-first. A doc that
+    /// drifts from the composition is worse than no doc, because the order is now a correctness
+    /// property for anything delayed or generated (see `rtc-interceptor`'s chain contract).
+    ///
+    /// The composed chain's *type* spells out its nesting — `TwccReceiver<SenderReport<…>>` —
+    /// so the type name is the composition, read back. This asserts the documented order against
+    /// it rather than against a second copy of the same list.
+    #[test]
+    fn register_default_interceptors_composes_the_documented_order() {
+        let mut media_engine = MediaEngine::default();
+        let registry = register_default_interceptors(Registry::new(), &mut media_engine)
+            .expect("default interceptors");
+        let chain = registry.build();
+
+        let type_name = std::any::type_name_of_val(&chain);
+
+        // Outermost first, exactly as the module doc lists them.
+        let documented = [
+            "TwccReceiverInterceptor",
+            "SenderReportInterceptor",
+            "ReceiverReportInterceptor",
+            "NackResponderInterceptor",
+            "NackGeneratorInterceptor",
+            "NoopInterceptor",
+        ];
+
+        let mut searched_from = 0;
+        for (position, interceptor) in documented.iter().enumerate() {
+            let found = type_name[searched_from..].find(interceptor).unwrap_or_else(|| {
+                panic!(
+                    "`{interceptor}` is documented at position {position} (outermost first) but \
+                     does not appear after the ones before it.\nchain: {type_name}"
+                )
+            });
+            searched_from += found + interceptor.len();
+        }
     }
 }

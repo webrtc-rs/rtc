@@ -11,7 +11,9 @@ use crate::media_stream::track::MediaStreamTrackId;
 use crate::peer_connection::configuration::media_engine::{MIME_TYPE_RTX, MediaEngine};
 use crate::peer_connection::event::track_event::{RTCTrackEvent, RTCTrackEventInit};
 use crate::rtp_transceiver::rtp_receiver::internal::RTCRtpReceiverInternal;
-use crate::rtp_transceiver::rtp_sender::rtp_codec::parse_rtx_apt;
+use crate::rtp_transceiver::rtp_sender::rtp_codec::{
+    find_fec_payload_type, find_rtx_payload_type, parse_rtx_apt,
+};
 use crate::rtp_transceiver::rtp_sender::{
     RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpHeaderExtensionCapability,
 };
@@ -533,25 +535,11 @@ where
                         coding.ssrc = Some(ssrc);
                     }
 
-                    let parameters = receiver.get_parameters(self.media_engine);
-                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                        self.interceptor,
-                        true,
-                        rtp_header.ssrc,
-                        codec.payload_type,
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
-
-                    let new_entry =
-                        receiver
-                            .track_mut()
-                            .set_codec_ssrc_by_rid(codec.rtp_codec, ssrc, &rid);
-                    assert!(!new_entry);
-
-                    let track_id = receiver.track().track_id().to_owned();
-
-                    // Get RTX and FEC SSRCs from coding parameters
+                    // Get RTX and FEC SSRCs from coding parameters.
+                    //
+                    // Resolved before the bind rather than after it: each simulcast layer has its
+                    // own repair flow, so the association has to be the one belonging to *this*
+                    // coding, and it is what the bind below hands to the interceptors.
                     let (rtx_ssrc, fec_ssrc) = receiver
                         .get_coding_parameters()
                         .iter()
@@ -563,6 +551,37 @@ where
                             )
                         })
                         .unwrap_or((None, None));
+
+                    let parameters = receiver.get_parameters(self.media_engine);
+                    // Both halves or neither, per repair flow — see
+                    // `interceptor_remote_streams_op`. RTX and FEC are handled identically:
+                    // both repair this stream from a separate SSRC.
+                    let rtx = rtx_ssrc.zip(find_rtx_payload_type(
+                        codec.payload_type,
+                        &parameters.rtp_parameters.codecs,
+                    ));
+                    let fec =
+                        fec_ssrc.zip(find_fec_payload_type(&parameters.rtp_parameters.codecs));
+                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                        self.interceptor,
+                        true,
+                        rtp_header.ssrc,
+                        rtx.map(|(ssrc_rtx, _)| ssrc_rtx),
+                        fec.map(|(ssrc_fec, _)| ssrc_fec),
+                        codec.payload_type,
+                        rtx.map(|(_, payload_type_rtx)| payload_type_rtx),
+                        fec.map(|(_, payload_type_fec)| payload_type_fec),
+                        &codec.rtp_codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
+
+                    let new_entry =
+                        receiver
+                            .track_mut()
+                            .set_codec_ssrc_by_rid(codec.rtp_codec, ssrc, &rid);
+                    assert!(!new_entry);
+
+                    let track_id = receiver.track().track_id().to_owned();
 
                     // Create inbound stream accumulator before firing OnOpen event
                     self.stats.get_or_create_inbound_rtp_streams(
@@ -630,11 +649,17 @@ where
                 receiver.set_coding_parameters(receive_codings);
 
                 let parameters = receiver.get_parameters(self.media_engine);
+                // An undeclared SSRC arrived without any `a=ssrc-group` to associate it with, so
+                // there is no repair flow to report — the codings above are built with `fec: None`.
                 RTCRtpReceiverInternal::interceptor_remote_stream_op(
                     self.interceptor,
                     true,
                     rtp_header.ssrc,
+                    None,
+                    None,
                     codec.payload_type,
+                    None,
+                    None,
                     &codec.rtp_codec,
                     &parameters.rtp_parameters.header_extensions,
                 );
