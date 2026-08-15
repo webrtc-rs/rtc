@@ -216,12 +216,16 @@ use std::time::Instant;
 mod noop;
 mod registry;
 
+pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
 pub(crate) mod report;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use intervalpli::generator::{
+    DEFAULT_INTERVAL as INTERVAL_PLI_DEFAULT_INTERVAL, IntervalPliBuilder, IntervalPliInterceptor,
+};
 pub use jitterbuffer::buffer::{
     JitterBuffer, JitterBufferStats, Rejected, State as JitterBufferState,
 };
