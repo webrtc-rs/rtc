@@ -220,6 +220,7 @@ pub(crate) mod flexfec;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
+pub(crate) mod pacing;
 pub(crate) mod report;
 pub(crate) mod rfc8888;
 pub(crate) mod rtpfb;
@@ -250,6 +251,10 @@ pub use nack::{
     responder::{NackResponderBuilder, NackResponderInterceptor},
 };
 pub use noop::NoopInterceptor;
+pub use pacing::{
+    DEFAULT_INITIAL_RATE as PACER_DEFAULT_INITIAL_RATE, DEFAULT_INTERVAL as PACER_DEFAULT_INTERVAL,
+    DEFAULT_QUEUE_SIZE as PACER_DEFAULT_QUEUE_SIZE, PacerBuilder, PacerInterceptor,
+};
 pub use registry::Registry;
 pub use report::{
     receiver::{ReceiverReportBuilder, ReceiverReportInterceptor},
