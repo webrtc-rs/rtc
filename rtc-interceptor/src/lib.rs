@@ -216,6 +216,7 @@ use std::time::Instant;
 mod noop;
 mod registry;
 
+pub(crate) mod flexfec;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
@@ -223,6 +224,15 @@ pub(crate) mod report;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use flexfec::bit_array::BitArray;
+pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
+pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
+pub use flexfec::draft03::encoder::FlexFec03Encoder;
+pub use flexfec::draft03::receiver::{FlexFec03ReceiveBuilder, FlexFec03ReceiveInterceptor};
+pub use flexfec::draft03::sender::{
+    DEFAULT_NUM_FEC_PACKETS, DEFAULT_NUM_MEDIA_PACKETS, FlexFec03SendBuilder,
+    FlexFec03SendInterceptor,
+};
 pub use intervalpli::generator::{
     DEFAULT_INTERVAL as INTERVAL_PLI_DEFAULT_INTERVAL, IntervalPliBuilder, IntervalPliInterceptor,
 };
