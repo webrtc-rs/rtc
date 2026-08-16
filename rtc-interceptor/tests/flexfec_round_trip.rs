@@ -324,6 +324,54 @@ fn a_truncated_repair_packet_is_discarded() {
     assert_eq!(0, decoder.pending_repair_packets());
 }
 
+/// A repair packet whose payload is shorter than the length it claims to recover cannot rebuild
+/// the packet. Zero padding the tail would produce something that parses, passes downstream and
+/// renders as corruption — worse than the loss it was meant to repair.
+#[test]
+fn a_repair_packet_with_a_truncated_payload_recovers_nothing() {
+    let media = block(100, 4);
+    let repair = encode(&media, 1);
+
+    // Keep the header intact and cut the repair payload short.
+    let mut truncated = repair[0].clone();
+    truncated.payload = repair[0].payload.slice(..repair[0].payload.len() - 3);
+
+    let mut decoder = FlexFec03Decoder::new(REPAIR_SSRC, MEDIA_SSRC);
+    let mut recovered = Vec::new();
+    for packet in [&media[0], &media[1], &media[3]] {
+        recovered.extend(decoder.decode(packet.clone()));
+    }
+    recovered.extend(decoder.decode(truncated));
+
+    assert!(
+        recovered.is_empty(),
+        "a corrupted recovery is worse than no recovery"
+    );
+}
+
+/// A repair packet that has produced its recovery can never produce another, so holding it costs
+/// capacity against the retention limit and is rescanned on every later pass.
+#[test]
+fn a_spent_repair_packet_is_released() {
+    let media = block(100, 4);
+    let repair = encode(&media, 1);
+
+    let mut decoder = FlexFec03Decoder::new(REPAIR_SSRC, MEDIA_SSRC);
+    decoder.decode(repair[0].clone());
+    assert_eq!(1, decoder.pending_repair_packets(), "held while it waits");
+
+    // 101 is missing; supplying the rest completes it.
+    for packet in [&media[0], &media[2], &media[3]] {
+        decoder.decode(packet.clone());
+    }
+
+    assert_eq!(
+        0,
+        decoder.pending_repair_packets(),
+        "released once it has done its work"
+    );
+}
+
 /// The repair packet can arrive before the media it protects — reordering is ordinary, and a
 /// decoder that only matched backwards would recover nothing.
 #[test]

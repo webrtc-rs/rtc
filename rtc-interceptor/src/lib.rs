@@ -221,6 +221,7 @@ pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
 pub(crate) mod report;
+pub(crate) mod rfc8888;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
@@ -252,6 +253,11 @@ pub use registry::Registry;
 pub use report::{
     receiver::{ReceiverReportBuilder, ReceiverReportInterceptor},
     sender::{SenderReportBuilder, SenderReportInterceptor},
+};
+pub use rfc8888::recorder::CcFeedbackRecorder;
+pub use rfc8888::sender::{
+    DEFAULT_INTERVAL as RFC8888_DEFAULT_INTERVAL,
+    DEFAULT_MAX_REPORT_SIZE as RFC8888_DEFAULT_MAX_REPORT_SIZE, Rfc8888Builder, Rfc8888Interceptor,
 };
 pub use stream_info::{RTCPFeedback, RTPHeaderExtension, StreamInfo};
 pub use twcc::{
