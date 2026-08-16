@@ -234,21 +234,26 @@ impl FlexFec03Decoder {
     fn attempt_recovery(&mut self) -> Vec<rtp::Packet> {
         let mut recovered_now = Vec::new();
 
+        // Each pass takes its repair packet *out* of the list before using it, which bounds the
+        // loop by the list length whatever happens next. A repair packet is spent once it has
+        // produced its recovery, and one that cannot be used must not be retried.
+        //
+        // Removing it is not merely tidy. Leaving it in and relying on `record_recovered` to
+        // clear its missing count does not terminate: if the recovered sequence number did not
+        // match the slot that was waiting on it, the same repair packet would be selected again
+        // forever.
         while let Some(index) = self
             .repair_packets
             .iter()
             .position(|state| state.missing() == 1)
         {
-            let state = self.repair_packets[index].clone();
+            let state = self.repair_packets.remove(index);
             let Some(packet) = self.recover(&state) else {
-                // Unusable — drop it rather than retrying it forever.
-                self.repair_packets.remove(index);
                 continue;
             };
 
             recovered_now.push(packet.clone());
             self.record_recovered(packet);
-            self.repair_packets.remove(index);
             self.discard_old_recovered_packets();
         }
 
