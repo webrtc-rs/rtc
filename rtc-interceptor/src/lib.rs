@@ -27,6 +27,13 @@
 //! | [`TwccSenderInterceptor`] | Adds transport-wide sequence numbers to outgoing RTP packets |
 //! | [`TwccReceiverInterceptor`] | Tracks incoming packets and generates TransportLayerCC feedback |
 //!
+//! ## Congestion control
+//!
+//! | Interceptor | Description |
+//! |-------------|-------------|
+//! | [`PacerInterceptor`] | Releases outgoing packets at a target rate rather than in bursts |
+//! | [`Rfc8888Interceptor`] | Reports per-packet arrival times back to the sender (RFC 8888) |
+//!
 //! ## Utility
 //!
 //! | Interceptor | Description |
@@ -220,6 +227,7 @@ pub(crate) mod flexfec;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
+pub(crate) mod pacing;
 pub(crate) mod report;
 pub(crate) mod rfc8888;
 pub(crate) mod rtpfb;
@@ -250,6 +258,11 @@ pub use nack::{
     responder::{NackResponderBuilder, NackResponderInterceptor},
 };
 pub use noop::NoopInterceptor;
+pub use pacing::pacer::{MIN_BURST_BITS as PACER_MIN_BURST_BITS, Pacer};
+pub use pacing::sender::{
+    DEFAULT_BITRATE as PACER_DEFAULT_BITRATE, DEFAULT_QUEUE_LIMIT as PACER_DEFAULT_QUEUE_LIMIT,
+    PacerBuilder, PacerInterceptor,
+};
 pub use registry::Registry;
 pub use report::{
     receiver::{ReceiverReportBuilder, ReceiverReportInterceptor},
