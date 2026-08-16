@@ -248,6 +248,7 @@ impl FlexFec03Decoder {
 
             recovered_now.push(packet.clone());
             self.record_recovered(packet);
+            self.repair_packets.remove(index);
             self.discard_old_recovered_packets();
         }
 
@@ -286,13 +287,13 @@ impl FlexFec03Decoder {
         header[0] &= 0xBF;
 
         let payload_length = u16::from_be_bytes([header[2], header[3]]) as usize;
+        if repair_payload.len() < payload_length {
+            return None;
+        }
         header[2..4].copy_from_slice(&missing_sequence_number.to_be_bytes());
         header[8..12].copy_from_slice(&self.media_ssrc.to_be_bytes());
 
-        let mut payload = vec![0u8; payload_length];
-        for (target, &source) in payload.iter_mut().zip(repair_payload) {
-            *target = source;
-        }
+        let mut payload = repair_payload[..payload_length].to_vec();
         for protected in &state.protected {
             let Some(packet) = &protected.packet else {
                 continue;

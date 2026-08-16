@@ -118,6 +118,7 @@ impl FlexFec03Encoder {
             return Vec::new();
         }
 
+        let num_fec_packets = coverage.num_fec_packets();
         let base_sequence_number = media_packets[0].header.sequence_number;
         let mut repair_packets = Vec::with_capacity(num_fec_packets as usize);
         for fec_index in 0..num_fec_packets {
