@@ -222,6 +222,7 @@ pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
 pub(crate) mod report;
 pub(crate) mod rfc8888;
+pub(crate) mod rtpfb;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
@@ -259,6 +260,9 @@ pub use rfc8888::sender::{
     DEFAULT_INTERVAL as RFC8888_DEFAULT_INTERVAL,
     DEFAULT_MAX_REPORT_SIZE as RFC8888_DEFAULT_MAX_REPORT_SIZE, Rfc8888Builder, Rfc8888Interceptor,
 };
+pub use rtpfb::acknowledgement::{Acknowledgement, PacketReport, Report};
+pub use rtpfb::convert::{convert_ccfb, convert_twcc};
+pub use rtpfb::history::History;
 pub use stream_info::{RTCPFeedback, RTPHeaderExtension, StreamInfo};
 pub use twcc::{
     receiver::{TwccReceiverBuilder, TwccReceiverInterceptor},
