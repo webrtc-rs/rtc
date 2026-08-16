@@ -133,11 +133,11 @@ impl History {
         Some(received_at.saturating_duration_since(packet.departure))
     }
 
-    /// Take everything acknowledged since the last call, in send order.
+    /// Take everything up to the highest *arrived* packet since the last call, in send order.
     ///
-    /// Packets are reported up to the newest acknowledgement and then dropped: a packet older
-    /// than that which was never acknowledged is a loss, and reporting it later would tell
-    /// congestion control it arrived out of order.
+    /// Packets older than that which are still unreported are treated as lost and then dropped.
+    /// Loss feedback alone does not advance the reporting window; losses are emitted when a later
+    /// packet is reported as arrived.
     pub fn take_reports(&mut self) -> Vec<PacketReport> {
         let Some(highest) = self.highest_acknowledged else {
             return Vec::new();
@@ -149,7 +149,9 @@ impl History {
         let mut reports = Vec::new();
         for id in self.next_to_report..=highest {
             if let Some(packet) = self.packets.remove(&id) {
-                self.twcc_index.remove(&packet.twcc_sequence_number);
+                if packet.is_twcc {
+                    self.twcc_index.remove(&packet.twcc_sequence_number);
+                }
                 self.ssrc_sequence_index
                     .remove(&(packet.ssrc, packet.rtp_sequence_number));
                 reports.push(packet);
@@ -168,13 +170,18 @@ impl History {
         let stale: Vec<u64> = self
             .packets
             .iter()
-            .filter(|(_, packet)| packet.departure < cutoff)
+            .filter(|(_, packet)| packet.departure < cutoff && !packet.arrived)
             .map(|(&id, _)| id)
             .collect();
 
         for id in stale {
             if let Some(packet) = self.packets.remove(&id) {
-                self.twcc_index.remove(&packet.twcc_sequence_number);
+                // Only a TWCC packet has an entry under its transport-wide sequence number. A
+                // non-TWCC packet carries whatever the caller passed — typically 0 — and removing
+                // that key would evict whichever real TWCC packet holds it.
+                if packet.is_twcc {
+                    self.twcc_index.remove(&packet.twcc_sequence_number);
+                }
                 self.ssrc_sequence_index
                     .remove(&(packet.ssrc, packet.rtp_sequence_number));
             }
@@ -354,6 +361,79 @@ mod tests {
 
     /// Without pruning, an unacknowledged packet is never reported and never removed, so a lossy
     /// path grows the history without bound.
+    /// A non-TWCC packet carries a meaningless `twcc_sequence_number` (whatever the caller
+    /// passed, typically 0) and was never entered into the TWCC index. Removing that key when it
+    /// is released evicts whichever *real* TWCC packet happens to hold it, and that packet's
+    /// feedback can then never match.
+    #[test]
+    fn releasing_a_non_twcc_packet_does_not_evict_a_twcc_packets_index_entry() {
+        let now = Instant::now();
+        let mut history = History::new();
+
+        // The non-TWCC packet is sent *first*, so reporting it does not sweep up the TWCC one:
+        // the reporting window runs to the highest arrived id, and anything below it is dropped
+        // as a loss regardless. Ordering this way isolates the index eviction from that.
+        history.add_outgoing(2, 200, false, 0, 1200, now);
+        // A real TWCC packet holding transport-wide sequence 0, sent after.
+        history.add_outgoing(1, 100, true, 0, 1200, now);
+
+        // Release the non-TWCC packet by reporting it.
+        history.on_ccfb_feedback(now, 2, Acknowledgement::received(200, None, Ecn::NotEct));
+        history.take_reports();
+
+        assert!(
+            history
+                .on_twcc_feedback(now, Acknowledgement::received(0, None, Ecn::NotEct))
+                .is_some(),
+            "the TWCC packet is still matchable by its transport-wide sequence number"
+        );
+    }
+
+    /// The same hazard on the pruning path.
+    #[test]
+    fn pruning_a_non_twcc_packet_does_not_evict_a_twcc_packets_index_entry() {
+        let now = Instant::now();
+        let mut history = History::new();
+
+        // Old, non-TWCC, carrying the default 0 it never registered.
+        history.add_outgoing(2, 200, false, 0, 1200, now);
+        // Recent, a real TWCC packet holding transport-wide sequence 0.
+        history.add_outgoing(1, 100, true, 0, 1200, now + Duration::from_secs(5));
+
+        history.prune_before(now + Duration::from_secs(1));
+
+        assert!(
+            history
+                .on_twcc_feedback(
+                    now + Duration::from_secs(5),
+                    Acknowledgement::received(0, None, Ecn::NotEct)
+                )
+                .is_some(),
+            "pruning the unrelated packet must not take the TWCC index entry with it"
+        );
+    }
+
+    /// An acknowledged packet that has not been reported yet must survive pruning, or the arrival
+    /// is lost and congestion control never hears about it.
+    #[test]
+    fn an_acknowledged_packet_is_not_pruned_before_it_is_reported() {
+        let now = Instant::now();
+        let mut history = History::new();
+        history.add_outgoing(1, 100, true, 0, 1200, now);
+
+        history.on_twcc_feedback(
+            now + Duration::from_millis(50),
+            Acknowledgement::received(0, None, Ecn::NotEct),
+        );
+
+        // Well past the cutoff, but it has been acknowledged and not yet collected.
+        history.prune_before(now + Duration::from_secs(30));
+
+        let reports = history.take_reports();
+        assert_eq!(1, reports.len(), "the arrival survived to be reported");
+        assert!(reports[0].arrived);
+    }
+
     #[test]
     fn old_unacknowledged_packets_are_pruned() {
         let now = Instant::now();
