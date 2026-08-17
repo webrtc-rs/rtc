@@ -799,11 +799,22 @@ where
         }
 
         media = {
+            // When the remote description requested simulcast reception, the
+            // rid loop above already emitted one `a=rid:<id> send` line per
+            // offered rid (honoring pause state and the offered preference
+            // order) and collected them into `send_sc_list`. In that case the
+            // sender must not describe its encodings a second time: doing so
+            // duplicated every `a=rid:<id> send` line and produced a second
+            // `send` list in the simulcast attribute (`a=simulcast:send f;h;q
+            // send f;h;q`), which is invalid per the RFC 8853 Section 5.1 ABNF
+            // (at most one list per direction) and rejected by WebKit with
+            // "Malformed simulcast line".
             let (media, send_rids) = RTCPeerConnection::add_sender_sdp(
                 media,
                 media_engine,
                 transceiver,
                 write_ssrc_attributes_for_simulcast,
+                send_sc_list.is_empty(),
             );
 
             // Simulcast
@@ -840,11 +851,15 @@ where
         Ok((d.with_media(media), true))
     }
 
+    /// `write_rid_attributes` is false when the media section's rid map has
+    /// already emitted the `a=rid:<id> send` lines for this section, in which
+    /// case the sender's encodings must not be described a second time.
     fn add_sender_sdp(
         mut media: MediaDescription,
         media_engine: &MediaEngine,
         transceiver: &mut RTCRtpTransceiverInternal<I>,
         write_ssrc_attributes_for_simulcast: bool,
+        write_rid_attributes: bool,
     ) -> (MediaDescription, Vec<RtpStreamId>) {
         let mut send_rids = vec![];
 
@@ -916,7 +931,7 @@ where
                 }
             }
 
-            if is_simulcast {
+            if is_simulcast && write_rid_attributes {
                 for encoding in &encodings {
                     media = media.with_value_attribute(
                         SDP_ATTRIBUTE_RID.to_owned(),
