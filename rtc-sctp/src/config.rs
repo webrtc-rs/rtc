@@ -21,6 +21,10 @@ pub(crate) const INITIAL_MTU: u32 = 1191;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;
+/// Floor for [`EndpointConfig::mtu`]: the smallest representable padded DATA
+/// packet — the 12-byte common header, the 16-byte DATA chunk header, and a
+/// 1..=4-byte payload padded to the 4-byte chunk boundary.
+pub(crate) const MIN_DATA_PACKET_MTU: u32 = COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE + 4;
 pub(crate) const DEFAULT_MAX_MESSAGE_SIZE: u32 = 262144;
 
 /// Config collects the arguments to create_association construction into
@@ -181,6 +185,35 @@ impl EndpointConfig {
         self
     }
 
+    /// Sets [`max_payload_size`](Self::max_payload_size) from an outbound DATA-packet
+    /// budget: the largest DATA packet (common header plus bundled DATA chunks)
+    /// associations built from this configuration may emit, in bytes. Control packets
+    /// (INIT, INIT ACK, SACK, RECONFIG, FORWARD TSN, shutdown) marshal without consulting
+    /// this value.
+    ///
+    /// This is the inverse of the default derivation: the per-chunk payload budget is `value`
+    /// minus the 12-byte common header and the 16-byte DATA chunk header, rounded down to the
+    /// SCTP 4-byte chunk-padding boundary —
+    /// `(value - COMMON_HEADER_SIZE - DATA_CHUNK_HEADER_SIZE) & !3` — so a single maximum-size
+    /// DATA chunk (common header plus the padded chunk) always marshals to at most `value`
+    /// bytes, exactly as the default budget does for `INITIAL_MTU` (1191, the TURN-relayed
+    /// IPv6 minimum-MTU budget).
+    ///
+    /// Values below 32 — the smallest representable padded DATA packet: the two headers
+    /// plus a 1..=4-byte payload padded to the 4-byte boundary — cannot satisfy that
+    /// promise and are raised to 32 with a warning.
+    pub fn mtu(&mut self, value: u32) -> &mut Self {
+        if value < MIN_DATA_PACKET_MTU {
+            log::warn!(
+                "sctp mtu {value} is below the smallest representable DATA packet; raising to \
+                 {MIN_DATA_PACKET_MTU} bytes"
+            );
+        }
+        let value = value.max(MIN_DATA_PACKET_MTU);
+        self.max_payload_size = (value - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)) & !3;
+        self
+    }
+
     /// Get the current value of `max_payload_size`
     ///
     /// While most parameters don't need to be readable, this must be exposed to allow higher-level
@@ -281,5 +314,38 @@ mod tests {
         let padded_chunk =
             (DATA_CHUNK_HEADER_SIZE + config.get_max_payload_size()).next_multiple_of(4);
         assert!(COMMON_HEADER_SIZE + padded_chunk <= INITIAL_MTU);
+    }
+
+    #[test]
+    fn mtu_setter_derives_the_payload_budget() {
+        // `mtu(INITIAL_MTU)` must reproduce the default payload budget exactly.
+        let mut config = EndpointConfig::new();
+        config.mtu(INITIAL_MTU);
+        assert_eq!(
+            config.get_max_payload_size(),
+            EndpointConfig::default().get_max_payload_size()
+        );
+
+        // Rounded down to the 4-byte padding boundary: the last MTU of one
+        // padding window and the first of the next straddle a 4-byte step.
+        config.mtu(1203);
+        assert_eq!(config.get_max_payload_size(), 1172);
+        config.mtu(1204);
+        assert_eq!(config.get_max_payload_size(), 1176);
+
+        // Values below MIN_DATA_PACKET_MTU behave exactly as the 32-byte
+        // floor: the smallest representable padded DATA packet, a 4-byte
+        // payload budget.
+        for mtu in [0, 31, 32] {
+            config.mtu(mtu);
+            assert_eq!(config.get_max_payload_size(), 4, "mtu {mtu}");
+        }
+
+        // Upper edge: the derivation must not overflow.
+        config.mtu(u32::MAX);
+        assert_eq!(
+            config.get_max_payload_size(),
+            (u32::MAX - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)) & !3
+        );
     }
 }

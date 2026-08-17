@@ -345,12 +345,16 @@ impl Association {
 
         // It's a bit strange, but we're going backwards from the calculation in
         // config.rs to get max_payload_size from INITIAL_MTU.
-        let mtu = max_payload_size + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE;
+        let mtu = max_payload_size.saturating_add(COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE);
 
-        // RFC 4690 Sec 7.2.1
+        // RFC 4960 Sec 7.2.1
         // The initial cwnd before DATA transmission or after a sufficiently
         // long idle period MUST be set to min(4*MTU, max (2*MTU, 4380bytes)).
-        let cwnd = (2 * mtu).clamp(4380, 4 * mtu);
+        // Written in total form: the previous `(2 * mtu).clamp(4380, 4 * mtu)`
+        // panicked for effective MTUs below ~1095 (`Ord::clamp` with
+        // min > max) and overflowed near `u32::MAX`, both reachable via
+        // `EndpointConfig::max_payload_size`/`mtu`.
+        let cwnd = mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4));
         // RFC 4960 requires an unpredictable initial TSN. SCTP remains usable without an RTC
         // crypto provider, so this deliberately uses `rand`'s thread-local CSPRNG.
         let mut tsn = random::<u32>();

@@ -1100,6 +1100,7 @@ mod tests {
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
             None,
+            None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1534,6 +1535,7 @@ mod tests {
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
             None,
+            None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -1597,6 +1599,7 @@ mod tests {
 
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
+            None,
             None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
