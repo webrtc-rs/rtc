@@ -151,17 +151,9 @@ impl<P> PacerInterceptor<P> {
     }
 
     /// The instant the head of the queue can next be released.
-    ///
-    /// A packet larger than a full burst is releasable immediately rather than never: waiting
-    /// cannot make it affordable, so reporting its (finite but useless) affordability instant
-    /// would wake the driver for a release that never happens.
     fn next_release(&self) -> Option<Instant> {
         let head = self.queue.front()?;
-        let bits = Self::bits_of(head);
-        if bits > self.pacer.burst_bits() {
-            return self.pacer.affordable_at(0.0);
-        }
-        self.pacer.affordable_at(bits)
+        self.pacer.releasable_at(Self::bits_of(head))
     }
 }
 
@@ -197,11 +189,7 @@ impl<P: Interceptor> PacerInterceptor<P> {
 
         while let Some(head) = self.queue.front() {
             let bits = Self::bits_of(head);
-            // A packet larger than a full burst can never become affordable: the budget caps at
-            // the burst, so waiting does not help. Send it anyway and let the budget go negative,
-            // rather than stalling the whole queue behind one packet forever.
-            let unaffordable_forever = bits > self.pacer.burst_bits();
-            if !self.pacer.can_afford(bits) && !unaffordable_forever {
+            if !self.pacer.can_release(bits) {
                 break;
             }
 

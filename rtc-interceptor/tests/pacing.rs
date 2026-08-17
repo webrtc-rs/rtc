@@ -99,6 +99,10 @@ impl Harness {
     }
 
     fn send(&mut self, at: Duration, sequence_number: u16) {
+        self.send_sized(at, sequence_number, PAYLOAD_BYTES);
+    }
+
+    fn send_sized(&mut self, at: Duration, sequence_number: u16, payload_bytes: usize) {
         self.chain
             .handle_write(TaggedPacket {
                 now: self.epoch + at,
@@ -111,7 +115,7 @@ impl Harness {
                         ssrc: 1,
                         ..Default::default()
                     },
-                    payload: vec![0u8; PAYLOAD_BYTES].into(),
+                    payload: vec![0u8; payload_bytes].into(),
                 }),
             })
             .expect("handle_write");
@@ -127,6 +131,7 @@ impl Harness {
     /// order, up to `at`. This is what turns "eventually" into a schedule.
     fn advance_to(&mut self, at: Duration) {
         let deadline = self.epoch + at;
+        let mut fired_deadline = false;
         // Bounded so a pacer that reports a non-advancing deadline fails the test rather than
         // hanging it — the webrtc#862 failure mode.
         for _ in 0..10_000 {
@@ -136,9 +141,16 @@ impl Harness {
             if next > deadline {
                 break;
             }
+            fired_deadline |= next == deadline;
             self.chain.handle_timeout(next).expect("handle_timeout");
         }
-        self.tick(at);
+        // Only if the loop did not already reach it: a driver fires each deadline once, and a
+        // harness that fires twice would hide an interceptor that treats timeouts as edge
+        // triggered. `repeated_timeouts_at_one_instant_release_nothing_extra` asserts that
+        // property directly rather than leaning on this having covered it by accident.
+        if !fired_deadline {
+            self.tick(at);
+        }
     }
 
     fn released(&self) -> Vec<Released> {
@@ -380,6 +392,89 @@ fn rtcp_is_not_paced() {
         .expect("handle_write");
 
     assert_eq!(0, harness.chain.queued(), "not queued behind media");
+}
+
+/// A driver may hand the same instant over more than once — two protocols' deadlines can coincide.
+/// Releasing again on the second call would put a packet on the wire that the budget never paid
+/// for.
+#[test]
+fn repeated_timeouts_at_one_instant_release_nothing_extra() {
+    let mut harness = Harness::new();
+    for sequence_number in 0..4 {
+        harness.send(ms(0), sequence_number);
+    }
+
+    harness.tick(ms(0));
+    let once = harness.schedule();
+    harness.tick(ms(0));
+    harness.tick(ms(0));
+
+    assert_eq!(
+        vec![(0, ms(0))],
+        once,
+        "one packet fits the one-packet burst"
+    );
+    assert_eq!(
+        once,
+        harness.schedule(),
+        "and repeating the instant adds none"
+    );
+}
+
+/// A burst the caller configured is not a function of the rate, so an estimator raising the rate
+/// must not widen it. Otherwise the first rate update silently turns a one-at-a-time sender into a
+/// bursty one, which is exactly what a pacer exists to prevent.
+///
+/// The pacer has to be left *idle* across the rate change for this to bite: a widened burst only
+/// shows up once the budget has had time to accumulate into it. Draining continuously hides it.
+#[test]
+fn a_configured_burst_survives_a_rate_change() {
+    let mut harness = Harness::new();
+    harness.tick(ms(0));
+
+    // Twenty times the rate. A burst derived from this would be 240 000 bits — twenty packets.
+    harness.chain.pacer_mut().set_target_bitrate(BITRATE * 20.0);
+
+    // Idle long enough for the budget to fill whatever the burst now is.
+    harness.advance_to(ms(100));
+    for sequence_number in 0..6 {
+        harness.send(ms(100), sequence_number);
+    }
+    harness.tick(ms(100));
+
+    assert_eq!(
+        vec![(0, ms(100))],
+        harness.schedule(),
+        "one packet, not a burst at the widened rate"
+    );
+}
+
+/// Packets larger than the burst are paced too. Releasing them unconditionally — the only way to
+/// keep them from stalling the queue — would let a run of them leave all at once, defeating the
+/// pacer for exactly the traffic that stresses the path most.
+#[test]
+fn oversized_packets_are_paced_not_dumped() {
+    let mut harness = Harness::with_burst(PACKET_BITS);
+    for sequence_number in 0..4 {
+        harness.send_sized(ms(0), sequence_number, 4000);
+    }
+
+    harness.advance_to(ms(0));
+    assert_eq!(
+        1,
+        harness.schedule().len(),
+        "one oversized packet per release: {:?}",
+        harness.schedule()
+    );
+
+    // 4012 bytes is 32 096 bits; at 1.2 Mb/s that is 26.7 ms of debt before the next may go.
+    harness.advance_to(ms(26));
+    assert_eq!(1, harness.schedule().len(), "the next still owes");
+    harness.advance_to(ms(27));
+    assert_eq!(2, harness.schedule().len(), "and then goes");
+
+    harness.advance_to(ms(500));
+    assert_eq!(4, harness.schedule().len(), "all of them get out");
 }
 
 /// A packet larger than a full burst can never become affordable, since the budget caps at the
