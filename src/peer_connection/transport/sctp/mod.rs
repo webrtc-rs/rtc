@@ -177,7 +177,7 @@ impl SctpTransport {
 
         let mut sctp_endpoint_config = ::sctp::EndpointConfig::default();
         if let Some(mtu) = self.mtu {
-            sctp_endpoint_config.mtu(mtu);
+            sctp_endpoint_config.max_payload_size(::sctp::max_payload_size_for_mtu(mtu));
         }
         let mut sctp_transport_config = ::sctp::TransportConfig::default()
             .with_max_message_size(max_message_size)

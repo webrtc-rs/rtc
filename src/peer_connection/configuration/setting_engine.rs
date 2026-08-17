@@ -353,9 +353,9 @@ pub struct SettingEngine {
     /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes.
     /// `None` uses the rtc-sctp default (`INITIAL_RECV_BUF_SIZE`, 1 MiB).
     pub(crate) sctp_max_receive_buffer_size: Option<u32>,
-    /// Overrides the outbound SCTP DATA-packet budget handed to rtc-sctp's
-    /// `EndpointConfig::mtu`. `None` uses the rtc-sctp default (`INITIAL_MTU`, 1191 — the
-    /// TURN-relayed IPv6 minimum-MTU budget).
+    /// Overrides the outbound SCTP DATA-packet budget, converted to a payload
+    /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
+    /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
     pub(crate) sctp_mtu: Option<u32>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,

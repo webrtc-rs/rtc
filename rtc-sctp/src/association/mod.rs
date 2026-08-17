@@ -352,8 +352,8 @@ impl Association {
         // long idle period MUST be set to min(4*MTU, max (2*MTU, 4380bytes)).
         // Written in total form: the previous `(2 * mtu).clamp(4380, 4 * mtu)`
         // panicked for effective MTUs below ~1095 (`Ord::clamp` with
-        // min > max) and overflowed near `u32::MAX`, both reachable via
-        // `EndpointConfig::max_payload_size`/`mtu`.
+        // min > max) and overflowed near `u32::MAX`, both reachable through
+        // `EndpointConfig::max_payload_size` and MTU-derived payload budgets.
         let cwnd = mtu.saturating_mul(2).max(4380).min(mtu.saturating_mul(4));
         // RFC 4960 requires an unpredictable initial TSN. SCTP remains usable without an RTC
         // crypto provider, so this deliberately uses `rand`'s thread-local CSPRNG.
