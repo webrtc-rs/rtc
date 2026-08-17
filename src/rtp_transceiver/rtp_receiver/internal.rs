@@ -14,7 +14,9 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParamet
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpHeaderExtensionCapability;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParameters};
+use crate::rtp_transceiver::rtp_sender::{
+    RTCRtpCodec, RTCRtpEncodingParameters, RTCRtpHeaderExtensionParameters,
+};
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::Interceptor;
 use shared::error::Result;
@@ -238,46 +240,75 @@ where
         let parameters = self.get_parameters(media_engine).clone();
 
         for coding in self.track().codings() {
-            let (codec, match_type) =
-                codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
-            if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
-                && match_type != CodecMatch::None
-            {
+            Self::interceptor_remote_coding_op(interceptor, is_binding, coding, &parameters);
+        }
+    }
+
+    /// Bind or unbind one exact primary SSRC and its repair streams.
+    ///
+    /// SDP-declared tracks initially have no codec. Once the first RTP packet
+    /// resolves that codec, binding only its coding avoids rebinding other
+    /// simulcast streams whose codecs were resolved by earlier packets.
+    pub(crate) fn interceptor_remote_stream_by_ssrc_op(
+        &mut self,
+        media_engine: &MediaEngine,
+        interceptor: &mut I,
+        is_binding: bool,
+        ssrc: SSRC,
+    ) {
+        let parameters = self.get_parameters(media_engine).clone();
+
+        if let Some(coding) = self
+            .track()
+            .codings()
+            .iter()
+            .find(|coding| coding.rtp_coding_parameters.ssrc == Some(ssrc))
+        {
+            Self::interceptor_remote_coding_op(interceptor, is_binding, coding, &parameters);
+        }
+    }
+
+    fn interceptor_remote_coding_op(
+        interceptor: &mut I,
+        is_binding: bool,
+        coding: &RTCRtpEncodingParameters,
+        parameters: &RTCRtpReceiveParameters,
+    ) {
+        let (codec, match_type) =
+            codec_parameters_fuzzy_search(&coding.codec, &parameters.rtp_parameters.codecs);
+        if let Some(&ssrc) = coding.rtp_coding_parameters.ssrc.as_ref()
+            && match_type != CodecMatch::None
+        {
+            RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                interceptor,
+                is_binding,
+                ssrc,
+                codec.payload_type,
+                &codec.rtp_codec,
+                &parameters.rtp_parameters.header_extensions,
+            );
+
+            if let Some(rtx) = coding.rtp_coding_parameters.rtx.as_ref() {
                 RTCRtpReceiverInternal::interceptor_remote_stream_op(
                     interceptor,
                     is_binding,
-                    ssrc,
-                    codec.payload_type,
+                    rtx.ssrc,
+                    find_rtx_payload_type(codec.payload_type, &parameters.rtp_parameters.codecs)
+                        .unwrap_or_default(),
                     &codec.rtp_codec,
                     &parameters.rtp_parameters.header_extensions,
                 );
+            }
 
-                if let Some(rtx) = coding.rtp_coding_parameters.rtx.as_ref() {
-                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                        interceptor,
-                        is_binding,
-                        rtx.ssrc,
-                        find_rtx_payload_type(
-                            codec.payload_type,
-                            &parameters.rtp_parameters.codecs,
-                        )
-                        .unwrap_or_default(),
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
-                }
-
-                if let Some(fec) = coding.rtp_coding_parameters.fec.as_ref() {
-                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
-                        interceptor,
-                        is_binding,
-                        fec.ssrc,
-                        find_fec_payload_type(&parameters.rtp_parameters.codecs)
-                            .unwrap_or_default(),
-                        &codec.rtp_codec,
-                        &parameters.rtp_parameters.header_extensions,
-                    );
-                }
+            if let Some(fec) = coding.rtp_coding_parameters.fec.as_ref() {
+                RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                    interceptor,
+                    is_binding,
+                    fec.ssrc,
+                    find_fec_payload_type(&parameters.rtp_parameters.codecs).unwrap_or_default(),
+                    &codec.rtp_codec,
+                    &parameters.rtp_parameters.header_extensions,
+                );
             }
         }
     }

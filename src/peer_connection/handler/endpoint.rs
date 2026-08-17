@@ -408,6 +408,17 @@ where
                     let new_entry = receiver.track_mut().set_codec_by_ssrc(codec, ssrc);
                     assert!(!new_entry);
 
+                    // The eager bind performed while applying the remote SDP
+                    // skipped this declared SSRC because its codec was deferred.
+                    // Bind this exact coding now, before OnTrack is emitted;
+                    // the empty-codec guard above makes this once-only.
+                    receiver.interceptor_remote_stream_by_ssrc_op(
+                        self.media_engine,
+                        self.interceptor,
+                        true,
+                        ssrc,
+                    );
+
                     // Get RTX and FEC SSRCs from coding parameters
                     let (rtx_ssrc, fec_ssrc) = receiver
                         .get_coding_parameters()
@@ -808,15 +819,23 @@ mod rtx_tests {
         TrackPacket, TransportContext, deencapsulate_rtx, resolve_rtx_primary,
     };
     use crate::media_stream::track::MediaStreamTrack;
+    use crate::peer_connection::configuration::interceptor_registry::configure_twcc_receiver_only;
     use crate::peer_connection::configuration::media_engine::MediaEngine;
     use crate::rtp_transceiver::rtp_sender::{
-        RTCRtpCodec, RTCRtpEncodingParameters, RTCRtpRtxParameters, RtpCodecKind,
+        RTCRtpCodec, RTCRtpEncodingParameters, RTCRtpFecParameters, RTCRtpRtxParameters,
+        RtpCodecKind,
     };
     use crate::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
     use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
-    use interceptor::NoopInterceptor;
+    use interceptor::{
+        Interceptor, NoopInterceptor, Registry, StreamInfo, TaggedPacket, interceptor,
+    };
+    use rtcp::transport_feedbacks::transport_layer_cc::TransportLayerCc;
+    use sansio::Protocol;
     use shared::TransportProtocol;
+    use shared::error::Error;
+    use std::time::Duration;
 
     fn coding(primary_ssrc: u32, rtx_ssrc: Option<u32>) -> RTCRtpCodingParameters {
         RTCRtpCodingParameters {
@@ -1117,6 +1136,276 @@ mod rtx_tests {
         assert!(
             ctx.read_outs.is_empty(),
             "an RTX probe packet with no OSN should be dropped, not dispatched"
+        );
+    }
+
+    fn deferred_codec_receiver_transceiver<I: Interceptor>(
+        codings: Vec<RTCRtpCodingParameters>,
+        payload_type: u8,
+    ) -> RTCRtpTransceiverInternal<I> {
+        let mut transceiver = RTCRtpTransceiverInternal::<I>::new(
+            RtpCodecKind::Video,
+            None,
+            RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                streams: vec![],
+                send_encodings: vec![],
+            },
+        );
+
+        let receiver = transceiver.receiver_mut().as_mut().unwrap();
+        receiver.set_coding_parameters(codings.clone());
+        receiver.set_codec_preferences(vec![codec(payload_type, "video/VP8", "")]);
+        receiver.set_track(MediaStreamTrack::new(
+            "stream".to_string(),
+            "track".to_string(),
+            "label".to_string(),
+            RtpCodecKind::Video,
+            codings
+                .into_iter()
+                .map(|rtp_coding_parameters| RTCRtpEncodingParameters {
+                    rtp_coding_parameters,
+                    codec: Default::default(),
+                    ..Default::default()
+                })
+                .collect(),
+        ));
+        transceiver
+    }
+
+    #[derive(Interceptor)]
+    struct RecordingInterceptor<P: Interceptor> {
+        #[next]
+        inner: P,
+        remote_bindings: Vec<StreamInfo>,
+    }
+
+    #[interceptor]
+    impl<P: Interceptor> RecordingInterceptor<P> {
+        #[overrides]
+        fn bind_remote_stream(&mut self, info: &StreamInfo) {
+            self.remote_bindings.push(info.clone());
+            self.inner.bind_remote_stream(info);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn deliver_declared_rtp<I: Interceptor>(
+        ctx: &mut EndpointHandlerContext,
+        transceivers: &mut Vec<RTCRtpTransceiverInternal<I>>,
+        media_engine: &MediaEngine,
+        interceptor: &mut I,
+        stats: &mut RTCStatsAccumulator,
+        ssrc: u32,
+        sequence_number: u16,
+        payload_type: u8,
+    ) {
+        EndpointHandler::new(ctx, transceivers, media_engine, interceptor, stats)
+            .handle_rtp_message(
+                Instant::now(),
+                test_transport(),
+                rtp::Packet {
+                    header: rtp::Header {
+                        payload_type,
+                        sequence_number,
+                        ssrc,
+                        ..Default::default()
+                    },
+                    payload: Bytes::from_static(&[0x01]),
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn declared_ssrc_binds_twcc_after_first_packet_resolves_codec() {
+        const SSRC: u32 = 0x1122_3344;
+        const PAYLOAD_TYPE: u8 = 96;
+
+        let mut media_engine = MediaEngine::default();
+        media_engine.register_default_codecs().unwrap();
+        let registry = configure_twcc_receiver_only(Registry::new(), &mut media_engine).unwrap();
+        let mut interceptor = registry.build();
+        let mut transceivers = vec![deferred_codec_receiver_transceiver::<_>(
+            vec![coding(SSRC, None)],
+            PAYLOAD_TYPE,
+        )];
+        let mut stats = RTCStatsAccumulator::new();
+        let mut ctx = EndpointHandlerContext::default();
+
+        // This is the eager bind attempted while applying an SDP that declares
+        // the SSRC. It cannot bind yet because the track codec is intentionally
+        // deferred until the first RTP packet identifies its payload type.
+        transceivers[0]
+            .receiver_mut()
+            .as_mut()
+            .unwrap()
+            .interceptor_remote_streams_op(&media_engine, &mut interceptor, true);
+
+        let twcc_extension_id = media_engine
+            .get_rtp_parameters_by_kind(RtpCodecKind::Video, RTCRtpTransceiverDirection::Recvonly)
+            .header_extensions
+            .into_iter()
+            .find(|extension| extension.uri == sdp::extmap::TRANSPORT_CC_URI)
+            .expect("TWCC header extension should be configured")
+            .id as u8;
+
+        let start = Instant::now();
+        interceptor
+            .handle_read(TaggedPacket {
+                now: start,
+                transport: test_transport(),
+                message: Packet::Rtp(rtp::Packet {
+                    header: rtp::Header {
+                        payload_type: PAYLOAD_TYPE,
+                        sequence_number: 1,
+                        ssrc: SSRC,
+                        ..Default::default()
+                    },
+                    payload: Bytes::from_static(&[0x01]),
+                }),
+            })
+            .unwrap();
+        let first_packet = match interceptor.poll_read().unwrap().message {
+            Packet::Rtp(packet) => packet,
+            Packet::Rtcp(_) => panic!("expected the first RTP packet"),
+        };
+
+        EndpointHandler::new(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+        )
+        .handle_rtp_message(start, test_transport(), first_packet)
+        .unwrap();
+
+        let mut second_packet = rtp::Packet {
+            header: rtp::Header {
+                payload_type: PAYLOAD_TYPE,
+                sequence_number: 2,
+                ssrc: SSRC,
+                ..Default::default()
+            },
+            payload: Bytes::from_static(&[0x02]),
+        };
+        second_packet
+            .header
+            .set_extension(
+                twcc_extension_id,
+                Bytes::copy_from_slice(&2u16.to_be_bytes()),
+            )
+            .unwrap();
+        interceptor
+            .handle_read(TaggedPacket {
+                now: start + Duration::from_millis(10),
+                transport: test_transport(),
+                message: Packet::Rtp(second_packet),
+            })
+            .unwrap();
+        interceptor
+            .handle_timeout(start + Duration::from_millis(150))
+            .unwrap();
+
+        let generated_twcc = std::iter::from_fn(|| interceptor.poll_write()).any(|packet| {
+            matches!(packet.message, Packet::Rtcp(ref packets) if packets
+                .iter()
+                .any(|packet| packet.as_any().is::<TransportLayerCc>()))
+        });
+        assert!(generated_twcc, "declared SSRC was not bound to TWCC");
+    }
+
+    #[test]
+    fn declared_simulcast_ssrcs_bind_once_with_repair_streams() {
+        const PAYLOAD_TYPE: u8 = 96;
+        const PRIMARY_1: u32 = 1001;
+        const RTX_1: u32 = 2001;
+        const FEC_1: u32 = 3001;
+        const PRIMARY_2: u32 = 1002;
+        const RTX_2: u32 = 2002;
+        const FEC_2: u32 = 3002;
+
+        let coding_with_repair = |primary, rtx, fec| RTCRtpCodingParameters {
+            fec: Some(RTCRtpFecParameters { ssrc: fec }),
+            ..coding(primary, Some(rtx))
+        };
+        let codings = vec![
+            coding_with_repair(PRIMARY_1, RTX_1, FEC_1),
+            coding_with_repair(PRIMARY_2, RTX_2, FEC_2),
+        ];
+
+        let mut media_engine = MediaEngine::default();
+        media_engine.register_default_codecs().unwrap();
+        let mut interceptor = RecordingInterceptor {
+            inner: NoopInterceptor::new(),
+            remote_bindings: vec![],
+        };
+        let mut transceivers = vec![deferred_codec_receiver_transceiver::<_>(
+            codings,
+            PAYLOAD_TYPE,
+        )];
+        let mut stats = RTCStatsAccumulator::new();
+        let mut ctx = EndpointHandlerContext::default();
+
+        transceivers[0]
+            .receiver_mut()
+            .as_mut()
+            .unwrap()
+            .interceptor_remote_streams_op(&media_engine, &mut interceptor, true);
+        assert!(interceptor.remote_bindings.is_empty());
+
+        deliver_declared_rtp(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+            PRIMARY_1,
+            1,
+            PAYLOAD_TYPE,
+        );
+        assert_eq!(
+            interceptor
+                .remote_bindings
+                .iter()
+                .map(|info| info.ssrc)
+                .collect::<Vec<_>>(),
+            vec![PRIMARY_1, RTX_1, FEC_1]
+        );
+
+        // Later packets on the same stream must not duplicate its binding.
+        deliver_declared_rtp(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+            PRIMARY_1,
+            2,
+            PAYLOAD_TYPE,
+        );
+        assert_eq!(interceptor.remote_bindings.len(), 3);
+
+        // Resolving another simulcast stream binds only that stream and its
+        // repair SSRCs; rebinding PRIMARY_1 would reset interceptor state.
+        deliver_declared_rtp(
+            &mut ctx,
+            &mut transceivers,
+            &media_engine,
+            &mut interceptor,
+            &mut stats,
+            PRIMARY_2,
+            1,
+            PAYLOAD_TYPE,
+        );
+        assert_eq!(
+            interceptor
+                .remote_bindings
+                .iter()
+                .map(|info| info.ssrc)
+                .collect::<Vec<_>>(),
+            vec![PRIMARY_1, RTX_1, FEC_1, PRIMARY_2, RTX_2, FEC_2]
         );
     }
 }
