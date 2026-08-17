@@ -551,3 +551,104 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
 
     Ok(())
 }
+
+// The MTU-split rule in `bundle_data_chunks_into_packets` must bound every
+// marshalled datagram: bundle decisions are made on padded wire sizes (the
+// chunk header + payload, rounded up to the SCTP 4-byte boundary), never on
+// raw payload sizes. These tests marshal real packets and measure the emitted
+// bytes, so any accounting drift fails here rather than as silent on-path
+// datagram loss.
+
+use crate::EndpointConfig;
+use crate::config::INITIAL_MTU;
+
+fn create_association_with_mtu(mtu: u32) -> Association {
+    Association::new(
+        None,
+        Arc::new(TransportConfig::default()),
+        mtu - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE),
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    )
+}
+
+fn payload_chunk(tsn: u32, len: usize) -> ChunkPayloadData {
+    ChunkPayloadData {
+        beginning_fragment: true,
+        ending_fragment: true,
+        tsn,
+        stream_identifier: 0,
+        stream_sequence_number: 0,
+        user_data: Bytes::from(vec![0u8; len]),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn bundle_split_decides_on_padded_wire_sizes() {
+    // Payloads of 1147 + 16 bytes pass a payload-only boundary check at
+    // exactly an MTU of 1191, but the two chunks marshal to
+    // 12 + 1164 + 32 = 1208 bytes — past the MTU the association promised.
+    let a = create_association_with_mtu(1191);
+    let chunks = vec![payload_chunk(1, 1147), payload_chunk(2, 16)];
+    let mut raw_packets = vec![];
+    a.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
+    assert_eq!(
+        raw_packets.len(),
+        2,
+        "a bundle that only fits unpadded must split"
+    );
+    for p in &raw_packets {
+        assert!(
+            p.len() as u32 <= a.mtu,
+            "emitted packet is {} bytes, mtu is {}",
+            p.len(),
+            a.mtu
+        );
+    }
+}
+
+#[test]
+fn single_maximum_size_chunk_marshals_within_initial_mtu() {
+    let max_payload = EndpointConfig::default().get_max_payload_size();
+    let a = create_association_with_mtu(max_payload + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE);
+    let chunks = vec![payload_chunk(1, max_payload as usize)];
+    let mut raw_packets = vec![];
+    a.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
+    assert_eq!(raw_packets.len(), 1);
+    assert!(
+        raw_packets[0].len() as u32 <= INITIAL_MTU,
+        "a single maximum-size chunk is {} bytes, INITIAL_MTU is {}",
+        raw_packets[0].len(),
+        INITIAL_MTU
+    );
+}
+
+#[test]
+fn many_small_chunks_bundle_within_mtu() {
+    // Per-chunk padding (17-byte payloads: 33 raw, 36 padded) compounds; a
+    // payload-only accounting packed bundles that marshalled well past the
+    // MTU once dozens of small chunks rode one flight.
+    let a = create_association_with_mtu(1191);
+    let chunks: Vec<ChunkPayloadData> = (0..60).map(|i| payload_chunk(i, 17)).collect();
+    let mut raw_packets = vec![];
+    a.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
+    assert!(raw_packets.len() >= 2);
+    let total: usize = raw_packets.iter().map(|p| p.len()).sum();
+    for p in &raw_packets {
+        assert!(
+            p.len() as u32 <= a.mtu,
+            "emitted packet is {} bytes, mtu is {}",
+            p.len(),
+            a.mtu
+        );
+    }
+    // Nothing was dropped: at least every chunk's unpadded wire size plus one
+    // common header per emitted packet.
+    let min_expected = 60 * (DATA_CHUNK_HEADER_SIZE as usize + 17)
+        + raw_packets.len() * COMMON_HEADER_SIZE as usize;
+    assert!(total >= min_expected);
+}

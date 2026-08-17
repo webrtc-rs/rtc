@@ -2279,7 +2279,11 @@ impl Association {
                     //      of cwnd and SHOULD NOT delay retransmission for this single
                     //		packet.
 
-                    let data_chunk_size = DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32;
+                    // Padded wire size, the same accounting
+                    // bundle_data_chunks_into_packets uses for bundle
+                    // decisions.
+                    let data_chunk_size =
+                        (DATA_CHUNK_HEADER_SIZE + c.user_data.len() as u32).next_multiple_of(4);
                     if self.mtu < fast_retrans_size + data_chunk_size {
                         break;
                     }
@@ -2596,22 +2600,24 @@ impl Association {
         let mut bundles: Vec<(usize, usize)> = Vec::new();
         let mut total_len = 0usize;
         let mut bundle_start = 0;
-        let mut bytes_in_packet = COMMON_HEADER_SIZE;
         let mut bundle_len = hdr;
         for (i, chunk) in chunks.iter().enumerate() {
-            let data_len = chunk.user_data.len() as u32;
-            // Close the current bundle before a chunk that would exceed the MTU.
-            if bytes_in_packet + data_len > self.mtu && i > bundle_start {
+            // Marshalled chunk size: header + payload, padded up to the SCTP
+            // 4-byte boundary. Bundle decisions must use this wire size —
+            // deciding on raw payload sizes admitted bundles that marshalled
+            // past the MTU (e.g. payloads of 1147 + 16 pass a payload-only
+            // check at an MTU of 1191 but serialize to a 1208-byte packet).
+            let wire =
+                (DATA_CHUNK_HEADER_SIZE as usize + chunk.user_data.len()).next_multiple_of(4);
+            // Close the current bundle before a chunk whose padded wire size
+            // would push the datagram past the MTU.
+            if bundle_len + wire > self.mtu as usize && i > bundle_start {
                 bundles.push((bundle_start, i));
                 total_len += bundle_len;
                 bundle_start = i;
-                bytes_in_packet = COMMON_HEADER_SIZE;
                 bundle_len = hdr;
             }
-            bytes_in_packet += DATA_CHUNK_HEADER_SIZE + data_len;
-            // Marshalled chunk size, padded up to the SCTP 4-byte boundary.
-            let wire = (DATA_CHUNK_HEADER_SIZE + data_len) as usize;
-            bundle_len += (wire + 3) & !3;
+            bundle_len += wire;
         }
         bundles.push((bundle_start, chunks.len()));
         total_len += bundle_len;
