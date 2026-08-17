@@ -6,8 +6,18 @@ use std::sync::Arc;
 
 /// MTU for inbound packet (from DTLS)
 pub(crate) const RECEIVE_MTU: usize = 8192;
-/// initial MTU for outgoing packets (to DTLS)
-pub(crate) const INITIAL_MTU: u32 = 1228;
+/// Initial MTU for outgoing packets (to DTLS): bounds the assembled SCTP
+/// packet (common header + bundled chunks). Each SCTP packet becomes one
+/// DTLS record carried in one UDP datagram, so the wire size is roughly
+/// `INITIAL_MTU` + ~37 bytes of DTLS record overhead + 48 bytes of IPv6/UDP
+/// headers. 1191 keeps that within the 1280-byte IPv6 minimum MTU advertised
+/// by common tunnel paths (WireGuard, Tailscale); the previous 1228
+/// overflowed it (~1313 wire bytes), and because retransmissions re-bundle
+/// to the same oversized packet, a dropped flight stalled forever with no
+/// surfaced error. 1191 is the exact TURN-relayed IPv6 budget
+/// (1280 - 40 IPv6 - 8 UDP - 4 TURN ChannelData - 37 DTLS), the derivation
+/// from pion/sctp#476, adopted by webrtc-rs/webrtc#807 (webrtc v0.17.2).
+pub(crate) const INITIAL_MTU: u32 = 1191;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;
@@ -133,7 +143,11 @@ impl EndpointConfig {
         let aid_factory: fn() -> Box<dyn AssociationIdGenerator + Send> =
             || Box::<RandomAssociationIdGenerator>::default();
         Self {
-            max_payload_size: INITIAL_MTU - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE),
+            // Rounded down to the SCTP 4-byte chunk-padding boundary (as
+            // pion/sctp does) so a single maximum-size DATA chunk — common
+            // header plus the padded chunk — marshals to at most INITIAL_MTU
+            // bytes.
+            max_payload_size: (INITIAL_MTU - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)) & !3,
             aid_generator_factory: Arc::new(aid_factory),
         }
     }
@@ -243,5 +257,29 @@ impl ClientConfig {
         ClientConfig {
             transport: Arc::new(transport),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_max_payload_size_fits_ipv6_min_mtu() {
+        // INITIAL_MTU bounds the assembled SCTP packet. The default is the
+        // exact TURN-relayed IPv6 budget (pion/sctp#476, webrtc-rs/webrtc#807):
+        // the 1280-byte IPv6 minimum MTU (RFC 8200) minus IPv6, UDP, and TURN
+        // ChannelData headers and DTLS record overhead.
+        assert_eq!(INITIAL_MTU, 1280 - 40 - 8 - 4 - 37);
+        let config = EndpointConfig::default();
+        assert_eq!(
+            config.get_max_payload_size(),
+            (INITIAL_MTU - (COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE)) & !3
+        );
+        // A single maximum-size DATA chunk must marshal within INITIAL_MTU:
+        // common header + the chunk header and payload, padded to 4 bytes.
+        let padded_chunk =
+            (DATA_CHUNK_HEADER_SIZE + config.get_max_payload_size()).next_multiple_of(4);
+        assert!(COMMON_HEADER_SIZE + padded_chunk <= INITIAL_MTU);
     }
 }
