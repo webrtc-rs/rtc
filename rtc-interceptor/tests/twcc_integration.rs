@@ -7,7 +7,7 @@
 //! - Properly tracks stream binding/unbinding
 
 use rtc_interceptor::{
-    Interceptor, Packet, RTPHeaderExtension, Registry, StreamInfo, TaggedPacket,
+    AttributedPacket, Interceptor, Packet, RTPHeaderExtension, Registry, StreamInfo, TaggedPacket,
     TwccReceiverBuilder, TwccSenderBuilder,
 };
 use sansio::Protocol;
@@ -33,7 +33,7 @@ fn create_rtp_packet(ssrc: u32, seq: u16, timestamp: u32, payload_len: usize) ->
     TaggedPacket {
         now: Instant::now(),
         transport: TransportContext::default(),
-        message: Packet::Rtp(rtp::Packet {
+        message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
             header: rtp::header::Header {
                 ssrc,
                 sequence_number: seq,
@@ -42,7 +42,7 @@ fn create_rtp_packet(ssrc: u32, seq: u16, timestamp: u32, payload_len: usize) ->
                 ..Default::default()
             },
             payload: payload.into(),
-        }),
+        })),
     }
 }
 
@@ -75,7 +75,7 @@ fn create_rtp_packet_with_twcc(
     TaggedPacket {
         now,
         transport: TransportContext::default(),
-        message: Packet::Rtp(pkt),
+        message: AttributedPacket::new(Packet::Rtp(pkt)),
     }
 }
 
@@ -155,7 +155,7 @@ fn test_twcc_sender_adds_sequence_numbers() {
     // Collect output and verify TWCC extensions
     let mut twcc_seqs = Vec::new();
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(rtp) = &pkt.message
+        if let Packet::Rtp(rtp) = &pkt.message.packet
             && let Some(twcc_seq) = extract_twcc_seq(rtp, ext_id as u8)
         {
             twcc_seqs.push(twcc_seq);
@@ -199,7 +199,7 @@ fn test_twcc_sender_multiple_streams_share_counter() {
     // Collect TWCC sequences
     let mut twcc_seqs = Vec::new();
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(rtp) = &pkt.message
+        if let Packet::Rtp(rtp) = &pkt.message.packet
             && let Some(twcc_seq) = extract_twcc_seq(rtp, ext_id as u8)
         {
             twcc_seqs.push(twcc_seq);
@@ -228,7 +228,7 @@ fn test_twcc_sender_ignores_streams_without_twcc() {
 
     // Output should not have TWCC extension
     if let Some(pkt) = chain.poll_write()
-        && let Packet::Rtp(rtp) = &pkt.message
+        && let Packet::Rtp(rtp) = &pkt.message.packet
     {
         let has_ext = rtp.header.get_extension(5).is_some();
         assert!(!has_ext, "Stream without TWCC should not have extension");
@@ -261,7 +261,7 @@ fn test_twcc_sender_sequence_wraparound() {
 
     let mut twcc_seqs = Vec::new();
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(rtp) = &pkt.message
+        if let Packet::Rtp(rtp) = &pkt.message.packet
             && let Some(twcc_seq) = extract_twcc_seq(rtp, ext_id as u8)
         {
             twcc_seqs.push(twcc_seq);
@@ -321,7 +321,7 @@ fn test_twcc_receiver_generates_feedback_on_timeout() {
     // Check for TransportLayerCC feedback
     let mut feedback_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -378,7 +378,7 @@ fn test_twcc_receiver_feedback_contains_packet_info() {
 
     // Verify feedback content
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(tlcc) = rtcp_pkt
                     .as_any()
@@ -440,7 +440,7 @@ fn test_twcc_receiver_ignores_streams_without_twcc() {
     // Should not generate feedback for unsupported stream
     let mut feedback_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -531,7 +531,7 @@ fn test_combined_twcc_sender_and_receiver() {
     // Check outgoing packets have TWCC extension
     let mut outgoing_twcc_count = 0;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(rtp) = &pkt.message
+        if let Packet::Rtp(rtp) = &pkt.message.packet
             && extract_twcc_seq(rtp, ext_id as u8).is_some()
         {
             outgoing_twcc_count += 1;
@@ -553,7 +553,7 @@ fn test_combined_twcc_sender_and_receiver() {
     // Should have TWCC feedback
     let mut feedback_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -616,7 +616,7 @@ fn test_twcc_unbind_stops_processing() {
     chain.handle_write(pkt).unwrap();
 
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(rtp) = &pkt.message
+        if let Packet::Rtp(rtp) = &pkt.message.packet
             && rtp.header.ssrc == local_ssrc
         {
             let has_twcc = extract_twcc_seq(rtp, ext_id as u8).is_some();
@@ -681,7 +681,7 @@ fn test_twcc_multiple_remote_streams() {
     // Should generate feedback covering all packets
     let mut feedback_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(tlcc) = rtcp_pkt
                     .as_any()
@@ -779,7 +779,7 @@ fn test_full_interceptor_chain_with_reports_and_twcc() {
     let mut twcc_found = false;
 
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()

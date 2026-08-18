@@ -1,55 +1,73 @@
-//! NoOp Interceptor - A pass-through terminal for interceptor chains.
+//! Where the inbound RTCP path ends.
 
-use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket};
+use crate::Interceptor;
+use crate::{Packet, StreamInfo, TaggedPacket};
+use sansio::Protocol;
 use shared::error::Error;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-/// A no-operation interceptor that simply queues messages for pass-through.
+/// Decides what becomes of inbound RTCP once the interceptors have had it, and passes everything
+/// else through.
 ///
-/// `NoopInterceptor` serves as the innermost layer of an interceptor chain.
-/// It accepts messages via `handle_read`/`handle_write`/etc and returns them
-/// unchanged via `poll_read`/`poll_write`/etc.
+/// # Why this exists
 ///
-/// # Example
+/// Inbound RTCP is **for the interceptors**: a receiver report feeds the sender-side statistics, a
+/// NACK is answered by the responder, transport-wide feedback drives the bandwidth estimate.
+/// Handing it onward by default would give an application a stream of control traffic it did not
+/// ask for and cannot act on, mixed in with its media — so by default it stops here.
 ///
-/// ```
-/// use rtc_interceptor::{NoopInterceptor, Packet, TaggedPacket};
-/// use sansio::Protocol;
-/// use std::time::Instant;
+/// An application that *does* read RTCP asks for it when building the chain, with
+/// [`Registry::with_rtcp_readable`](crate::Registry::with_rtcp_readable). See below for why that is
+/// the only way to get it.
 ///
-/// let mut noop = NoopInterceptor::new();
-/// noop.handle_read(TaggedPacket {
-///     now: Instant::now(),
-///     transport: Default::default(),
-///     message: Packet::Rtp(rtp::Packet::default()),
-/// })
-/// .unwrap();
-/// assert!(noop.poll_read().is_some());
-/// ```
+/// # Where this belongs in the chain
+///
+/// **Last**, so every interceptor that reads RTCP has already seen it by the time it is dropped.
+/// Anywhere else it would starve the ones beyond it — a NACK responder placed after this would
+/// never see a NACK. [`Registry::build`](crate::Registry::build) appends it for that reason,
+/// rather than leaving the position to each caller.
+///
+/// # Why an interceptor of your own cannot do it instead
+///
+/// Under the nested chain an application could add an interceptor that kept a copy of each RTCP
+/// packet and returned it from its own `poll_read` ahead of delegating inward. That worked because
+/// a local `poll_read` queue was *terminal*: the copy bypassed everything below and escaped this
+/// one.
+///
+/// On the belt it does not. What an interceptor emits from `poll_read` rejoins the belt **behind
+/// itself**, so it arrives here like any other packet and is dropped like any other packet — the
+/// original *and* the copy, twice over. Since this is always the last interceptor, no position
+/// exists from which to forward past it, which is why the decision belongs to whoever builds the
+/// chain rather than to an interceptor in it.
+///
+/// # Naming
+///
+/// It was a no-op in the nested chain, where its job was to terminate the recursion and hand
+/// packets back. The belt needs no terminator, so all that is left is the one decision it always
+/// quietly made.
+#[derive(Default)]
 pub struct NoopInterceptor {
+    rtcp_readable: bool,
     read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
 }
 
 impl NoopInterceptor {
-    /// Create a new NoopInterceptor.
-    pub fn new() -> Self {
+    /// A terminus.
+    ///
+    /// `rtcp_readable` decides whether inbound RTCP carries on to the application after every
+    /// interceptor has seen it. [`Registry::build`](crate::Registry::build) supplies it from
+    /// [`Registry::with_rtcp_readable`](crate::Registry::with_rtcp_readable).
+    pub fn new(rtcp_readable: bool) -> Self {
         Self {
-            read_queue: VecDeque::new(),
-            write_queue: VecDeque::new(),
+            rtcp_readable,
+            ..Default::default()
         }
     }
 }
 
-impl Default for NoopInterceptor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
+impl Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Rout = TaggedPacket;
     type Wout = TaggedPacket;
     type Eout = ();
@@ -57,11 +75,14 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(_) = &msg.message {
+        let keep = match msg.message.packet {
+            Packet::Rtp(_) => true,
+            // The end of the line for inbound control traffic, unless the chain asked for it.
+            Packet::Rtcp(_) => self.rtcp_readable,
+        };
+        if keep {
             self.read_queue.push_back(msg);
         }
-        // RTCP message read must end here. If any rtcp packet needs to be forwarded to PeerConnection,
-        // just add a new interceptor to forward it by using self.interceptor.poll_read()
         Ok(())
     }
 
@@ -77,28 +98,6 @@ impl sansio::Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     fn poll_write(&mut self) -> Option<Self::Wout> {
         self.write_queue.pop_front()
     }
-
-    fn handle_event(&mut self, _evt: ()) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn poll_event(&mut self) -> Option<Self::Eout> {
-        None
-    }
-
-    fn handle_timeout(&mut self, _now: Self::Time) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        None
-    }
-
-    fn close(&mut self) -> Result<(), Self::Error> {
-        self.read_queue.clear();
-        self.write_queue.clear();
-        Ok(())
-    }
 }
 
 impl Interceptor for NoopInterceptor {
@@ -111,59 +110,107 @@ impl Interceptor for NoopInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AttributedPacket, Registry, StreamInfo};
     use sansio::Protocol;
+    use shared::TransportContext;
+    use shared::error::Error;
+    use std::collections::VecDeque;
+    use std::time::Instant;
 
-    fn dummy_rtp_packet() -> TaggedPacket {
+    fn packet(message: Packet) -> TaggedPacket {
         TaggedPacket {
             now: Instant::now(),
-            transport: Default::default(),
-            message: crate::Packet::Rtp(rtp::Packet::default()),
-        }
-    }
-
-    fn dummy_rtcp_packet() -> TaggedPacket {
-        TaggedPacket {
-            now: Instant::now(),
-            transport: Default::default(),
-            message: crate::Packet::Rtcp(vec![Box::new(rtcp::raw_packet::RawPacket::default())]),
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(message),
         }
     }
 
     #[test]
-    fn test_noop_read_write() {
-        let mut noop = NoopInterceptor::new();
+    fn inbound_rtcp_does_not_reach_the_application() {
+        let mut chain = Registry::new().build();
 
-        // Test read
-        let pkt1 = dummy_rtp_packet();
-        let pkt1_message = pkt1.message.clone();
-        let pkt2 = dummy_rtcp_packet();
-        noop.handle_read(pkt1).unwrap();
-        noop.handle_read(pkt2).unwrap();
-        assert_eq!(noop.poll_read().unwrap().message, pkt1_message);
-        assert!(noop.poll_read().is_none());
-
-        // Test write
-        let pkt3 = dummy_rtp_packet();
-        let pkt4 = dummy_rtp_packet();
-        let pkt3_message = pkt3.message.clone();
-        let pkt4_message = pkt4.message.clone();
-        noop.handle_write(pkt3).unwrap();
-        noop.handle_write(pkt4).unwrap();
-        assert_eq!(noop.poll_write().unwrap().message, pkt3_message);
-        assert_eq!(noop.poll_write().unwrap().message, pkt4_message);
-        assert!(noop.poll_write().is_none());
+        chain.handle_read(packet(Packet::Rtcp(vec![]))).unwrap();
+        assert!(chain.poll_read().is_none());
     }
 
     #[test]
-    fn test_noop_close_clears_queues() {
-        let mut noop = NoopInterceptor::new();
+    fn inbound_rtp_passes_through() {
+        let mut chain = Registry::new().build();
 
-        noop.handle_read(dummy_rtp_packet()).unwrap();
-        noop.handle_write(dummy_rtp_packet()).unwrap();
+        chain
+            .handle_read(packet(Packet::Rtp(rtp::Packet::default())))
+            .unwrap();
+        assert!(chain.poll_read().is_some());
+    }
 
-        noop.close().unwrap();
+    /// Outbound RTCP is untouched: this ends the *inbound* path only.
+    #[test]
+    fn outbound_rtcp_is_not_affected() {
+        let mut chain = Registry::new().build();
 
-        assert!(noop.poll_read().is_none());
-        assert!(noop.poll_write().is_none());
+        chain.handle_write(packet(Packet::Rtcp(vec![]))).unwrap();
+        assert!(chain.poll_write().is_some());
+    }
+
+    /// An interceptor wire-ward of the terminus still sees inbound RTCP — that is the whole point of it
+    /// being application-most.
+    #[test]
+    fn stages_before_it_still_see_inbound_rtcp() {
+        #[derive(Default)]
+        struct Counter {
+            seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+            read_queue: VecDeque<TaggedPacket>,
+            write_queue: VecDeque<TaggedPacket>,
+        }
+        impl Protocol<TaggedPacket, TaggedPacket, ()> for Counter {
+            type Rout = TaggedPacket;
+            type Wout = TaggedPacket;
+            type Eout = ();
+            type Error = Error;
+            type Time = Instant;
+
+            fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+                if matches!(msg.message.packet, Packet::Rtcp(_)) {
+                    self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                self.read_queue.push_back(msg);
+                Ok(())
+            }
+
+            fn poll_read(&mut self) -> Option<Self::Rout> {
+                self.read_queue.pop_front()
+            }
+
+            fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+                self.write_queue.push_back(msg);
+                Ok(())
+            }
+
+            fn poll_write(&mut self) -> Option<Self::Wout> {
+                self.write_queue.pop_front()
+            }
+
+            fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn poll_timeout(&mut self) -> Option<Self::Time> {
+                None
+            }
+        }
+        impl Interceptor for Counter {
+            fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+            fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+            fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+            fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
+        }
+        let counter = Counter::default();
+        let seen = counter.seen.clone();
+        let mut chain = Registry::new().with(counter).build();
+
+        chain.handle_read(packet(Packet::Rtcp(vec![]))).unwrap();
+
+        assert_eq!(1, seen.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(chain.poll_read().is_none(), "but it stops at the terminus");
     }
 }

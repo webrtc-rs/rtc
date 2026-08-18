@@ -462,28 +462,24 @@
 //! # }
 //! ```
 //!
-//! #### Type-erasing the interceptor chain
+//! #### One connection type, whatever the chain
 //!
-//! [`RTCPeerConnection`](peer_connection::RTCPeerConnection) is generic over its
-//! interceptor chain, and a chain's type spells out its entire composition
-//! (`TwccReceiverInterceptor<SenderReportInterceptor<…>>`). That type propagates into
-//! everything that *holds* a peer connection, which is a problem when the chain is chosen
-//! at runtime or when connections have to live in your own structs and collections.
-//!
-//! [`Registry::boxed`](interceptor::Registry::boxed) erases the chain to
-//! [`BoxedInterceptor`](interceptor::BoxedInterceptor), giving every connection the same
-//! concrete type no matter how it was built:
+//! A chain is a flat list of interceptors, and
+//! [`RTCPeerConnection`](peer_connection::RTCPeerConnection) has one concrete type no matter what
+//! the list contains. Nothing that holds a connection has to know how its chain was assembled,
+//! chains can be chosen at runtime, and connections built from different chains share a
+//! collection:
 //!
 //! ```no_run
 //! # use std::time::Instant;
-//! use rtc::interceptor::{BoxedInterceptor, Registry};
+//! use rtc::interceptor::Registry;
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 //!
 //! // No type parameter: this struct does not have to know the chain.
 //! struct Session {
-//!     peer_connection: RTCPeerConnection<BoxedInterceptor>,
+//!     peer_connection: RTCPeerConnection,
 //! }
 //!
 //! # fn example(with_nack: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -494,15 +490,14 @@
 //! sessions.push(Session {
 //!     peer_connection: RTCPeerConnectionBuilder::new()
 //!         .with_media_engine(media_engine)
-//!         .with_interceptor_registry(registry.boxed())
+//!         .with_interceptor_registry(registry)
 //!         .build(Instant::now())?,
 //! });
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! The cost is one virtual call per chain entry point (`handle_read`, `poll_write`,
-//! `handle_timeout`, …); the chain's interior remains statically dispatched and inlined.
+//! The cost is one virtual call per interceptor per packet, which is nothing beside SRTP.
 //! Static dispatch is still the default — keep the generic form when the chain is fixed at
 //! compile time.
 //!
@@ -707,8 +702,8 @@
 #![allow(dead_code)]
 
 pub use {
-    crypto, datachannel, dtls, ice, interceptor, interceptor_derive, mdns, media, rtcp, rtp,
-    sansio, sctp, sdp, shared, srtp, stun, turn,
+    crypto, datachannel, dtls, ice, interceptor, mdns, media, rtcp, rtp, sansio, sctp, sdp, shared,
+    srtp, stun, turn,
 };
 
 pub mod data_channel;

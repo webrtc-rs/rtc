@@ -26,22 +26,16 @@ pub(crate) struct InterceptorHandlerContext {
 }
 
 /// InterceptorHandler implements RTCP feedback handling
-pub(crate) struct InterceptorHandler<'a, I>
-where
-    I: Interceptor,
-{
+pub(crate) struct InterceptorHandler<'a> {
     ctx: &'a mut InterceptorHandlerContext,
-    interceptor: &'a mut I,
+    interceptor: &'a mut dyn Interceptor,
     stats: &'a mut RTCStatsAccumulator,
 }
 
-impl<'a, I> InterceptorHandler<'a, I>
-where
-    I: Interceptor,
-{
+impl<'a> InterceptorHandler<'a> {
     pub(crate) fn new(
         ctx: &'a mut InterceptorHandlerContext,
-        interceptor: &'a mut I,
+        interceptor: &'a mut dyn Interceptor,
         stats: &'a mut RTCStatsAccumulator,
     ) -> Self {
         InterceptorHandler {
@@ -168,11 +162,9 @@ where
     }
 }
 
-impl<'a, I>
+impl<'a>
     sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
-    for InterceptorHandler<'a, I>
-where
-    I: Interceptor,
+    for InterceptorHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
@@ -196,7 +188,7 @@ where
             self.interceptor.handle_read(TaggedPacket {
                 now: msg.now,
                 transport: msg.transport,
-                message: packet,
+                message: packet.into(),
             })?;
         } else {
             debug!("interceptor read bypass {:?}", msg.transport.peer_addr);
@@ -208,14 +200,14 @@ where
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_read() {
-                if let Packet::Rtcp(rtcp_packet) = &packet.message {
+                if let Packet::Rtcp(rtcp_packet) = &packet.message.packet {
                     trace!("Interceptor forwarded a RTCP packet {:?}", rtcp_packet);
                 }
 
                 self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
                     now: packet.now,
                     transport: packet.transport,
-                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message.packet)),
                 });
             }
         }
@@ -230,7 +222,7 @@ where
             self.interceptor.handle_write(TaggedPacket {
                 now: msg.now,
                 transport: msg.transport,
-                message: packet,
+                message: packet.into(),
             })?;
         } else {
             debug!("interceptor bypass {:?}", msg.transport.peer_addr);
@@ -243,7 +235,7 @@ where
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_write() {
                 // Process outgoing packets for stats
-                match &packet.message {
+                match &packet.message.packet {
                     Packet::Rtcp(rtcp_packets) => {
                         self.process_write_rtcp_for_stats(rtcp_packets);
                     }
@@ -267,7 +259,7 @@ where
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: packet.now,
                     transport: packet.transport,
-                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message)),
+                    message: RTCMessageInternal::Rtp(RTPMessage::Packet(packet.message.packet)),
                 });
                 trace!("interceptor write {:?}", packet.transport.peer_addr);
             }

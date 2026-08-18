@@ -169,7 +169,6 @@ use crate::rtp_transceiver::{
     rtp_sender::rtcp_parameters::RTCPFeedback,
 };
 use ice::candidate::{Candidate, unmarshal_candidate};
-use interceptor::Interceptor;
 use sdp::description::common::{Address, ConnectionInformation};
 use sdp::description::media::*;
 use sdp::description::session::*;
@@ -630,16 +629,13 @@ pub(crate) struct AddTransceiverSdpParams {
     write_ssrc_attributes_for_simulcast: bool,
 }
 
-impl<I> RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnection {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_transceiver_sdp(
         mut d: SessionDescription,
         dtls_fingerprints: &[RTCDtlsFingerprint],
         media_engine: &MediaEngine,
-        transceivers: &mut [RTCRtpTransceiverInternal<I>],
+        transceivers: &mut [RTCRtpTransceiverInternal],
         ice_params: &RTCIceParameters,
         candidates: &[RTCIceCandidate],
         media_section: &MediaSection,
@@ -857,7 +853,7 @@ where
     fn add_sender_sdp(
         mut media: MediaDescription,
         media_engine: &MediaEngine,
-        transceiver: &mut RTCRtpTransceiverInternal<I>,
+        transceiver: &mut RTCRtpTransceiverInternal,
         write_ssrc_attributes_for_simulcast: bool,
         write_rid_attributes: bool,
     ) -> (MediaDescription, Vec<RtpStreamId>) {
@@ -1023,13 +1019,10 @@ pub(crate) struct PopulateSdpParams {
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
 
-impl<I> RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnection {
     pub(crate) fn find_by_mid(
         mid: &String,
-        local_transceivers: &[RTCRtpTransceiverInternal<I>],
+        local_transceivers: &[RTCRtpTransceiverInternal],
     ) -> Option<usize> {
         local_transceivers
             .iter()
@@ -1043,8 +1036,8 @@ where
     pub(crate) fn satisfy_type_and_direction(
         remote_kind: RtpCodecKind,
         remote_direction: RTCRtpTransceiverDirection,
-        local_transceivers: &mut [RTCRtpTransceiverInternal<I>],
-    ) -> Option<&mut RTCRtpTransceiverInternal<I>> {
+        local_transceivers: &mut [RTCRtpTransceiverInternal],
+    ) -> Option<&mut RTCRtpTransceiverInternal> {
         // Get direction order from most preferred to least
         let get_preferred_directions = || -> Vec<RTCRtpTransceiverDirection> {
             match remote_direction {
@@ -1079,7 +1072,7 @@ where
         mut d: SessionDescription,
         dtls_fingerprints: &[RTCDtlsFingerprint],
         media_engine: &MediaEngine,
-        transceivers: &mut [RTCRtpTransceiverInternal<I>],
+        transceivers: &mut [RTCRtpTransceiverInternal],
         candidates: &[RTCIceCandidate],
         ice_params: &RTCIceParameters,
         media_sections: &[MediaSection],

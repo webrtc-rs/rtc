@@ -7,8 +7,8 @@
 //! - Generates reports at configured intervals
 
 use rtc_interceptor::{
-    Interceptor, Packet, ReceiverReportBuilder, Registry, SenderReportBuilder, StreamInfo,
-    TaggedPacket,
+    AttributedPacket, Interceptor, Packet, ReceiverReportBuilder, Registry, SenderReportBuilder,
+    StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -25,7 +25,7 @@ fn create_rtp_packet(ssrc: u32, seq: u16, timestamp: u32, payload_len: usize) ->
     TaggedPacket {
         now: Instant::now(),
         transport: TransportContext::default(),
-        message: Packet::Rtp(rtp::Packet {
+        message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
             header: rtp::header::Header {
                 ssrc,
                 sequence_number: seq,
@@ -34,7 +34,7 @@ fn create_rtp_packet(ssrc: u32, seq: u16, timestamp: u32, payload_len: usize) ->
             },
             payload: payload.into(),
             ..Default::default()
-        }),
+        })),
     }
 }
 
@@ -103,7 +103,7 @@ fn test_sender_report_interceptor_generates_sr_on_timeout() {
     // Poll all written packets (RTP passes through)
     let mut rtp_count = 0;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtp(_) = pkt.message {
+        if let Packet::Rtp(_) = pkt.message.packet {
             rtp_count += 1;
         }
     }
@@ -120,7 +120,7 @@ fn test_sender_report_interceptor_generates_sr_on_timeout() {
     // Poll for the generated RTCP Sender Report
     let mut sr_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -167,7 +167,7 @@ fn test_sender_report_tracks_packet_statistics() {
 
     // Find the Sender Report and verify statistics
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(sr) = rtcp_pkt
                     .as_any()
@@ -232,7 +232,7 @@ fn test_sender_report_multiple_streams() {
     let mut audio_sr = false;
 
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(sr) = rtcp_pkt
                     .as_any()
@@ -285,7 +285,7 @@ fn test_receiver_report_interceptor_generates_rr_on_timeout() {
     // Poll all read packets (RTP passes through)
     let mut rtp_count = 0;
     while let Some(pkt) = chain.poll_read() {
-        if let Packet::Rtp(_) = pkt.message {
+        if let Packet::Rtp(_) = pkt.message.packet {
             rtp_count += 1;
         }
     }
@@ -298,7 +298,7 @@ fn test_receiver_report_interceptor_generates_rr_on_timeout() {
     // Poll for the generated RTCP Receiver Report
     let mut rr_found = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -345,7 +345,7 @@ fn test_receiver_report_tracks_sequence_numbers() {
 
     // Verify Receiver Report contains correct sequence tracking
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(rr) = rtcp_pkt
                     .as_any()
@@ -403,7 +403,7 @@ fn test_receiver_report_detects_packet_loss() {
 
     // Verify Receiver Report indicates packet loss
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(rr) = rtcp_pkt
                     .as_any()
@@ -481,7 +481,7 @@ fn test_combined_sender_and_receiver_interceptors() {
     let mut rr_found = false;
 
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(sr) = rtcp_pkt
                     .as_any()
@@ -563,7 +563,7 @@ fn test_interceptor_chain_unbind_streams() {
     // Verify no RTCP reports are generated
     let mut report_count = 0;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if rtcp_pkt
                     .as_any()
@@ -623,7 +623,7 @@ fn test_receiver_processes_sender_report() {
     let sr_packet = TaggedPacket {
         now: base_time,
         transport: TransportContext::default(),
-        message: Packet::Rtcp(vec![Box::new(sr)]),
+        message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(sr)])),
     };
 
     // Process the incoming SR
@@ -639,7 +639,7 @@ fn test_receiver_processes_sender_report() {
 
     // The RR should have DLSR (delay since last SR) set
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &pkt.message {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
             for rtcp_pkt in rtcp_packets {
                 if let Some(rr) = rtcp_pkt
                     .as_any()
@@ -686,7 +686,7 @@ fn test_report_interval_is_respected() {
     chain.handle_timeout(base_time + interval).unwrap();
     let mut first_sr = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(pkts) = &pkt.message {
+        if let Packet::Rtcp(pkts) = &pkt.message.packet {
             for p in pkts {
                 if p.as_any()
                     .downcast_ref::<rtcp::sender_report::SenderReport>()
@@ -705,7 +705,7 @@ fn test_report_interval_is_respected() {
         .unwrap();
     let mut second_sr = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(pkts) = &pkt.message {
+        if let Packet::Rtcp(pkts) = &pkt.message.packet {
             for p in pkts {
                 if p.as_any()
                     .downcast_ref::<rtcp::sender_report::SenderReport>()
@@ -724,7 +724,7 @@ fn test_report_interval_is_respected() {
         .unwrap();
     let mut third_sr = false;
     while let Some(pkt) = chain.poll_write() {
-        if let Packet::Rtcp(pkts) = &pkt.message {
+        if let Packet::Rtcp(pkts) = &pkt.message.packet {
             for p in pkts {
                 if p.as_any()
                     .downcast_ref::<rtcp::sender_report::SenderReport>()

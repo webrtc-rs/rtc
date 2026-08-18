@@ -10,12 +10,11 @@
 //! sees them exactly as it would a live packet (the chain contract's rule 2).
 
 use rtc_interceptor::{
-    Interceptor, JitterBufferBuilder, NoopInterceptor, Packet, Registry, StreamInfo, TaggedPacket,
-    interceptor,
+    AttributedPacket, Interceptor, JitterBufferBuilder, Packet, Registry, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
-use shared::error::Error;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -34,19 +33,22 @@ struct Released {
     at: Duration,
 }
 
-#[derive(Interceptor)]
-struct Marker<P> {
-    #[next]
-    inner: P,
+struct Marker {
     released: Arc<Mutex<Vec<Released>>>,
     epoch: Instant,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-#[interceptor]
-impl<P: Interceptor> Marker<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Marker {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = shared::error::Error;
+    type Time = Instant;
+
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp) = &msg.message {
+        if let Packet::Rtp(rtp) = &msg.message.packet {
             self.released.lock().unwrap().push(Released {
                 ssrc: rtp.header.ssrc,
                 sequence_number: rtp.header.sequence_number,
@@ -54,8 +56,29 @@ impl<P: Interceptor> Marker<P> {
                 at: msg.now.saturating_duration_since(self.epoch),
             });
         }
-        self.inner.handle_read(msg)
+        self.read_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for Marker {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 struct Harness {
@@ -70,23 +93,25 @@ impl Harness {
         let released = Arc::new(Mutex::new(Vec::new()));
 
         let marker_released = Arc::clone(&released);
+        // The marker sits at the application-most slot, so it records what is played out rather
+        // than what arrives.
         let chain = Registry::new()
-            .with(move |inner: NoopInterceptor| Marker {
-                inner,
-                released: marker_released,
-                epoch,
-            })
             .with(
                 JitterBufferBuilder::new()
                     .with_depth(depth)
                     .with_capacity(capacity)
                     .build(),
             )
-            .boxed()
+            .with(Marker {
+                released: marker_released,
+                epoch,
+                read_queue: VecDeque::new(),
+                write_queue: VecDeque::new(),
+            })
             .build();
 
         Self {
-            chain,
+            chain: Box::new(chain),
             released,
             epoch,
         }
@@ -113,7 +138,7 @@ impl Harness {
             .handle_read(TaggedPacket {
                 now: self.epoch + at,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         ssrc,
                         sequence_number,
@@ -121,16 +146,27 @@ impl Harness {
                         ..Default::default()
                     },
                     ..Default::default()
-                }),
+                })),
             })
             .expect("handle_read");
     }
 
     /// Advance the clock to `at` and let the buffer release whatever is due.
+    /// Fire a timeout and then pull, which is what a driver does.
+    ///
+    /// The pulling is load-bearing on the belt and was not under nesting: a released packet is
+    /// handed on by the buffer's `poll_read`, so it reaches the stages between the buffer and the
+    /// application only when the chain's `poll_read` walk runs.
     fn tick(&mut self, at: Duration) {
         self.chain
             .handle_timeout(self.epoch + at)
             .expect("handle_timeout");
+        self.drain();
+    }
+
+    /// Pull everything the chain is ready to deliver.
+    fn drain(&mut self) {
+        while self.chain.poll_read().is_some() {}
     }
 
     fn released(&self) -> Vec<Released> {
@@ -593,7 +629,7 @@ fn rtcp_is_forwarded_without_being_buffered() {
         .handle_read(TaggedPacket {
             now: harness.epoch,
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![]),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
         })
         .expect("handle_read");
 

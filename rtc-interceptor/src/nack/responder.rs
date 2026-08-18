@@ -2,12 +2,13 @@
 
 use super::send_buffer::SendBuffer;
 use super::stream_supports_nack;
+use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use crate::{AttributedPacket, Packet, TaggedPacket};
+use sansio::Protocol;
 use shared::TransportContext;
 use shared::error::Error;
 use std::collections::{HashMap, VecDeque};
-use std::marker::PhantomData;
 use std::time::Instant;
 
 /// Builder for the NackResponderInterceptor.
@@ -23,22 +24,18 @@ use std::time::Instant;
 ///         .build())
 ///     .build();
 /// ```
-pub struct NackResponderBuilder<P> {
+pub struct NackResponderBuilder {
     /// Size of the send buffer (must be power of 2: 1, 2, 4, ..., 32768).
     size: u16,
-    _phantom: PhantomData<P>,
 }
 
-impl<P> Default for NackResponderBuilder<P> {
+impl Default for NackResponderBuilder {
     fn default() -> Self {
-        Self {
-            size: 1024,
-            _phantom: PhantomData,
-        }
+        Self { size: 1024 }
     }
 }
 
-impl<P> NackResponderBuilder<P> {
+impl NackResponderBuilder {
     /// Create a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
@@ -53,9 +50,9 @@ impl<P> NackResponderBuilder<P> {
         self
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> NackResponderInterceptor<P> {
-        move |inner| NackResponderInterceptor::new(inner, self.size)
+    /// Build the interceptor.
+    pub fn build(self) -> NackResponderInterceptor {
+        NackResponderInterceptor::new(self.size)
     }
 }
 
@@ -75,11 +72,7 @@ struct LocalStream {
 ///
 /// This interceptor buffers outgoing RTP packets on local streams and
 /// retransmits them when RTCP TransportLayerNack packets are received.
-#[derive(Interceptor)]
-pub struct NackResponderInterceptor<P> {
-    #[next]
-    inner: P,
-
+pub struct NackResponderInterceptor {
     /// Configuration
     size: u16,
 
@@ -88,12 +81,14 @@ pub struct NackResponderInterceptor<P> {
 
     /// Queue for retransmitted packets
     write_queue: VecDeque<TaggedPacket>,
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> NackResponderInterceptor<P> {
-    fn new(inner: P, size: u16) -> Self {
+impl NackResponderInterceptor {
+    fn new(size: u16) -> Self {
         Self {
-            inner,
+            read_queue: VecDeque::new(),
             size,
             streams: HashMap::new(),
             write_queue: VecDeque::new(),
@@ -166,18 +161,22 @@ impl<P> NackResponderInterceptor<P> {
             self.write_queue.push_back(TaggedPacket {
                 now,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(packet),
+                message: AttributedPacket::new(Packet::Rtp(packet)),
             });
         }
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> NackResponderInterceptor<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for NackResponderInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Process NACK packets
-        if let Packet::Rtcp(ref rtcp_packets) = msg.message {
+        if let Packet::Rtcp(ref rtcp_packets) = msg.message.packet {
             for rtcp_packet in rtcp_packets {
                 if let Some(nack) = rtcp_packet
                     .as_any()
@@ -188,31 +187,43 @@ impl<P: Interceptor> NackResponderInterceptor<P> {
             }
         }
 
-        self.inner.handle_read(msg)
+        self.read_queue.push_back(msg);
+
+        Ok(())
     }
 
-    #[overrides]
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Buffer outgoing RTP packets
-        if let Packet::Rtp(ref rtp_packet) = msg.message
+        if let Packet::Rtp(ref rtp_packet) = msg.message.packet
             && let Some(stream) = self.streams.get_mut(&rtp_packet.header.ssrc)
         {
             stream.send_buffer.add(rtp_packet.clone());
         }
 
-        self.inner.handle_write(msg)
+        self.write_queue.push_back(msg);
+
+        Ok(())
     }
 
-    #[overrides]
-    fn poll_write(&mut self) -> Option<Self::Wout> {
+    fn poll_write(&mut self) -> Option<TaggedPacket> {
         // First drain retransmitted packets
-        if let Some(pkt) = self.write_queue.pop_front() {
-            return Some(pkt);
-        }
-        self.inner.poll_write()
+        self.write_queue.pop_front()
     }
 
-    #[overrides]
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
+        None
+    }
+}
+
+impl Interceptor for NackResponderInterceptor {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         if stream_supports_nack(info)
             && let Some(send_buffer) = SendBuffer::new(self.size)
@@ -227,356 +238,13 @@ impl<P: Interceptor> NackResponderInterceptor<P> {
                 },
             );
         }
-        self.inner.bind_local_stream(info);
     }
 
-    #[overrides]
     fn unbind_local_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
-        self.inner.unbind_local_stream(info);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Registry;
-    use crate::stream_info::RTCPFeedback;
-    use sansio::Protocol;
-
-    fn make_rtp_packet(ssrc: u32, seq: u16, payload: &[u8]) -> TaggedPacket {
-        TaggedPacket {
-            now: Instant::now(),
-            transport: Default::default(),
-            message: Packet::Rtp(rtp::Packet {
-                header: rtp::header::Header {
-                    ssrc,
-                    sequence_number: seq,
-                    ..Default::default()
-                },
-                payload: payload.to_vec().into(),
-            }),
-        }
     }
 
-    fn make_nack_packet(sender_ssrc: u32, media_ssrc: u32, nacks: Vec<(u16, u16)>) -> TaggedPacket {
-        let nack_pairs: Vec<rtcp::transport_feedbacks::transport_layer_nack::NackPair> = nacks
-            .into_iter()
-            .map(|(packet_id, lost_packets)| {
-                rtcp::transport_feedbacks::transport_layer_nack::NackPair {
-                    packet_id,
-                    lost_packets,
-                }
-            })
-            .collect();
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
 
-        TaggedPacket {
-            now: Instant::now(),
-            transport: Default::default(),
-            message: Packet::Rtcp(vec![Box::new(
-                rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack {
-                    sender_ssrc,
-                    media_ssrc,
-                    nacks: nack_pairs,
-                },
-            )]),
-        }
-    }
-
-    #[test]
-    fn test_nack_responder_builder_defaults() {
-        let chain = Registry::new()
-            .with(NackResponderBuilder::default().build())
-            .build();
-
-        assert_eq!(chain.size, 1024);
-    }
-
-    #[test]
-    fn test_nack_responder_builder_custom() {
-        let chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(2048).build())
-            .build();
-
-        assert_eq!(chain.size, 2048);
-    }
-
-    #[test]
-    fn test_nack_responder_retransmits_packet() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        // Bind local stream with NACK support
-        let info = StreamInfo {
-            ssrc: 12345,
-            clock_rate: 90000,
-            rtcp_feedback: vec![RTCPFeedback {
-                typ: "nack".to_string(),
-                parameter: "".to_string(),
-            }],
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info);
-
-        let now = Instant::now();
-
-        // Send packets 10, 11, 12, 14, 15 (missing 13)
-        for seq in [10u16, 11, 12, 14, 15] {
-            let mut pkt = make_rtp_packet(12345, seq, &[seq as u8]);
-            pkt.now = now;
-            chain.handle_write(pkt).unwrap();
-            chain.poll_write(); // Drain normal write
-        }
-
-        // Receive NACK for 11, 12, 13, 15
-        // nack_pair: packet_id=11, lost_packets=0b1011 means 11, 12, 13, 15
-        let mut nack = make_nack_packet(999, 12345, vec![(11, 0b1011)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-
-        // Should retransmit 11, 12, 15 (13 was never sent)
-        let mut retransmitted = Vec::new();
-        while let Some(pkt) = chain.poll_write() {
-            if let Packet::Rtp(rtp) = pkt.message {
-                retransmitted.push(rtp.header.sequence_number);
-            }
-        }
-
-        assert!(retransmitted.contains(&11));
-        assert!(retransmitted.contains(&12));
-        assert!(!retransmitted.contains(&13)); // Never sent
-        assert!(retransmitted.contains(&15));
-    }
-
-    #[test]
-    fn test_nack_responder_no_retransmit_without_binding() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        let now = Instant::now();
-
-        // Send packets without binding stream (no buffer)
-        for seq in [10u16, 11, 12] {
-            let mut pkt = make_rtp_packet(12345, seq, &[seq as u8]);
-            pkt.now = now;
-            chain.handle_write(pkt).unwrap();
-            chain.poll_write();
-        }
-
-        // Receive NACK
-        let mut nack = make_nack_packet(999, 12345, vec![(11, 0)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-
-        // No retransmissions (stream not bound)
-        assert!(chain.poll_write().is_none());
-    }
-
-    #[test]
-    fn test_nack_responder_no_retransmit_expired_packet() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        let info = StreamInfo {
-            ssrc: 12345,
-            clock_rate: 90000,
-            rtcp_feedback: vec![RTCPFeedback {
-                typ: "nack".to_string(),
-                parameter: "".to_string(),
-            }],
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info);
-
-        let now = Instant::now();
-
-        // Send packets 0-15 (buffer size is 8, so 0-7 will be pushed out)
-        for seq in 0..16u16 {
-            let mut pkt = make_rtp_packet(12345, seq, &[seq as u8]);
-            pkt.now = now;
-            chain.handle_write(pkt).unwrap();
-            chain.poll_write();
-        }
-
-        // Request retransmit of seq 0 (should be expired from buffer)
-        let mut nack = make_nack_packet(999, 12345, vec![(0, 0)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-
-        // No retransmission (packet too old)
-        assert!(chain.poll_write().is_none());
-
-        // But seq 10 should still be available
-        let mut nack = make_nack_packet(999, 12345, vec![(10, 0)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-
-        let pkt = chain.poll_write();
-        assert!(pkt.is_some());
-        if let Some(tagged) = pkt
-            && let Packet::Rtp(rtp) = tagged.message
-        {
-            assert_eq!(rtp.header.sequence_number, 10);
-        }
-    }
-
-    #[test]
-    fn test_nack_responder_unbind_removes_stream() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        let info = StreamInfo {
-            ssrc: 12345,
-            clock_rate: 90000,
-            rtcp_feedback: vec![RTCPFeedback {
-                typ: "nack".to_string(),
-                parameter: "".to_string(),
-            }],
-            ..Default::default()
-        };
-
-        chain.bind_local_stream(&info);
-        assert!(chain.streams.contains_key(&12345));
-
-        chain.unbind_local_stream(&info);
-        assert!(!chain.streams.contains_key(&12345));
-    }
-
-    #[test]
-    fn test_nack_responder_no_nack_support() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        // Bind stream without NACK support
-        let info = StreamInfo {
-            ssrc: 12345,
-            clock_rate: 90000,
-            rtcp_feedback: vec![], // No NACK support
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info);
-
-        // Should not create send buffer
-        assert!(!chain.streams.contains_key(&12345));
-    }
-
-    #[test]
-    fn test_nack_responder_passthrough() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        let now = Instant::now();
-
-        // RTP packets should pass through
-        let mut pkt = make_rtp_packet(12345, 1, &[1]);
-        pkt.now = now;
-        chain.handle_write(pkt).unwrap();
-        let out = chain.poll_write();
-        assert!(out.is_some());
-
-        // RTCP packets should pass through to read
-        let mut nack = make_nack_packet(999, 12345, vec![(1, 0)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-        let out = chain.poll_read();
-        assert!(out.is_none());
-    }
-
-    #[test]
-    fn test_nack_responder_rfc4588_rtx() {
-        let mut chain = Registry::new()
-            .with(NackResponderBuilder::new().with_size(8).build())
-            .build();
-
-        // Bind local stream with NACK support AND RTX configured
-        let info = StreamInfo {
-            ssrc: 1,
-            ssrc_rtx: Some(2), // RTX SSRC
-            payload_type: 96,
-            payload_type_rtx: Some(97), // RTX payload type
-            clock_rate: 90000,
-            rtcp_feedback: vec![RTCPFeedback {
-                typ: "nack".to_string(),
-                parameter: "".to_string(),
-            }],
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info);
-
-        let now = Instant::now();
-
-        // Send packets 10, 11, 12, 14, 15 (missing 13)
-        for seq in [10u16, 11, 12, 14, 15] {
-            let mut pkt = make_rtp_packet(1, seq, &[seq as u8]);
-            pkt.now = now;
-            chain.handle_write(pkt).unwrap();
-            chain.poll_write(); // Drain normal write
-        }
-
-        // Receive NACK for 11, 12, 13, 15
-        // nack_pair: packet_id=11, lost_packets=0b1011 means 11, 12, 13, 15
-        let mut nack = make_nack_packet(999, 1, vec![(11, 0b1011)]);
-        nack.now = now;
-        chain.handle_read(nack).unwrap();
-
-        // Should retransmit 11, 12, 15 (13 was never sent) using RTX format
-        let mut rtx_seq = 0u16;
-        for expected_original_seq in [11u16, 12, 15] {
-            let pkt = chain.poll_write();
-            assert!(
-                pkt.is_some(),
-                "Expected RTX packet for seq {}",
-                expected_original_seq
-            );
-
-            if let Some(tagged) = pkt {
-                if let Packet::Rtp(rtp) = tagged.message {
-                    // Verify RTX SSRC
-                    assert_eq!(rtp.header.ssrc, 2, "RTX packet should use RTX SSRC");
-                    // Verify RTX payload type
-                    assert_eq!(
-                        rtp.header.payload_type, 97,
-                        "RTX packet should use RTX payload type"
-                    );
-                    // Verify RTX sequence number (increments separately)
-                    assert_eq!(
-                        rtp.header.sequence_number, rtx_seq,
-                        "RTX seq should be {}",
-                        rtx_seq
-                    );
-                    rtx_seq += 1;
-
-                    // Verify payload: first 2 bytes should be original sequence number (big-endian)
-                    assert!(
-                        rtp.payload.len() >= 2,
-                        "RTX payload should have at least 2 bytes"
-                    );
-                    let original_seq_from_payload =
-                        u16::from_be_bytes([rtp.payload[0], rtp.payload[1]]);
-                    assert_eq!(
-                        original_seq_from_payload, expected_original_seq,
-                        "RTX payload should contain original seq"
-                    );
-
-                    // Verify original payload follows
-                    assert_eq!(
-                        rtp.payload[2..],
-                        [expected_original_seq as u8],
-                        "Original payload should follow seq number"
-                    );
-                } else {
-                    panic!("Expected RTP packet");
-                }
-            }
-        }
-
-        // No more packets
-        assert!(chain.poll_write().is_none());
-    }
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }

@@ -10,13 +10,13 @@
 //! instant the application enqueued.
 
 use rtc_interceptor::{
-    Interceptor, NoopInterceptor, PacerBuilder, PacerInterceptor, Packet, Registry, StreamInfo,
-    TaggedPacket, interceptor,
+    Attribute, AttributedPacket, Interceptor, PacerBuilder, Packet, Registry, StreamInfo,
+    TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
-use shared::error::Error;
 use shared::marshal::MarshalSize;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,26 +27,50 @@ struct Released {
     at: Duration,
 }
 
-#[derive(Interceptor)]
-struct Marker<P> {
-    #[next]
-    inner: P,
+struct Marker {
     released: Arc<Mutex<Vec<Released>>>,
     epoch: Instant,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-#[interceptor]
-impl<P: Interceptor> Marker<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Marker {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = shared::error::Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.read_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp) = &msg.message {
+        if let Packet::Rtp(rtp) = &msg.message.packet {
             self.released.lock().unwrap().push(Released {
                 sequence_number: rtp.header.sequence_number,
                 at: msg.now.saturating_duration_since(self.epoch),
             });
         }
-        self.inner.handle_write(msg)
+        self.write_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for Marker {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 /// A maximum-sized packet: 12-byte RTP header plus payload makes 1500 bytes on the wire.
@@ -60,7 +84,7 @@ const PACKET_BITS: f64 = 12_000.0;
 const BITRATE: f64 = 1_200_000.0;
 
 struct Harness {
-    chain: PacerInterceptor<Marker<NoopInterceptor>>,
+    chain: Box<dyn Interceptor>,
     released: Arc<Mutex<Vec<Released>>>,
     epoch: Instant,
 }
@@ -78,10 +102,11 @@ impl Harness {
         let marker_released = Arc::clone(&released);
 
         let chain = Registry::new()
-            .with(move |inner: NoopInterceptor| Marker {
-                inner,
+            .with(Marker {
                 released: marker_released,
                 epoch,
+                read_queue: VecDeque::new(),
+                write_queue: VecDeque::new(),
             })
             .with(
                 PacerBuilder::new()
@@ -92,7 +117,7 @@ impl Harness {
             .build();
 
         Self {
-            chain,
+            chain: Box::new(chain),
             released,
             epoch,
         }
@@ -107,7 +132,7 @@ impl Harness {
             .handle_write(TaggedPacket {
                 now: self.epoch + at,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         version: 2,
                         payload_type: 96,
@@ -116,15 +141,43 @@ impl Harness {
                         ..Default::default()
                     },
                     payload: vec![0u8; payload_bytes].into(),
-                }),
+                })),
             })
             .expect("handle_write");
+    }
+
+    /// Fire a timeout and then drain, which is what a driver does.
+    ///
+    /// The draining is load-bearing on the belt and was not under nesting: a released packet is
+    /// handed on by the pacer's `poll_write`, so it only reaches the stages between the pacer and
+    /// the wire when the chain's `poll_write` walk runs. `handle_timeout` alone moves a packet out
+    /// of the pacer's queue and no further.
+    /// Tell the pacer a new target rate.
+    ///
+    /// With no event channel the estimate travels as an attribute on an outgoing packet, which is
+    /// how a congestion controller application-ward of the pacer would deliver it.
+    fn retarget(&mut self, bits_per_second: f64) {
+        let mut msg = TaggedPacket {
+            now: self.epoch,
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
+        };
+        msg.message
+            .add(Attribute::TargetBitrateChanged { bits_per_second });
+        self.chain.handle_write(msg).expect("handle_write");
+        while self.chain.poll_write().is_some() {}
     }
 
     fn tick(&mut self, at: Duration) {
         self.chain
             .handle_timeout(self.epoch + at)
             .expect("handle_timeout");
+        self.drain();
+    }
+
+    /// Pull everything the chain is ready to send.
+    fn drain(&mut self) {
+        while self.chain.poll_write().is_some() {}
     }
 
     /// Advance the clock the way the driver does: fire every deadline the chain asks for, in
@@ -143,6 +196,7 @@ impl Harness {
             }
             fired_deadline |= next == deadline;
             self.chain.handle_timeout(next).expect("handle_timeout");
+            self.drain();
         }
         // Only if the loop did not already reach it: a driver fires each deadline once, and a
         // harness that fires twice would hide an interceptor that treats timeouts as edge
@@ -225,7 +279,7 @@ fn changing_the_rate_changes_the_subsequent_schedule() {
     );
 
     // Twice the rate: the next packet is due half as long after the last one.
-    harness.chain.pacer_mut().set_target_bitrate(BITRATE * 2.0);
+    harness.retarget(BITRATE * 2.0);
     harness.advance_to(ms(40));
 
     let schedule = harness.schedule();
@@ -387,11 +441,14 @@ fn rtcp_is_not_paced() {
         .handle_write(TaggedPacket {
             now: harness.epoch,
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![]),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
         })
         .expect("handle_write");
 
-    assert_eq!(0, harness.chain.queued(), "not queued behind media");
+    assert!(
+        harness.chain.poll_write().is_some(),
+        "RTCP leaves immediately rather than waiting for a release deadline"
+    );
 }
 
 /// A driver may hand the same instant over more than once — two protocols' deadlines can coincide.
@@ -433,7 +490,7 @@ fn a_configured_burst_survives_a_rate_change() {
     harness.tick(ms(0));
 
     // Twenty times the rate. A burst derived from this would be 240 000 bits — twenty packets.
-    harness.chain.pacer_mut().set_target_bitrate(BITRATE * 20.0);
+    harness.retarget(BITRATE * 20.0);
 
     // Idle long enough for the budget to fill whatever the burst now is.
     harness.advance_to(ms(100));
@@ -488,7 +545,7 @@ fn a_packet_larger_than_the_burst_is_still_released() {
         .handle_write(TaggedPacket {
             now: harness.epoch,
             transport: TransportContext::default(),
-            message: Packet::Rtp(rtp::Packet {
+            message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                 header: rtp::header::Header {
                     version: 2,
                     sequence_number: 99,
@@ -497,7 +554,7 @@ fn a_packet_larger_than_the_burst_is_still_released() {
                 },
                 // Far bigger than the one-packet burst.
                 payload: vec![0u8; 4000].into(),
-            }),
+            })),
         })
         .expect("handle_write");
     harness.send(ms(0), 100);
@@ -538,7 +595,7 @@ fn the_queue_is_bounded_and_refuses_new_arrivals_when_full() {
             .handle_write(TaggedPacket {
                 now: epoch,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         version: 2,
                         sequence_number,
@@ -546,16 +603,25 @@ fn the_queue_is_bounded_and_refuses_new_arrivals_when_full() {
                         ..Default::default()
                     },
                     payload: vec![0u8; PAYLOAD_BYTES].into(),
-                }),
+                })),
             })
             .expect("handle_write");
     }
 
-    assert_eq!(3, chain.queued(), "capped");
+    // Drain everything the pacer will ever release: only what fitted in the queue comes out.
+    let mut released = 0;
+    let mut now = epoch;
+    for _ in 0..100 {
+        chain.handle_timeout(now).expect("handle_timeout");
+        while chain.poll_write().is_some() {
+            released += 1;
+        }
+        now += Duration::from_millis(10);
+    }
+
     assert_eq!(
-        7,
-        chain.dropped(),
-        "and the overflow is counted, not silent"
+        3, released,
+        "capped at the queue limit; the other seven arrivals were refused"
     );
 }
 

@@ -22,8 +22,7 @@ use rtc::rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodec
 
 const FIREFOX_OFFER: &str = include_str!("testdata/firefox_152_simulcast_offer.sdp");
 
-fn build_answerer()
--> Result<rtc::peer_connection::RTCPeerConnection<impl rtc::interceptor::Interceptor + use<>>> {
+fn build_answerer() -> Result<rtc::peer_connection::RTCPeerConnection> {
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
     for uri in [

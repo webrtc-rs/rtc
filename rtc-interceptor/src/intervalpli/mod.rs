@@ -9,7 +9,6 @@
 //! # References
 //!
 //! - [RFC 4585](https://datatracker.ietf.org/doc/html/rfc4585) §6.3.1 — Picture Loss Indication
-pub(crate) mod generator;
 
 use crate::stream_info::StreamInfo;
 
@@ -22,3 +21,5 @@ pub(crate) fn stream_supports_pli(info: &StreamInfo) -> bool {
         .iter()
         .any(|fb| fb.typ == "nack" && fb.parameter == "pli")
 }
+
+pub(crate) mod generator;

@@ -83,8 +83,7 @@ async fn create_webrtc_peer_video_only() -> Result<Arc<WebrtcPeerConnection>> {
 
 /// Create sansio RTC peer configuration with video-only codec support
 /// Audio codecs are NOT registered, so audio tracks will be rejected
-fn create_rtc_peer_config_video_only()
--> Result<RTCPeerConnection<impl rtc::interceptor::Interceptor>> {
+fn create_rtc_peer_config_video_only() -> Result<RTCPeerConnection> {
     let setting_engine = SettingEngineBuilder::new()
         .with_answering_dtls_role(RTCDtlsRole::Client)
         .build();

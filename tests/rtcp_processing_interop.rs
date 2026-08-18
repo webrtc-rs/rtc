@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
+use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket};
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -38,6 +38,7 @@ use rtc::rtp_transceiver::rtp_sender::{
 use rtc::shared::error::Error;
 
 use webrtc::api::APIBuilder;
+// webrtc links its own `rtcp`, so the type it is handed is not the one this crate parses with.
 use webrtc::api::interceptor_registry::register_default_interceptors as webrtc_register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine as WebrtcMediaEngine;
 use webrtc::ice_transport::ice_server::RTCIceServer as WebrtcIceServer;
@@ -46,6 +47,7 @@ use webrtc::peer_connection::RTCPeerConnection as WebrtcPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration as WebrtcRTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as WebrtcRTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription as WebrtcRTCSessionDescription;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication as WebrtcPictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
@@ -58,77 +60,101 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 // RTCP Forwarder Interceptor
 // ============================================================================
 
-/// Builder for the RtcpForwarderInterceptor.
-pub struct RtcpForwarderBuilder<P> {
-    _phantom: std::marker::PhantomData<P>,
-}
+/// Builder for the [`RtcpForwarderInterceptor`].
+pub struct RtcpForwarderBuilder;
 
-impl<P> Default for RtcpForwarderBuilder<P> {
+impl Default for RtcpForwarderBuilder {
     fn default() -> Self {
-        Self {
-            _phantom: std::marker::PhantomData,
-        }
+        Self
     }
 }
 
-impl<P> RtcpForwarderBuilder<P> {
+impl RtcpForwarderBuilder {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn build(self) -> impl FnOnce(P) -> RtcpForwarderInterceptor<P> {
-        move |inner| RtcpForwarderInterceptor::new(inner)
-    }
-}
-
-/// Interceptor that forwards RTCP packets to the application via poll_read().
-#[derive(Interceptor)]
-pub struct RtcpForwarderInterceptor<P> {
-    #[next]
-    next: P,
-    read_queue: VecDeque<TaggedPacket>,
-}
-
-impl<P> RtcpForwarderInterceptor<P> {
-    fn new(next: P) -> Self {
-        Self {
-            next,
+    pub fn build(self) -> RtcpForwarderInterceptor {
+        RtcpForwarderInterceptor {
             read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
         }
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> RtcpForwarderInterceptor<P> {
-    #[overrides]
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        // If this is an RTCP packet, queue a copy for the application
-        if let Packet::Rtcp(rtcp_packets) = &msg.message {
-            self.read_queue.push_back(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: Packet::Rtcp(rtcp_packets.clone()),
-            });
+/// Passes inbound keyframe requests — PLI and FIR — on to the application, and drops every other
+/// inbound RTCP packet.
+///
+/// # Why an SFU wants exactly this
+///
+/// The rest of the inbound RTCP is for the interceptors: a receiver report feeds the sender
+/// statistics, a NACK is answered by the responder, transport-wide feedback drives the bandwidth
+/// estimate. A keyframe request is the exception — it is about a stream this endpoint is only
+/// relaying, so the only thing that can act on it is the application, which knows where the
+/// publisher is.
+///
+/// # Where it belongs
+///
+/// **Last**, so every interceptor that reads RTCP has already seen the whole of it before this one
+/// narrows it down. It also needs [`Registry::with_rtcp_readable`], because what it passes on still
+/// has to get past the terminus that ends the inbound RTCP path — on the belt, a packet an
+/// interceptor emits rejoins *behind* itself, so no position exists from which to forward past the
+/// end of the chain.
+pub struct RtcpForwarderInterceptor {
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
+}
+
+/// Whether an RTCP packet is a request for a keyframe.
+fn is_keyframe_request(packet: &Box<dyn rtcp::Packet>) -> bool {
+    let payload = packet.as_any();
+    payload.is::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>()
+        || payload.is::<rtcp::payload_feedbacks::full_intra_request::FullIntraRequest>()
+}
+
+impl Protocol<TaggedPacket, TaggedPacket, ()> for RtcpForwarderInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
+        if let Packet::Rtcp(packets) = &msg.message.packet {
+            let requests: Vec<Box<dyn rtcp::Packet>> = packets
+                .iter()
+                .filter(|packet| is_keyframe_request(packet))
+                .cloned()
+                .collect();
+            if requests.is_empty() {
+                // Not the application's business, and it has already been acted on.
+                return Ok(());
+            }
+            msg.message.packet = Packet::Rtcp(requests);
         }
-        // Always pass to next interceptor for normal processing
-        self.next.handle_read(msg)
+        self.read_queue.push_back(msg);
+        Ok(())
     }
 
-    #[overrides]
     fn poll_read(&mut self) -> Option<Self::Rout> {
-        // First return any queued RTCP packets
-        if let Some(pkt) = self.read_queue.pop_front() {
-            return Some(pkt);
-        }
-        // Then check next interceptor
-        self.next.poll_read()
+        self.read_queue.pop_front()
     }
 
-    #[overrides]
-    fn close(&mut self) -> Result<(), Self::Error> {
-        self.read_queue.clear();
-        self.next.close()
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for RtcpForwarderInterceptor {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 // ============================================================================
@@ -159,10 +185,15 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
     Ok(Arc::new(api.new_peer_connection(config).await?))
 }
 
-/// Create sansio RTC peer with RTCP forwarder interceptor
+/// Create a sansio RTC peer whose application can read inbound RTCP.
+///
+/// `keyframe_requests_only` adds the [`RtcpForwarderInterceptor`], which narrows what the
+/// application sees to PLI and FIR. Only a peer that is *sending* can be asked for a keyframe, so
+/// the receive-only tests leave it off and read the reports they are about.
 fn create_rtc_peer_config_with_rtcp_forwarder(
     is_answerer: bool,
-) -> Result<RTCPeerConnection<impl Interceptor>> {
+    keyframe_requests_only: bool,
+) -> Result<RTCPeerConnection> {
     let mut builder = SettingEngineBuilder::new();
     if is_answerer {
         builder = builder.with_answering_dtls_role(RTCDtlsRole::Client);
@@ -182,12 +213,18 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
     };
     media_engine.register_codec(video_codec, RtpCodecKind::Video)?;
 
-    // Create registry with default interceptors
-    let registry = Registry::new();
+    // Create registry with default interceptors. `with_rtcp_readable` is what lets inbound RTCP
+    // past the terminus at the end of the chain; without it nothing an interceptor forwards can
+    // reach the application.
+    let registry = Registry::new().with_rtcp_readable();
     let registry = register_default_interceptors(registry, &mut media_engine)?;
 
-    // Add RTCP forwarder as outermost layer to capture RTCP before consumption
-    let registry = registry.with(RtcpForwarderBuilder::new().build());
+    // Application-most, so every interceptor has already seen the whole of the inbound RTCP.
+    let registry = if keyframe_requests_only {
+        registry.with(RtcpForwarderBuilder::new().build())
+    } else {
+        registry
+    };
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -263,7 +300,7 @@ async fn test_rtcp_processing_webrtc_offerer_rtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(true)?;
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(true, false)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -492,7 +529,7 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false)?;
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false, false)?;
 
     // Add local candidate
     let candidate = CandidateHostConfig {
@@ -752,7 +789,11 @@ async fn test_rtcp_processing_rtc_offerer_webrtc_answerer() -> Result<()> {
 /// fix adds a sender fallback so such feedback surfaces via `poll_read`, tagged with the
 /// sender's track id — exactly what an SFU needs to relay PLI/FIR upstream to a publisher.
 ///
-/// Asserts the RTC peer receives RTCP about its sent stream, tagged with the sender's track id.
+/// The chain here carries [`RtcpForwarderInterceptor`], so what reaches the application is
+/// narrowed to keyframe requests; the webrtc peer sends them explicitly, since nothing in the
+/// default interceptor set asks for a keyframe on its own.
+///
+/// Asserts the RTC peer receives those requests, tagged with the sender's track id.
 #[tokio::test]
 async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
     common::install_crypto_provider();
@@ -772,7 +813,7 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
     let local_addr = socket.local_addr()?;
     log::info!("RTC peer bound to {}", local_addr);
 
-    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false)?;
+    let mut rtc_pc = create_rtc_peer_config_with_rtcp_forwarder(false, true)?;
 
     let candidate = CandidateHostConfig {
         base_config: CandidateConfig {
@@ -835,11 +876,24 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
     let mut connected = false;
     let mut rtcp_packets_received = 0u32;
     let mut rtp_packets_sent = 0u32;
+    let mut keyframe_requests_sent = 0u32;
 
     let start_time = Instant::now();
     let test_timeout = Duration::from_secs(30);
 
     while start_time.elapsed() < test_timeout {
+        // The receiver asks for a keyframe. Nothing in the default interceptor set generates one,
+        // so the test drives it: this is the packet the forwarder is there to surface, and the
+        // one an SFU would relay to the publisher.
+        if connected && keyframe_requests_sent < 8 && rtp_packets_sent % 25 == 0 {
+            let pli = WebrtcPictureLossIndication {
+                sender_ssrc: 0,
+                media_ssrc: SENDER_SSRC,
+            };
+            let _ = webrtc_pc.write_rtcp(&[Box::new(pli)]).await;
+            keyframe_requests_sent += 1;
+        }
+
         // Keep the webrtc receiver active (so it keeps reporting) by streaming RTP.
         if connected && rtp_packets_sent < 300 {
             if let Some(mut sender) = rtc_pc.rtp_sender(sender_id) {
@@ -889,6 +943,13 @@ async fn test_rtcp_processing_rtc_sender_receives_feedback() -> Result<()> {
                 assert_eq!(
                     track_id, SENDER_TRACK_ID,
                     "sender-side RTCP should be tagged with the sender's track id"
+                );
+                // And the forwarder narrowed it: reports were dropped, keyframe requests kept.
+                assert!(
+                    rtcp_packets
+                        .iter()
+                        .all(|packet| is_keyframe_request(packet)),
+                    "the forwarder passes PLI and FIR only, but let something else through"
                 );
                 rtcp_packets_received += 1;
                 log::info!(

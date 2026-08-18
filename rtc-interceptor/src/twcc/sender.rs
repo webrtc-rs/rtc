@@ -1,14 +1,17 @@
-//! TWCC Sender Interceptor - adds transport-wide sequence numbers to outgoing packets.
+//! Tags outgoing RTP packets with transport-wide sequence numbers.
 
 use super::stream_supports_twcc;
+use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use crate::{Packet, TaggedPacket};
+use sansio::Protocol;
 use shared::error::Error;
 use shared::marshal::Marshal;
 use std::collections::HashMap;
-use std::marker::PhantomData;
+use std::collections::VecDeque;
+use std::time::Instant;
 
-/// Builder for the TwccSenderInterceptor.
+/// Builder for the [`TwccSenderInterceptor`].
 ///
 /// # Example
 ///
@@ -19,307 +22,302 @@ use std::marker::PhantomData;
 ///     .with(TwccSenderBuilder::new().build())
 ///     .build();
 /// ```
-pub struct TwccSenderBuilder<P> {
-    _phantom: PhantomData<P>,
+#[derive(Default)]
+pub struct TwccSenderBuilder {
+    /// The first transport-wide sequence number to hand out.
+    initial_sequence_number: u16,
 }
 
-impl<P> Default for TwccSenderBuilder<P> {
-    fn default() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<P> TwccSenderBuilder<P> {
+impl TwccSenderBuilder {
     /// Create a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> TwccSenderInterceptor<P> {
-        move |inner| TwccSenderInterceptor::new(inner)
+    /// Set the first transport-wide sequence number to hand out.
+    ///
+    /// Defaults to zero. The counter is shared across every local stream and wraps, so the
+    /// starting point only matters to a test that wants to pin the numbers it asserts on, or to
+    /// a session resuming a numbering it had already begun.
+    pub fn with_initial_sequence_number(mut self, sequence_number: u16) -> Self {
+        self.initial_sequence_number = sequence_number;
+        self
+    }
+
+    /// Build the interceptor.
+    pub fn build(self) -> TwccSenderInterceptor {
+        TwccSenderInterceptor::new(self.initial_sequence_number)
     }
 }
 
-/// Per-stream state for the sender.
+/// Per-stream state.
 struct LocalStream {
     /// Header extension ID for transport-wide CC.
     hdr_ext_id: u8,
 }
 
-/// Interceptor that adds transport-wide sequence numbers to outgoing RTP packets.
+/// Numbers every departing RTP packet so the remote can report on it
+/// ([`draft-holmer-rmcat-transport-wide-cc-extensions-01`]).
 ///
-/// This interceptor examines the stream's RTP header extensions for the transport-wide
-/// CC extension URI and adds sequence numbers to each outgoing packet.
-#[derive(Interceptor)]
-pub struct TwccSenderInterceptor<P> {
-    #[next]
-    inner: P,
-    /// Transport-wide sequence number counter (shared across all streams).
+/// # Where this belongs in the chain
+///
+/// **Between the pacer and the send history**, near the wire. Numbering identifies a
+/// *transmission*, not a packet, so it has to happen after the pacer has decided what actually
+/// leaves and before the history records it — a retransmission is a separate transmission and gets
+/// its own number.
+///
+/// Under the nested chain this could not hold: a retransmission left from the NACK responder's own
+/// queue and never reached the tagger at all.
+///
+/// [`draft-holmer-rmcat-transport-wide-cc-extensions-01`]: http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
+#[derive(Default)]
+pub struct TwccSenderInterceptor {
+    /// Transport-wide sequence number counter, shared across all streams.
     next_sequence_number: u16,
-    /// Local stream state per SSRC.
     streams: HashMap<u32, LocalStream>,
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
+    /// Outbound packets ready for the next interceptor: what passed through, plus
+    /// anything this one generated.
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> TwccSenderInterceptor<P> {
-    fn new(inner: P) -> Self {
+impl TwccSenderInterceptor {
+    /// A tagger with no streams bound yet.
+    fn new(initial_sequence_number: u16) -> Self {
         Self {
-            inner,
-            next_sequence_number: 0,
-            streams: HashMap::new(),
+            next_sequence_number: initial_sequence_number,
+            ..Default::default()
         }
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> TwccSenderInterceptor<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for TwccSenderInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.read_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
     fn handle_write(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
-        // Add transport-wide CC sequence number to outgoing RTP packets
-        if let Packet::Rtp(ref mut rtp_packet) = msg.message
+        if let Packet::Rtp(ref mut rtp_packet) = msg.message.packet
             && let Some(stream) = self.streams.get(&rtp_packet.header.ssrc)
         {
-            // Create transport CC extension
             let seq = self.next_sequence_number;
             self.next_sequence_number = self.next_sequence_number.wrapping_add(1);
 
             let tcc_ext = rtp::extension::transport_cc_extension::TransportCcExtension {
                 transport_sequence: seq,
             };
-
-            // Marshal the extension
             if let Ok(ext_data) = tcc_ext.marshal() {
-                // Set the extension on the packet
                 let _ = rtp_packet
                     .header
                     .set_extension(stream.hdr_ext_id, ext_data.freeze());
             }
         }
-
-        self.inner.handle_write(msg)
+        self.write_queue.push_back(msg);
+        Ok(())
     }
 
-    #[overrides]
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
+        None
+    }
+}
+
+impl Interceptor for TwccSenderInterceptor {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
-        if let Some(hdr_ext_id) = stream_supports_twcc(info) {
-            // Don't add header extension if ID is 0 (invalid)
-            if hdr_ext_id != 0 {
-                self.streams.insert(info.ssrc, LocalStream { hdr_ext_id });
-            }
+        if let Some(hdr_ext_id) = stream_supports_twcc(info)
+            && hdr_ext_id != 0
+        {
+            self.streams.insert(info.ssrc, LocalStream { hdr_ext_id });
         }
-        self.inner.bind_local_stream(info);
     }
 
-    #[overrides]
     fn unbind_local_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
-        self.inner.unbind_local_stream(info);
     }
+
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Registry;
+    use crate::AttributedPacket;
+    use crate::chain::InterceptorChain;
     use crate::stream_info::RTPHeaderExtension;
     use sansio::Protocol;
+    use shared::TransportContext;
     use shared::marshal::Unmarshal;
     use std::time::Instant;
 
-    fn make_rtp_packet(ssrc: u32, seq: u16) -> TaggedPacket {
+    const TWCC_URI: &str =
+        "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
+
+    fn stream_info(ssrc: u32, ext_id: u16) -> StreamInfo {
+        StreamInfo {
+            ssrc,
+            rtp_header_extensions: vec![RTPHeaderExtension {
+                uri: TWCC_URI.to_owned(),
+                id: ext_id,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn packet(sequence_number: u16, ssrc: u32) -> TaggedPacket {
         TaggedPacket {
             now: Instant::now(),
-            transport: Default::default(),
-            message: Packet::Rtp(rtp::Packet {
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                 header: rtp::header::Header {
+                    version: 2,
+                    sequence_number,
                     ssrc,
-                    sequence_number: seq,
                     ..Default::default()
                 },
-                payload: vec![].into(),
-            }),
+                payload: vec![0u8; 4].into(),
+            })),
         }
     }
 
-    #[test]
-    fn test_twcc_sender_builder_defaults() {
-        let chain = Registry::new()
-            .with(TwccSenderBuilder::default().build())
-            .build();
-
-        assert!(chain.streams.is_empty());
-    }
-
-    #[test]
-    fn test_twcc_sender_adds_extension() {
-        let mut chain = Registry::new()
-            .with(TwccSenderBuilder::new().build())
-            .build();
-
-        // Bind stream with TWCC support
-        let info = StreamInfo {
-            ssrc: 12345,
-            rtp_header_extensions: vec![RTPHeaderExtension {
-                uri: super::super::TRANSPORT_CC_URI.to_string(),
-                id: 5,
-            }],
-            ..Default::default()
+    fn tag_of(msg: &TaggedPacket, ext_id: u8) -> Option<u16> {
+        let Packet::Rtp(rtp) = &msg.message.packet else {
+            return None;
         };
-        chain.bind_local_stream(&info);
+        let data = rtp.header.get_extension(ext_id)?;
+        rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(&mut data.as_ref())
+            .ok()
+            .map(|e| e.transport_sequence)
+    }
 
-        // Send packets
-        let pkt1 = make_rtp_packet(12345, 1);
-        chain.handle_write(pkt1).unwrap();
-        let out1 = chain.poll_write().unwrap();
-
-        let pkt2 = make_rtp_packet(12345, 2);
-        chain.handle_write(pkt2).unwrap();
-        let out2 = chain.poll_write().unwrap();
-
-        // Verify extensions were added with incrementing sequence numbers
-        if let Packet::Rtp(rtp1) = out1.message {
-            let ext = rtp1.header.get_extension(5);
-            assert!(ext.is_some());
-            let tcc = rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                &mut ext.unwrap().as_ref(),
-            )
-            .unwrap();
-            assert_eq!(tcc.transport_sequence, 0);
-        } else {
-            panic!("Expected RTP packet");
-        }
-
-        if let Packet::Rtp(rtp2) = out2.message {
-            let ext = rtp2.header.get_extension(5);
-            assert!(ext.is_some());
-            let tcc = rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                &mut ext.unwrap().as_ref(),
-            )
-            .unwrap();
-            assert_eq!(tcc.transport_sequence, 1);
-        } else {
-            panic!("Expected RTP packet");
-        }
+    fn chain() -> InterceptorChain {
+        let mut chain = InterceptorChain::new(vec![Box::new(TwccSenderBuilder::new().build())]);
+        chain.bind_local_stream(&stream_info(1, 5));
+        chain
     }
 
     #[test]
-    fn test_twcc_sender_no_extension_without_binding() {
-        let mut chain = Registry::new()
-            .with(TwccSenderBuilder::new().build())
-            .build();
-
-        // Send packet without binding (no TWCC)
-        let pkt = make_rtp_packet(12345, 1);
-        chain.handle_write(pkt).unwrap();
-        let out = chain.poll_write().unwrap();
-
-        // Verify no extension was added
-        if let Packet::Rtp(rtp) = out.message {
-            assert!(rtp.header.get_extension(5).is_none());
-        } else {
-            panic!("Expected RTP packet");
-        }
-    }
-
-    #[test]
-    fn test_twcc_sender_unbind_removes_stream() {
-        let mut chain = Registry::new()
-            .with(TwccSenderBuilder::new().build())
-            .build();
-
-        let info = StreamInfo {
-            ssrc: 12345,
-            rtp_header_extensions: vec![RTPHeaderExtension {
-                uri: super::super::TRANSPORT_CC_URI.to_string(),
-                id: 5,
-            }],
-            ..Default::default()
-        };
-
-        chain.bind_local_stream(&info);
-        assert!(chain.streams.contains_key(&12345));
-
-        chain.unbind_local_stream(&info);
-        assert!(!chain.streams.contains_key(&12345));
-    }
-
-    #[test]
-    fn test_twcc_sender_sequence_wraparound() {
-        let mut chain = Registry::new()
-            .with(TwccSenderBuilder::new().build())
-            .build();
-
-        let info = StreamInfo {
-            ssrc: 12345,
-            rtp_header_extensions: vec![RTPHeaderExtension {
-                uri: super::super::TRANSPORT_CC_URI.to_string(),
-                id: 5,
-            }],
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info);
-
-        // Set sequence number near wraparound
-        chain.next_sequence_number = 65534;
-
-        for expected_seq in [65534u16, 65535, 0, 1] {
-            let pkt = make_rtp_packet(12345, 1);
-            chain.handle_write(pkt).unwrap();
-            let out = chain.poll_write().unwrap();
-
-            if let Packet::Rtp(rtp) = out.message {
-                let ext = rtp.header.get_extension(5).unwrap();
-                let tcc = rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                    &mut ext.as_ref(),
-                )
-                .unwrap();
-                assert_eq!(tcc.transport_sequence, expected_seq);
+    fn a_bound_stream_is_numbered_consecutively() {
+        let mut chain = chain();
+        let mut tags = Vec::new();
+        for sequence_number in 0..3 {
+            chain.handle_write(packet(sequence_number, 1)).unwrap();
+            while let Some(out) = chain.poll_write() {
+                tags.push(tag_of(&out, 5));
             }
         }
+        assert_eq!(vec![Some(0), Some(1), Some(2)], tags);
     }
 
     #[test]
-    fn test_twcc_sender_multiple_streams_share_counter() {
-        let mut chain = Registry::new()
-            .with(TwccSenderBuilder::new().build())
-            .build();
+    fn an_unbound_stream_is_left_alone() {
+        let mut chain = chain();
+        chain.handle_write(packet(0, 999)).unwrap();
+        let out = chain.poll_write().expect("passes through");
+        assert_eq!(None, tag_of(&out, 5), "no extension added");
+    }
 
-        // Bind two streams
-        let info1 = StreamInfo {
-            ssrc: 1111,
-            rtp_header_extensions: vec![RTPHeaderExtension {
-                uri: super::super::TRANSPORT_CC_URI.to_string(),
-                id: 5,
-            }],
-            ..Default::default()
-        };
-        let info2 = StreamInfo {
-            ssrc: 2222,
-            rtp_header_extensions: vec![RTPHeaderExtension {
-                uri: super::super::TRANSPORT_CC_URI.to_string(),
-                id: 5,
-            }],
-            ..Default::default()
-        };
-        chain.bind_local_stream(&info1);
-        chain.bind_local_stream(&info2);
+    #[test]
+    fn unbinding_stops_the_numbering() {
+        let mut chain = chain();
+        chain.unbind_local_stream(&stream_info(1, 5));
+        chain.handle_write(packet(0, 1)).unwrap();
+        let out = chain.poll_write().expect("passes through");
+        assert_eq!(None, tag_of(&out, 5));
+    }
 
-        // Send packets alternating between streams
-        for (i, ssrc) in [1111u32, 2222, 1111, 2222].iter().enumerate() {
-            let pkt = make_rtp_packet(*ssrc, 1);
-            chain.handle_write(pkt).unwrap();
-            let out = chain.poll_write().unwrap();
+    /// The counter is transport-wide: one sequence across every stream, not one per SSRC.
+    #[test]
+    fn the_counter_is_shared_across_streams() {
+        let mut chain = chain();
+        chain.bind_local_stream(&stream_info(2, 5));
 
-            if let Packet::Rtp(rtp) = out.message {
-                let ext = rtp.header.get_extension(5).unwrap();
-                let tcc = rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
-                    &mut ext.as_ref(),
-                )
-                .unwrap();
-                assert_eq!(tcc.transport_sequence, i as u16);
+        let mut tags = Vec::new();
+        for ssrc in [1, 2, 1] {
+            chain.handle_write(packet(0, ssrc)).unwrap();
+            while let Some(out) = chain.poll_write() {
+                tags.push(tag_of(&out, 5));
             }
         }
+        assert_eq!(vec![Some(0), Some(1), Some(2)], tags);
+    }
+
+    /// An interceptor wireward of the tagger sees the number, which is what lets a send history key on it.
+    #[test]
+    fn a_stage_closer_to_the_wire_sees_the_tag() {
+        #[derive(Default)]
+        struct Recorder {
+            seen: Vec<Option<u16>>,
+            write_queue: VecDeque<TaggedPacket>,
+        }
+        impl Protocol<TaggedPacket, TaggedPacket, ()> for Recorder {
+            type Rout = TaggedPacket;
+            type Wout = TaggedPacket;
+            type Eout = ();
+            type Error = Error;
+            type Time = Instant;
+
+            fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+                self.seen.push(tag_of(&msg, 5));
+                self.write_queue.push_back(msg);
+                Ok(())
+            }
+
+            fn poll_write(&mut self) -> Option<Self::Wout> {
+                self.write_queue.pop_front()
+            }
+
+            fn handle_read(&mut self, _msg: TaggedPacket) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn poll_read(&mut self) -> Option<Self::Rout> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn poll_timeout(&mut self) -> Option<Self::Time> {
+                None
+            }
+        }
+        impl Interceptor for Recorder {
+            fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+            fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+            fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+            fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
+        }
+        // index 0 = wireward of the tagger at index 1, so it acts *after* on the write walk.
+        let mut chain = InterceptorChain::new(vec![
+            Box::new(Recorder::default()),
+            Box::new(TwccSenderBuilder::new().build()),
+        ]);
+        chain.bind_local_stream(&stream_info(1, 5));
+
+        chain.handle_write(packet(0, 1)).unwrap();
+        let out = chain.poll_write().expect("reaches the driver");
+        assert_eq!(Some(0), tag_of(&out, 5), "the packet leaves tagged");
     }
 }

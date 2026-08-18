@@ -5,18 +5,21 @@
 //! it asks for, when it stops, and that an idle chain is not woken for nothing.
 
 use rtc_interceptor::{
-    Interceptor, IntervalPliBuilder, IntervalPliInterceptor, NoopInterceptor, Packet, RTCPFeedback,
-    Registry, StreamInfo,
+    Attribute, AttributedPacket, Interceptor, IntervalPliInterceptor, Packet, RTCPFeedback,
+    Registry, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
+use shared::TransportContext;
 use std::time::{Duration, Instant};
 
 const INTERVAL: Duration = Duration::from_secs(1);
 
-fn chain() -> IntervalPliInterceptor<NoopInterceptor> {
-    Registry::new()
-        .with(IntervalPliBuilder::new().with_interval(INTERVAL).build())
-        .build()
+fn chain() -> Box<dyn Interceptor> {
+    Box::new(
+        Registry::new()
+            .with(IntervalPliInterceptor::new(INTERVAL))
+            .build(),
+    )
 }
 
 /// A stream that negotiated `nack pli`.
@@ -43,11 +46,24 @@ fn nack_only_stream(ssrc: u32) -> StreamInfo {
     }
 }
 
+/// Ask for a keyframe. With no event channel, an attribute on an inbound packet is how one
+/// interceptor asks another for something.
+fn force_pli(chain: &mut dyn Interceptor, now: Instant, ssrcs: Option<Vec<u32>>) {
+    let mut msg = TaggedPacket {
+        now,
+        transport: TransportContext::default(),
+        message: AttributedPacket::new(Packet::Rtp(rtp::Packet::default())),
+    };
+    msg.message.add(Attribute::ForcePli { ssrcs });
+    chain.handle_read(msg).expect("handle_read");
+    while chain.poll_read().is_some() {}
+}
+
 /// Every media SSRC a PLI was requested for, draining the write side.
-fn drain_plis(chain: &mut IntervalPliInterceptor<NoopInterceptor>) -> Vec<u32> {
+fn drain_plis(chain: &mut dyn Interceptor) -> Vec<u32> {
     let mut ssrcs = Vec::new();
     while let Some(packet) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &packet.message {
+        if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
             for rtcp_packet in rtcp_packets {
                 if let Some(pli) = rtcp_packet
                     .as_any()
@@ -106,7 +122,6 @@ fn only_streams_that_negotiated_pli_are_asked() {
         drain_plis(&mut chain),
         "2 has nack without pli, 3 has no feedback at all"
     );
-    assert_eq!(vec![1], chain.bound_streams().collect::<Vec<_>>());
 }
 
 #[test]
@@ -181,7 +196,6 @@ fn unbinding_a_stream_stops_asking_for_it() {
         drain_plis(&mut chain),
         "1 is gone; asking it for a keyframe would be shouting into the void"
     );
-    assert_eq!(vec![2], chain.bound_streams().collect::<Vec<_>>());
 }
 
 #[test]
@@ -251,11 +265,7 @@ fn poll_timeout_is_none_until_a_stream_is_bound_and_running() {
 fn a_zero_interval_disables_periodic_requests() {
     let epoch = Instant::now();
     let mut chain = Registry::new()
-        .with(
-            IntervalPliBuilder::new()
-                .with_interval(Duration::ZERO)
-                .build(),
-        )
+        .with(IntervalPliInterceptor::new(Duration::ZERO))
         .build();
 
     chain.bind_remote_stream(&pli_stream(1));
@@ -277,7 +287,7 @@ fn a_zero_interval_disables_periodic_requests() {
 // The out-of-band request
 // ---------------------------------------------------------------------------------------
 
-/// `Ein` is `()` for every interceptor, so an out-of-band request cannot travel through a chain as
+/// `Ein` is `()` for every so an out-of-band request cannot travel through a chain as
 /// a typed event. It is an inherent method instead, reachable while the concrete type is in hand.
 #[test]
 fn a_keyframe_can_be_requested_on_demand() {
@@ -289,10 +299,10 @@ fn a_keyframe_can_be_requested_on_demand() {
     chain.handle_timeout(epoch).expect("handle_timeout");
     drain_plis(&mut chain);
 
-    chain.force_pli(epoch + Duration::from_millis(10));
+    force_pli(&mut chain, epoch + Duration::from_millis(10), None);
     assert_eq!(vec![1, 2], drain_plis(&mut chain), "every bound stream");
 
-    chain.force_pli_for(epoch + Duration::from_millis(20), &[2]);
+    force_pli(&mut chain, epoch + Duration::from_millis(20), Some(vec![2]));
     assert_eq!(vec![2], drain_plis(&mut chain), "just the one asked for");
 }
 
@@ -307,10 +317,10 @@ fn forcing_a_keyframe_for_an_unbound_stream_asks_nothing() {
     chain.handle_timeout(epoch).expect("handle_timeout");
     drain_plis(&mut chain);
 
-    chain.force_pli_for(epoch, &[99]);
+    force_pli(&mut chain, epoch, Some(vec![99]));
     assert!(drain_plis(&mut chain).is_empty());
 
-    chain.force_pli_for(epoch, &[1, 99]);
+    force_pli(&mut chain, epoch, Some(vec![1, 99]));
     assert_eq!(vec![1], drain_plis(&mut chain), "the bound one only");
 }
 
@@ -319,6 +329,6 @@ fn forcing_a_keyframe_for_an_unbound_stream_asks_nothing() {
 #[test]
 fn forcing_a_keyframe_with_nothing_bound_sends_nothing() {
     let mut chain = chain();
-    chain.force_pli(Instant::now());
+    force_pli(&mut chain, Instant::now(), None);
     assert!(drain_plis(&mut chain).is_empty());
 }

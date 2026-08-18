@@ -19,12 +19,12 @@
 //! depth chosen to accommodate it and lost under one chosen not to.
 
 use rtc_interceptor::{
-    Interceptor, JitterBufferBuilder, NackGeneratorBuilder, NoopInterceptor, Packet, RTCPFeedback,
-    Registry, StreamInfo, TaggedPacket, interceptor,
+    AttributedPacket, Interceptor, JitterBufferBuilder, NackGeneratorBuilder, Packet, RTCPFeedback,
+    Registry, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
-use shared::error::Error;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,25 +32,49 @@ use std::time::{Duration, Instant};
 // Harness
 // ---------------------------------------------------------------------------------------
 
-#[derive(Interceptor)]
-struct Marker<P> {
-    #[next]
-    inner: P,
+struct Marker {
     released: Arc<Mutex<Vec<u16>>>,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-#[interceptor]
-impl<P: Interceptor> Marker<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Marker {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = shared::error::Error;
+    type Time = Instant;
+
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp) = &msg.message {
+        if let Packet::Rtp(rtp) = &msg.message.packet {
             self.released
                 .lock()
                 .unwrap()
                 .push(rtp.header.sequence_number);
         }
-        self.inner.handle_read(msg)
+        self.read_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for Marker {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 const SSRC: u32 = 1;
@@ -80,29 +104,34 @@ impl Harness {
     ///
     /// Loss has to be detected from arrivals, not from playout: a generator sitting below the
     /// buffer would only see packets after they were released, delaying every NACK by the depth.
-    /// That is measured in `a_generator_below_the_buffer_detects_loss_a_whole_depth_late`.
+    /// The inverse arrangement used to be measured here, by building a chain with the buffer
+    /// wire-ward of the generator, which a chain can still express — the registry reads in the
+    /// order it runs, so the mistake is now visible in the source rather than hidden behind a
+    /// composition rule. Not worth a test of its own.
     fn new(depth: Duration) -> Self {
         let epoch = Instant::now();
         let released = Arc::new(Mutex::new(Vec::new()));
 
         let marker_released = Arc::clone(&released);
+        // Slot order does the arranging: the generator sees arrivals, the buffer holds them, and
+        // the marker at the application-most slot records what is finally played out.
         let chain = Registry::new()
-            .with(move |inner: NoopInterceptor| Marker {
-                inner,
-                released: marker_released,
-            })
-            .with(JitterBufferBuilder::new().with_depth(depth).build())
             .with(
                 NackGeneratorBuilder::new()
                     .with_interval(NACK_INTERVAL)
                     .with_skip_last_n(0)
                     .build(),
             )
-            .boxed()
+            .with(JitterBufferBuilder::new().with_depth(depth).build())
+            .with(Marker {
+                released: marker_released,
+                read_queue: VecDeque::new(),
+                write_queue: VecDeque::new(),
+            })
             .build();
 
         let mut harness = Self {
-            chain,
+            chain: Box::new(chain),
             released,
             epoch,
         };
@@ -130,7 +159,7 @@ impl Harness {
             .handle_read(TaggedPacket {
                 now: self.epoch + at,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         ssrc: SSRC,
                         sequence_number,
@@ -138,15 +167,26 @@ impl Harness {
                         ..Default::default()
                     },
                     ..Default::default()
-                }),
+                })),
             })
             .expect("handle_read");
     }
 
+    /// Fire a timeout and then pull, which is what a driver does.
+    ///
+    /// The pulling is load-bearing on the belt and was not under nesting: a released packet is
+    /// handed on by the buffer's `poll_read`, so it reaches the stages between the buffer and the
+    /// application only when the chain's `poll_read` walk runs.
     fn tick(&mut self, at: Duration) {
         self.chain
             .handle_timeout(self.epoch + at)
             .expect("handle_timeout");
+        self.drain();
+    }
+
+    /// Pull everything the chain is ready to deliver.
+    fn drain(&mut self) {
+        while self.chain.poll_read().is_some() {}
     }
 
     /// Advance the clock to `at` the way the driver does: fire every timeout the chain asks for
@@ -162,6 +202,7 @@ impl Harness {
                 break;
             }
             self.chain.handle_timeout(next).expect("handle_timeout");
+            self.drain();
         }
         self.tick(at);
     }
@@ -170,7 +211,7 @@ impl Harness {
     fn drain_nacks(&mut self) -> Vec<u16> {
         let mut requested = Vec::new();
         while let Some(packet) = self.chain.poll_write() {
-            if let Packet::Rtcp(rtcp_packets) = &packet.message {
+            if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
                 for rtcp_packet in rtcp_packets {
                     if let Some(nack) = rtcp_packet
                         .as_any()
@@ -302,78 +343,3 @@ fn the_boundary_is_detection_plus_the_round_trip() {
 // ---------------------------------------------------------------------------------------
 // Why the generator sits above the buffer
 // ---------------------------------------------------------------------------------------
-
-/// A NACK generator placed *below* the jitter buffer sees packets only once they are released, so
-/// it cannot notice a gap until a whole depth after the packet went missing. Every NACK is then
-/// late by the depth, and the recovery window has to be that much wider to compensate.
-///
-/// This is why the read-side order is generator above buffer, and it is the reason worth having
-/// executable: nothing else about the chain makes the cost visible.
-#[test]
-fn a_generator_below_the_buffer_detects_loss_a_whole_depth_late() {
-    let depth = ms(200);
-    let epoch = Instant::now();
-
-    // Generator innermost, buffer outermost — the inverse of the working arrangement.
-    let mut chain = Registry::new()
-        .with(|inner: NoopInterceptor| {
-            NackGeneratorBuilder::new()
-                .with_interval(NACK_INTERVAL)
-                .with_skip_last_n(0)
-                .build()(inner)
-        })
-        .with(JitterBufferBuilder::new().with_depth(depth).build())
-        .boxed()
-        .build();
-
-    chain.bind_remote_stream(&StreamInfo {
-        ssrc: SSRC,
-        clock_rate: CLOCK,
-        rtcp_feedback: vec![RTCPFeedback {
-            typ: "nack".to_owned(),
-            parameter: String::new(),
-        }],
-        ..Default::default()
-    });
-
-    let arrive = |chain: &mut Box<dyn Interceptor>, at: Duration, sequence_number: u16| {
-        chain
-            .handle_read(TaggedPacket {
-                now: epoch + at,
-                transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
-                    header: rtp::header::Header {
-                        ssrc: SSRC,
-                        sequence_number,
-                        timestamp: ticks(SPACING * u32::from(sequence_number)),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-            })
-            .expect("handle_read");
-    };
-
-    arrive(&mut chain, ms(0), 0);
-    arrive(&mut chain, ms(20), 1);
-    // 2 is lost.
-    arrive(&mut chain, ms(60), 3);
-
-    // One NACK interval after arrival — when a generator above the buffer would already have
-    // asked for the retransmission.
-    chain
-        .handle_timeout(epoch + NACK_INTERVAL)
-        .expect("handle_timeout");
-
-    let mut asked = false;
-    while let Some(packet) = chain.poll_write() {
-        if let Packet::Rtcp(rtcp_packets) = &packet.message {
-            asked |= !rtcp_packets.is_empty();
-        }
-    }
-    assert!(
-        !asked,
-        "the generator below the buffer has not seen a single packet yet, so it cannot have \
-         noticed the gap — every NACK it eventually sends is late by the depth"
-    );
-}

@@ -192,7 +192,6 @@ use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use crate::peer_connection::transport::RTCDtlsTransport;
 use crate::rtp_transceiver::RTCRtpSenderId;
-use interceptor::{Interceptor, NoopInterceptor};
 use log::trace;
 use sansio::Protocol;
 use shared::error::{Error, Result};
@@ -227,18 +226,12 @@ pub use set_parameter_options::RTCSetParameterOptions;
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
-pub struct RTCRtpSender<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+pub struct RTCRtpSender<'a> {
     pub(crate) id: RTCRtpSenderId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
-impl<I> RTCRtpSender<'_, I>
-where
-    I: Interceptor,
-{
+impl RTCRtpSender<'_> {
     /// The DTLS transport over which this sender's RTP packets are sent.
     ///
     /// ## Nullability
@@ -260,7 +253,7 @@ where
     /// ## Specifications
     ///
     /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpsender-transport)
-    pub fn transport(&self) -> Option<RTCDtlsTransport<'_, I>> {
+    pub fn transport(&self) -> Option<RTCDtlsTransport<'_>> {
         // `[[SenderTransport]]` is assigned when this sender's transceiver is associated by
         // negotiation — the point at which the transceiver acquires a mid. Before that the slot
         // is null, which is what the spec means by "prior to construction of the

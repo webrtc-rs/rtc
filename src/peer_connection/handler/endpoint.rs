@@ -38,26 +38,20 @@ pub(crate) struct EndpointHandlerContext {
 
 /// EndpointHandler implements DataChannel/Media Endpoint handling
 /// The transmits queue is now stored in RTCPeerConnection and passed by reference
-pub(crate) struct EndpointHandler<'a, I>
-where
-    I: Interceptor,
-{
+pub(crate) struct EndpointHandler<'a> {
     ctx: &'a mut EndpointHandlerContext,
-    rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal<I>>,
+    rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal>,
     media_engine: &'a MediaEngine,
-    interceptor: &'a mut I,
+    interceptor: &'a mut dyn Interceptor,
     stats: &'a mut RTCStatsAccumulator,
 }
 
-impl<'a, I> EndpointHandler<'a, I>
-where
-    I: Interceptor,
-{
+impl<'a> EndpointHandler<'a> {
     pub(crate) fn new(
         ctx: &'a mut EndpointHandlerContext,
-        rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal<I>>,
+        rtp_transceivers: &'a mut Vec<RTCRtpTransceiverInternal>,
         media_engine: &'a MediaEngine,
-        interceptor: &'a mut I,
+        interceptor: &'a mut dyn Interceptor,
         stats: &'a mut RTCStatsAccumulator,
     ) -> Self {
         EndpointHandler {
@@ -75,11 +69,9 @@ where
 }
 
 // Implement Protocol trait for message processing
-impl<'a, I>
+impl<'a>
     sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, TaggedRTCEventInternal>
-    for EndpointHandler<'a, I>
-where
-    I: Interceptor,
+    for EndpointHandler<'a>
 {
     type Rout = TaggedRTCMessageInternal;
     type Wout = TaggedRTCMessageInternal;
@@ -140,10 +132,7 @@ where
     }
 }
 
-impl<'a, I> EndpointHandler<'a, I>
-where
-    I: Interceptor,
-{
+impl<'a> EndpointHandler<'a> {
     fn handle_dtls_message(
         &mut self,
         now: Instant,
@@ -1003,8 +992,8 @@ mod rtx_test {
         rtx_ssrc: u32,
         primary_pt: u8,
         rtx_pt: u8,
-    ) -> RTCRtpTransceiverInternal<NoopInterceptor> {
-        let mut transceiver = RTCRtpTransceiverInternal::<NoopInterceptor>::new(
+    ) -> RTCRtpTransceiverInternal {
+        let mut transceiver = RTCRtpTransceiverInternal::new(
             RtpCodecKind::Video,
             None,
             RTCRtpTransceiverInit {
@@ -1062,7 +1051,7 @@ mod rtx_test {
             rtx_pt,
         )];
         let media_engine = MediaEngine::default();
-        let mut interceptor = NoopInterceptor::new();
+        let mut interceptor = NoopInterceptor::default();
         let mut stats = RTCStatsAccumulator::new();
         let mut ctx = EndpointHandlerContext::default();
 
@@ -1123,7 +1112,7 @@ mod rtx_test {
             rtx_pt,
         )];
         let media_engine = MediaEngine::default();
-        let mut interceptor = NoopInterceptor::new();
+        let mut interceptor = NoopInterceptor::default();
         let mut stats = RTCStatsAccumulator::new();
         let mut ctx = EndpointHandlerContext::default();
 

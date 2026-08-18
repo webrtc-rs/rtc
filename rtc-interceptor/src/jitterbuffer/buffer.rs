@@ -138,7 +138,7 @@ impl JitterBuffer {
     /// A non-RTP packet is rejected as foreign: this buffer orders by sequence number, and RTCP
     /// has none.
     pub fn push(&mut self, packet: TaggedPacket) -> Result<u64, Rejected> {
-        let Packet::Rtp(rtp) = &packet.message else {
+        let Packet::Rtp(rtp) = &packet.message.packet else {
             self.stats.foreign_ssrc += 1;
             return Err(Rejected::ForeignSsrc);
         };
@@ -276,7 +276,7 @@ impl JitterBuffer {
         let extended =
             self.packets
                 .iter()
-                .find_map(|(&extended, packet)| match &packet.message {
+                .find_map(|(&extended, packet)| match &packet.message.packet {
                     Packet::Rtp(rtp) if rtp.header.timestamp == timestamp => Some(extended),
                     _ => None,
                 })?;
@@ -306,7 +306,7 @@ impl JitterBuffer {
     fn extended_of(&self, sequence_number: u16) -> Option<u64> {
         self.packets
             .iter()
-            .find_map(|(&extended, packet)| match &packet.message {
+            .find_map(|(&extended, packet)| match &packet.message.packet {
                 Packet::Rtp(rtp) if rtp.header.sequence_number == sequence_number => Some(extended),
                 _ => None,
             })
@@ -314,7 +314,7 @@ impl JitterBuffer {
 
     /// The RTP timestamp of the packet nearest playout.
     pub fn front_timestamp(&self) -> Option<u32> {
-        match &self.peek()?.message {
+        match &self.peek()?.message.packet {
             Packet::Rtp(rtp) => Some(rtp.header.timestamp),
             _ => None,
         }
@@ -342,6 +342,7 @@ impl JitterBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AttributedPacket;
     use shared::TransportContext;
     use std::time::Instant;
 
@@ -349,7 +350,7 @@ mod tests {
         TaggedPacket {
             now: Instant::now(),
             transport: TransportContext::default(),
-            message: Packet::Rtp(rtp::Packet {
+            message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                 header: rtp::header::Header {
                     ssrc,
                     sequence_number,
@@ -357,12 +358,12 @@ mod tests {
                     ..Default::default()
                 },
                 ..Default::default()
-            }),
+            })),
         }
     }
 
     fn sequence_of(packet: &TaggedPacket) -> u16 {
-        match &packet.message {
+        match &packet.message.packet {
             Packet::Rtp(rtp) => rtp.header.sequence_number,
             _ => panic!("not RTP"),
         }
@@ -479,7 +480,7 @@ mod tests {
         let rtcp = TaggedPacket {
             now: Instant::now(),
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![]),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
         };
         assert_eq!(Err(Rejected::ForeignSsrc), buffer.push(rtcp));
         assert!(buffer.is_empty());

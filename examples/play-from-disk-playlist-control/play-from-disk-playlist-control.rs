@@ -23,7 +23,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use log::{debug, error, trace};
 use rtc::data_channel::RTCDataChannelId;
-use rtc::interceptor::{Interceptor, Registry};
+use rtc::interceptor::Registry;
 use rtc::media::io::ogg_reader::{
     OggHeader, OggHeaderType, OggReader, OpusTags, parse_opus_head, parse_opus_tags,
 };
@@ -615,10 +615,10 @@ async fn handle_whep_connection(
 }
 
 /// Run the peer connection event loop
-async fn run_peer_connection<I: Interceptor>(
+async fn run_peer_connection(
     socket: UdpSocket,
     local_addr: std::net::SocketAddr,
-    mut peer_connection: RTCPeerConnection<I>,
+    mut peer_connection: RTCPeerConnection,
     tracks: Arc<Vec<OggTrack>>,
     audio_sender_id: RTCRtpSenderId,
     playlist_channel_id: RTCDataChannelId,
@@ -843,12 +843,12 @@ async fn run_peer_connection<I: Interceptor>(
 }
 
 /// Handle playlist control commands from data channel
-fn handle_playlist_command<I: Interceptor>(
+fn handle_playlist_command(
     command: &str,
     tracks: &[OggTrack],
     current_track: &AtomicI32,
     switch_track: &AtomicI32,
-    peer_connection: &mut RTCPeerConnection<I>,
+    peer_connection: &mut RTCPeerConnection,
     playlist_channel_id: RTCDataChannelId,
 ) {
     let limit = tracks.len() as i32;
