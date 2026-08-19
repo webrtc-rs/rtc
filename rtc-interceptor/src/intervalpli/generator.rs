@@ -23,13 +23,14 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(3);
 ///
 /// # Forcing a keyframe
 ///
-/// Send [`InterceptorEvent::ForcePli`] into the chain. Under the nested design this was an
-/// inherent method, `force_pli`, which became unreachable the moment anything wrapped this
-/// interceptor — it was dead code in practice. A command event walks application-ward to the wire
-/// and reaches it wherever it sits.
+/// Attach [`Attribute::ForcePli`] to a packet handed to `handle_read`. Under the nested design
+/// this was an inherent method, `force_pli`, which became unreachable the moment anything wrapped
+/// this interceptor — it was dead code in practice. An attribute rides on a packet through the
+/// walk and reaches this interceptor wherever it sits, and is not consumed, so anything further
+/// on sees both the request and the PLI it produced.
 ///
 /// Sans-I/O has no clock of its own, so the interval is measured from the first `Instant` the
-/// interceptor is handed, whether that arrives via `handle_read`, `handle_timeout` or the event.
+/// interceptor is handed, whether that arrives via `handle_read` or `handle_timeout`.
 pub struct IntervalPliInterceptor {
     interval: Duration,
     /// Bound remote streams that negotiated PLI. Ordered so a tick emits deterministically.
@@ -54,7 +55,7 @@ impl Default for IntervalPliInterceptor {
 impl IntervalPliInterceptor {
     /// A generator asking every bound stream for a keyframe every `interval`.
     ///
-    /// A zero interval disables periodic requests, leaving only [`InterceptorEvent::ForcePli`] —
+    /// A zero interval disables periodic requests, leaving only [`Attribute::ForcePli`] —
     /// matching upstream, which creates no ticker when its interval is not positive.
     pub fn new(interval: Duration) -> Self {
         Self {

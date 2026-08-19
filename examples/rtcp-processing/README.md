@@ -21,82 +21,30 @@ media data, RTCP provides out-of-band statistics and control information for an 
 3. Paste the answer in the browser to establish the connection
 4. As media flows, RTCP packets are received and printed in human-readable format
 
-## Custom RTCP Forwarder Interceptor
+## Reading inbound RTCP
 
-**Important:** By default, RTCP packets are consumed by the interceptor chain (for generating statistics, NACK
-responses, congestion control, etc.) and are **not forwarded** to the application via `poll_read()`.
+**Important:** by default, inbound RTCP is consumed by the interceptor chain (for generating statistics, NACK
+responses, congestion control, etc.) and does **not** reach the application via `poll_read()`. It is control traffic
+the interceptors act on, not media the application asked for.
 
-This example demonstrates how to create a custom `RtcpForwarderInterceptor` using the derive macros:
-
-```rust
-use rtc::interceptor::{Interceptor, Packet, TaggedPacket, interceptor};
-use std::collections::VecDeque;
-
-#[derive(Interceptor)]
-pub struct RtcpForwarderInterceptor<P> {
-    #[next]
-    next: P,  // The next interceptor in the chain (can use any field name)
-    read_queue: VecDeque<TaggedPacket>,
-}
-
-#[interceptor]
-impl<P: Interceptor> RtcpForwarderInterceptor<P> {
-    #[overrides]
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        // If this is an RTCP packet, queue a copy for the application
-        if let Packet::Rtcp(rtcp_packets) = &msg.message {
-            self.read_queue.push_back(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: Packet::Rtcp(rtcp_packets.clone()),
-            });
-        }
-        // Always pass to next interceptor for normal processing
-        self.next.handle_read(msg)
-    }
-
-    #[overrides]
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        // First return any queued RTCP packets
-        if let Some(pkt) = self.read_queue.pop_front() {
-            return Some(pkt);
-        }
-        // Then check next interceptor
-        self.next.poll_read()
-    }
-
-    #[overrides]
-    fn close(&mut self) -> Result<(), Self::Error> {
-        self.read_queue.clear();
-        self.next.close()
-    }
-}
-```
-
-The derive macros handle all the boilerplate:
-
-- `#[derive(Interceptor)]` marks the struct and requires a `#[next]` field
-- `#[interceptor]` generates `Protocol` and `Interceptor` trait implementations
-- `#[overrides]` marks methods with custom logic (non-marked methods delegate to `next`)
-
-### Registering the Interceptor
-
-The RTCP forwarder must be registered as the **outermost layer** in the interceptor chain to capture RTCP packets before
-they are consumed by other interceptors:
+`Registry::with_rtcp_readable()` says otherwise, and then RTCP arrives from `poll_read()` alongside the media:
 
 ```rust
-let registry = Registry::new();
+// Inbound RTCP is readable by the application as well as acted on by the interceptors.
+let registry = Registry::new().with_rtcp_readable();
 
 // Register default interceptors (NACK, reports, TWCC, etc.)
-let registry = register_default_interceptors(registry, & mut media_engine) ?;
-
-// Add RTCP forwarder as the outermost layer
-let registry = registry.with(RtcpForwarderBuilder::new().build());
+let registry = register_default_interceptors(registry, &mut media_engine)?;
 
 let config = RTCConfigurationBuilder::new()
-.with_interceptor_registry(registry)
-.build();
+    .with_interceptor_registry(registry)
+    .build();
 ```
+
+It has to be asked for when the chain is built rather than arranged by an interceptor of your own. A chain is a flat
+list walked from the wire towards the application, and what an interceptor emits from `poll_read` rejoins that list
+*behind* itself — where the stage that ends the inbound RTCP path is still ahead of it, and drops the original and the
+copy both.
 
 ## Instructions
 
@@ -189,7 +137,7 @@ Event loop exited
 
 ## API Usage
 
-With the `RtcpForwarderInterceptor` registered, RTCP packets become available via `poll_read()`:
+With `with_rtcp_readable()` on the chain, RTCP packets become available via `poll_read()`:
 
 ```rust
 while let Some(message) = peer_connection.poll_read() {
@@ -209,8 +157,8 @@ _ => {}
 }
 ```
 
-**Note:** Without the custom `RtcpForwarderInterceptor`, you will **not** receive `RTCMessage::RtcpPacket` messages
-since RTCP is consumed internally by the interceptor chain.
+**Note:** Without `with_rtcp_readable()`, you will **not** receive `RTCMessage::RtcpPacket` messages — inbound RTCP is
+consumed internally by the interceptor chain.
 
 ## Sending RTCP Packets
 

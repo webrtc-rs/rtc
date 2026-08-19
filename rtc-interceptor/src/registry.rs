@@ -1,8 +1,8 @@
 //! Building a chain.
 
-use crate::Interceptor;
 use crate::chain::InterceptorChain;
 use crate::noop::NoopInterceptor;
+use crate::{BoxedInterceptor, Interceptor};
 
 /// Collects interceptors and assembles them into an [`InterceptorChain`].
 ///
@@ -54,14 +54,14 @@ impl Registry {
     }
 
     /// Add an interceptor on the application side of everything added so far.
-    pub fn with(mut self, stage: impl Interceptor + 'static) -> Self {
-        self.interceptors.push(Box::new(stage));
+    pub fn with(mut self, interceptor: impl Interceptor + 'static) -> Self {
+        self.interceptors.push(Box::new(interceptor));
         self
     }
 
     /// Add an interceptor that is already boxed, for a caller assembling a chain dynamically.
-    pub fn with_boxed(mut self, stage: Box<dyn Interceptor>) -> Self {
-        self.interceptors.push(stage);
+    pub fn with_boxed(mut self, boxed_interceptor: BoxedInterceptor) -> Self {
+        self.interceptors.push(boxed_interceptor);
         self
     }
 
