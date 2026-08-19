@@ -187,12 +187,7 @@ impl RTCRtpSenderInternal {
                 }
             }
 
-            if self.kind() == RtpCodecKind::Audio {
-                parameters.encodings.retain(|encoding| {
-                    encoding.scale_resolution_down_by.is_none() && encoding.max_framerate.is_none()
-                });
-            } else {
-                // Video
+            if self.kind() == RtpCodecKind::Video {
                 parameters.encodings.iter_mut().for_each(|encoding| {
                     encoding.scale_resolution_down_by.get_or_insert(1.0);
                 });
@@ -206,6 +201,11 @@ impl RTCRtpSenderInternal {
                         "scaleResolutionDownBy must be >= 1.0".to_string(),
                     ));
                 }
+            } else {
+                // Audio and Application have no resolution/framerate to scale.
+                parameters.encodings.retain(|encoding| {
+                    encoding.scale_resolution_down_by.is_none() && encoding.max_framerate.is_none()
+                });
             }
         }
 

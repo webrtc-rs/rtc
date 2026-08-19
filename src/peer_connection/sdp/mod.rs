@@ -244,6 +244,10 @@ pub(crate) fn track_details_from_sdp(s: &SessionDescription) -> Vec<TrackDetails
             _ => continue,
         };
 
+        if media.is_webrtc_datachannel() {
+            continue;
+        }
+
         let codec_type = RtpCodecKind::from(media.media_name.media.as_str());
         if codec_type == RtpCodecKind::Unspecified {
             continue;
@@ -676,6 +680,7 @@ impl RTCPeerConnection {
                 .mime_type
                 .trim_start_matches("audio/")
                 .trim_start_matches("video/")
+                .trim_start_matches("application/")
                 .to_owned();
             media = media.with_codec(
                 codec.payload_type,
