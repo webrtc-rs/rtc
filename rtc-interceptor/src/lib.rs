@@ -343,11 +343,11 @@ pub trait Interceptor:
     fn unbind_remote_stream(&mut self, info: &StreamInfo);
 }
 
-/// A type-erased interceptor chain.
+/// An interceptor whose concrete type has been erased.
 ///
-/// `Interceptor` is object safe, so a chain built at runtime can be erased into this one
-/// concrete type. That lets an application store a `RTCPeerConnection<BoxedInterceptor>`
-/// (see [`Registry::boxed`]) instead of being generic over the chain's type.
+/// `Interceptor` is object safe, which is what lets a chain be a flat list of these rather than a
+/// tower of nested types. Name it when an application chooses an interceptor at runtime and hands
+/// the result to [`Registry::with_boxed`].
 pub type BoxedInterceptor = Box<dyn Interceptor>;
 
 impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
