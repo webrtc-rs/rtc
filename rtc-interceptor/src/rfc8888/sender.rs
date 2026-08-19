@@ -1,15 +1,16 @@
 //! Emits RFC 8888 congestion control feedback for the streams being received.
 
 use super::recorder::CcFeedbackRecorder;
+use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use crate::{AttributedPacket, Packet, TaggedPacket};
 use rtcp::transport_feedbacks::cc_feedback_report::Ecn;
+use sansio::Protocol;
 use shared::TransportContext;
 use shared::error::Error;
 use shared::time::SystemInstant;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 /// How often feedback is sent when no interval is configured.
@@ -30,25 +31,23 @@ pub const DEFAULT_MAX_REPORT_SIZE: usize = 1200;
 ///     .with(Rfc8888Builder::new().with_interval(Duration::from_millis(50)).build())
 ///     .build();
 /// ```
-pub struct Rfc8888Builder<P> {
+pub struct Rfc8888Builder {
     interval: Duration,
     max_report_size: usize,
     sender_ssrc: u32,
-    _phantom: PhantomData<P>,
 }
 
-impl<P> Default for Rfc8888Builder<P> {
+impl Default for Rfc8888Builder {
     fn default() -> Self {
         Self {
             interval: DEFAULT_INTERVAL,
             max_report_size: DEFAULT_MAX_REPORT_SIZE,
             sender_ssrc: 0,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<P> Rfc8888Builder<P> {
+impl Rfc8888Builder {
     /// Create a builder with the default interval and report size.
     pub fn new() -> Self {
         Self::default()
@@ -78,11 +77,9 @@ impl<P> Rfc8888Builder<P> {
         self
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> Rfc8888Interceptor<P> {
-        move |inner| {
-            Rfc8888Interceptor::new(inner, self.interval, self.max_report_size, self.sender_ssrc)
-        }
+    /// Build the interceptor.
+    pub fn build(self) -> Rfc8888Interceptor {
+        Rfc8888Interceptor::new(self.interval, self.max_report_size, self.sender_ssrc)
     }
 }
 
@@ -98,10 +95,7 @@ impl<P> Rfc8888Builder<P> {
 /// from SSRC 0. Here it is configured.
 ///
 /// [RFC 8888]: https://www.rfc-editor.org/rfc/rfc8888
-#[derive(Interceptor)]
-pub struct Rfc8888Interceptor<P> {
-    #[next]
-    inner: P,
+pub struct Rfc8888Interceptor {
     interval: Duration,
     max_report_size: usize,
     sender_ssrc: u32,
@@ -113,12 +107,14 @@ pub struct Rfc8888Interceptor<P> {
     /// can be turned into the NTP timestamp a report carries.
     epoch: Option<SystemInstant>,
     write_queue: VecDeque<TaggedPacket>,
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> Rfc8888Interceptor<P> {
-    fn new(inner: P, interval: Duration, max_report_size: usize, sender_ssrc: u32) -> Self {
+impl Rfc8888Interceptor {
+    fn new(interval: Duration, max_report_size: usize, sender_ssrc: u32) -> Self {
         Self {
-            inner,
+            read_queue: VecDeque::new(),
             interval,
             max_report_size,
             sender_ssrc,
@@ -144,27 +140,15 @@ impl<P> Rfc8888Interceptor<P> {
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> Rfc8888Interceptor<P> {
-    #[overrides]
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        self.streams.insert(info.ssrc);
-        self.inner.bind_remote_stream(info);
-    }
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Rfc8888Interceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
 
-    #[overrides]
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        self.streams.remove(&info.ssrc);
-        self.recorder.remove_stream(info.ssrc);
-        if self.streams.is_empty() {
-            self.next_timeout = None;
-        }
-        self.inner.unbind_remote_stream(info);
-    }
-
-    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp_packet) = &msg.message
+        if let Packet::Rtp(rtp_packet) = &msg.message.packet
             && self.streams.contains(&rtp_packet.header.ssrc)
         {
             // ECN lives in the IP header, which a sans-I/O interceptor never sees. Until the
@@ -178,11 +162,26 @@ impl<P: Interceptor> Rfc8888Interceptor<P> {
             );
             self.arm(msg.now);
         }
-        self.inner.handle_read(msg)
+        self.read_queue.push_back(msg);
+        Ok(())
     }
 
-    #[overrides]
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<TaggedPacket> {
+        // Rejoins the belt and passes every interceptor between here and the wire, so a pacer
+        // meters it and a send history counts its bytes like any other outgoing packet.
+        self.write_queue.pop_front()
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), Error> {
         self.arm(now);
 
         if let Some(next_timeout) = self.next_timeout
@@ -202,30 +201,33 @@ impl<P: Interceptor> Rfc8888Interceptor<P> {
                     self.write_queue.push_back(TaggedPacket {
                         now,
                         transport: TransportContext::default(),
-                        message: Packet::Rtcp(vec![Box::new(report)]),
+                        message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(report)])),
                     });
                 }
             }
         }
-
-        self.inner.handle_timeout(now)
+        Ok(())
     }
 
-    #[overrides]
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        match (self.next_timeout, self.inner.poll_timeout()) {
-            (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
-            (mine, theirs) => mine.or(theirs),
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        self.next_timeout
+    }
+}
+
+impl Interceptor for Rfc8888Interceptor {
+    fn bind_remote_stream(&mut self, info: &StreamInfo) {
+        self.streams.insert(info.ssrc);
+    }
+
+    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
+        self.streams.remove(&info.ssrc);
+        self.recorder.remove_stream(info.ssrc);
+        if self.streams.is_empty() {
+            self.next_timeout = None;
         }
     }
 
-    #[overrides]
-    fn poll_write(&mut self) -> Option<Self::Wout> {
-        // A generated report is terminal (chain contract rule 1): complete when built, with
-        // nothing below to transform it.
-        if let Some(packet) = self.write_queue.pop_front() {
-            return Some(packet);
-        }
-        self.inner.poll_write()
-    }
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
 }

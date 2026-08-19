@@ -50,10 +50,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   track.
 - ✅ [RTCP Processing](rtcp-processing): The rtcp-processing example demonstrates how to create a custom
   RtcpForwarderInterceptor using the derive macros. This allows access to media statistics and control information.
-- ✅ [RTCP Processing Boxed](rtcp-processing-boxed): The rtcp-processing-boxed example is the type-erased variant of
-  rtcp-processing. It holds the peer connection as `RTCPeerConnection<BoxedInterceptor>`, so an interceptor chain
-  assembled at runtime (here, switched by a `--no-rtcp-forwarding` flag) does not leak its type into the application:
-  a plain, non-generic struct can own the peer connection, and peers built with different chains share one type.
 - ✅ [Save to Disk AV1](save-to-disk-av1): The save-to-disk-av1 is a simple application that shows how to save a video to
   disk using AV1.
 - ✅ [Play from Disk Playlist Control](play-from-disk-playlist-control): Streams Opus pages from multi or single track

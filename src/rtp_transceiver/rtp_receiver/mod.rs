@@ -168,7 +168,6 @@ use crate::rtp_transceiver::RTCRtpReceiverId;
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::RtpCodecKind;
 use crate::rtp_transceiver::rtp_sender::rtp_receiver_parameters::RTCRtpReceiveParameters;
-use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::Result;
 use std::time::Instant;
@@ -184,18 +183,12 @@ pub use rtp_contributing_source::{RTCRtpContributingSource, RTCRtpSynchronizatio
 ///
 /// This struct borrows the [`RTCPeerConnection`] mutably, ensuring exclusive access
 /// during RTP receiver operations.
-pub struct RTCRtpReceiver<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+pub struct RTCRtpReceiver<'a> {
     pub(crate) id: RTCRtpReceiverId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
-impl<I> RTCRtpReceiver<'_, I>
-where
-    I: Interceptor,
-{
+impl RTCRtpReceiver<'_> {
     /// The DTLS transport over which this receiver's RTP packets are received.
     ///
     /// ## Nullability
@@ -217,7 +210,7 @@ where
     /// ## Specifications
     ///
     /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-transport)
-    pub fn transport(&self) -> Option<RTCDtlsTransport<'_, I>> {
+    pub fn transport(&self) -> Option<RTCDtlsTransport<'_>> {
         // `[[ReceiverTransport]]` is assigned when this receiver's transceiver is associated by
         // negotiation — the point at which the transceiver acquires a mid. Before that the slot
         // is null, which is what the spec means by "prior to construction of the

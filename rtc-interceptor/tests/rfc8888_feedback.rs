@@ -5,7 +5,9 @@
 //! long before the report each one did. The reports are also round-tripped through the wire codec
 //! from PRE-01, since a report that cannot be encoded and decoded is worth nothing.
 
-use rtc_interceptor::{Interceptor, Packet, Registry, Rfc8888Builder, StreamInfo, TaggedPacket};
+use rtc_interceptor::{
+    AttributedPacket, Interceptor, Packet, Registry, Rfc8888Builder, StreamInfo, TaggedPacket,
+};
 use rtcp::transport_feedbacks::cc_feedback_report::CcFeedbackReport;
 use sansio::Protocol;
 use shared::TransportContext;
@@ -30,11 +32,10 @@ impl Harness {
                     .with_sender_ssrc(SENDER_SSRC)
                     .build(),
             )
-            .boxed()
             .build();
 
         Self {
-            chain,
+            chain: Box::new(chain),
             epoch: Instant::now(),
         }
     }
@@ -52,7 +53,7 @@ impl Harness {
             .handle_read(TaggedPacket {
                 now: self.epoch + at,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         version: 2,
                         payload_type: 96,
@@ -61,7 +62,7 @@ impl Harness {
                         ..Default::default()
                     },
                     payload: vec![1, 2, 3].into(),
-                }),
+                })),
             })
             .expect("handle_read");
     }
@@ -76,7 +77,7 @@ impl Harness {
     fn drain_reports(&mut self) -> Vec<CcFeedbackReport> {
         let mut reports = Vec::new();
         while let Some(packet) = self.chain.poll_write() {
-            if let Packet::Rtcp(rtcp_packets) = &packet.message {
+            if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
                 for rtcp_packet in rtcp_packets {
                     if let Some(report) = rtcp_packet.as_any().downcast_ref::<CcFeedbackReport>() {
                         reports.push(report.clone());

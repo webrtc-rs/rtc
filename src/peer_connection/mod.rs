@@ -312,7 +312,7 @@ use ::sdp::description::session::Origin;
 use ::sdp::util::ConnectionRole;
 use ice::AgentConfig;
 use ice::candidate::{Candidate, unmarshal_candidate};
-use interceptor::{Interceptor, NoopInterceptor, Registry};
+use interceptor::{Interceptor, Registry};
 use sdp::MEDIA_SECTION_APPLICATION;
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
@@ -402,29 +402,15 @@ use std::time::Instant;
 /// # Ok(())
 /// # }
 /// ```
-pub struct RTCPeerConnectionBuilder<I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+#[derive(Default)]
+pub struct RTCPeerConnectionBuilder {
     configuration: RTCConfiguration,
     media_engine: MediaEngine,
     setting_engine: SettingEngine,
-    interceptor: I,
+    interceptor_registry: Registry,
 }
 
-impl Default for RTCPeerConnectionBuilder<NoopInterceptor> {
-    fn default() -> Self {
-        Self {
-            configuration: RTCConfiguration::default(),
-            media_engine: MediaEngine::default(),
-            setting_engine: SettingEngine::default(),
-            interceptor: NoopInterceptor::new(),
-        }
-    }
-}
-
-// Non-generic impl block for associated functions that don't depend on I
-impl RTCPeerConnectionBuilder<NoopInterceptor> {
+impl RTCPeerConnectionBuilder {
     /// Creates a new RTCPeerConnectionBuilder with default configuration.
     ///
     /// The default builder includes:
@@ -451,10 +437,7 @@ impl RTCPeerConnectionBuilder<NoopInterceptor> {
     }
 }
 
-impl<I> RTCPeerConnectionBuilder<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnectionBuilder {
     /// Sets the RTCConfiguration for the peer connection.
     ///
     /// The configuration includes ICE servers, transport policies, bundle policies,
@@ -585,25 +568,21 @@ where
     /// # }
     /// ```
     ///
-    /// # Type-erasing the chain
+    /// # One connection type, whatever the chain
     ///
-    /// A chain's type spells out its whole composition
-    /// (`TwccReceiverInterceptor<SenderReportInterceptor<…>>`), and it propagates into
-    /// every type that holds the peer connection. [`Registry::boxed`] erases it to
-    /// [`BoxedInterceptor`], so the connection has one concrete type —
-    /// `RTCPeerConnection<BoxedInterceptor>` — whatever chain it was built from. That is
-    /// what lets a non-generic struct own one, or two connections with *different* chains
-    /// share a collection:
+    /// A chain is a flat list of interceptors, so the connection has one concrete type whatever
+    /// the list contains. That is what lets a non-generic struct own one, or two connections with
+    /// *different* chains share a collection:
     ///
     /// ```
     /// # use std::time::Instant;
-    /// use rtc::interceptor::{BoxedInterceptor, Registry};
+    /// use rtc::interceptor::Registry;
     /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
     /// use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
     ///
     /// struct Session {
-    ///     peer_connection: RTCPeerConnection<BoxedInterceptor>, // no type parameter
+    ///     peer_connection: RTCPeerConnection, // no type parameter
     /// }
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -613,32 +592,18 @@ where
     /// let session = Session {
     ///     peer_connection: RTCPeerConnectionBuilder::new()
     ///         .with_media_engine(media_engine)
-    ///         .with_interceptor_registry(registry.boxed())
+    ///         .with_interceptor_registry(registry)
     ///         .build(Instant::now())?,
     /// };
     /// # Ok(())
     /// # }
     /// ```
     ///
-    /// The cost is one virtual call per chain entry point; the chain's interior stays
-    /// statically dispatched. Keep the generic form when the chain is fixed at compile
-    /// time.
-    ///
-    /// [`BoxedInterceptor`]: crate::interceptor::BoxedInterceptor
-    /// [`Registry::boxed`]: crate::interceptor::Registry::boxed
-    pub fn with_interceptor_registry<P>(
-        self,
-        interceptor_registry: Registry<P>,
-    ) -> RTCPeerConnectionBuilder<P>
-    where
-        P: Interceptor,
-    {
-        RTCPeerConnectionBuilder {
-            configuration: self.configuration,
-            media_engine: self.media_engine,
-            setting_engine: self.setting_engine,
-            interceptor: interceptor_registry.build(),
-        }
+    /// The registry is assembled into the chain by [`build`](RTCPeerConnectionBuilder::build),
+    /// so it stays a list — inspectable, extendable — right up until the connection is made.
+    pub fn with_interceptor_registry(mut self, interceptor_registry: Registry) -> Self {
+        self.interceptor_registry = interceptor_registry;
+        self
     }
 
     /// Builds the RTCPeerConnection with the configured settings.
@@ -665,13 +630,14 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self, now: Instant) -> Result<RTCPeerConnection<I>> {
+    pub fn build(self, now: Instant) -> Result<RTCPeerConnection> {
         RTCPeerConnection::new(
             now,
             self.configuration,
             self.media_engine,
             self.setting_engine,
-            self.interceptor,
+            // The registry is a list until here; `build` freezes it into the chain.
+            Box::new(self.interceptor_registry.build()),
         )
     }
 }
@@ -693,17 +659,14 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub struct RTCPeerConnection<I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
     //////////////////////////////////////////////////
     pub(crate) configuration: RTCConfiguration,
     pub(crate) media_engine: MediaEngine,
     pub(crate) setting_engine: SettingEngine,
-    pub(crate) interceptor: I,
+    pub(crate) interceptor: Box<dyn Interceptor>,
 
     local_description: Option<RTCSessionDescription>,
     current_local_description: Option<RTCSessionDescription>,
@@ -721,7 +684,7 @@ where
     //////////////////////////////////////////////////
     pub(crate) pipeline_context: PipelineContext,
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
-    pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal<I>>,
+    pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal>,
 
     greater_mid: isize,
     sdp_origin: Origin,
@@ -733,10 +696,7 @@ where
     is_negotiation_ongoing: bool,
 }
 
-impl<I> RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnection {
     /// Creates an SDP offer to start a new WebRTC connection to a remote peer.
     ///
     /// The offer includes information about the attached media tracks, codecs and options supported
@@ -1865,10 +1825,7 @@ where
         &mut self,
         label: &str,
         options: Option<RTCDataChannelInit>,
-    ) -> Result<RTCDataChannel<'_, I>>
-    where
-        I: Interceptor,
-    {
+    ) -> Result<RTCDataChannel<'_>> {
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
@@ -1951,7 +1908,7 @@ where
     /// # Specification
     ///
     /// See [getSenders](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getsenders)
-    pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_, I> {
+    pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_> {
         self.rtp_transceivers
             .iter()
             .enumerate()
@@ -1967,7 +1924,7 @@ where
     /// # Specification
     ///
     /// See [getReceivers](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getreceivers)
-    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_, I> {
+    pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_> {
         self.rtp_transceivers
             .iter()
             .enumerate()
@@ -2220,10 +2177,7 @@ where
     }
 
     /// data_channel provides the access to RTCDataChannel object with the given id
-    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_, I>>
-    where
-        I: Interceptor,
-    {
+    pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
         if self.data_channels.contains_key(&id) {
             Some(RTCDataChannel {
                 id,
@@ -2251,7 +2205,7 @@ where
     /// ## Specifications
     ///
     /// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-sctp)
-    pub fn sctp(&self) -> Option<RTCSctpTransport<'_, I>> {
+    pub fn sctp(&self) -> Option<RTCSctpTransport<'_>> {
         if self.sctp_transport().is_started {
             Some(RTCSctpTransport {
                 peer_connection: self,
@@ -2262,10 +2216,7 @@ where
     }
 
     /// rtp_sender provides the access to RTCRtpSender object with the given id
-    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_, I>>
-    where
-        I: Interceptor,
-    {
+    pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_>> {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_send()
             && self.rtp_transceivers[id.0].sender().is_some()
@@ -2280,10 +2231,7 @@ where
     }
 
     /// rtp_receiver provides the access to RTCRtpReceiver object with the given id
-    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_, I>>
-    where
-        I: Interceptor,
-    {
+    pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_>> {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_recv()
             && self.rtp_transceivers[id.0].receiver().is_some()
@@ -2298,10 +2246,7 @@ where
     }
 
     /// rtp_transceiver provides the access to RTCRtpTransceiver object with the given id
-    pub fn rtp_transceiver(&mut self, id: RTCRtpTransceiverId) -> Option<RTCRtpTransceiver<'_, I>>
-    where
-        I: Interceptor,
-    {
+    pub fn rtp_transceiver(&mut self, id: RTCRtpTransceiverId) -> Option<RTCRtpTransceiver<'_>> {
         if id < self.rtp_transceivers.len() {
             Some(RTCRtpTransceiver {
                 id,

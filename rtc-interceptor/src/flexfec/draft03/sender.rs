@@ -1,11 +1,13 @@
 //! Send-side FlexFEC draft-03: protects outgoing media with repair packets.
 
 use super::encoder::FlexFec03Encoder;
+use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use crate::{AttributedPacket, Packet, TaggedPacket};
+use sansio::Protocol;
 use shared::error::Error;
-use std::collections::HashMap;
-use std::marker::PhantomData;
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
 
 /// Media packets gathered before a repair block is produced.
 pub const DEFAULT_NUM_MEDIA_PACKETS: u32 = 5;
@@ -24,23 +26,21 @@ pub const DEFAULT_NUM_FEC_PACKETS: u32 = 2;
 ///     .with(FlexFec03SendBuilder::new().with_num_fec_packets(1).build())
 ///     .build();
 /// ```
-pub struct FlexFec03SendBuilder<P> {
+pub struct FlexFec03SendBuilder {
     num_media_packets: u32,
     num_fec_packets: u32,
-    _phantom: PhantomData<P>,
 }
 
-impl<P> Default for FlexFec03SendBuilder<P> {
+impl Default for FlexFec03SendBuilder {
     fn default() -> Self {
         Self {
             num_media_packets: DEFAULT_NUM_MEDIA_PACKETS,
             num_fec_packets: DEFAULT_NUM_FEC_PACKETS,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<P> FlexFec03SendBuilder<P> {
+impl FlexFec03SendBuilder {
     /// Create a builder with the default block shape.
     pub fn new() -> Self {
         Self::default()
@@ -64,11 +64,9 @@ impl<P> FlexFec03SendBuilder<P> {
         self
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> FlexFec03SendInterceptor<P> {
-        move |inner| {
-            FlexFec03SendInterceptor::new(inner, self.num_media_packets, self.num_fec_packets)
-        }
+    /// Build the interceptor.
+    pub fn build(self) -> FlexFec03SendInterceptor {
+        FlexFec03SendInterceptor::new(self.num_media_packets, self.num_fec_packets)
     }
 }
 
@@ -84,20 +82,24 @@ struct ProtectedStream {
 /// Binds only when the stream carries both a FEC SSRC and a FEC payload type: a repair stream
 /// needs its own SSRC to send on and its own payload type to be recognised by, and half an
 /// association is not usable. Those come from the negotiated `a=ssrc-group:FEC-FR`.
-#[derive(Interceptor)]
-pub struct FlexFec03SendInterceptor<P> {
-    #[next]
-    inner: P,
+pub struct FlexFec03SendInterceptor {
     num_media_packets: u32,
     num_fec_packets: u32,
     /// Keyed by the **media** SSRC being protected.
     streams: HashMap<u32, ProtectedStream>,
+    /// Repair packets the encoder produced, waiting to join the belt.
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
+    /// Outbound packets ready for the next interceptor: what passed through, plus
+    /// anything this one generated.
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> FlexFec03SendInterceptor<P> {
-    fn new(inner: P, num_media_packets: u32, num_fec_packets: u32) -> Self {
+impl FlexFec03SendInterceptor {
+    fn new(num_media_packets: u32, num_fec_packets: u32) -> Self {
         Self {
-            inner,
+            read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
             num_media_packets: num_media_packets.max(1),
             num_fec_packets,
             streams: HashMap::new(),
@@ -110,37 +112,26 @@ impl<P> FlexFec03SendInterceptor<P> {
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> FlexFec03SendInterceptor<P> {
-    #[overrides]
-    fn bind_local_stream(&mut self, info: &StreamInfo) {
-        // The gate FEC-PRE-01 exists to open. Both halves or neither: an SSRC with no payload
-        // type has nothing to mark its packets with, and a payload type with no SSRC has nowhere
-        // to send them.
-        if let (Some(ssrc_fec), Some(payload_type_fec)) = (info.ssrc_fec, info.payload_type_fec) {
-            self.streams.insert(
-                info.ssrc,
-                ProtectedStream {
-                    encoder: FlexFec03Encoder::new(payload_type_fec, ssrc_fec),
-                    block: Vec::new(),
-                },
-            );
-        }
-        self.inner.bind_local_stream(info);
+impl Protocol<TaggedPacket, TaggedPacket, ()> for FlexFec03SendInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.read_queue.push_back(msg);
+        Ok(())
     }
 
-    #[overrides]
-    fn unbind_local_stream(&mut self, info: &StreamInfo) {
-        // Any partly-filled block goes with it: those packets have already been sent unprotected,
-        // and a repair packet for a stream that has stopped has nothing left to repair.
-        self.streams.remove(&info.ssrc);
-        self.inner.unbind_local_stream(info);
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
     }
 
-    #[overrides]
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        let Packet::Rtp(rtp_packet) = &msg.message else {
-            return self.inner.handle_write(msg);
+        let Packet::Rtp(rtp_packet) = &msg.message.packet else {
+            self.write_queue.push_back(msg);
+            return Ok(());
         };
 
         let ssrc = rtp_packet.header.ssrc;
@@ -148,7 +139,8 @@ impl<P: Interceptor> FlexFec03SendInterceptor<P> {
         let transport = msg.transport;
 
         let Some(stream) = self.streams.get_mut(&ssrc) else {
-            return self.inner.handle_write(msg);
+            self.write_queue.push_back(msg);
+            return Ok(());
         };
 
         stream.block.push(rtp_packet.clone());
@@ -163,19 +155,57 @@ impl<P: Interceptor> FlexFec03SendInterceptor<P> {
         };
 
         // The media packet goes out first; the repair packets protect what has already left.
-        self.inner.handle_write(msg)?;
+        self.write_queue.push_back(msg);
 
         for packet in repair_packets {
-            // Re-injected rather than queued locally (chain contract rule 2): a repair packet is
-            // a real outgoing RTP packet and still needs the layers below — a transport-wide
-            // sequence number, and a place in the send history congestion control reads.
-            self.inner.handle_write(TaggedPacket {
+            // Queued for `poll_write`, which puts them back on the belt: a repair packet is a real
+            // outgoing RTP packet and still needs every interceptor ahead — a transport-wide sequence
+            // number, the pacer, and a place in the send history congestion control reads.
+            self.write_queue.push_back(TaggedPacket {
                 now,
                 transport,
-                message: Packet::Rtp(packet),
-            })?;
+                message: AttributedPacket::new(Packet::Rtp(packet)),
+            });
         }
-
         Ok(())
     }
+
+    fn poll_write(&mut self) -> Option<TaggedPacket> {
+        self.write_queue.pop_front()
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
+        None
+    }
+}
+
+impl Interceptor for FlexFec03SendInterceptor {
+    fn bind_local_stream(&mut self, info: &StreamInfo) {
+        // The gate FEC-PRE-01 exists to open. Both halves or neither: an SSRC with no payload
+        // type has nothing to mark its packets with, and a payload type with no SSRC has nowhere
+        // to send them.
+        if let (Some(ssrc_fec), Some(payload_type_fec)) = (info.ssrc_fec, info.payload_type_fec) {
+            self.streams.insert(
+                info.ssrc,
+                ProtectedStream {
+                    encoder: FlexFec03Encoder::new(payload_type_fec, ssrc_fec),
+                    block: Vec::new(),
+                },
+            );
+        }
+    }
+
+    fn unbind_local_stream(&mut self, info: &StreamInfo) {
+        // Any partly-filled block goes with it: those packets have already been sent unprotected,
+        // and a repair packet for a stream that has stopped has nothing left to repair.
+        self.streams.remove(&info.ssrc);
+    }
+
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }

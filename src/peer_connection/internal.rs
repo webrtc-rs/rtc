@@ -31,16 +31,13 @@ use rand::RngExt;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
-impl<I> RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnection {
     pub(super) fn new(
         now: Instant,
         mut configuration: RTCConfiguration,
         media_engine: MediaEngine,
         mut setting_engine: SettingEngine,
-        interceptor: I,
+        interceptor: Box<dyn Interceptor>,
     ) -> Result<Self> {
         configuration.validate()?;
 
@@ -679,7 +676,7 @@ where
     /// caller of this method should hold `self.mu` lock
     pub(super) fn add_rtp_transceiver(
         &mut self,
-        t: RTCRtpTransceiverInternal<I>,
+        t: RTCRtpTransceiverInternal,
     ) -> RTCRtpTransceiverId {
         self.rtp_transceivers.push(t);
         self.trigger_negotiation_needed();
@@ -1190,7 +1187,7 @@ where
         &self,
         track: MediaStreamTrack,
         mut init: RTCRtpTransceiverInit,
-    ) -> Result<RTCRtpTransceiverInternal<I>> {
+    ) -> Result<RTCRtpTransceiverInternal> {
         if init.direction == RTCRtpTransceiverDirection::Unspecified {
             Err(Error::ErrPeerConnAddTransceiverFromTrackSupport)
         } else {

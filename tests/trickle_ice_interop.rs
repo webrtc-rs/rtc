@@ -33,7 +33,6 @@ use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 
-use interceptor::Interceptor;
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
@@ -72,9 +71,7 @@ async fn create_webrtc_peer() -> Result<Arc<WebrtcPeerConnection>> {
 }
 
 /// Create sansio RTC peer configuration (no STUN - local only)
-fn create_rtc_peer_config(
-    is_answerer: bool,
-) -> Result<rtc::peer_connection::RTCPeerConnection<impl Interceptor>> {
+fn create_rtc_peer_config(is_answerer: bool) -> Result<rtc::peer_connection::RTCPeerConnection> {
     let mut builder = SettingEngineBuilder::new();
     if is_answerer {
         builder = builder.with_answering_dtls_role(RTCDtlsRole::Client);

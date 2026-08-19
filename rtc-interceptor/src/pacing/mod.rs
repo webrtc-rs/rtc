@@ -6,6 +6,6 @@
 //! was fine.
 //!
 //! The rate is driven by a bandwidth estimator through
-//! [`Pacer::set_target_bitrate`](pacer::Pacer::set_target_bitrate).
+//! [`PacerInterceptor::set_target_bitrate`](pacer::PacerInterceptor::set_target_bitrate).
 pub(crate) mod pacer;
 pub(crate) mod sender;

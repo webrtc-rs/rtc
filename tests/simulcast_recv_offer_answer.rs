@@ -63,8 +63,7 @@ a=simulcast:recv f;h;q
 /// Build an answerer whose local video sender carries three simulcast
 /// encodings (rids f, h, q), mirroring how
 /// `tests/simulcast_rtc_to_webrtc_interop.rs` constructs its layers.
-fn build_simulcast_sender_answerer()
--> Result<rtc::peer_connection::RTCPeerConnection<impl rtc::interceptor::Interceptor + use<>>> {
+fn build_simulcast_sender_answerer() -> Result<rtc::peer_connection::RTCPeerConnection> {
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs()?;
     for uri in [

@@ -10,13 +10,13 @@
 //! from one that was never lost.
 
 use rtc_interceptor::{
-    FlexFec03Encoder, FlexFec03ReceiveBuilder, Interceptor, NoopInterceptor, Packet, Registry,
-    StreamInfo, TaggedPacket, interceptor,
+    AttributedPacket, FlexFec03Encoder, FlexFec03ReceiveBuilder, Interceptor, Packet, Registry,
+    StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
-use shared::error::Error;
 use shared::marshal::{Marshal, MarshalSize};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -25,22 +25,46 @@ const REPAIR_SSRC: u32 = 867_589_674;
 const REPAIR_PT: u8 = 49;
 
 /// What the layer below the FEC interceptor saw, in full, so the test can compare bytes.
-#[derive(Interceptor)]
-struct Marker<P> {
-    #[next]
-    inner: P,
+struct Marker {
     seen: Arc<Mutex<Vec<rtp::Packet>>>,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-#[interceptor]
-impl<P: Interceptor> Marker<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Marker {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = shared::error::Error;
+    type Time = Instant;
+
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp) = &msg.message {
+        if let Packet::Rtp(rtp) = &msg.message.packet {
             self.seen.lock().unwrap().push(rtp.clone());
         }
-        self.inner.handle_read(msg)
+        self.read_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for Marker {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 struct Harness {
@@ -54,17 +78,19 @@ impl Harness {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let marker_seen = Arc::clone(&seen);
 
+        // The marker sits application-ward of the decoder, so it sees what the decoder passes on:
+        // repair packets swallowed, recovered ones added.
         let chain = Registry::new()
-            .with(move |inner: NoopInterceptor| Marker {
-                inner,
-                seen: marker_seen,
-            })
             .with(FlexFec03ReceiveBuilder::new().build())
-            .boxed()
+            .with(Marker {
+                seen: marker_seen,
+                read_queue: VecDeque::new(),
+                write_queue: VecDeque::new(),
+            })
             .build();
 
         Self {
-            chain,
+            chain: Box::new(chain),
             seen,
             epoch: Instant::now(),
         }
@@ -86,7 +112,7 @@ impl Harness {
             .handle_read(TaggedPacket {
                 now: self.epoch,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(packet.clone()),
+                message: AttributedPacket::new(Packet::Rtp(packet.clone())),
             })
             .expect("handle_read");
     }
@@ -387,7 +413,7 @@ fn rtcp_passes_through() {
         .handle_read(TaggedPacket {
             now: harness.epoch,
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![]),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
         })
         .expect("handle_read");
 

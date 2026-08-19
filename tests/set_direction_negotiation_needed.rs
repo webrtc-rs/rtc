@@ -21,9 +21,7 @@ use std::time::Instant;
 
 /// Drain every currently queued peer-connection event and return how many of
 /// them were `OnNegotiationNeededEvent`.
-fn count_negotiation_needed<I: rtc::interceptor::Interceptor>(
-    pc: &mut rtc::peer_connection::RTCPeerConnection<I>,
-) -> usize {
+fn count_negotiation_needed(pc: &mut rtc::peer_connection::RTCPeerConnection) -> usize {
     let mut count = 0;
     while let Some(event) = pc.poll_event() {
         if matches!(event, RTCPeerConnectionEvent::OnNegotiationNeededEvent) {

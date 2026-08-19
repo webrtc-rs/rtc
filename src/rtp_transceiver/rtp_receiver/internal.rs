@@ -18,7 +18,6 @@ use crate::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpHeaderExtensionParam
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::Interceptor;
 use shared::error::Result;
-use std::marker::PhantomData;
 use std::time::Duration;
 
 /// RTPReceiver allows an application to inspect the receipt of a TrackRemote
@@ -31,10 +30,7 @@ use std::time::Duration;
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpReceiver
 /// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpreceiver-interface
 #[derive(Default, Debug, Clone)]
-pub(crate) struct RTCRtpReceiverInternal<I>
-where
-    I: Interceptor,
-{
+pub(crate) struct RTCRtpReceiverInternal {
     kind: RtpCodecKind,
     track: MediaStreamTrack,
     contributing_sources: Vec<RTCRtpContributingSource>,
@@ -45,14 +41,9 @@ where
     receive_codecs: Vec<RTCRtpCodecParameters>,
 
     last_returned_parameters: Option<RTCRtpReceiveParameters>,
-
-    _phantom: PhantomData<I>,
 }
 
-impl<I> RTCRtpReceiverInternal<I>
-where
-    I: Interceptor,
-{
+impl RTCRtpReceiverInternal {
     pub(crate) fn new(kind: RtpCodecKind, receive_codings: Vec<RTCRtpCodingParameters>) -> Self {
         Self {
             kind,
@@ -64,7 +55,6 @@ where
 
             receive_codecs: vec![],
             last_returned_parameters: None,
-            _phantom: PhantomData,
         }
     }
 
@@ -120,11 +110,8 @@ where
             let mut rtp_parameters = media_engine
                 .get_rtp_parameters_by_kind(self.kind(), RTCRtpTransceiverDirection::Recvonly);
 
-            rtp_parameters.codecs = RTCRtpReceiverInternal::<I>::get_codecs(
-                &self.receive_codecs,
-                self.kind(),
-                media_engine,
-            );
+            rtp_parameters.codecs =
+                RTCRtpReceiverInternal::get_codecs(&self.receive_codecs, self.kind(), media_engine);
 
             self.last_returned_parameters = Some(RTCRtpReceiveParameters { rtp_parameters });
         }
@@ -197,7 +184,11 @@ where
         self.track = track;
     }
 
-    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
+    pub(crate) fn stop(
+        &mut self,
+        media_engine: &MediaEngine,
+        interceptor: &mut dyn Interceptor,
+    ) -> Result<()> {
         self.interceptor_remote_streams_op(media_engine, interceptor, false);
 
         Ok(())
@@ -214,7 +205,7 @@ where
     /// [RFC 8888]: https://www.rfc-editor.org/rfc/rfc8888
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn interceptor_remote_stream_op(
-        interceptor: &mut I,
+        interceptor: &mut dyn Interceptor,
         is_binding: bool,
         ssrc: SSRC,
         ssrc_rtx: Option<SSRC>,
@@ -246,7 +237,7 @@ where
     pub(crate) fn interceptor_remote_streams_op(
         &mut self,
         media_engine: &MediaEngine,
-        interceptor: &mut I,
+        interceptor: &mut dyn Interceptor,
         is_binding: bool,
     ) {
         let parameters = self.get_parameters(media_engine).clone();
@@ -347,32 +338,59 @@ mod repair_association_test {
         RTCRtpCodec, RTCRtpFecParameters, RTCRtpRtxParameters,
     };
     use crate::rtp_transceiver::{PayloadType, SSRC};
-    use interceptor::{Interceptor, NoopInterceptor, StreamInfo, TaggedPacket, interceptor};
+    use interceptor::{Interceptor, StreamInfo, TaggedPacket};
+    use sansio::Protocol;
     use shared::error::Error;
+    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     /// Records every remote stream bound and unbound, so a test can assert what the chain was
     /// told rather than what the caller intended.
-    #[derive(Interceptor)]
-    struct Recorder<P> {
-        #[next]
-        inner: P,
+    #[derive(Default)]
+    struct Recorder {
         bound: Arc<Mutex<Vec<StreamInfo>>>,
         unbound: Arc<Mutex<Vec<StreamInfo>>>,
+        read_queue: VecDeque<TaggedPacket>,
+        write_queue: VecDeque<TaggedPacket>,
     }
 
-    #[interceptor]
-    impl<P: Interceptor> Recorder<P> {
-        #[overrides]
-        fn bind_remote_stream(&mut self, info: &StreamInfo) {
-            self.bound.lock().unwrap().push(info.clone());
-            self.inner.bind_remote_stream(info);
+    impl Protocol<TaggedPacket, TaggedPacket, ()> for Recorder {
+        type Rout = TaggedPacket;
+        type Wout = TaggedPacket;
+        type Eout = ();
+        type Error = Error;
+        type Time = Instant;
+
+        fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+            self.read_queue.push_back(msg);
+            Ok(())
         }
 
-        #[overrides]
+        fn poll_read(&mut self) -> Option<Self::Rout> {
+            self.read_queue.pop_front()
+        }
+
+        fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+            self.write_queue.push_back(msg);
+            Ok(())
+        }
+
+        fn poll_write(&mut self) -> Option<Self::Wout> {
+            self.write_queue.pop_front()
+        }
+    }
+
+    impl Interceptor for Recorder {
+        fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+        fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+
+        fn bind_remote_stream(&mut self, info: &StreamInfo) {
+            self.bound.lock().unwrap().push(info.clone());
+        }
+
         fn unbind_remote_stream(&mut self, info: &StreamInfo) {
             self.unbound.lock().unwrap().push(info.clone());
-            self.inner.unbind_remote_stream(info);
         }
     }
 
@@ -450,17 +468,16 @@ mod repair_association_test {
         let bound = Arc::new(Mutex::new(Vec::new()));
         let unbound = Arc::new(Mutex::new(Vec::new()));
         let mut interceptor = Recorder {
-            inner: NoopInterceptor::new(),
             bound: Arc::clone(&bound),
             unbound: Arc::clone(&unbound),
+            ..Default::default()
         };
 
         let codings = encodings
             .iter()
             .map(|e| e.rtp_coding_parameters.clone())
             .collect();
-        let mut receiver: RTCRtpReceiverInternal<Recorder<NoopInterceptor>> =
-            RTCRtpReceiverInternal::new(RtpCodecKind::Video, codings);
+        let mut receiver = RTCRtpReceiverInternal::new(RtpCodecKind::Video, codings);
         receiver.set_track(MediaStreamTrack::new(
             "stream".to_owned(),
             "track".to_owned(),

@@ -33,9 +33,7 @@ use tokio::net::UdpSocket;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(30);
 
-fn build_video_only_peer(
-    role: RTCDtlsRole,
-) -> Result<rtc::peer_connection::RTCPeerConnection<impl rtc::interceptor::Interceptor>> {
+fn build_video_only_peer(role: RTCDtlsRole) -> Result<rtc::peer_connection::RTCPeerConnection> {
     let setting_engine = SettingEngineBuilder::new()
         .with_answering_dtls_role(role)
         .build();

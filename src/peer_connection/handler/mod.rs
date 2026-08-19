@@ -28,7 +28,6 @@ use crate::peer_connection::message::{
 use crate::peer_connection::state::peer_connection_state::RTCPeerConnectionState;
 use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use ::interceptor::Interceptor;
 use ::interceptor::Packet;
 use log::warn;
 use shared::TaggedBytesMut;
@@ -133,10 +132,7 @@ pub(crate) struct PipelineContext {
     pub(crate) stats: RTCStatsAccumulator,
 }
 
-impl<I> RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl RTCPeerConnection {
     /*
      Pipeline Flow (Read Path):
      Raw Bytes -> Demuxer -> ICE -> DTLS -> SCTP -> DataChannel -> SRTP -> Interceptor -> Endpoint -> Application
@@ -209,7 +205,7 @@ where
         SrtpHandler::new(&mut self.pipeline_context.srtp_handler_context)
     }
 
-    pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_, I> {
+    pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
         InterceptorHandler::new(
             &mut self.pipeline_context.interceptor_handler_context,
             &mut self.interceptor,
@@ -217,7 +213,7 @@ where
         )
     }
 
-    pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_, I> {
+    pub(crate) fn get_endpoint_handler(&mut self) -> EndpointHandler<'_> {
         EndpointHandler::new(
             &mut self.pipeline_context.endpoint_handler_context,
             &mut self.rtp_transceivers,
@@ -228,10 +224,7 @@ where
     }
 }
 
-impl<I> sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection<I>
-where
-    I: Interceptor,
-{
+impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
     type Rout = TaggedRTCMessage;
     type Wout = TaggedBytesMut;
     type Eout = RTCPeerConnectionEvent;

@@ -38,7 +38,6 @@
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use bytes::BytesMut;
-use interceptor::{Interceptor, NoopInterceptor};
 use sansio::Protocol;
 use shared::error::{Error, Result};
 use std::time::Instant;
@@ -71,18 +70,12 @@ pub use state::RTCDataChannelState;
 ///
 /// * [W3C WebRTC - RTCDataChannel](https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel)
 /// * [MDN - RTCDataChannel](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel)
-pub struct RTCDataChannel<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+pub struct RTCDataChannel<'a> {
     pub(crate) id: RTCDataChannelId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
-impl<I> RTCDataChannel<'_, I>
-where
-    I: Interceptor,
-{
+impl RTCDataChannel<'_> {
     /// label represents a label that can be used to distinguish this
     /// DataChannel object from other DataChannel objects. Scripts are
     /// allowed to create multiple DataChannel objects with the same label.

@@ -1,21 +1,26 @@
 //! rtcp-processing demonstrates the Public API for processing RTCP packets in sansio RTC.
 //!
 //! This example shows:
-//! - How to create a custom RTCP forwarder interceptor
+//! - How to ask for inbound RTCP to reach the application
 //! - How to receive and process incoming RTCP packets
 //! - Displaying RTCP packet information (Sender Reports, Receiver Reports, etc.)
 //! - Handling track events and connection state changes
 //!
-//! Note: By default, RTCP packets are consumed by the interceptor chain and not forwarded
-//! to the application. This example demonstrates how to create a custom interceptor that
-//! forwards RTCP packets to the application via `poll_read()`.
+//! Note: by default inbound RTCP is consumed by the interceptor chain and does not reach the
+//! application — it is control traffic the interceptors act on, not media that was asked for.
+//! `Registry::with_rtcp_readable()` says otherwise, and then RTCP arrives from `poll_read()`
+//! alongside the media.
+//!
+//! It has to be asked for when the chain is built rather than arranged by an interceptor of your
+//! own: a chain is a flat list, and what an interceptor emits from `poll_read` rejoins the list
+//! *behind* itself, where the terminus that ends the inbound RTCP path is still ahead of it.
 
 use anyhow::Result;
 use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
-use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket, interceptor};
+use rtc::interceptor::Registry;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -31,10 +36,10 @@ use rtc::peer_connection::transport::RTCIceServer;
 use rtc::peer_connection::transport::{CandidateConfig, CandidateHostConfig, RTCIceCandidate};
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodecParameters};
-use rtc::sansio::{self, Protocol}; // Required for #[interceptor] macro and Protocol trait methods
+use rtc::sansio::Protocol;
 use rtc::shared::error::Error;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::str::FromStr;
@@ -43,93 +48,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::channel;
 
 const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day
-
-// ============================================================================
-// RTCP Forwarder Interceptor
-// ============================================================================
-//
-// This interceptor forwards RTCP packets to the application via poll_read().
-// By default, RTCP packets are consumed by the interceptor chain (for generating
-// statistics, NACK, etc.) and not forwarded to the application.
-
-/// Builder for the RtcpForwarderInterceptor.
-pub struct RtcpForwarderBuilder<P> {
-    _phantom: std::marker::PhantomData<P>,
-}
-
-impl<P> Default for RtcpForwarderBuilder<P> {
-    fn default() -> Self {
-        Self {
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<P> RtcpForwarderBuilder<P> {
-    /// Create a new builder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Build the interceptor.
-    pub fn build(self) -> impl FnOnce(P) -> RtcpForwarderInterceptor<P> {
-        move |inner| RtcpForwarderInterceptor::new(inner)
-    }
-}
-
-/// Interceptor that forwards RTCP packets to the application.
-///
-/// This interceptor intercepts incoming RTCP packets and queues them for
-/// `poll_read()`, allowing the application to receive and process RTCP packets.
-#[derive(Interceptor)]
-pub struct RtcpForwarderInterceptor<P> {
-    #[next]
-    next: P,
-    read_queue: VecDeque<TaggedPacket>,
-}
-
-impl<P> RtcpForwarderInterceptor<P> {
-    /// Create a new RtcpForwarderInterceptor.
-    fn new(next: P) -> Self {
-        Self {
-            next,
-            read_queue: VecDeque::new(),
-        }
-    }
-}
-
-#[interceptor]
-impl<P: Interceptor> RtcpForwarderInterceptor<P> {
-    #[overrides]
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        // If this is an RTCP packet, queue a copy for the application
-        if let Packet::Rtcp(rtcp_packets) = &msg.message {
-            self.read_queue.push_back(TaggedPacket {
-                now: msg.now,
-                transport: msg.transport,
-                message: Packet::Rtcp(rtcp_packets.clone()),
-            });
-        }
-        // Always pass to next interceptor for normal processing
-        self.next.handle_read(msg)
-    }
-
-    #[overrides]
-    fn poll_read(&mut self) -> Option<Self::Rout> {
-        // First return any queued RTCP packets
-        if let Some(pkt) = self.read_queue.pop_front() {
-            return Some(pkt);
-        }
-        // Then check next interceptor
-        self.next.poll_read()
-    }
-
-    #[overrides]
-    fn close(&mut self) -> Result<(), Self::Error> {
-        self.read_queue.clear();
-        self.next.close()
-    }
-}
 
 // ============================================================================
 // Main Application
@@ -230,15 +148,12 @@ async fn run(input_sdp_file: String) -> Result<()> {
         RtpCodecKind::Audio,
     )?;
 
-    // Create interceptor registry with RTCP forwarder
-    let registry = Registry::new();
+    // Inbound RTCP is for the interceptors unless the chain says otherwise. This example is
+    // about reading it, so it says otherwise.
+    let registry = Registry::new().with_rtcp_readable();
 
     // Register default interceptors (NACK, reports, etc.)
     let registry = register_default_interceptors(registry, &mut media_engine)?;
-
-    // Add our RTCP forwarder interceptor as the outermost layer
-    // This ensures RTCP packets are captured before being consumed
-    let registry = registry.with(RtcpForwarderBuilder::new().build());
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

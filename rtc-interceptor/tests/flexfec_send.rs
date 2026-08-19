@@ -7,12 +7,11 @@
 //! repair packet returned from a local queue would skip all of that.
 
 use rtc_interceptor::{
-    FlexFec03SendBuilder, Interceptor, NoopInterceptor, Packet, Registry, StreamInfo, TaggedPacket,
-    interceptor,
+    AttributedPacket, FlexFec03SendBuilder, Interceptor, Packet, Registry, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
-use shared::error::Error;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -28,26 +27,50 @@ struct Sent {
     sequence_number: u16,
 }
 
-#[derive(Interceptor)]
-struct Marker<P> {
-    #[next]
-    inner: P,
+struct Marker {
     sent: Arc<Mutex<Vec<Sent>>>,
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-#[interceptor]
-impl<P: Interceptor> Marker<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Marker {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = shared::error::Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.read_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        if let Packet::Rtp(rtp) = &msg.message {
+        if let Packet::Rtp(rtp) = &msg.message.packet {
             self.sent.lock().unwrap().push(Sent {
                 ssrc: rtp.header.ssrc,
                 payload_type: rtp.header.payload_type,
                 sequence_number: rtp.header.sequence_number,
             });
         }
-        self.inner.handle_write(msg)
+        self.write_queue.push_back(msg);
+        Ok(())
     }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+}
+
+impl Interceptor for Marker {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 struct Harness {
@@ -62,9 +85,10 @@ impl Harness {
         let marker_sent = Arc::clone(&sent);
 
         let chain = Registry::new()
-            .with(move |inner: NoopInterceptor| Marker {
-                inner,
+            .with(Marker {
                 sent: marker_sent,
+                read_queue: VecDeque::new(),
+                write_queue: VecDeque::new(),
             })
             .with(
                 FlexFec03SendBuilder::new()
@@ -72,11 +96,10 @@ impl Harness {
                     .with_num_fec_packets(num_fec_packets)
                     .build(),
             )
-            .boxed()
             .build();
 
         Self {
-            chain,
+            chain: Box::new(chain),
             sent,
             epoch: Instant::now(),
         }
@@ -102,7 +125,7 @@ impl Harness {
             .handle_write(TaggedPacket {
                 now: self.epoch,
                 transport: TransportContext::default(),
-                message: Packet::Rtp(rtp::Packet {
+                message: AttributedPacket::new(Packet::Rtp(rtp::Packet {
                     header: rtp::header::Header {
                         version: 2,
                         payload_type: MEDIA_PT,
@@ -111,7 +134,7 @@ impl Harness {
                         ..Default::default()
                     },
                     payload: vec![1, 2, 3, 4].into(),
-                }),
+                })),
             })
             .expect("handle_write");
     }
@@ -381,7 +404,7 @@ fn rtcp_is_not_protected() {
         .handle_write(TaggedPacket {
             now: harness.epoch,
             transport: TransportContext::default(),
-            message: Packet::Rtcp(vec![]),
+            message: AttributedPacket::new(Packet::Rtcp(vec![])),
         })
         .expect("handle_write");
 

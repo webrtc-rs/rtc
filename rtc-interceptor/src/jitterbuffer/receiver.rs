@@ -1,4 +1,4 @@
-//! Receive-side jitter buffer interceptor: a time-based playout policy over [`JitterBuffer`].
+//! Receive-side jitter buffer interceptor: a time-based playout policy over [`JitterBufferInterceptor`].
 //!
 //! # Why this does not follow upstream
 //!
@@ -19,13 +19,14 @@
 //! | per stream | one buffer for all of them | one per SSRC |
 //! | unbind | clears every stream's packets | drops only that stream |
 
-use super::buffer::{JitterBuffer, Rejected, State};
+use super::buffer::{JitterBuffer as Buffer, Rejected, State};
 use super::sequence::TimestampExtender;
+use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use crate::{Packet, TaggedPacket};
+use sansio::Protocol;
 use shared::error::Error;
-use std::collections::HashMap;
-use std::marker::PhantomData;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Default playout depth: enough to absorb ordinary network jitter without adding audible delay.
@@ -53,23 +54,21 @@ const DISCONTINUITY: Duration = Duration::from_secs(10);
 ///     .with(JitterBufferBuilder::new().with_depth(Duration::from_millis(80)).build())
 ///     .build();
 /// ```
-pub struct JitterBufferBuilder<P> {
+pub struct JitterBufferBuilder {
     depth: Duration,
     capacity: usize,
-    _phantom: PhantomData<P>,
 }
 
-impl<P> Default for JitterBufferBuilder<P> {
+impl Default for JitterBufferBuilder {
     fn default() -> Self {
         Self {
             depth: DEFAULT_DEPTH,
             capacity: DEFAULT_CAPACITY,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<P> JitterBufferBuilder<P> {
+impl JitterBufferBuilder {
     /// Create a builder with the default depth and capacity.
     pub fn new() -> Self {
         Self::default()
@@ -107,9 +106,9 @@ impl<P> JitterBufferBuilder<P> {
         self
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> JitterBufferInterceptor<P> {
-        move |inner| JitterBufferInterceptor::new(inner, self.depth, self.capacity)
+    /// Build the interceptor.
+    pub fn build(self) -> JitterBufferInterceptor {
+        JitterBufferInterceptor::new(self.depth, self.capacity)
     }
 }
 
@@ -127,7 +126,7 @@ struct Anchor {
 
 /// Everything tracked for one remote stream.
 struct Stream {
-    buffer: JitterBuffer,
+    buffer: Buffer,
     timestamps: TimestampExtender,
     /// RTP timestamp units per second, from the negotiated codec.
     clock_rate: u32,
@@ -139,7 +138,7 @@ struct Stream {
 impl Stream {
     fn new(clock_rate: u32, capacity: usize) -> Self {
         Self {
-            buffer: JitterBuffer::new(capacity),
+            buffer: Buffer::new(capacity),
             timestamps: TimestampExtender::new(),
             // A zero clock rate would make every deadline a division by zero; treat an
             // unnegotiated rate as the RTP video default rather than refusing to buffer.
@@ -172,19 +171,25 @@ impl Stream {
 /// Holds each stream's packets for a fixed span of time, then releases them in order.
 ///
 /// The `jitterbuffer::receiver` module documentation covers how this differs from upstream.
-#[derive(Interceptor)]
-pub struct JitterBufferInterceptor<P> {
-    #[next]
-    inner: P,
+pub struct JitterBufferInterceptor {
     depth: Duration,
     capacity: usize,
     streams: HashMap<u32, Stream>,
+    /// Packets whose playout instant has come, waiting to join the belt.
+    due: VecDeque<TaggedPacket>,
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
+    /// Outbound packets ready for the next interceptor: what passed through, plus
+    /// anything this one generated.
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> JitterBufferInterceptor<P> {
-    fn new(inner: P, depth: Duration, capacity: usize) -> Self {
+impl JitterBufferInterceptor {
+    fn new(depth: Duration, capacity: usize) -> Self {
         Self {
-            inner,
+            read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
+            due: VecDeque::new(),
             depth,
             capacity,
             streams: HashMap::new(),
@@ -198,32 +203,19 @@ impl<P> JitterBufferInterceptor<P> {
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> JitterBufferInterceptor<P> {
-    #[overrides]
-    fn bind_remote_stream(&mut self, info: &StreamInfo) {
-        // Keyed by SSRC, unlike upstream, whose single buffer interleaves every remote stream
-        // into one sequence-number ordering.
-        self.streams
-            .entry(info.ssrc)
-            .or_insert_with(|| Stream::new(info.clock_rate, self.capacity));
-        self.inner.bind_remote_stream(info);
-    }
+impl Protocol<TaggedPacket, TaggedPacket, ()> for JitterBufferInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
 
-    #[overrides]
-    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
-        // Only this stream. Upstream's `UnbindRemoteStream` clears the shared buffer, discarding
-        // every other stream's packets along with it.
-        self.streams.remove(&info.ssrc);
-        self.inner.unbind_remote_stream(info);
-    }
-
-    #[overrides]
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        let Packet::Rtp(rtp) = &msg.message else {
+        let Packet::Rtp(rtp) = &msg.message.packet else {
             // RTCP has no sequence number to order by and no playout deadline; it must not be
             // delayed behind media either, since feedback is only useful while it is fresh.
-            return self.inner.handle_read(msg);
+            self.read_queue.push_back(msg);
+            return Ok(());
         };
 
         let ssrc = rtp.header.ssrc;
@@ -233,7 +225,8 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
         let Some(stream) = self.streams.get_mut(&ssrc) else {
             // Not a stream we were told about: pass it straight through rather than buffering
             // packets nobody will ever come to collect.
-            return self.inner.handle_read(msg);
+            self.read_queue.push_back(msg);
+            return Ok(());
         };
 
         let extended_timestamp = stream.timestamps.extend(timestamp);
@@ -267,6 +260,7 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
         match stream.buffer.push(msg) {
             Ok(extended) => {
                 stream.deadlines.insert(extended, deadline);
+                // Held: it leaves later, from `poll_read`, at its playout instant.
                 Ok(())
             }
             // Dropped on purpose — a duplicate, a straggler past its position, a foreign SSRC, or
@@ -278,9 +272,22 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
         }
     }
 
-    #[overrides]
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
-        // Collected first so the borrow of `self.streams` ends before `self.inner` is used.
+    fn poll_read(&mut self) -> Option<TaggedPacket> {
+        // What passed straight through goes first: RTCP must not wait behind buffered media.
+        self.read_queue.pop_front().or_else(|| self.due.pop_front())
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), Error> {
+        // Collected first so the borrow of `self.streams` ends before the queue is extended.
         let mut due: Vec<TaggedPacket> = Vec::new();
 
         for stream in self.streams.values_mut() {
@@ -320,22 +327,34 @@ impl<P: Interceptor> JitterBufferInterceptor<P> {
             }
         }
 
-        // Rule 2: re-injected through `inner`, not returned from a local queue, so a released
-        // packet traverses every downstream interceptor exactly as a live one would.
-        for packet in due {
-            self.inner.handle_read(packet)?;
-        }
-
-        self.inner.handle_timeout(now)
+        // Queued for `poll_read`, which puts them back on the belt, so a released packet
+        // traverses every interceptor ahead of this one exactly as a live one would. The nested design
+        // did this by re-injecting through `inner` by hand.
+        self.due.extend(due);
+        Ok(())
     }
 
-    #[overrides]
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        let mine = self.streams.values().filter_map(Self::next_deadline).min();
-
-        match (mine, self.inner.poll_timeout()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        self.streams.values().filter_map(Self::next_deadline).min()
     }
+}
+
+impl Interceptor for JitterBufferInterceptor {
+    fn bind_remote_stream(&mut self, info: &StreamInfo) {
+        // Keyed by SSRC, unlike upstream, whose single buffer interleaves every remote stream
+        // into one sequence-number ordering.
+        self.streams
+            .entry(info.ssrc)
+            .or_insert_with(|| Stream::new(info.clock_rate, self.capacity));
+    }
+
+    fn unbind_remote_stream(&mut self, info: &StreamInfo) {
+        // Only this stream. Upstream's `UnbindRemoteStream` clears the shared buffer, discarding
+        // every other stream's packets along with it.
+        self.streams.remove(&info.ssrc);
+    }
+
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
 }

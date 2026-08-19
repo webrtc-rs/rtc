@@ -11,35 +11,39 @@
 //!
 //! # Interceptor Chain Architecture
 //!
-//! Interceptors form a processing chain where each interceptor wraps the next. Interceptors
-//! added later wrap those added earlier, so **the last one added is the outermost**.
-//!
-//! Unlike the peer connection's own pipeline, an interceptor chain has **no direction concept**:
-//! `handle_read`, `handle_write` and `poll_*` all walk outer → inner. The outermost interceptor
-//! sees a packet first whether it is inbound or outbound; "inbound" and "outbound" are properties
-//! of the packet, not of the traversal order.
-//!
-//! [`register_default_interceptors`] composes this chain, listed outermost first:
+//! A chain is a flat list of interceptors ordered by **distance from the wire**: the first added
+//! is closest to the network, the last closest to the application. Direction is a property of the
+//! walk rather than of the list:
 //!
 //! ```text
-//!   outermost   [TWCC Receiver]     records arrivals, emits TransportLayerCC
-//!               [Sender Report]     emits SR, filters hop-by-hop RTCP
-//!               [Receiver Report]   emits RR from inbound RTP statistics
-//!               [NACK Responder]    buffers sent RTP, retransmits on NACK
-//!   innermost   [NACK Generator]    detects gaps in inbound RTP, emits NACK
-//!                     ↓
-//!               [Noop]              chain terminal
+//! read   (network → application)   forward:  first → … → last
+//! write  (application → network)   reverse:  last  → … → first
 //! ```
 //!
-//! Both a read and a write enter at TWCC Receiver and descend; neither traversal is reversed.
+//! One list serves both directions, so "closest to the wire" means one thing rather than opposite
+//! things per direction.
+//!
+//! [`register_default_interceptors`] composes this chain, listed wire-to-application:
+//!
+//! ```text
+//!   wire-most   [NACK Responder]    buffers sent RTP, retransmits on NACK
+//!               [NACK Generator]    detects gaps in inbound RTP, emits NACK
+//!               [TWCC Receiver]     records arrivals, emits TransportLayerCC
+//!               [Receiver Report]   emits RR from inbound RTP statistics
+//!    app-most   [Sender Report]     emits SR, filters hop-by-hop RTCP
+//!                     ↓
+//!               [Noop]              ends the inbound RTCP path
+//! ```
+//!
+//! The NACK responder is wire-most because its retransmissions must still pass everything between
+//! it and the network; the generator is above it because loss has to be detected from arrivals.
+//! The arrival recorders come before the report generators, and before anything that delays or
+//! re-stamps a packet.
 //!
 //! When adding an interceptor that **delays** a packet (jitter buffer, pacer) or **generates**
 //! one (FEC repair, a recovered packet), its position stops being a preference and becomes a
-//! correctness property. The rules that govern it — when a packet may be returned from a local
-//! `poll_*` queue, when it must be re-injected through `inner`, and why a delayed packet must
-//! carry its release instant — are documented on the
-//! [interceptor registry](crate::interceptor::Registry) and verified by the interceptor crate's
-//! `tests/chain_order.rs`.
+//! correctness property. The rules that govern it are documented on
+//! [`Registry`](crate::interceptor::Registry) and on the interceptor trait itself.
 //!
 //! # Quick Start
 //!
@@ -127,7 +131,7 @@ use crate::rtp_transceiver::rtp_sender::{
 };
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::{
-    Interceptor, NackGeneratorBuilder, NackResponderBuilder, ReceiverReportBuilder, Registry,
+    NackGeneratorBuilder, NackResponderBuilder, ReceiverReportBuilder, Registry,
     SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
 };
 use shared::error::Result;
@@ -168,20 +172,20 @@ use shared::error::Result;
 ///
 /// If you need to customize which interceptors are loaded, copy the code from
 /// this function and remove or modify the unwanted interceptors.
-pub fn register_default_interceptors<P>(
-    registry: Registry<P>,
+pub fn register_default_interceptors(
+    registry: Registry,
     media_engine: &mut MediaEngine,
-) -> Result<Registry<impl Interceptor + use<P>>>
-where
-    P: Interceptor,
-{
+) -> Result<Registry> {
+    // Added wire-to-application, which is the order they run in on the read path and the
+    // reverse of the order they run in on the write path.
     let registry = configure_nack(registry, media_engine);
-
-    let registry = configure_rtcp_reports(registry);
 
     configure_simulcast_extension_headers(media_engine)?;
 
+    // TWCC records arrival times, so it precedes anything that re-stamps or delays a packet.
     let registry = configure_twcc_receiver_only(registry, media_engine)?;
+
+    let registry = configure_rtcp_reports(registry);
 
     Ok(registry)
 }
@@ -219,13 +223,7 @@ where
 /// # References
 ///
 /// - [RFC 4585](https://datatracker.ietf.org/doc/html/rfc4585) - Extended RTP Profile for RTCP-Based Feedback
-pub fn configure_nack<P>(
-    registry: Registry<P>,
-    media_engine: &mut MediaEngine,
-) -> Registry<impl Interceptor + use<P>>
-where
-    P: Interceptor,
-{
+pub fn configure_nack(registry: Registry, media_engine: &mut MediaEngine) -> Registry {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_NACK.to_owned(),
@@ -242,8 +240,8 @@ where
     );
 
     registry
-        .with(NackGeneratorBuilder::new().build())
         .with(NackResponderBuilder::new().build())
+        .with(NackGeneratorBuilder::new().build())
 }
 
 /// Configures RTCP Sender and Receiver Report interceptors.
@@ -285,10 +283,7 @@ where
 /// # References
 ///
 /// - [RFC 3550 Section 6](https://datatracker.ietf.org/doc/html/rfc3550#section-6) - RTCP Sender and Receiver Reports
-pub fn configure_rtcp_reports<P>(registry: Registry<P>) -> Registry<impl Interceptor + use<P>>
-where
-    P: Interceptor,
-{
+pub fn configure_rtcp_reports(registry: Registry) -> Registry {
     registry
         .with(ReceiverReportBuilder::new().build())
         .with(SenderReportBuilder::new().build())
@@ -400,13 +395,7 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 /// # References
 ///
 /// - [draft-holmer-rmcat-transport-wide-cc](https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01)
-pub fn configure_twcc<P>(
-    registry: Registry<P>,
-    media_engine: &mut MediaEngine,
-) -> Result<Registry<impl Interceptor + use<P>>>
-where
-    P: Interceptor,
-{
+pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Result<Registry> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -478,13 +467,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn configure_twcc_sender_only<P>(
-    registry: Registry<P>,
+pub fn configure_twcc_sender_only(
+    registry: Registry,
     media_engine: &mut MediaEngine,
-) -> Result<Registry<impl Interceptor + use<P>>>
-where
-    P: Interceptor,
-{
+) -> Result<Registry> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -559,13 +545,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn configure_twcc_receiver_only<P>(
-    registry: Registry<P>,
+pub fn configure_twcc_receiver_only(
+    registry: Registry,
     media_engine: &mut MediaEngine,
-) -> Result<Registry<impl Interceptor + use<P>>>
-where
-    P: Interceptor,
-{
+) -> Result<Registry> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -644,48 +627,5 @@ pub(crate) fn create_stream_info(
         channels: codec.channels,
         sdp_fmtp_line: codec.sdp_fmtp_line.clone(),
         rtcp_feedback: feedbacks,
-    }
-}
-
-#[cfg(test)]
-mod chain_order_tests {
-    use super::*;
-
-    /// The module documentation states the default chain's order outermost-first. A doc that
-    /// drifts from the composition is worse than no doc, because the order is now a correctness
-    /// property for anything delayed or generated (see `rtc-interceptor`'s chain contract).
-    ///
-    /// The composed chain's *type* spells out its nesting — `TwccReceiver<SenderReport<…>>` —
-    /// so the type name is the composition, read back. This asserts the documented order against
-    /// it rather than against a second copy of the same list.
-    #[test]
-    fn register_default_interceptors_composes_the_documented_order() {
-        let mut media_engine = MediaEngine::default();
-        let registry = register_default_interceptors(Registry::new(), &mut media_engine)
-            .expect("default interceptors");
-        let chain = registry.build();
-
-        let type_name = std::any::type_name_of_val(&chain);
-
-        // Outermost first, exactly as the module doc lists them.
-        let documented = [
-            "TwccReceiverInterceptor",
-            "SenderReportInterceptor",
-            "ReceiverReportInterceptor",
-            "NackResponderInterceptor",
-            "NackGeneratorInterceptor",
-            "NoopInterceptor",
-        ];
-
-        let mut searched_from = 0;
-        for (position, interceptor) in documented.iter().enumerate() {
-            let found = type_name[searched_from..].find(interceptor).unwrap_or_else(|| {
-                panic!(
-                    "`{interceptor}` is documented at position {position} (outermost first) but \
-                     does not appear after the ones before it.\nchain: {type_name}"
-                )
-            });
-            searched_from += found + interceptor.len();
-        }
     }
 }

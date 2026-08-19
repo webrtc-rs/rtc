@@ -105,7 +105,6 @@ use crate::peer_connection::RTCPeerConnection;
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_encoding_parameters::RTCRtpEncodingParameters;
 pub use direction::RTCRtpTransceiverDirection;
-use interceptor::{Interceptor, NoopInterceptor};
 use log::trace;
 use shared::error::Result;
 
@@ -217,18 +216,12 @@ pub struct RTCRtpTransceiverInit {
 /// # Specification
 ///
 /// See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
-pub struct RTCRtpTransceiver<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
+pub struct RTCRtpTransceiver<'a> {
     pub(crate) id: RTCRtpTransceiverId,
-    pub(crate) peer_connection: &'a mut RTCPeerConnection<I>,
+    pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
-impl<I> RTCRtpTransceiver<'_, I>
-where
-    I: Interceptor,
-{
+impl RTCRtpTransceiver<'_> {
     /// Returns the media stream identification tag (mid) for this transceiver.
     ///
     /// The mid uniquely identifies the media description in the SDP. When not already set,

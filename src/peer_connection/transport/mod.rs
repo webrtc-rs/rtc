@@ -182,7 +182,6 @@ pub use sctp::state::RTCSctpTransportState;
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::state::RTCIceGatheringState;
 pub use ice::component::RTCIceComponent;
-use interceptor::{Interceptor, NoopInterceptor};
 
 /// Identifies one of a peer connection's transports.
 ///
@@ -259,17 +258,11 @@ impl fmt::Display for RTCTransportId {
 /// * [W3C]
 ///
 /// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtcicetransport
-pub struct RTCIceTransport<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
-    pub(crate) peer_connection: &'a RTCPeerConnection<I>,
+pub struct RTCIceTransport<'a> {
+    pub(crate) peer_connection: &'a RTCPeerConnection,
 }
 
-impl<I> RTCIceTransport<'_, I>
-where
-    I: Interceptor,
-{
+impl RTCIceTransport<'_> {
     /// This transport's identity. See [`RTCTransportId`].
     pub fn id(&self) -> RTCTransportId {
         self.peer_connection.ice_transport().id
@@ -346,17 +339,11 @@ where
 /// * [W3C]
 ///
 /// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtcdtlstransport
-pub struct RTCDtlsTransport<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
-    pub(crate) peer_connection: &'a RTCPeerConnection<I>,
+pub struct RTCDtlsTransport<'a> {
+    pub(crate) peer_connection: &'a RTCPeerConnection,
 }
 
-impl<'a, I> RTCDtlsTransport<'a, I>
-where
-    I: Interceptor,
-{
+impl<'a> RTCDtlsTransport<'a> {
     /// This transport's identity. See [`RTCTransportId`].
     pub fn id(&self) -> RTCTransportId {
         self.peer_connection.dtls_transport().id
@@ -365,7 +352,7 @@ where
     /// The ICE transport this DTLS transport runs over.
     ///
     /// Never absent: the spec types `iceTransport` non-nullable.
-    pub fn ice_transport(&self) -> RTCIceTransport<'a, I> {
+    pub fn ice_transport(&self) -> RTCIceTransport<'a> {
         RTCIceTransport {
             peer_connection: self.peer_connection,
         }
@@ -397,17 +384,11 @@ where
 ///
 /// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtcsctptransport
 /// [`RTCPeerConnection::sctp`]: crate::peer_connection::RTCPeerConnection::sctp
-pub struct RTCSctpTransport<'a, I = NoopInterceptor>
-where
-    I: Interceptor,
-{
-    pub(crate) peer_connection: &'a RTCPeerConnection<I>,
+pub struct RTCSctpTransport<'a> {
+    pub(crate) peer_connection: &'a RTCPeerConnection,
 }
 
-impl<'a, I> RTCSctpTransport<'a, I>
-where
-    I: Interceptor,
-{
+impl<'a> RTCSctpTransport<'a> {
     /// This transport's identity. See [`RTCTransportId`].
     pub fn id(&self) -> RTCTransportId {
         self.peer_connection.sctp_transport().id
@@ -416,7 +397,7 @@ where
     /// The DTLS transport all SCTP packets for data channels are sent over.
     ///
     /// Never absent: the spec types `transport` non-nullable.
-    pub fn transport(&self) -> RTCDtlsTransport<'a, I> {
+    pub fn transport(&self) -> RTCDtlsTransport<'a> {
         RTCDtlsTransport {
             peer_connection: self.peer_connection,
         }

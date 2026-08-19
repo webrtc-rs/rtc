@@ -25,14 +25,11 @@ use unicase::UniCase;
 ///
 /// See [RTCRtpTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver) in the W3C WebRTC specification.
 #[derive(Default, Clone)]
-pub(crate) struct RTCRtpTransceiverInternal<I>
-where
-    I: Interceptor,
-{
+pub(crate) struct RTCRtpTransceiverInternal {
     mid: Option<String>,
     kind: RtpCodecKind,
-    sender: Option<RTCRtpSenderInternal<I>>,
-    receiver: Option<RTCRtpReceiverInternal<I>>,
+    sender: Option<RTCRtpSenderInternal>,
+    receiver: Option<RTCRtpReceiverInternal>,
     direction: RTCRtpTransceiverDirection,
     current_direction: RTCRtpTransceiverDirection,
     preferred_codecs: Vec<RTCRtpCodecParameters>,
@@ -45,10 +42,7 @@ where
     created_by_remote_description: bool,
 }
 
-impl<I> fmt::Debug for RTCRtpTransceiverInternal<I>
-where
-    I: Interceptor,
-{
+impl fmt::Debug for RTCRtpTransceiverInternal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RTCRtpTransceiver")
             .field("mid", &self.mid)
@@ -63,10 +57,7 @@ where
     }
 }
 
-impl<I> RTCRtpTransceiverInternal<I>
-where
-    I: Interceptor,
-{
+impl RTCRtpTransceiverInternal {
     pub(crate) fn new(
         kind: RtpCodecKind,
         track: Option<MediaStreamTrack>,
@@ -120,20 +111,20 @@ where
     }
 
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal<I>> {
+    pub(crate) fn sender(&self) -> &Option<RTCRtpSenderInternal> {
         &self.sender
     }
     /// sender returns the RTPTransceiver's RTPSender if it has one
-    pub(crate) fn sender_mut(&mut self) -> &mut Option<RTCRtpSenderInternal<I>> {
+    pub(crate) fn sender_mut(&mut self) -> &mut Option<RTCRtpSenderInternal> {
         &mut self.sender
     }
 
     /// receiver returns the RTPTransceiver's RTPReceiver if it has one
-    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal<I>> {
+    pub(crate) fn receiver(&self) -> &Option<RTCRtpReceiverInternal> {
         &self.receiver
     }
 
-    pub(crate) fn receiver_mut(&mut self) -> &mut Option<RTCRtpReceiverInternal<I>> {
+    pub(crate) fn receiver_mut(&mut self) -> &mut Option<RTCRtpReceiverInternal> {
         &mut self.receiver
     }
 
@@ -185,7 +176,11 @@ where
     /// # Specification
     ///
     /// See [RTCRtpTransceiver.stop()](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-stop).
-    pub(crate) fn stop(&mut self, media_engine: &MediaEngine, interceptor: &mut I) -> Result<()> {
+    pub(crate) fn stop(
+        &mut self,
+        media_engine: &MediaEngine,
+        interceptor: &mut dyn Interceptor,
+    ) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
@@ -249,7 +244,7 @@ where
 
     /// Codecs returns list of supported codecs
     pub(crate) fn get_codecs(&self, media_engine: &MediaEngine) -> Vec<RTCRtpCodecParameters> {
-        RTCRtpReceiverInternal::<I>::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
+        RTCRtpReceiverInternal::get_codecs(&self.preferred_codecs, self.kind(), media_engine)
     }
 
     /// set_mid sets the RTPTransceiver's mid. If it was already set, will return an error.

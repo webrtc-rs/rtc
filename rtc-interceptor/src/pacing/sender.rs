@@ -1,12 +1,13 @@
 //! Smooths outgoing packets to a target rate.
 
-use super::pacer::Pacer;
-use crate::stream_info::StreamInfo;
-use crate::{Interceptor, Packet, TaggedPacket, interceptor};
+use super::pacer::Pacer as LeakyBucket;
+use crate::Interceptor;
+use crate::StreamInfo;
+use crate::{Attribute, Packet, TaggedPacket};
+use sansio::Protocol;
 use shared::error::Error;
 use shared::marshal::MarshalSize;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 use std::time::Instant;
 
 /// Rate used when none is configured: 1 Mb/s.
@@ -26,25 +27,23 @@ pub const DEFAULT_QUEUE_LIMIT: usize = 4096;
 ///     .with(PacerBuilder::new().with_target_bitrate(2_000_000.0).build())
 ///     .build();
 /// ```
-pub struct PacerBuilder<P> {
+pub struct PacerBuilder {
     bitrate: f64,
     burst_bits: Option<f64>,
     queue_limit: usize,
-    _phantom: PhantomData<P>,
 }
 
-impl<P> Default for PacerBuilder<P> {
+impl Default for PacerBuilder {
     fn default() -> Self {
         Self {
             bitrate: DEFAULT_BITRATE,
             burst_bits: None,
             queue_limit: DEFAULT_QUEUE_LIMIT,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<P> PacerBuilder<P> {
+impl PacerBuilder {
     /// Create a builder with the default rate and queue limit.
     pub fn new() -> Self {
         Self::default()
@@ -70,15 +69,13 @@ impl<P> PacerBuilder<P> {
         self
     }
 
-    /// Build the interceptor factory function.
-    pub fn build(self) -> impl FnOnce(P) -> PacerInterceptor<P> {
-        move |inner| {
-            let core = match self.burst_bits {
-                Some(burst_bits) => Pacer::new(self.bitrate).with_burst_bits(burst_bits),
-                None => Pacer::new(self.bitrate),
-            };
-            PacerInterceptor::new(inner, core, self.queue_limit)
-        }
+    /// Build the interceptor.
+    pub fn build(self) -> PacerInterceptor {
+        let bucket = match self.burst_bits {
+            Some(burst_bits) => LeakyBucket::new(self.bitrate).with_burst_bits(burst_bits),
+            None => LeakyBucket::new(self.bitrate),
+        };
+        PacerInterceptor::new(bucket, self.queue_limit)
     }
 }
 
@@ -86,9 +83,14 @@ impl<P> PacerBuilder<P> {
 ///
 /// # Where this belongs in the chain
 ///
-/// **Outermost on write.** Everything below must observe the *release* instant, so nothing that
-/// timestamps or records a packet may sit above it — a send history above the pacer would record
-/// the enqueue instant and charge this queueing delay to the network (chain contract rule 3).
+/// **Close to the wire, with every generator on the application side of it.** Everything after it
+/// on the write path observes the *release* instant, so a send history goes there and records what
+/// actually left; placed the other way round it would record the enqueue instant and charge this
+/// queueing delay to the network.
+///
+/// Retransmissions, FEC repair packets and generated RTCP are all produced further out and reach
+/// the pacer on the belt, so they are metered along with everything else. Under the nested chain
+/// they bypassed it entirely.
 ///
 /// # Differences from upstream
 ///
@@ -100,21 +102,27 @@ impl<P> PacerBuilder<P> {
 /// - **The deadline is when the head can afford to go**, not `now + interval`, so it always
 ///   advances — a deadline at or before the `now` just handed to `handle_timeout` is the
 ///   webrtc#862 busy-loop.
-#[derive(Interceptor)]
-pub struct PacerInterceptor<P> {
-    #[next]
-    inner: P,
-    pacer: Pacer,
+pub struct PacerInterceptor {
+    pacer: LeakyBucket,
     queue: VecDeque<TaggedPacket>,
     queue_limit: usize,
     /// Packets refused because the queue was full.
     dropped: u64,
+    /// Packets the budget has released, waiting to join the belt.
+    released: VecDeque<TaggedPacket>,
+    /// Inbound packets ready for the next interceptor.
+    read_queue: VecDeque<TaggedPacket>,
+    /// Outbound packets ready for the next interceptor: what passed through, plus
+    /// anything this one generated.
+    write_queue: VecDeque<TaggedPacket>,
 }
 
-impl<P> PacerInterceptor<P> {
-    fn new(inner: P, pacer: Pacer, queue_limit: usize) -> Self {
+impl PacerInterceptor {
+    fn new(pacer: LeakyBucket, queue_limit: usize) -> Self {
         Self {
-            inner,
+            read_queue: VecDeque::new(),
+            write_queue: VecDeque::new(),
+            released: VecDeque::new(),
             pacer,
             queue: VecDeque::new(),
             queue_limit: queue_limit.max(1),
@@ -123,12 +131,12 @@ impl<P> PacerInterceptor<P> {
     }
 
     /// The pacing bucket, for a bandwidth estimator to drive.
-    pub fn pacer(&self) -> &Pacer {
+    pub fn pacer(&self) -> &LeakyBucket {
         &self.pacer
     }
 
     /// The pacing bucket, mutably — this is where `set_target_bitrate` is reached.
-    pub fn pacer_mut(&mut self) -> &mut Pacer {
+    pub fn pacer_mut(&mut self) -> &mut LeakyBucket {
         &mut self.pacer
     }
 
@@ -144,7 +152,7 @@ impl<P> PacerInterceptor<P> {
 
     /// The size of a packet on the wire, in bits — the unit the budget is kept in.
     fn bits_of(packet: &TaggedPacket) -> f64 {
-        match &packet.message {
+        match &packet.message.packet {
             Packet::Rtp(rtp) => (rtp.marshal_size() * 8) as f64,
             Packet::Rtcp(_) => 0.0,
         }
@@ -157,14 +165,40 @@ impl<P> PacerInterceptor<P> {
     }
 }
 
-#[interceptor]
-impl<P: Interceptor> PacerInterceptor<P> {
-    #[overrides]
+impl Protocol<TaggedPacket, TaggedPacket, ()> for PacerInterceptor {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.read_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        // Follow the congestion controller's estimate. It rides on an outgoing packet because
+        // the controller is application-ward of the pacer and nothing else connects the two;
+        // observed rather than consumed, so whatever picks the encoder bitrate reads the same
+        // number from the same packet.
+        if let Some(Attribute::TargetBitrateChanged { bits_per_second }) =
+            msg.message.get(&Attribute::TargetBitrateChanged {
+                bits_per_second: 0.0,
+            })
+        {
+            self.pacer.set_target_bitrate(*bits_per_second);
+        }
+
         // RTCP is control traffic and mostly time-sensitive — feedback is only useful while it is
         // fresh — so it is not paced.
-        if matches!(msg.message, Packet::Rtcp(_)) {
-            return self.inner.handle_write(msg);
+        if matches!(msg.message.packet, Packet::Rtcp(_)) {
+            self.write_queue.push_back(msg);
+            return Ok(());
         }
 
         // Keeping the budget current at enqueue time is what lets `poll_timeout` compute a
@@ -176,15 +210,24 @@ impl<P: Interceptor> PacerInterceptor<P> {
             // packets are older, and dropping one of those would put a hole in the middle of a
             // stream that the receiver would have to recover from.
             self.dropped += 1;
+            // Refused, so it never leaves.
             return Ok(());
         }
 
+        // Held: it leaves later, from `poll_write`, when the budget allows.
         self.queue.push_back(msg);
         Ok(())
     }
 
-    #[overrides]
-    fn handle_timeout(&mut self, now: Self::Time) -> Result<(), Self::Error> {
+    fn poll_write(&mut self) -> Option<TaggedPacket> {
+        // Unpaced traffic goes first — RTCP is only useful while it is fresh, and holding it
+        // behind the budget would be pacing it after all.
+        self.write_queue
+            .pop_front()
+            .or_else(|| self.released.pop_front())
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), Error> {
         self.pacer.refill(now);
 
         while let Some(head) = self.queue.front() {
@@ -199,19 +242,24 @@ impl<P: Interceptor> PacerInterceptor<P> {
             // history congestion control reads — must see the release instant, not the enqueue
             // instant, or this queueing delay is charged to the network.
             packet.now = now;
-            // Rule 2: re-injected through `inner`, so it traverses every outbound layer below
-            // exactly as an unpaced packet would.
-            self.inner.handle_write(packet)?;
+            // Queued for `poll_write`, which puts it back on the belt so it traverses every
+            // interceptor ahead — numbering, and the send history reading the release instant just set.
+            self.released.push_back(packet);
         }
-
-        self.inner.handle_timeout(now)
+        Ok(())
     }
 
-    #[overrides]
-    fn poll_timeout(&mut self) -> Option<Self::Time> {
-        match (self.next_release(), self.inner.poll_timeout()) {
-            (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
-            (mine, theirs) => mine.or(theirs),
-        }
+    fn poll_timeout(&mut self) -> Option<Instant> {
+        self.next_release()
     }
+}
+
+impl Interceptor for PacerInterceptor {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
