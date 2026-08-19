@@ -106,6 +106,8 @@ impl RTCRtpCodec {
             Ok(Box::<rtp::codec::g7xx::G7xxPayloader>::default())
         } else if mime_type == MIME_TYPE_AV1.to_lowercase() {
             Ok(Box::<rtp::codec::av1::Av1Payloader>::default())
+        } else if mime_type == MIME_TYPE_SMPTE336M.to_lowercase() {
+            Ok(Box::<rtp::codec::smpte336m::Smpte336mPayloader>::default())
         } else {
             Err(Error::ErrNoPayloaderForCodec)
         }

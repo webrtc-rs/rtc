@@ -8,6 +8,8 @@ pub mod h264;
 pub mod h265;
 /// Opus payload format ([RFC 7587]), one packet per frame.
 pub mod opus;
+/// SMPTE ST 336 (KLV) payload ([RFC 6597]).
+pub mod smpte336m;
 /// VP8 payload format ([RFC 7741]).
 pub mod vp8;
 /// VP9 payload format (draft-ietf-payload-vp9).

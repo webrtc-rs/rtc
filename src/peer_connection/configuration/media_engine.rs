@@ -186,6 +186,12 @@ pub const MIME_TYPE_ULP_FEC: &str = "video/ulpfec";
 /// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
 
+/// SMPTE ST 336 (KLV) metadata MIME type
+///
+/// Used for transmitting KLV (key-length-value) metadata.
+/// Note: MIME type matching is case-insensitive.
+pub const MIME_TYPE_SMPTE336M: &str = "application/smpte336m";
+
 const VALID_EXT_IDS: Range<u16> = 1..15;
 
 #[derive(Default, Clone)]
