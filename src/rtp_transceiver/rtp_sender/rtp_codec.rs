@@ -23,6 +23,10 @@ pub enum RtpCodecKind {
     /// Video codec
     #[serde(rename = "video")]
     Video = 2,
+
+    /// Non-audio/video RTP-carried application data
+    #[serde(rename = "application")]
+    Application = 3,
 }
 
 impl From<&str> for RtpCodecKind {
@@ -30,6 +34,7 @@ impl From<&str> for RtpCodecKind {
         match raw {
             "audio" => RtpCodecKind::Audio,
             "video" => RtpCodecKind::Video,
+            "application" => RtpCodecKind::Application,
             _ => RtpCodecKind::Unspecified,
         }
     }
@@ -40,6 +45,7 @@ impl From<u8> for RtpCodecKind {
         match v {
             1 => RtpCodecKind::Audio,
             2 => RtpCodecKind::Video,
+            3 => RtpCodecKind::Application,
             _ => RtpCodecKind::Unspecified,
         }
     }
@@ -50,6 +56,7 @@ impl fmt::Display for RtpCodecKind {
         let s = match *self {
             RtpCodecKind::Audio => "audio",
             RtpCodecKind::Video => "video",
+            RtpCodecKind::Application => "application",
             RtpCodecKind::Unspecified => UNSPECIFIED_STR,
         };
         write!(f, "{s}")
@@ -106,6 +113,8 @@ impl RTCRtpCodec {
             Ok(Box::<rtp::codec::g7xx::G7xxPayloader>::default())
         } else if mime_type == MIME_TYPE_AV1.to_lowercase() {
             Ok(Box::<rtp::codec::av1::Av1Payloader>::default())
+        } else if mime_type == MIME_TYPE_SMPTE336M.to_lowercase() {
+            Ok(Box::<rtp::codec::smpte336m::Smpte336mPayloader>::default())
         } else {
             Err(Error::ErrNoPayloaderForCodec)
         }

@@ -294,7 +294,7 @@ impl RTCPeerConnection {
                         return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue);
                     }
 
-                    if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                    if media.is_webrtc_datachannel() {
                         media_sections.push(MediaSection {
                             mid: mid_value.to_owned(),
                             transceiver_index: usize::MAX,

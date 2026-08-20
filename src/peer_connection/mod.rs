@@ -267,6 +267,7 @@ use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::handler::dtls::DtlsHandlerContext;
 use crate::peer_connection::handler::ice::IceHandlerContext;
 use crate::peer_connection::handler::sctp::SctpHandlerContext;
+use crate::peer_connection::sdp::MediaDescriptionExt;
 use crate::peer_connection::sdp::session_description::RTCSessionDescription;
 use crate::peer_connection::sdp::{
     extract_fingerprint, extract_ice_details, get_application_media,
@@ -1142,7 +1143,7 @@ impl RTCPeerConnection {
                     _ => return Err(Error::ErrPeerConnLocalDescriptionWithoutMidValue),
                 };
 
-                if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                if media.is_webrtc_datachannel() {
                     continue;
                 }
 
@@ -1361,7 +1362,7 @@ impl RTCPeerConnection {
                             _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
                         };
 
-                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                        if media.is_webrtc_datachannel() {
                             continue;
                         }
 
@@ -1466,7 +1467,7 @@ impl RTCPeerConnection {
                             _ => return Err(Error::ErrPeerConnRemoteDescriptionWithoutMidValue),
                         };
 
-                        if media.media_name.media == MEDIA_SECTION_APPLICATION {
+                        if media.is_webrtc_datachannel() {
                             continue;
                         }
 

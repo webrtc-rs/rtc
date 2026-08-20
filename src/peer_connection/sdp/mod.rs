@@ -244,6 +244,10 @@ pub(crate) fn track_details_from_sdp(s: &SessionDescription) -> Vec<TrackDetails
             _ => continue,
         };
 
+        if media.is_webrtc_datachannel() {
+            continue;
+        }
+
         let codec_type = RtpCodecKind::from(media.media_name.media.as_str());
         if codec_type == RtpCodecKind::Unspecified {
             continue;
@@ -676,6 +680,7 @@ impl RTCPeerConnection {
                 .mime_type
                 .trim_start_matches("audio/")
                 .trim_start_matches("video/")
+                .trim_start_matches("application/")
                 .to_owned();
             media = media.with_codec(
                 codec.payload_type,
@@ -1297,10 +1302,23 @@ pub(crate) fn is_lite_set(desc: &SessionDescription) -> bool {
     false
 }
 
+pub(crate) trait MediaDescriptionExt {
+    /// Reports whether `self` is the WebRTC SCTP data channel m-line, as opposed to some
+    /// other RTP-carried media that also uses the SDP media name `"application"`.
+    fn is_webrtc_datachannel(&self) -> bool;
+}
+
+impl MediaDescriptionExt for MediaDescription {
+    fn is_webrtc_datachannel(&self) -> bool {
+        self.media_name.media == MEDIA_SECTION_APPLICATION
+            && self.media_name.formats == ["webrtc-datachannel"]
+    }
+}
+
 pub(crate) fn get_application_media_section_sctp_port(
     media_desc: &MediaDescription,
 ) -> Option<u16> {
-    if media_desc.media_name.media == MEDIA_SECTION_APPLICATION {
+    if media_desc.is_webrtc_datachannel() {
         return if let Some(sctp_port_attr) = media_desc
             .attributes
             .iter()
@@ -1333,7 +1351,7 @@ pub(crate) fn get_application_media_section_sctp_port(
 pub(crate) fn get_application_media_section_max_message_size(
     media_desc: &MediaDescription,
 ) -> Option<u32> {
-    if media_desc.media_name.media == MEDIA_SECTION_APPLICATION {
+    if media_desc.is_webrtc_datachannel() {
         media_desc
             .attribute(ATTR_KEY_MAX_MESSAGE_SIZE)??
             .parse()
@@ -1362,7 +1380,7 @@ pub(crate) fn get_by_mid<'a>(
 pub(crate) fn get_application_media(desc: &SessionDescription) -> Option<&MediaDescription> {
     desc.media_descriptions
         .iter()
-        .find(|media_description| media_description.media_name.media == MEDIA_SECTION_APPLICATION)
+        .find(|media_description| media_description.is_webrtc_datachannel())
 }
 
 /// have_data_channel return MediaDescription with MediaName equal application

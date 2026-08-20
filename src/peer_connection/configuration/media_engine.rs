@@ -81,7 +81,7 @@
 //mod media_engine_test;
 
 use crate::peer_connection::sdp::{
-    codecs_from_media_description, rtp_extensions_from_media_description,
+    MediaDescriptionExt, codecs_from_media_description, rtp_extensions_from_media_description,
 };
 use crate::rtp_transceiver::direction::RTCRtpTransceiverDirection;
 use crate::rtp_transceiver::fmtp;
@@ -186,6 +186,12 @@ pub const MIME_TYPE_ULP_FEC: &str = "video/ulpfec";
 /// Note: MIME type matching is case-insensitive.
 pub const MIME_TYPE_TELEPHONE_EVENT: &str = "audio/telephone-event";
 
+/// SMPTE ST 336 (KLV) metadata MIME type
+///
+/// Used for transmitting KLV (key-length-value) metadata.
+/// Note: MIME type matching is case-insensitive.
+pub const MIME_TYPE_SMPTE336M: &str = "application/smpte336m";
+
 const VALID_EXT_IDS: Range<u16> = 1..15;
 
 #[derive(Default, Clone)]
@@ -288,12 +294,15 @@ pub struct MediaEngine {
     // If we have attempted to negotiate a codec type yet.
     pub(crate) negotiated_video: bool,
     pub(crate) negotiated_audio: bool,
+    pub(crate) negotiated_application: bool,
     pub(crate) negotiate_multi_codecs: bool,
 
     pub(crate) video_codecs: Vec<RTCRtpCodecParameters>,
     pub(crate) audio_codecs: Vec<RTCRtpCodecParameters>,
+    pub(crate) application_codecs: Vec<RTCRtpCodecParameters>,
     pub(crate) negotiated_video_codecs: Vec<RTCRtpCodecParameters>,
     pub(crate) negotiated_audio_codecs: Vec<RTCRtpCodecParameters>,
+    pub(crate) negotiated_application_codecs: Vec<RTCRtpCodecParameters>,
 
     pub(crate) header_extensions: Vec<MediaEngineHeaderExtension>,
     pub(crate) negotiated_header_extensions: HashMap<u16, MediaEngineHeaderExtension>,
@@ -623,6 +632,10 @@ impl MediaEngine {
                 MediaEngine::add_codec(&mut self.video_codecs, codec);
                 Ok(())
             }
+            RtpCodecKind::Application => {
+                MediaEngine::add_codec(&mut self.application_codecs, codec);
+                Ok(())
+            }
             _ => Err(Error::ErrUnknownType),
         }
     }
@@ -721,6 +734,7 @@ impl MediaEngine {
         MediaEngine {
             video_codecs: self.video_codecs.clone(),
             audio_codecs: self.audio_codecs.clone(),
+            application_codecs: self.application_codecs.clone(),
             header_extensions: self.header_extensions.clone(),
             ..Default::default()
         }
@@ -754,6 +768,13 @@ impl MediaEngine {
                 }
             }
         }
+        if self.negotiated_application {
+            for codec in &self.negotiated_application_codecs {
+                if codec.payload_type == payload_type {
+                    return Ok((codec.clone(), RtpCodecKind::Application));
+                }
+            }
+        }
         if !self.negotiated_video {
             for codec in &self.video_codecs {
                 if codec.payload_type == payload_type {
@@ -765,6 +786,13 @@ impl MediaEngine {
             for codec in &self.audio_codecs {
                 if codec.payload_type == payload_type {
                     return Ok((codec.clone(), RtpCodecKind::Audio));
+                }
+            }
+        }
+        if !self.negotiated_application {
+            for codec in &self.application_codecs {
+                if codec.payload_type == payload_type {
+                    return Ok((codec.clone(), RtpCodecKind::Application));
                 }
             }
         }
@@ -780,10 +808,11 @@ impl MediaEngine {
         exact_matches: &[RTCRtpCodecParameters],
         partial_matches: &[RTCRtpCodecParameters],
     ) -> Result<(RTCRtpCodecParameters, CodecMatch)> {
-        let codecs = if typ == RtpCodecKind::Audio {
-            &self.audio_codecs
-        } else {
-            &self.video_codecs
+        let codecs = match typ {
+            RtpCodecKind::Audio => &self.audio_codecs,
+            RtpCodecKind::Video => &self.video_codecs,
+            RtpCodecKind::Application => &self.application_codecs,
+            RtpCodecKind::Unspecified => unreachable!(),
         };
 
         let remote_fmtp = fmtp::parse(
@@ -906,6 +935,8 @@ impl MediaEngine {
                 MediaEngine::add_codec(&mut self.negotiated_audio_codecs, codec);
             } else if typ == RtpCodecKind::Video {
                 MediaEngine::add_codec(&mut self.negotiated_video_codecs, codec);
+            } else if typ == RtpCodecKind::Application {
+                MediaEngine::add_codec(&mut self.negotiated_application_codecs, codec);
             }
         }
     }
@@ -916,10 +947,16 @@ impl MediaEngine {
         desc: &SessionDescription,
     ) -> Result<()> {
         for media in &desc.media_descriptions {
+            if media.is_webrtc_datachannel() {
+                continue;
+            }
+
             let typ = if media.media_name.media.to_lowercase() == "audio" {
                 RtpCodecKind::Audio
             } else if media.media_name.media.to_lowercase() == "video" {
                 RtpCodecKind::Video
+            } else if media.media_name.media.to_lowercase() == "application" {
+                RtpCodecKind::Application
             } else {
                 RtpCodecKind::Unspecified
             };
@@ -928,6 +965,8 @@ impl MediaEngine {
                 self.negotiated_audio = true;
             } else if !self.negotiated_video && typ == RtpCodecKind::Video {
                 self.negotiated_video = true;
+            } else if !self.negotiated_application && typ == RtpCodecKind::Application {
+                self.negotiated_application = true;
             } else {
                 // update header extesions from remote sdp if codec is negotiated, Firefox
                 // would send updated header extension in renegotiation.
@@ -935,9 +974,7 @@ impl MediaEngine {
                 // then the two media secontions have different rtp header extensions in offer
                 self.update_header_extension_from_media_section(media)?;
 
-                if !self.negotiate_multi_codecs
-                    || (typ != RtpCodecKind::Audio && typ != RtpCodecKind::Video)
-                {
+                if !self.negotiate_multi_codecs || typ == RtpCodecKind::Unspecified {
                     continue;
                 }
             }
@@ -1022,6 +1059,12 @@ impl MediaEngine {
                 self.negotiated_audio_codecs.clone()
             } else {
                 self.audio_codecs.clone()
+            }
+        } else if typ == RtpCodecKind::Application {
+            if self.negotiated_application {
+                self.negotiated_application_codecs.clone()
+            } else {
+                self.application_codecs.clone()
             }
         } else {
             vec![]
