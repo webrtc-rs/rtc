@@ -249,6 +249,10 @@ fn test_data_channel_negotiated_opens_stream_without_dcep_handshake() -> Result<
         dc.poll_write().is_none(),
         "no further DCEP messages expected for a negotiated channel"
     );
+    assert!(
+        dc.is_handshake_complete(),
+        "an out-of-band negotiated channel is open immediately (no DCEP handshake)"
+    );
 
     Ok(())
 }
@@ -272,6 +276,101 @@ fn test_data_channel_in_band_open_is_transmitted() -> Result<()> {
     assert!(
         !msg.negotiated,
         "an in-band DATA_CHANNEL_OPEN must be transmitted to the peer"
+    );
+    assert!(
+        !dc.is_handshake_complete(),
+        "an in-band channel is not open until the peer's DATA_CHANNEL_ACK arrives"
+    );
+
+    Ok(())
+}
+
+/// An in-band channel becomes open the moment its `DATA_CHANNEL_ACK` is processed.
+#[test]
+fn test_data_channel_in_band_open_on_data_channel_ack() -> Result<()> {
+    let (a0, _a1) = create_new_association_pair()?;
+
+    let cfg = DataChannelConfig {
+        channel_type: ChannelType::Reliable,
+        label: "in-band".to_string(),
+        negotiated: false,
+        ..Default::default()
+    };
+
+    let mut dc = DataChannel::dial(cfg, a0, 100)?;
+    assert!(!dc.is_handshake_complete());
+
+    // The dialed channel is a Protocol<DataChannelMessage, ...>; feed it the peer's ACK.
+    let ack_bytes = Message::DataChannelAck(DataChannelAck {}).marshal()?;
+    dc.handle_read(DataChannelMessage {
+        association_handle: a0,
+        stream_id: 100,
+        ppi: PayloadProtocolIdentifier::Dcep,
+        payload: BytesMut::from(&ack_bytes[..]),
+        negotiated: false,
+    })?;
+
+    assert!(
+        dc.is_handshake_complete(),
+        "receiving DATA_CHANNEL_ACK must mark the local channel as open"
+    );
+
+    Ok(())
+}
+
+/// A remote channel is open from `accept()`: the peer's `DATA_CHANNEL_OPEN` has
+/// been processed and the ACK is written out, completing the handshake.
+#[test]
+fn test_data_channel_accept_marks_remote_channel_open() -> Result<()> {
+    let (a0, _a1) = create_new_association_pair()?;
+
+    let open_bytes = Message::DataChannelOpen(DataChannelOpen {
+        channel_type: ChannelType::Reliable,
+        priority: CHANNEL_PRIORITY_NORMAL,
+        reliability_parameter: 0,
+        label: b"remote".to_vec(),
+        protocol: Vec::new(),
+    })
+    .marshal()?;
+
+    let dc = DataChannel::accept(
+        DataChannelConfig::default(),
+        a0,
+        100,
+        PayloadProtocolIdentifier::Dcep,
+        &open_bytes[..],
+    )?;
+
+    assert!(
+        dc.is_handshake_complete(),
+        "accept() processing the peer's DATA_CHANNEL_OPEN must mark the remote channel as open"
+    );
+
+    Ok(())
+}
+
+/// Closing an open channel clears the handshake-complete flag.
+#[test]
+fn test_data_channel_close_resets_handshake_complete_flag() -> Result<()> {
+    let (a0, _a1) = create_new_association_pair()?;
+
+    let cfg = DataChannelConfig {
+        channel_type: ChannelType::Reliable,
+        label: "negotiated".to_string(),
+        negotiated: true,
+        ..Default::default()
+    };
+
+    let mut dc = DataChannel::dial(cfg, a0, 100)?;
+    assert!(
+        dc.is_handshake_complete(),
+        "an out-of-band negotiated channel is open immediately (no DCEP handshake)"
+    );
+
+    dc.close()?;
+    assert!(
+        !dc.is_handshake_complete(),
+        "closing an open channel must clear the handshake-complete flag"
     );
 
     Ok(())
