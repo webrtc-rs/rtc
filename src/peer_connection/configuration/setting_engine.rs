@@ -353,6 +353,10 @@ pub struct SettingEngine {
     /// Overrides the SCTP receive-buffer size (the a_rwnd flow-control window), in bytes.
     /// `None` uses the rtc-sctp default (`INITIAL_RECV_BUF_SIZE`, 1 MiB).
     pub(crate) sctp_max_receive_buffer_size: Option<u32>,
+    /// Overrides the outbound SCTP DATA-packet budget, converted to a payload
+    /// budget via rtc-sctp's `max_payload_size_for_mtu`. `None` uses the rtc-sctp
+    /// default (`INITIAL_MTU`, 1191 — the TURN-relayed IPv6 minimum-MTU budget).
+    pub(crate) sctp_mtu: Option<u32>,
     pub(crate) ignore_rid_pause_for_recv: bool,
     pub(crate) write_ssrc_attributes_for_simulcast: bool,
 }
@@ -1344,6 +1348,30 @@ impl SettingEngineBuilder {
         }
 
         self.0.sctp_max_receive_buffer_size = Some(size.max(MIN_SCTP_RECEIVE_BUFFER_SIZE));
+        self
+    }
+
+    /// Overrides the SCTP MTU: the size budget, in bytes, for each outbound DATA packet
+    /// (common header plus bundled DATA chunks) this endpoint emits. Control packets
+    /// (INIT, INIT ACK, SACK, RECONFIG, FORWARD TSN, shutdown) marshal without consulting
+    /// this value.
+    ///
+    /// Each SCTP packet becomes one DTLS record carried in one UDP datagram, so the wire
+    /// size is roughly this value + ~37 bytes of DTLS record overhead + IP/UDP headers
+    /// (+ 4 bytes of TURN ChannelData framing when relayed). The default (1191) is the
+    /// TURN-relayed IPv6 minimum-MTU budget of `1280 - 40 IPv6 - 8 UDP - 4 TURN
+    /// ChannelData - 37 DTLS` (webrtc-rs/rtc#178). Set this only for paths with a known
+    /// different budget: raise it where the path genuinely carries more (fewer, larger
+    /// packets cut per-packet overhead), lower it for tunnels with an even smaller MTU.
+    ///
+    /// The per-chunk payload budget is derived from this value by the inverse of the
+    /// default derivation (minus the 12-byte common header and 16-byte DATA chunk header,
+    /// rounded down to the SCTP 4-byte chunk-padding boundary), so a single maximum-size
+    /// DATA chunk always marshals within this budget. Values below 32 — the smallest
+    /// representable padded DATA packet — are raised to 32 with a warning. To keep the
+    /// default, leave this unset.
+    pub fn with_sctp_mtu(mut self, mtu: u32) -> Self {
+        self.0.sctp_mtu = Some(mtu);
         self
     }
 

@@ -70,7 +70,10 @@ pub use crate::chunk::{
 };
 
 mod config;
-pub use crate::config::{ClientConfig, EndpointConfig, ServerConfig, TransportConfig};
+pub use crate::config::{
+    ClientConfig, EndpointConfig, MIN_DATA_PACKET_MTU, ServerConfig, TransportConfig,
+    max_payload_size_for_mtu,
+};
 
 mod endpoint;
 pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoint};

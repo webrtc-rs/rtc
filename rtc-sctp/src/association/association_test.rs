@@ -560,7 +560,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
 // datagram loss.
 
 use crate::EndpointConfig;
-use crate::config::INITIAL_MTU;
+use crate::config::{INITIAL_MTU, max_payload_size_for_mtu};
 
 fn create_association_with_mtu(mtu: u32) -> Association {
     Association::new(
@@ -625,6 +625,61 @@ fn single_maximum_size_chunk_marshals_within_initial_mtu() {
         raw_packets[0].len(),
         INITIAL_MTU
     );
+}
+
+#[test]
+fn single_maximum_size_chunk_marshals_within_a_custom_mtu() {
+    // `max_payload_size_for_mtu(N)` derives a payload budget for which a
+    // single maximum-size DATA chunk marshals to at most N bytes, mirroring
+    // the default derivation's guarantee for INITIAL_MTU. Prove it on
+    // emitted bytes at the 32-byte floor (exactly the smallest
+    // representable padded DATA packet), across
+    // a 4-byte padding boundary (1201 emits 1200), and at a typical larger
+    // path MTU (1500, fully used).
+    for (mtu, expected) in [(32u32, 32usize), (1201, 1200), (1500, 1500)] {
+        let max_payload = max_payload_size_for_mtu(mtu);
+        let a =
+            create_association_with_mtu(max_payload + COMMON_HEADER_SIZE + DATA_CHUNK_HEADER_SIZE);
+        let chunks = vec![payload_chunk(1, max_payload as usize)];
+        let mut raw_packets = vec![];
+        a.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
+        assert_eq!(raw_packets.len(), 1);
+        assert_eq!(
+            raw_packets[0].len(),
+            expected,
+            "a single maximum-size chunk under mtu({mtu})"
+        );
+    }
+}
+
+#[test]
+fn initial_cwnd_is_computed_safely_for_non_default_mtus() {
+    // Regression: the initial congestion window was computed as
+    // `(2 * mtu).clamp(4380, 4 * mtu)`, which panicked for effective MTUs
+    // below ~1095 (`Ord::clamp` with min > max) and overflowed near
+    // `u32::MAX` — reachable through `EndpointConfig::max_payload_size`
+    // and MTU-derived payload budgets. RFC 4960 §7.2.1:
+    // cwnd = min(4*MTU, max(2*MTU, 4380)); for a small MTU that is 4*MTU.
+    let a = create_association_with_mtu(100);
+    assert_eq!(a.cwnd, 4 * a.mtu);
+
+    // Directly via the low-level `max_payload_size` setter path: the
+    // effective-MTU reconstruction (`max_payload_size + 28`) must saturate
+    // rather than overflow when the payload budget itself is near
+    // `u32::MAX` (the helper above subtracts the headers first, so it
+    // never exercises this addition's edge).
+    let a = Association::new(
+        None,
+        Arc::new(TransportConfig::default()),
+        u32::MAX,
+        0,
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        SocketAddr::from_str("0.0.0.0:0").unwrap(),
+        TransportProtocol::UDP,
+        Instant::now(),
+    );
+    assert_eq!(a.mtu, u32::MAX);
+    assert_eq!(a.cwnd, u32::MAX);
 }
 
 #[test]

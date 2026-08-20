@@ -142,6 +142,7 @@ impl RTCPeerConnection {
         let sctp_transport = SctpTransport::new(
             setting_engine.sctp_max_message_size,
             setting_engine.sctp_max_receive_buffer_size,
+            setting_engine.sctp_mtu,
             sctp_transport_id,
             dtls_transport_id,
         );

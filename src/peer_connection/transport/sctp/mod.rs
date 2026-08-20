@@ -47,6 +47,10 @@ pub(crate) struct SctpTransport {
     // in bytes. None uses the sctp crate default (INITIAL_RECV_BUF_SIZE, 1 MiB).
     pub(crate) max_receive_buffer_size: Option<u32>,
 
+    // Optional override for the outbound SCTP DATA-packet budget, applied to the endpoint's
+    // `EndpointConfig` in `start()`. None uses the sctp crate default (INITIAL_MTU, 1191).
+    pub(crate) mtu: Option<u32>,
+
     pub(crate) internal_buffer: Vec<u8>,
 }
 
@@ -54,6 +58,7 @@ impl SctpTransport {
     pub(crate) fn new(
         max_message_size: SctpMaxMessageSize,
         max_receive_buffer_size: Option<u32>,
+        mtu: Option<u32>,
         id: RTCTransportId,
         dtls_transport_id: RTCTransportId,
     ) -> Self {
@@ -68,6 +73,7 @@ impl SctpTransport {
             max_message_size,
             negotiated_max_message_size: None,
             max_receive_buffer_size,
+            mtu,
             internal_buffer: vec![],
         }
     }
@@ -169,7 +175,10 @@ impl SctpTransport {
         self.negotiated_max_message_size = Some(max_message_size);
         self.internal_buffer.resize(max_message_size as usize, 0u8);
 
-        let sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        let mut sctp_endpoint_config = ::sctp::EndpointConfig::default();
+        if let Some(mtu) = self.mtu {
+            sctp_endpoint_config.max_payload_size(::sctp::max_payload_size_for_mtu(mtu));
+        }
         let mut sctp_transport_config = ::sctp::TransportConfig::default()
             .with_max_message_size(max_message_size)
             .with_sctp_port(local_port);
@@ -216,6 +225,7 @@ mod tests {
     ) -> SctpTransport {
         let mut transport = SctpTransport::new(
             configured,
+            None,
             None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
@@ -272,6 +282,7 @@ mod tests {
         let transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
             None,
+            None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -283,6 +294,7 @@ mod tests {
     fn state_and_max_channels_before_any_association() {
         let transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
+            None,
             None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
@@ -298,6 +310,7 @@ mod tests {
     fn state_follows_a_closed_association() {
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
+            None,
             None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
@@ -320,6 +333,7 @@ mod tests {
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
             Some(200_000),
+            None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -347,6 +361,7 @@ mod tests {
         let mut transport = SctpTransport::new(
             SctpMaxMessageSize::default(),
             None,
+            None,
             test_transport_id(TransportKind::Sctp),
             test_transport_id(TransportKind::Dtls),
         );
@@ -367,6 +382,38 @@ mod tests {
                 .expect("client transport config")
                 .max_receive_buffer_size(),
             1024 * 1024
+        );
+    }
+
+    // Starting a Client transport builds the endpoint from an `EndpointConfig`, so we can
+    // assert the configured MTU flowed through `start()` as the derived payload budget:
+    // mtu minus the common and DATA chunk headers, rounded down to the 4-byte boundary.
+    #[test]
+    fn start_applies_configured_mtu() {
+        let mut transport = SctpTransport::new(
+            SctpMaxMessageSize::default(),
+            None,
+            Some(1500),
+            test_transport_id(TransportKind::Sctp),
+            test_transport_id(TransportKind::Dtls),
+        );
+        transport
+            .start(
+                RTCDtlsRole::Client,
+                SCTPTransportCapabilities {
+                    max_message_size: 0,
+                },
+                5000,
+                5000,
+            )
+            .expect("start");
+        assert_eq!(
+            transport
+                .sctp_endpoint
+                .expect("client endpoint")
+                .endpoint_config()
+                .get_max_payload_size(),
+            (1500 - (12 + 16)) & !3
         );
     }
 }
