@@ -132,21 +132,22 @@ impl<E: BandwidthEstimator> CongestionControlInterceptor<E> {
     }
 
     /// Feed one inbound RTCP packet to the history. Returns whether it said anything.
+    #[allow(clippy::borrowed_box)]
     fn ingest(&mut self, now: Instant, rtcp_packet: &Box<dyn rtcp::Packet>) -> bool {
         let payload = rtcp_packet.as_any();
 
         if let Some(feedback) = payload
-            .downcast_ref::<rtcp::transport_feedbacks::transport_layer_cc::TransportLayerCc>()
-        {
+            .downcast_ref::<rtcp::transport_feedbacks::transport_layer_cc::TransportLayerCc>(
+        ) {
             for acknowledgement in convert_twcc(feedback) {
                 self.history.on_twcc_feedback(now, acknowledgement);
             }
             return true;
         }
 
-        if let Some(feedback) =
-            payload.downcast_ref::<rtcp::transport_feedbacks::cc_feedback_report::CcFeedbackReport>()
-        {
+        if let Some(feedback) = payload
+            .downcast_ref::<rtcp::transport_feedbacks::cc_feedback_report::CcFeedbackReport>(
+        ) {
             let (_report_delay, per_stream) = convert_ccfb(feedback);
             for (ssrc, acknowledgements) in per_stream {
                 for acknowledgement in acknowledgements {
@@ -173,7 +174,7 @@ impl<E: BandwidthEstimator> Protocol<TaggedPacket, TaggedPacket, ()>
         let mut reported = false;
         if let Packet::Rtcp(ref rtcp_packets) = msg.message.packet {
             // `for` over a borrow of `msg` while `self` is borrowed mutably: collect first.
-            let feedback: Vec<_> = rtcp_packets.iter().cloned().collect();
+            let feedback: Vec<_> = rtcp_packets.to_vec();
             for rtcp_packet in &feedback {
                 reported |= self.ingest(msg.now, rtcp_packet);
             }

@@ -10,7 +10,8 @@
 //! from one that was never lost.
 
 use rtc_interceptor::{
-    AttributedPacket, FlexFec03Encoder, FlexFec03ReceiveBuilder, Interceptor, Packet, Registry, StreamInfo, TaggedPacket,
+    AttributedPacket, FlexFec03Encoder, FlexFec03ReceiveBuilder, Interceptor, Packet, Registry,
+    StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -477,7 +478,11 @@ fn a_recovered_packet_stops_the_nack_generator_asking_for_it() {
     // Wire-to-application: FEC decoder, then NACK generator — the shipped ordering.
     let mut chain = Registry::new()
         .with(FlexFec03ReceiveBuilder::new().build())
-        .with(NackGeneratorBuilder::new().with_interval(NACK_INTERVAL).build())
+        .with(
+            NackGeneratorBuilder::new()
+                .with_interval(NACK_INTERVAL)
+                .build(),
+        )
         .build();
 
     let stream = StreamInfo {

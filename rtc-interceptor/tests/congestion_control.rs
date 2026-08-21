@@ -147,7 +147,9 @@ fn twcc_feedback(now: Instant, base: u16, count: u16) -> TaggedPacket {
 /// Send `count` packets and drive the pacer until everything has been released.
 fn send_and_drain(chain: &mut impl Interceptor, epoch: Instant, count: u16) -> Vec<Instant> {
     for sequence_number in 0..count {
-        chain.handle_write(rtp(epoch, sequence_number)).expect("write");
+        chain
+            .handle_write(rtp(epoch, sequence_number))
+            .expect("write");
     }
 
     let mut released = Vec::new();
@@ -251,9 +253,9 @@ fn a_changed_estimate_rides_out_on_the_feedback_packet() {
         .expect("read");
     let unchanged = chain.poll_read().expect("the feedback packet carries on");
     assert!(
-        !unchanged
-            .message
-            .has(&Attribute::TargetBitrateChanged { bits_per_second: 0.0 }),
+        !unchanged.message.has(&Attribute::TargetBitrateChanged {
+            bits_per_second: 0.0
+        }),
         "an estimate that did not move must not re-announce itself"
     );
     while chain.poll_read().is_some() {}
@@ -267,9 +269,10 @@ fn a_changed_estimate_rides_out_on_the_feedback_packet() {
 
     let mut announced = None;
     while let Some(packet) = chain.poll_read() {
-        if let Some(Attribute::TargetBitrateChanged { bits_per_second }) = packet
-            .message
-            .get(&Attribute::TargetBitrateChanged { bits_per_second: 0.0 })
+        if let Some(Attribute::TargetBitrateChanged { bits_per_second }) =
+            packet.message.get(&Attribute::TargetBitrateChanged {
+                bits_per_second: 0.0,
+            })
         {
             announced = Some(*bits_per_second);
         }
@@ -323,9 +326,7 @@ fn unacknowledged_packets_are_written_off_after_the_prune_horizon() {
     while chain.poll_write().is_some() {}
 
     // Well past the horizon, with no feedback ever arriving.
-    chain
-        .handle_timeout(epoch + horizon * 4)
-        .expect("timeout");
+    chain.handle_timeout(epoch + horizon * 4).expect("timeout");
 
     // Feedback for packets that have been written off names nothing the history knows, so it
     // resolves to no reports rather than to wrong ones.

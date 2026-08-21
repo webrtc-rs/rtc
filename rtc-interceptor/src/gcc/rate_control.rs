@@ -115,9 +115,7 @@ impl RateController {
                     // rather than blown through.
                     (self.target + 12_000.0).clamp(self.min, self.max)
                 } else {
-                    let growth = self
-                        .increase_factor
-                        .powf(elapsed.as_secs_f64().min(1.0));
+                    let growth = self.increase_factor.powf(elapsed.as_secs_f64().min(1.0));
                     (self.target * growth).clamp(self.min, self.max)
                 };
                 self.last_change = Some(now);
@@ -252,7 +250,11 @@ mod tests {
         controller.update(epoch, Usage::Normal, Some(1_000_000.0));
         let after_first = controller.target();
         // Immediately again: too soon to act.
-        controller.update(epoch + Duration::from_millis(1), Usage::Normal, Some(1_000_000.0));
+        controller.update(
+            epoch + Duration::from_millis(1),
+            Usage::Normal,
+            Some(1_000_000.0),
+        );
         assert_eq!(
             after_first,
             controller.target(),
@@ -260,7 +262,11 @@ mod tests {
         );
 
         let before_backoff = controller.target();
-        controller.update(epoch + Duration::from_millis(2), Usage::Over, Some(500_000.0));
+        controller.update(
+            epoch + Duration::from_millis(2),
+            Usage::Over,
+            Some(500_000.0),
+        );
         assert!(
             controller.target() < before_backoff,
             "a decrease must not be delayed by the pacing interval"

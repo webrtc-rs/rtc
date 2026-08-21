@@ -100,7 +100,11 @@ fn twcc_sequence_number_of(packet: &TaggedPacket) -> Option<u16> {
 /// Run one closed loop: send, pace, cross the path, report back, for `duration`.
 ///
 /// Everything is driven by explicit instants, so the whole run is a pure function of its inputs.
-fn run(profile: PathProfile, duration: Duration, widen_after: Option<Duration>) -> Vec<PacketReport> {
+fn run(
+    profile: PathProfile,
+    duration: Duration,
+    widen_after: Option<Duration>,
+) -> Vec<PacketReport> {
     let epoch = Instant::now();
     let estimator = Recorder::default();
 
@@ -509,7 +513,7 @@ fn gcc_trajectory(
     widen_after: Option<Duration>,
     initial: f64,
 ) -> Vec<f64> {
-    use rtc_interceptor::{BandwidthEstimator, Gcc, GCC_MAX_BITRATE, GCC_MIN_BITRATE};
+    use rtc_interceptor::{BandwidthEstimator, GCC_MAX_BITRATE, GCC_MIN_BITRATE, Gcc};
 
     let epoch = Instant::now();
     let mut path = Path::new(profile, epoch);
@@ -564,7 +568,12 @@ fn gcc_trajectory(
 /// assuming it.
 #[test]
 fn gcc_backs_off_on_a_lossy_path_with_no_queueing() {
-    let trajectory = gcc_trajectory(PathProfile::lossy_without_queueing(), 600, None, 1_200_000.0);
+    let trajectory = gcc_trajectory(
+        PathProfile::lossy_without_queueing(),
+        600,
+        None,
+        1_200_000.0,
+    );
 
     let start = trajectory[0];
     let end = *trajectory.last().expect("a trajectory");

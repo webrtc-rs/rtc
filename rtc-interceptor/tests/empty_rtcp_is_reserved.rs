@@ -166,7 +166,9 @@ fn generators_under_traffic_emit_no_empty_rtcp() {
         let sequence_number = tick as u16;
         if sequence_number != 5 {
             chain.handle_read(rtp(now, sequence_number)).expect("read");
-            chain.handle_write(rtp(now, sequence_number)).expect("write");
+            chain
+                .handle_write(rtp(now, sequence_number))
+                .expect("write");
         }
         chain.handle_timeout(now).expect("timeout");
         emitted += drain(&mut chain, "under traffic");

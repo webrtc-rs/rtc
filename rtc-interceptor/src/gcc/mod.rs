@@ -15,8 +15,8 @@
 
 pub(crate) mod arrival_group;
 pub(crate) mod estimator;
-pub(crate) mod loss;
 pub(crate) mod kalman;
+pub(crate) mod loss;
 pub(crate) mod overuse;
 pub(crate) mod rate_calc;
 pub(crate) mod rate_control;

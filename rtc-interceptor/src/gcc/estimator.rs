@@ -175,7 +175,7 @@ mod tests {
         let epoch = Instant::now();
         let mut gcc = Gcc::default();
 
-        let mut at = epoch;
+        let mut at;
         for batch in 0..20u64 {
             at = epoch + Duration::from_millis(batch * 200);
             // Half the packets vanish; the ones that arrive do so promptly.
@@ -209,7 +209,7 @@ mod tests {
         let epoch = Instant::now();
         let mut gcc = Gcc::new(200_000.0, 150_000.0, 250_000.0);
 
-        let mut at = epoch;
+        let mut at;
         for batch in 0..50u64 {
             at = epoch + Duration::from_millis(batch * 200);
             let reports: Vec<PacketReport> = (0..10)

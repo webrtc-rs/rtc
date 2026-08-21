@@ -165,8 +165,7 @@ impl NackResponderInterceptor {
             self.write_queue.push_back(TaggedPacket {
                 now,
                 transport: TransportContext::default(),
-                message: AttributedPacket::new(Packet::Rtp(packet))
-                    .with(Attribute::Retransmission),
+                message: AttributedPacket::new(Packet::Rtp(packet)).with(Attribute::Retransmission),
             });
         }
     }

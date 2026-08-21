@@ -93,7 +93,10 @@ impl ArrivalGroupAccumulator {
         };
 
         // Still the same burst: extend it.
-        if report.departure.saturating_duration_since(current.first_departure) <= self.burst_interval
+        if report
+            .departure
+            .saturating_duration_since(current.first_departure)
+            <= self.burst_interval
         {
             current.departure = current.departure.max(report.departure);
             current.arrival = current.arrival.max(arrival);
@@ -184,7 +187,9 @@ mod tests {
             None,
             accumulator.accumulate(&report(epoch + Duration::from_millis(20), 120, 1200))
         );
-        let group = accumulator.flush().expect("the second group closes against the first");
+        let group = accumulator
+            .flush()
+            .expect("the second group closes against the first");
         assert_eq!(1200, group.size, "the second group holds one packet");
     }
 

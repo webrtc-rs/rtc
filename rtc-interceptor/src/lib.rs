@@ -242,6 +242,14 @@ pub use cc::interceptor::{
     DEFAULT_PRUNE_HORIZON as CONGESTION_CONTROL_DEFAULT_PRUNE_HORIZON,
 };
 pub use flexfec::bit_array::BitArray;
+pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
+pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
+pub use flexfec::draft03::encoder::FlexFec03Encoder;
+pub use flexfec::draft03::receiver::{FlexFec03ReceiveBuilder, FlexFec03ReceiveInterceptor};
+pub use flexfec::draft03::sender::{
+    DEFAULT_NUM_FEC_PACKETS, DEFAULT_NUM_MEDIA_PACKETS, FlexFec03SendBuilder,
+    FlexFec03SendInterceptor,
+};
 pub use gcc::arrival_group::{
     ArrivalGroup, ArrivalGroupAccumulator, DEFAULT_BURST_INTERVAL as GCC_DEFAULT_BURST_INTERVAL,
     InterGroupDelay,
@@ -261,17 +269,9 @@ pub use gcc::rate_control::{
     DEFAULT_DECREASE_FACTOR as GCC_DECREASE_FACTOR, DEFAULT_INCREASE_FACTOR as GCC_INCREASE_FACTOR,
     DEFAULT_RATE_CONTROL_INTERVAL as GCC_RATE_CONTROL_INTERVAL, RateController,
 };
+pub use gcc::slope::{DelayTrend, SlopeEstimator};
 pub use gcc::state::RateControlState;
 pub use gcc::threshold::{AdaptiveThreshold, DEFAULT_INITIAL_MS as GCC_THRESHOLD_INITIAL_MS};
-pub use gcc::slope::{DelayTrend, SlopeEstimator};
-pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
-pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
-pub use flexfec::draft03::encoder::FlexFec03Encoder;
-pub use flexfec::draft03::receiver::{FlexFec03ReceiveBuilder, FlexFec03ReceiveInterceptor};
-pub use flexfec::draft03::sender::{
-    DEFAULT_NUM_FEC_PACKETS, DEFAULT_NUM_MEDIA_PACKETS, FlexFec03SendBuilder,
-    FlexFec03SendInterceptor,
-};
 pub use intervalpli::generator::{
     DEFAULT_INTERVAL as INTERVAL_PLI_DEFAULT_INTERVAL, IntervalPliInterceptor,
 };

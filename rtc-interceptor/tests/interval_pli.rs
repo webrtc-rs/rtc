@@ -375,7 +375,11 @@ fn a_request_on_the_write_leg_produces_the_same_plis_as_one_on_the_read_leg() {
     let from_read = drain_plis(&mut on_read);
     let from_write = drain_plis(&mut on_write);
 
-    assert_eq!(vec![1, 2], from_read, "the read leg is the established behaviour");
+    assert_eq!(
+        vec![1, 2],
+        from_read,
+        "the read leg is the established behaviour"
+    );
     assert_eq!(
         from_read, from_write,
         "a keyframe request must be acted on whichever leg it arrives by — an application's \
