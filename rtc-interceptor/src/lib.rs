@@ -246,7 +246,15 @@ pub use gcc::arrival_group::{
     ArrivalGroup, ArrivalGroupAccumulator, DEFAULT_BURST_INTERVAL as GCC_DEFAULT_BURST_INTERVAL,
     InterGroupDelay,
 };
+pub use gcc::estimator::{
+    DEFAULT_INITIAL_BITRATE as GCC_INITIAL_BITRATE, DEFAULT_MAX_BITRATE as GCC_MAX_BITRATE,
+    DEFAULT_MIN_BITRATE as GCC_MIN_BITRATE, Gcc,
+};
 pub use gcc::kalman::Kalman;
+pub use gcc::loss::{
+    DEFAULT_HIGH_LOSS as GCC_HIGH_LOSS, DEFAULT_LOSS_INTERVAL as GCC_LOSS_INTERVAL,
+    DEFAULT_LOW_LOSS as GCC_LOW_LOSS, LossController,
+};
 pub use gcc::overuse::{DEFAULT_OVERUSE_TIME as GCC_DEFAULT_OVERUSE_TIME, OveruseDetector, Usage};
 pub use gcc::rate_calc::{DEFAULT_WINDOW as GCC_RATE_WINDOW, RateCalculator};
 pub use gcc::rate_control::{

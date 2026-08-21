@@ -279,11 +279,11 @@ fn the_lossy_fixture_loses_without_queueing() {
         "the lossy fixture lost nothing, so a loss-based estimator would have no signal"
     );
 
-    // One in twenty, so roughly 5% — assert the order of magnitude, not the exact count.
+    // One in five, so roughly 20% — above the 10% GCC reacts at, which is the point.
     let loss_fraction = lost as f64 / reports.len() as f64;
     assert!(
-        (0.02..0.10).contains(&loss_fraction),
-        "loss should be about one in twenty, got {loss_fraction:.3}"
+        (0.10..0.30).contains(&loss_fraction),
+        "loss should be about one in five, got {loss_fraction:.3}"
     );
 }
 
@@ -495,5 +495,129 @@ fn overuse_is_detected_on_a_queueing_path_and_not_on_a_steady_one() {
     assert!(
         queueing.iter().any(|usage| *usage == Usage::Over),
         "a queue building must be detected, got {queueing:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// P7-07 — `Gcc` end to end, against the fixtures
+// ---------------------------------------------------------------------------------------
+
+/// Drive `Gcc` over a fixture and return the target bitrate after each batch of feedback.
+fn gcc_trajectory(
+    profile: PathProfile,
+    packets: u64,
+    widen_after: Option<Duration>,
+    initial: f64,
+) -> Vec<f64> {
+    use rtc_interceptor::{BandwidthEstimator, Gcc, GCC_MAX_BITRATE, GCC_MIN_BITRATE};
+
+    let epoch = Instant::now();
+    let mut path = Path::new(profile, epoch);
+    if let Some(after) = widen_after {
+        path = path.widening_after(after);
+    }
+    let mut gcc = Gcc::new(initial, GCC_MIN_BITRATE, GCC_MAX_BITRATE);
+    let mut offered = Vec::new();
+    let mut trajectory = vec![gcc.target_bitrate()];
+
+    for step in 0..packets {
+        let at = epoch + Duration::from_millis(step * 10);
+        path.offer(at, step as u16, PACKET_BITS);
+        offered.push(at);
+        path.drain_to(at);
+
+        // Report every 100 ms, as a browser would.
+        if step % 10 == 9 {
+            let reports: Vec<PacketReport> = path
+                .take_arrivals()
+                .into_iter()
+                .map(|arrival| {
+                    let index = usize::from(arrival.twcc_sequence_number);
+                    PacketReport {
+                        ssrc: SSRC,
+                        id: index as u64,
+                        rtp_sequence_number: arrival.twcc_sequence_number,
+                        is_twcc: true,
+                        twcc_sequence_number: arrival.twcc_sequence_number,
+                        size: (PACKET_BITS / 8.0) as usize,
+                        arrived: arrival.at.is_some(),
+                        departure: offered[index],
+                        arrival: arrival.at.map(|at| at.duration_since(epoch)),
+                        ecn: rtcp::transport_feedbacks::cc_feedback_report::Ecn::default(),
+                    }
+                })
+                .collect();
+            if !reports.is_empty() {
+                gcc.on_reports(at, &reports);
+                trajectory.push(gcc.target_bitrate());
+            }
+        }
+    }
+    trajectory
+}
+
+/// **D4, the divergence from upstream.** On a path that loses packets *without* queueing, the
+/// delay half sees nothing — so if loss cannot move the target on its own, nothing does.
+///
+/// Upstream's loss controller computes an estimate here and then never applies it, because its
+/// `latestBitrate` is only written from a delay update. This asserts the divergence rather than
+/// assuming it.
+#[test]
+fn gcc_backs_off_on_a_lossy_path_with_no_queueing() {
+    let trajectory = gcc_trajectory(PathProfile::lossy_without_queueing(), 600, None, 1_200_000.0);
+
+    let start = trajectory[0];
+    let end = *trajectory.last().expect("a trajectory");
+
+    assert!(
+        end < start,
+        "loss alone must move the target — this is exactly what upstream fails to do: \
+         {start} → {end}"
+    );
+}
+
+/// The delay half, end to end: a queue building brings the target down.
+#[test]
+fn gcc_backs_off_on_a_queueing_path() {
+    let trajectory = gcc_trajectory(PathProfile::queue_building(), 400, None, 2_000_000.0);
+
+    let start = trajectory[0];
+    let lowest = trajectory.iter().cloned().fold(f64::INFINITY, f64::min);
+
+    assert!(
+        lowest < start,
+        "a queue building must bring the target down: started {start}, lowest {lowest}"
+    );
+}
+
+/// And a healthy path is left alone to climb — an estimator that only ever backs off is useless.
+#[test]
+fn gcc_climbs_on_a_healthy_path() {
+    let trajectory = gcc_trajectory(PathProfile::steady(), 400, None, 300_000.0);
+
+    let start = trajectory[0];
+    let end = *trajectory.last().expect("a trajectory");
+
+    assert!(
+        end > start,
+        "a path with headroom must be probed for more: {start} → {end}"
+    );
+}
+
+/// The other half of the loss story: GCC **ignores** loss between 2% and 10% on purpose. A few per
+/// cent is normal on a wireless link, and reacting to it would give up capacity permanently.
+///
+/// Without this, `gcc_backs_off_on_a_lossy_path_with_no_queueing` would be satisfied by an
+/// estimator that simply backs off at any loss at all.
+#[test]
+fn gcc_ignores_loss_inside_the_band() {
+    let trajectory = gcc_trajectory(PathProfile::mildly_lossy(), 600, None, 1_200_000.0);
+
+    let start = trajectory[0];
+    let end = *trajectory.last().expect("a trajectory");
+
+    assert!(
+        end >= start,
+        "5% loss on an otherwise healthy path must not cost capacity: {start} → {end}"
     );
 }

@@ -78,7 +78,12 @@ impl PathProfile {
         }
     }
 
-    /// Ample capacity but a lossy link: **loss without queueing**, the wireless shape.
+    /// Ample capacity but a badly lossy link: **loss without queueing**, the wireless shape.
+    ///
+    /// One in five, not one in twenty. GCC deliberately ignores loss between 2% and 10% — a few per
+    /// cent is normal on a wireless link and reacting to it would give up capacity permanently — so
+    /// a 5% fixture tests the *band*, not the reaction. Use [`mildly_lossy`](Self::mildly_lossy)
+    /// for that.
     ///
     /// pion's loss controller cannot move the target on its own here — its `latestBitrate` is only
     /// written from a delay update — so this fixture is what D4's deliberate divergence is tested
@@ -88,7 +93,15 @@ impl PathProfile {
             propagation: Duration::from_millis(20),
             capacity_bits_per_second: 3_000_000.0,
             queue_capacity_bits: 3_000_000.0,
+            drop_one_in: Some(5),
+        }
+    }
+
+    /// Loss inside the band GCC ignores on purpose, for asserting that it does.
+    pub fn mildly_lossy() -> Self {
+        Self {
             drop_one_in: Some(20),
+            ..Self::lossy_without_queueing()
         }
     }
 
