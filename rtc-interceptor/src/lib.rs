@@ -222,6 +222,7 @@ pub(crate) mod chain;
 pub(crate) mod noop;
 pub(crate) mod registry;
 
+pub(crate) mod cc;
 pub(crate) mod flexfec;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
@@ -234,6 +235,7 @@ pub(crate) mod rtpfb;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use cc::estimator::{BandwidthEstimator, ConstantBitrate, EstimatorStats};
 pub use flexfec::bit_array::BitArray;
 pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
 pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
