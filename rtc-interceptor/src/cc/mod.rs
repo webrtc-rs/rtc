@@ -8,3 +8,4 @@
 //! ahead of it in the walk, so a retransmission or a FEC repair packet cannot slip past unrecorded.
 
 pub(crate) mod estimator;
+pub(crate) mod interceptor;

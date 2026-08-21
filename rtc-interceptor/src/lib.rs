@@ -236,6 +236,10 @@ pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
 pub use cc::estimator::{BandwidthEstimator, ConstantBitrate, EstimatorStats};
+pub use cc::interceptor::{
+    CongestionControlBuilder, CongestionControlInterceptor,
+    DEFAULT_PRUNE_HORIZON as CONGESTION_CONTROL_DEFAULT_PRUNE_HORIZON,
+};
 pub use flexfec::bit_array::BitArray;
 pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
 pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
