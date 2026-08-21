@@ -247,6 +247,9 @@ pub use gcc::arrival_group::{
     InterGroupDelay,
 };
 pub use gcc::kalman::Kalman;
+pub use gcc::overuse::{DEFAULT_OVERUSE_TIME as GCC_DEFAULT_OVERUSE_TIME, OveruseDetector, Usage};
+pub use gcc::state::RateControlState;
+pub use gcc::threshold::{AdaptiveThreshold, DEFAULT_INITIAL_MS as GCC_THRESHOLD_INITIAL_MS};
 pub use gcc::slope::{DelayTrend, SlopeEstimator};
 pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
 pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};

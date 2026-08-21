@@ -57,13 +57,22 @@ impl PathProfile {
         }
     }
 
-    /// Capacity below what a sender at 1.2 Mb/s offers, with room to queue: **delay grows, nothing
-    /// is lost**. This is what a delay-based estimator exists to notice, and it must notice it
-    /// before the queue overflows and turns into loss.
+    /// Capacity far below what a sender at 1.2 Mb/s offers, with room to queue: **delay grows,
+    /// nothing is lost**. This is what a delay-based estimator exists to notice, and it must notice
+    /// it before the queue overflows and turns into loss.
+    ///
+    /// Four times oversubscribed, deliberately. A 12 000-bit packet offered every 10 ms into a
+    /// 300 kb/s bottleneck takes 40 ms to serve, so each group adds 30 ms of queue — comfortably
+    /// above the detector's 12.5 ms starting threshold.
+    ///
+    /// At 2× (600 kb/s) the gradient is exactly 10 ms, which sits *under* that threshold: real GCC
+    /// detects such a path only once the threshold has adapted down to meet it, which takes far
+    /// longer than a test run. That is correct behaviour, but it makes for a fixture that probes
+    /// the threshold's tuning rather than whether detection works at all.
     pub fn queue_building() -> Self {
         Self {
             propagation: Duration::from_millis(20),
-            capacity_bits_per_second: 600_000.0,
+            capacity_bits_per_second: 300_000.0,
             queue_capacity_bits: 6_000_000.0,
             drop_one_in: None,
         }
@@ -85,13 +94,23 @@ impl PathProfile {
 
     /// A narrow path that widens: the estimator must climb back rather than stay where the
     /// congestion left it.
+    /// Only 2× oversubscribed, unlike [`queue_building`](Self::queue_building). This fixture is
+    /// about the *recovery*, so the backlog has to be one a widened path can actually clear inside
+    /// a test run — at 4× the queue built during the congested phase takes longer to drain than the
+    /// run lasts, and the test would be measuring the fixture rather than the estimator.
     pub fn recovering() -> Self {
-        Self::queue_building()
+        Self {
+            propagation: Duration::from_millis(20),
+            capacity_bits_per_second: 600_000.0,
+            queue_capacity_bits: 6_000_000.0,
+            drop_one_in: None,
+        }
     }
 
     /// The capacity this path has at `elapsed` since the run began.
     ///
-    /// Constant except for [`recovering`](Self::recovering), which triples after two seconds.
+    /// Constant unless the path was built with [`widening_after`](Path::widening_after), which is
+    /// how the recovery fixture models a bottleneck opening up.
     fn capacity_at(&self, elapsed: Duration, widens_after: Option<Duration>) -> f64 {
         match widens_after {
             Some(after) if elapsed >= after => self.capacity_bits_per_second * 5.0,

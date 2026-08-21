@@ -430,3 +430,70 @@ fn the_delay_trend_separates_a_steady_path_from_a_queueing_one() {
         "the two fixtures must be separable: steady {steady}, queueing {queueing}"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// P7-05 — overuse detection, against the fixtures
+// ---------------------------------------------------------------------------------------
+
+/// Run a fixture through grouping → filtering → detection, and report what the detector concluded.
+fn usage_over(profile: PathProfile) -> Vec<rtc_interceptor::Usage> {
+    use rtc_interceptor::{OveruseDetector, SlopeEstimator};
+
+    let epoch = Instant::now();
+    let mut path = Path::new(profile, epoch);
+    let mut slope = SlopeEstimator::new();
+    let mut detector = OveruseDetector::new();
+    let mut offered = Vec::new();
+
+    for step in 0..150u64 {
+        let at = epoch + Duration::from_millis(step * 10);
+        path.offer(at, step as u16, PACKET_BITS);
+        offered.push(at);
+        path.drain_to(at);
+    }
+    path.drain_to(epoch + Duration::from_secs(60));
+
+    let mut usages = Vec::new();
+    for arrival in path.take_arrivals() {
+        let Some(at) = arrival.at else { continue };
+        let index = usize::from(arrival.twcc_sequence_number);
+        let report = PacketReport {
+            ssrc: SSRC,
+            id: index as u64,
+            rtp_sequence_number: arrival.twcc_sequence_number,
+            is_twcc: true,
+            twcc_sequence_number: arrival.twcc_sequence_number,
+            size: (PACKET_BITS / 8.0) as usize,
+            arrived: true,
+            departure: offered[index],
+            arrival: Some(at.duration_since(epoch)),
+            ecn: rtcp::transport_feedbacks::cc_feedback_report::Ecn::default(),
+        };
+        if let Some(trend) = slope.accumulate(&report) {
+            usages.push(detector.update(trend.at, trend.estimate_ms));
+        }
+    }
+    usages
+}
+
+/// The whole point of the delay half of GCC: a queue building is noticed, and a healthy path is
+/// left alone. Both halves matter — a detector that fires on everything is as useless as one that
+/// fires on nothing.
+#[test]
+fn overuse_is_detected_on_a_queueing_path_and_not_on_a_steady_one() {
+    use rtc_interceptor::Usage;
+
+    let steady = usage_over(PathProfile::steady());
+    let queueing = usage_over(PathProfile::queue_building());
+
+    assert!(!steady.is_empty(), "the steady run produced no readings");
+    assert!(
+        !steady.iter().any(|usage| *usage == Usage::Over),
+        "a healthy path must never be declared congested: {steady:?}"
+    );
+
+    assert!(
+        queueing.iter().any(|usage| *usage == Usage::Over),
+        "a queue building must be detected, got {queueing:?}"
+    );
+}
