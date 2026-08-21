@@ -24,6 +24,7 @@ use tokio::time::timeout;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -97,14 +98,15 @@ async fn test_reflect_rtc_to_webrtc() -> Result<()> {
 
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
-    let registry = rtc::interceptor::Registry::new();
+    let builder = RegistryBuilder::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
+            builder,
             &mut media_engine,
-        )?;
+        )?
+        .build();
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

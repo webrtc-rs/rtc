@@ -20,10 +20,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
-use rtc::interceptor::Registry;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::interceptor_registry::{
+    RegistryBuilder, register_default_interceptors,
+};
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -150,10 +151,10 @@ async fn run(input_sdp_file: String) -> Result<()> {
 
     // Inbound RTCP is for the interceptors unless the chain says otherwise. This example is
     // about reading it, so it says otherwise.
-    let registry = Registry::new().with_rtcp_readable();
+    let builder = RegistryBuilder::new().with_rtcp_readable();
 
     // Register default interceptors (NACK, reports, etc.)
-    let registry = register_default_interceptors(registry, &mut media_engine)?;
+    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

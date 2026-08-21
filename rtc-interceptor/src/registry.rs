@@ -1,10 +1,10 @@
 //! Building a chain.
 
-use crate::chain::InterceptorChain;
+use crate::chain::Chain;
 use crate::noop::NoopInterceptor;
 use crate::{BoxedInterceptor, Interceptor};
 
-/// Collects interceptors and assembles them into an [`InterceptorChain`].
+/// Collects interceptors and assembles them into an [`Chain`].
 ///
 /// # Order
 ///
@@ -99,7 +99,7 @@ impl Registry {
     pub fn build(mut self) -> impl Interceptor {
         self.interceptors
             .push(Box::new(NoopInterceptor::new(self.rtcp_readable)));
-        InterceptorChain::new(self.interceptors)
+        Chain::new(self.interceptors)
     }
 }
 

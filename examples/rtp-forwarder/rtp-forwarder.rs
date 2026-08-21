@@ -3,10 +3,12 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
-use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket};
+use rtc::interceptor::{Interceptor, Packet, StreamInfo, TaggedPacket};
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::interceptor_registry::{
+    RegistryBuilder, register_default_interceptors,
+};
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -264,10 +266,10 @@ async fn run_peer_connection(
 
     // Inbound RTCP is for the interceptors by default; a keyframe request is about a stream this
     // program only relays, so the application has to see that one.
-    let registry = Registry::new().with_rtcp_readable();
+    let builder = RegistryBuilder::new().with_rtcp_readable();
 
     // Use the default set of Interceptors
-    let registry = register_default_interceptors(registry, &mut media_engine)?;
+    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 
     // Application-most, so every interceptor has already seen the whole of the inbound RTCP
     // before this one narrows it to keyframe requests.

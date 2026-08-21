@@ -15,6 +15,7 @@ use bytes::BytesMut;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -90,14 +91,15 @@ async fn test_one_media_section_rtc_to_rtc_simulcast() -> Result<()> {
         )?;
     }
 
-    let registry = rtc::interceptor::Registry::new();
+    let builder = RegistryBuilder::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
+            builder,
             &mut answerer_media_engine,
-        )?;
+        )?
+        .build();
 
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -155,14 +157,15 @@ async fn test_one_media_section_rtc_to_rtc_simulcast() -> Result<()> {
         )?;
     }
 
-    let registry = rtc::interceptor::Registry::new();
+    let builder = RegistryBuilder::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            registry,
+            builder,
             &mut offerer_media_engine,
-        )?;
+        )?
+        .build();
 
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

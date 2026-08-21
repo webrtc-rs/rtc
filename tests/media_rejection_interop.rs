@@ -24,9 +24,10 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use rtc::interceptor::Registry;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::interceptor_registry::{
+    RegistryBuilder, register_default_interceptors,
+};
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -103,8 +104,8 @@ fn create_rtc_peer_config_video_only() -> Result<RTCPeerConnection> {
     media_engine.register_codec(video_codec, RtpCodecKind::Video)?;
     // Note: Audio codec is NOT registered, so audio will be rejected
 
-    let registry = Registry::new();
-    let registry = register_default_interceptors(registry, &mut media_engine)?;
+    let builder = RegistryBuilder::new();
+    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 
     let config = RTCConfigurationBuilder::new().build();
 

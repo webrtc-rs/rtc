@@ -31,14 +31,14 @@ the interceptors act on, not media the application asked for.
 
 ```rust
 // Inbound RTCP is readable by the application as well as acted on by the interceptors.
-let registry = Registry::new().with_rtcp_readable();
+let builder = RegistryBuilder::new().with_rtcp_readable();
 
 // Register default interceptors (NACK, reports, TWCC, etc.)
-let registry = register_default_interceptors(registry, &mut media_engine)?;
+let registry = register_default_interceptors(builder, & mut media_engine) ?;
 
 let config = RTCConfigurationBuilder::new()
-    .with_interceptor_registry(registry)
-    .build();
+.with_interceptor_registry(registry)
+.build();
 ```
 
 It has to be asked for when the chain is built rather than arranged by an interceptor of your own. A chain is a flat
