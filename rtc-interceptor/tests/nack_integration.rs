@@ -1215,3 +1215,69 @@ fn test_nack_sequence_wraparound() {
         lost_seqs, nacked_seqs, retransmitted
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// CC-PRE-02 — retransmissions are tagged
+// ---------------------------------------------------------------------------------------
+
+/// A retransmission is a *separate transmission* consuming separate bandwidth, and a send history
+/// has to count it as such. Without the tag the history cannot tell one from an original, and an
+/// estimator that under-counts bytes during loss infers headroom and raises the target — a positive
+/// feedback loop that is hard to diagnose, because the estimator's own accounting stays internally
+/// consistent the whole way down.
+///
+/// This asserts the retransmission carries [`Attribute::Retransmission`] and the original does not.
+#[test]
+fn a_retransmission_is_tagged_and_an_original_is_not() {
+    use rtc_interceptor::Attribute;
+
+    const SSRC: u32 = 0x8899_AABB;
+    let epoch = Instant::now();
+
+    let mut chain = Registry::new()
+        .with(NackResponderBuilder::new().build())
+        .build();
+    chain.bind_local_stream(&nack_stream_info(SSRC));
+
+    // Send one packet, so the responder has something buffered to retransmit.
+    chain
+        .handle_write(create_rtp_packet_with_time(epoch, SSRC, 1, 1000, 100))
+        .expect("write");
+    let original = chain.poll_write().expect("the original goes out");
+    assert!(
+        !original.message.has(&Attribute::Retransmission),
+        "a first transmission must not be tagged as a retransmission"
+    );
+    while chain.poll_write().is_some() {}
+
+    // Ask for it back.
+    chain
+        .handle_read(create_nack_packet(
+            epoch,
+            0,
+            SSRC,
+            vec![rtcp::transport_feedbacks::transport_layer_nack::NackPair {
+                packet_id: 1,
+                lost_packets: 0,
+            }],
+        ))
+        .expect("read");
+    while chain.poll_read().is_some() {}
+
+    let mut retransmissions = 0;
+    while let Some(packet) = chain.poll_write() {
+        if let Packet::Rtp(ref rtp) = packet.message.packet {
+            assert_eq!(1, rtp.header.sequence_number);
+            assert!(
+                packet.message.has(&Attribute::Retransmission),
+                "a packet sent in answer to a NACK must carry Attribute::Retransmission, or a \
+                 send history counts it as an original and under-reports the bytes on the wire"
+            );
+            retransmissions += 1;
+        }
+    }
+    assert_eq!(
+        1, retransmissions,
+        "the responder should have retransmitted exactly the packet that was asked for"
+    );
+}
