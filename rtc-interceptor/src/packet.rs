@@ -11,7 +11,19 @@ use std::sync::Arc;
 pub enum Packet {
     /// RTP (Real-time Transport Protocol) packet containing media data
     Rtp(rtp::Packet),
-    /// RTCP (RTP Control Protocol) packets for feedback and statistics
+    /// RTCP (RTP Control Protocol) packets for feedback and statistics.
+    ///
+    /// # An empty vector is reserved
+    ///
+    /// `Packet::Rtcp(vec![])` means **attribute carrier** and nothing else: a packet that exists
+    /// only to carry [`Attribute`]s when no real packet is going the same way. `rtc`'s handler
+    /// reads the attributes off it and then drops it, so it never reaches the wire or the
+    /// application.
+    ///
+    /// An interceptor must therefore never emit an empty compound packet meaning anything else —
+    /// it would be discarded with no error and no trace. Generators that build from a
+    /// variable-length list return early when that list is empty rather than emitting nothing-shaped
+    /// output; `rtc-interceptor/tests/empty_rtcp_is_reserved.rs` holds them to it.
     Rtcp(Vec<Box<dyn rtcp::Packet>>),
 }
 
@@ -26,6 +38,14 @@ pub enum Packet {
 /// held, reordered or duplicated.
 ///
 /// With `Ein`/`Eout` left as `()`, this is the only way information crosses interceptors.
+///
+/// # When there is no packet to ride
+///
+/// A connection-level fact — a bandwidth estimate, a keyframe request from the application — often
+/// needs to travel when no media is going that way. The carrier for those is an RTCP packet with an
+/// empty payload, [`Packet::Rtcp(vec![])`](Packet::Rtcp), which is inert to every interceptor that
+/// does not look for attributes and is dropped at the crate boundary once its attributes are read.
+/// That makes an empty compound RTCP packet **reserved**: see [`Packet::Rtcp`].
 ///
 /// # Cost
 ///
