@@ -56,7 +56,14 @@ pub enum Packet {
 pub enum Attribute {
     /// Rebuilt by FEC rather than received: these bytes never arrived on the wire.
     ///
-    /// A NACK generator that sees this must not ask for the packet again.
+    /// Not needed by the NACK generator, despite the obvious guess. The FEC decoder is wire-ward of
+    /// it, so a rebuilt packet reaches the generator on the read walk like any other arrival and
+    /// fills the gap in its receive log — there is nothing left to ask for, by ordering rather than
+    /// by inspection. `tests/flexfec_receive.rs` pins that.
+    ///
+    /// It matters to anything that must distinguish *arrived* from *present*: an arrival recorder
+    /// telling the remote a packet turned up, when in fact it was lost and rebuilt here, overstates
+    /// what the path delivered.
     RecoveredByFec,
 
     /// A retransmission answering a NACK, not a first transmission.
