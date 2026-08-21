@@ -17,10 +17,12 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use rtc::interceptor::{Interceptor, Packet, Registry, StreamInfo, TaggedPacket};
+use rtc::interceptor::{Interceptor, Packet, StreamInfo, TaggedPacket};
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::interceptor_registry::{
+    RegistryBuilder, register_default_interceptors,
+};
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -216,8 +218,8 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
     // Create registry with default interceptors. `with_rtcp_readable` is what lets inbound RTCP
     // past the terminus at the end of the chain; without it nothing an interceptor forwards can
     // reach the application.
-    let registry = Registry::new().with_rtcp_readable();
-    let registry = register_default_interceptors(registry, &mut media_engine)?;
+    let builder = RegistryBuilder::new().with_rtcp_readable();
+    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 
     // Application-most, so every interceptor has already seen the whole of the inbound RTCP.
     let registry = if keyframe_requests_only {

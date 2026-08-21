@@ -31,9 +31,13 @@
 //! | 4 | FEC encoder | its repair packets reach 3, 2, 1, 0 |
 //! | 5 | FEC decoder | recovery before anything inspects sequence numbers |
 //! | 6 | NACK generator | loss detected from arrivals, not from released packets |
-//! | 7–9 | TWCC receiver, RTCP receiver reports, RFC 8888 | **arrival recorders — must precede the jitter buffer** |
+//! | 7–9 | TWCC receiver, RFC 8888, RTCP receiver reports | **arrival recorders — must precede the jitter buffer** |
 //! | 10–11 | RTCP sender reports, interval PLI | generators with no read-side ordering constraint |
 //! | 12 | jitter buffer | delays and re-stamps; releases toward the application |
+//!
+//! TWCC receiver and RFC 8888 do the same job in different formats — a chain carries one or the
+//! other — so they are listed together; the receiver reports beside them are RFC 3550 reception
+//! quality, not congestion-control feedback. Their order relative to each other does not matter.
 //!
 //! Arrival recorders precede the jitter buffer because the buffer re-stamps a packet with its
 //! *release* instant. A recorder below it would report local playout times to the remote as
@@ -50,10 +54,9 @@ use std::time::Instant;
 
 /// A flat list of interceptors, driven as one [`Protocol`].
 ///
-/// The chain is the protocol; the interceptors are interceptors inside it. `InterceptorChain` does not
-/// itself implement [`Interceptor`], so chains cannot nest and there is exactly one belt.
+/// The chain is the interceptor too; the interceptors are interceptors inside it.
 #[derive(Default)]
-pub(crate) struct InterceptorChain {
+pub(crate) struct Chain {
     /// Ordered by distance from the wire: index 0 is closest to the network.
     interceptors: Vec<Box<dyn Interceptor>>,
     read_outs: VecDeque<TaggedPacket>,
@@ -61,7 +64,7 @@ pub(crate) struct InterceptorChain {
     event_outs: VecDeque<()>,
 }
 
-impl InterceptorChain {
+impl Chain {
     /// Build a chain from interceptors already in wire-to-application order.
     ///
     /// Crate-private: a chain is built by [`Registry`](crate::Registry), which also appends the
@@ -135,7 +138,7 @@ impl InterceptorChain {
     }
 }
 
-impl Protocol<TaggedPacket, TaggedPacket, ()> for InterceptorChain {
+impl Protocol<TaggedPacket, TaggedPacket, ()> for Chain {
     type Rout = TaggedPacket;
     type Wout = TaggedPacket;
     type Eout = ();
@@ -206,7 +209,7 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for InterceptorChain {
 
 /// A chain is itself an interceptor: it implements the same `Protocol`, and binding a stream
 /// on it binds that stream on every interceptor inside it.
-impl Interceptor for InterceptorChain {
+impl Interceptor for Chain {
     /// A local stream this endpoint is now sending.
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         for interceptor in self.interceptors.iter_mut() {

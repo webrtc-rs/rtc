@@ -52,19 +52,19 @@
 //!
 //! ```no_run
 //! # use std::time::Instant;
-//! use rtc::interceptor::Registry;
+//! use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
-//! let registry = Registry::new();
+//! let builder = RegistryBuilder::new();
 //!
 //! // Register NACK, RTCP reports, simulcast headers, and TWCC receiver.
 //! // Note this takes `&mut media_engine`: it registers the RTCP feedback types and
 //! // header extensions the interceptors need, so pass that same engine to the builder.
-//! let registry = register_default_interceptors(registry, &mut media_engine)?;
+//! let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 //!
 //! let pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
@@ -80,20 +80,23 @@
 //!
 //! ```no_run
 //! # use std::time::Instant;
-//! use rtc::interceptor::Registry;
+//! use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 //! use rtc::peer_connection::RTCPeerConnectionBuilder;
 //! use rtc::peer_connection::configuration::interceptor_registry::{configure_nack, configure_twcc};
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
-//! let registry = Registry::new();
+//! let builder = RegistryBuilder::new();
 //!
 //! // Only enable NACK (no TWCC, no reports)
-//! let registry = configure_nack(registry, &mut media_engine);
+//! let builder = configure_nack(builder, &mut media_engine);
 //!
 //! // Or enable full TWCC for bandwidth estimation
-//! let registry = configure_twcc(registry, &mut media_engine)?;
+//! let builder = configure_twcc(builder, &mut media_engine)?;
+//!
+//! // `build` sorts by slot, so the order the helpers ran in does not matter.
+//! let registry = builder.build();
 //!
 //! let pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
@@ -131,10 +134,208 @@ use crate::rtp_transceiver::rtp_sender::{
 };
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::{
-    NackGeneratorBuilder, NackResponderBuilder, ReceiverReportBuilder, Registry,
-    SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
+    BoxedInterceptor, Interceptor, NackGeneratorBuilder, NackResponderBuilder,
+    ReceiverReportBuilder, Registry, SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
 };
 use shared::error::Result;
+
+/// Where an interceptor belongs in the chain, measured by **distance from the wire**.
+///
+/// This is the chain contract's ordering table expressed as data, so that one place decides it and
+/// a test can check a builder against it. The doc comments carry that table's indices; the gaps are
+/// slots nothing fills yet.
+///
+/// Read walks the list forwards and write walks it in reverse, so a smaller slot is closer to the
+/// network in both directions.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[non_exhaustive]
+#[repr(usize)]
+pub enum InterceptorSlot {
+    /// Congestion control: send history and feedback ingest.
+    ///
+    /// The only position that sees every byte that leaves, because nothing exits the chain except
+    /// through the interceptors ahead of it. Filled by P7; named here so an estimator of your own
+    /// has a landmark.
+    CongestionControl = 100,
+    /// `TwccSenderInterceptor` — assigns the transport-wide sequence number the send history keys on.
+    TwccSender = 200,
+    /// `PacerInterceptor` — gates departures. Everything that generates a packet sits above it, so
+    /// retransmissions, FEC repair and generated RTCP are all metered.
+    Pacer = 300,
+    /// `NackResponderInterceptor` — buffers sent RTP; its retransmissions still reach 300, 200, 100.
+    NackResponder = 400,
+    /// `FlexFec03SendInterceptor` — its repair packets still reach everything below.
+    FecEncoder = 500,
+    /// `FlexFec03ReceiveInterceptor` — recovery before anything inspects sequence numbers.
+    FecDecoder = 600,
+    /// `NackGeneratorInterceptor` — loss detected from arrivals, not from released packets.
+    NackGenerator = 700,
+    /// `TwccReceiverInterceptor` — records arrivals and reports them to the remote sender's
+    /// congestion controller. An arrival recorder, so it precedes the jitter buffer.
+    TwccReceiver = 800,
+    /// `Rfc8888Interceptor` — the same job as [`InterceptorSlot::TwccReceiver`] in a different format, and
+    /// registering both double-counts, so a chain carries one or the other.
+    Rfc8888 = 900,
+    /// `ReceiverReportInterceptor` — RFC 3550 reception quality, not congestion-control feedback.
+    /// Still an arrival recorder, so it precedes the jitter buffer.
+    ReceiverReport = 1000,
+    /// `SenderReportInterceptor` — a generator with no read-side ordering constraint.
+    SenderReport = 1100,
+    /// `IntervalPliInterceptor` — a generator with no read-side ordering constraint.
+    IntervalPli = 1200,
+    /// `JitterBufferInterceptor` — delays and re-stamps, so every arrival recorder precedes it.
+    ///
+    /// A recorder below this would report local playout instants to the remote as arrival times,
+    /// and the remote's congestion controller would read this endpoint's buffering depth as network
+    /// delay variation.
+    JitterBuffer = 1300,
+}
+
+impl From<InterceptorSlot> for usize {
+    fn from(slot: InterceptorSlot) -> Self {
+        slot as usize
+    }
+}
+
+/// Collects interceptors with the slot each belongs in, then assembles a [`Registry`].
+///
+/// # Why this exists rather than adding to a [`Registry`] directly
+///
+/// `Registry` is positional: the first interceptor added is closest to the wire. That is the right
+/// model for the chain itself, but it makes *composition* hazardous, because a helper that appends
+/// can only ever occupy contiguous positions. The helpers here do not:
+///
+/// | Helper | Slots |
+/// |---|---|
+/// | [`configure_nack`] | [`InterceptorSlot::NackResponder`], [`InterceptorSlot::NackGenerator`] |
+/// | [`configure_twcc`] | **[`InterceptorSlot::TwccSender`]**, [`InterceptorSlot::TwccReceiver`] |
+/// | [`configure_rtcp_reports`] | [`InterceptorSlot::ReceiverReport`], [`InterceptorSlot::SenderReport`] |
+///
+/// TWCC spans NACK, so with append-only helpers **no call order produces the documented ordering** —
+/// `nack` then `twcc` gives responder, generator, sender, receiver, and the reverse is no better.
+/// Neither reports an error. A chain that records a packet in the send history *before* the TWCC
+/// sender has numbered it yields a bandwidth estimate computed from packets the estimator cannot
+/// match against feedback.
+///
+/// Here every interceptor carries the slot it belongs in, and [`build`](Self::build) sorts. Call
+/// order stops being load-bearing, and the ordering lives in one place — the [`InterceptorSlot`] values.
+///
+/// Calling a helper twice adds its interceptors twice, exactly as `Registry::with` always did.
+///
+/// # Example
+///
+/// ```
+/// use rtc::peer_connection::configuration::interceptor_registry::{
+///     RegistryBuilder, configure_nack, configure_twcc,
+/// };
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+///
+/// // Either order; the chain is the same.
+/// let builder = configure_nack(RegistryBuilder::new(), &mut media_engine);
+/// let builder = configure_twcc(builder, &mut media_engine)?;
+///
+/// let registry = builder.build();
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Default)]
+pub struct RegistryBuilder {
+    /// Each interceptor with the position it asked for, in the order they were added.
+    slots: Vec<(usize, BoxedInterceptor)>,
+    rtcp_readable: bool,
+}
+
+impl RegistryBuilder {
+    /// An empty builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an interceptor at `position`.
+    ///
+    /// [`InterceptorSlot`] names the positions this crate knows about, spaced a hundred apart so anything else
+    /// fits **between** them — pass a `Slot` to sit at one, or a bare number to sit in a gap:
+    ///
+    /// ```text
+    /// Slot::TwccSender (200) ── yours at 250 ── Slot::Pacer (300)
+    /// ```
+    ///
+    /// At the same position, interceptors keep the order they were added in, so an application's
+    /// own sits application-ward of a built-in it shares a slot with.
+    ///
+    /// ```
+    /// # use rtc::peer_connection::configuration::interceptor_registry::{RegistryBuilder, InterceptorSlot};
+    /// # fn example(mine: impl rtc::interceptor::Interceptor + 'static) {
+    /// let registry = RegistryBuilder::new().at(InterceptorSlot::Pacer, mine).build();
+    /// # }
+    /// ```
+    pub fn at(
+        mut self,
+        position: impl Into<usize>,
+        interceptor: impl Interceptor + 'static,
+    ) -> Self {
+        self.slots.push((position.into(), Box::new(interceptor)));
+        self
+    }
+
+    /// [`at`](Self::at) for an interceptor that is already boxed, so it is not boxed twice.
+    pub fn at_boxed(mut self, position: impl Into<usize>, interceptor: BoxedInterceptor) -> Self {
+        self.slots.push((position.into(), interceptor));
+        self
+    }
+
+    /// Make inbound RTCP readable by the application — it arrives from
+    /// [`poll_read`](sansio::Protocol::poll_read) like media does — as well as acted on by the
+    /// interceptors.
+    ///
+    /// Off by default. RTCP is control traffic the interceptors act on: a receiver report feeds
+    /// the sender statistics, a NACK is answered by the responder, transport-wide feedback drives
+    /// the bandwidth estimate. An application that did not ask for it would find a stream of
+    /// packets it cannot use interleaved with its media. Turn it on for an SFU relaying feedback,
+    /// or a tool inspecting a session.
+    ///
+    /// Outbound RTCP is unaffected; this is only about what arrives.
+    ///
+    /// It has to be asked for here rather than arranged by an interceptor of your own. One that
+    /// captured an RTCP packet and re-emitted it from `poll_read` would put the copy back on the
+    /// belt *behind* itself, where [`NoopInterceptor`] is still ahead of it and drops it — the
+    /// original and the copy both. The nested chain allowed that trick because a local `poll_read`
+    /// queue was terminal and bypassed everything below it, which is precisely the bypass this
+    /// design removes.
+    pub fn with_rtcp_readable(mut self) -> Self {
+        self.rtcp_readable = true;
+        self
+    }
+
+    /// Assemble the [`Registry`], wire-to-application.
+    ///
+    /// The sort is **stable**, so interceptors sharing a position keep the order they were added
+    /// in. Flags that are not positional — [`Registry::with_rtcp_readable`] — apply to the result:
+    ///
+    /// ```
+    /// # use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
+    /// let registry = RegistryBuilder::new().with_rtcp_readable().build();
+    /// ```
+    ///
+    /// An interceptor added with [`Registry::with`] after this lands application-most, which is
+    /// where something that merely observes the chain wants to be. One whose depth matters should
+    /// use [`at`](Self::at) instead.
+    pub fn build(mut self) -> Registry {
+        self.slots.sort_by_key(|(position, _)| *position);
+
+        let mut registry = Registry::new();
+        for (_position, interceptor) in self.slots {
+            registry = registry.with_boxed(interceptor);
+        }
+        if self.rtcp_readable {
+            registry = registry.with_rtcp_readable();
+        }
+        registry
+    }
+}
 
 /// Registers a standard set of interceptors for typical WebRTC usage.
 ///
@@ -156,14 +357,14 @@ use shared::error::Result;
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
-/// let registry = Registry::new();
-/// let registry = register_default_interceptors(registry, &mut media_engine)?;
+/// let builder = RegistryBuilder::new();
+/// let builder = register_default_interceptors(builder, &mut media_engine)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -173,21 +374,20 @@ use shared::error::Result;
 /// If you need to customize which interceptors are loaded, copy the code from
 /// this function and remove or modify the unwanted interceptors.
 pub fn register_default_interceptors(
-    registry: Registry,
+    builder: RegistryBuilder,
     media_engine: &mut MediaEngine,
-) -> Result<Registry> {
-    // Added wire-to-application, which is the order they run in on the read path and the
-    // reverse of the order they run in on the write path.
-    let registry = configure_nack(registry, media_engine);
+) -> Result<RegistryBuilder> {
+    // Order is not decided here — `RegistryBuilder::planned` decides it. These may be called in
+    // any sequence.
+    let builder = configure_nack(builder, media_engine);
 
     configure_simulcast_extension_headers(media_engine)?;
 
-    // TWCC records arrival times, so it precedes anything that re-stamps or delays a packet.
-    let registry = configure_twcc_receiver_only(registry, media_engine)?;
+    let builder = configure_twcc_receiver_only(builder, media_engine)?;
 
-    let registry = configure_rtcp_reports(registry);
+    let builder = configure_rtcp_reports(builder);
 
-    Ok(registry)
+    Ok(builder)
 }
 
 /// Configures NACK (Negative Acknowledgement) interceptors for packet loss recovery.
@@ -211,19 +411,19 @@ pub fn register_default_interceptors(
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_nack;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
 /// let mut media_engine = MediaEngine::default();
-/// let registry = Registry::new();
-/// let registry = configure_nack(registry, &mut media_engine);
+/// let builder = RegistryBuilder::new();
+/// let builder = configure_nack(builder, &mut media_engine);
 /// ```
 ///
 /// # References
 ///
 /// - [RFC 4585](https://datatracker.ietf.org/doc/html/rfc4585) - Extended RTP Profile for RTCP-Based Feedback
-pub fn configure_nack(registry: Registry, media_engine: &mut MediaEngine) -> Registry {
+pub fn configure_nack(builder: RegistryBuilder, media_engine: &mut MediaEngine) -> RegistryBuilder {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_NACK.to_owned(),
@@ -239,9 +439,15 @@ pub fn configure_nack(registry: Registry, media_engine: &mut MediaEngine) -> Reg
         RtpCodecKind::Video,
     );
 
-    registry
-        .with(NackResponderBuilder::new().build())
-        .with(NackGeneratorBuilder::new().build())
+    builder
+        .at(
+            InterceptorSlot::NackResponder,
+            NackResponderBuilder::new().build(),
+        )
+        .at(
+            InterceptorSlot::NackGenerator,
+            NackGeneratorBuilder::new().build(),
+        )
 }
 
 /// Configures RTCP Sender and Receiver Report interceptors.
@@ -273,20 +479,26 @@ pub fn configure_nack(registry: Registry, media_engine: &mut MediaEngine) -> Reg
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_rtcp_reports;
 ///
-/// let registry = Registry::new();
-/// let registry = configure_rtcp_reports(registry);
+/// let builder = RegistryBuilder::new();
+/// let builder = configure_rtcp_reports(builder);
 /// ```
 ///
 /// # References
 ///
 /// - [RFC 3550 Section 6](https://datatracker.ietf.org/doc/html/rfc3550#section-6) - RTCP Sender and Receiver Reports
-pub fn configure_rtcp_reports(registry: Registry) -> Registry {
-    registry
-        .with(ReceiverReportBuilder::new().build())
-        .with(SenderReportBuilder::new().build())
+pub fn configure_rtcp_reports(builder: RegistryBuilder) -> RegistryBuilder {
+    builder
+        .at(
+            InterceptorSlot::ReceiverReport,
+            ReceiverReportBuilder::new().build(),
+        )
+        .at(
+            InterceptorSlot::SenderReport,
+            SenderReportBuilder::new().build(),
+        )
 }
 
 /// Registers RTP header extensions required for simulcast streaming.
@@ -380,14 +592,14 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
-/// let registry = Registry::new();
-/// let registry = configure_twcc(registry, &mut media_engine)?;
+/// let builder = RegistryBuilder::new();
+/// let builder = configure_twcc(builder, &mut media_engine)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -395,7 +607,10 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 /// # References
 ///
 /// - [draft-holmer-rmcat-transport-wide-cc](https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01)
-pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Result<Registry> {
+pub fn configure_twcc(
+    builder: RegistryBuilder,
+    media_engine: &mut MediaEngine,
+) -> Result<RegistryBuilder> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -426,9 +641,15 @@ pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Res
         None,
     )?;
 
-    Ok(registry
-        .with(TwccSenderBuilder::new().build())
-        .with(TwccReceiverBuilder::new().build()))
+    Ok(builder
+        .at(
+            InterceptorSlot::TwccSender,
+            TwccSenderBuilder::new().build(),
+        )
+        .at(
+            InterceptorSlot::TwccReceiver,
+            TwccReceiverBuilder::new().build(),
+        ))
 }
 
 /// Configures TWCC sender only (the remote peer generates feedback).
@@ -456,21 +677,21 @@ pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Res
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc_sender_only;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
-/// let registry = Registry::new();
-/// let registry = configure_twcc_sender_only(registry, &mut media_engine)?;
+/// let builder = RegistryBuilder::new();
+/// let builder = configure_twcc_sender_only(builder, &mut media_engine)?;
 /// # Ok(())
 /// # }
 /// ```
 pub fn configure_twcc_sender_only(
-    registry: Registry,
+    builder: RegistryBuilder,
     media_engine: &mut MediaEngine,
-) -> Result<Registry> {
+) -> Result<RegistryBuilder> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -503,7 +724,10 @@ pub fn configure_twcc_sender_only(
         None,
     )?;
 
-    Ok(registry.with(TwccSenderBuilder::new().build()))
+    Ok(builder.at(
+        InterceptorSlot::TwccSender,
+        TwccSenderBuilder::new().build(),
+    ))
 }
 
 /// Configures TWCC receiver only (generates feedback for the remote sender).
@@ -534,21 +758,21 @@ pub fn configure_twcc_sender_only(
 /// # Example
 ///
 /// ```
-/// use rtc::interceptor::Registry;
+/// use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_twcc_receiver_only;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
-/// let registry = Registry::new();
-/// let registry = configure_twcc_receiver_only(registry, &mut media_engine)?;
+/// let builder = RegistryBuilder::new();
+/// let builder = configure_twcc_receiver_only(builder, &mut media_engine)?;
 /// # Ok(())
 /// # }
 /// ```
 pub fn configure_twcc_receiver_only(
-    registry: Registry,
+    builder: RegistryBuilder,
     media_engine: &mut MediaEngine,
-) -> Result<Registry> {
+) -> Result<RegistryBuilder> {
     media_engine.register_feedback(
         RTCPFeedback {
             typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
@@ -579,7 +803,10 @@ pub fn configure_twcc_receiver_only(
         None,
     )?;
 
-    Ok(registry.with(TwccReceiverBuilder::new().build()))
+    Ok(builder.at(
+        InterceptorSlot::TwccReceiver,
+        TwccReceiverBuilder::new().build(),
+    ))
 }
 
 /// Creates a [`StreamInfo`](interceptor::StreamInfo) from RTC types for interceptor binding.
@@ -627,5 +854,106 @@ pub(crate) fn create_stream_info(
         channels: codec.channels,
         sdp_fmtp_line: codec.sdp_fmtp_line.clone(),
         rtcp_feedback: feedbacks,
+    }
+}
+
+#[cfg(test)]
+mod slot_order_tests {
+    use super::*;
+
+    /// Positions of everything a builder holds, after `build`'s sort.
+    fn positions(mut builder: RegistryBuilder) -> Vec<usize> {
+        builder.slots.sort_by_key(|(position, _)| *position);
+        builder
+            .slots
+            .iter()
+            .map(|(position, _)| *position)
+            .collect()
+    }
+
+    /// The hazard this type exists for: with append-only helpers, TWCC spans NACK and no call
+    /// order produces the documented ordering. Here the two orders must be indistinguishable.
+    #[test]
+    fn helper_call_order_does_not_affect_the_chain() {
+        let mut media_engine = MediaEngine::default();
+
+        let nack_first = configure_twcc(
+            configure_nack(RegistryBuilder::new(), &mut media_engine),
+            &mut media_engine,
+        )
+        .expect("twcc");
+
+        let mut media_engine = MediaEngine::default();
+        let twcc_first = configure_nack(
+            configure_twcc(RegistryBuilder::new(), &mut media_engine).expect("twcc"),
+            &mut media_engine,
+        );
+
+        assert_eq!(positions(nack_first), positions(twcc_first));
+    }
+
+    /// Whatever a builder is asked for, it emits wire-to-application.
+    #[test]
+    fn the_default_chain_is_emitted_in_slot_order() {
+        let mut media_engine = MediaEngine::default();
+        let builder = register_default_interceptors(RegistryBuilder::new(), &mut media_engine)
+            .expect("default interceptors");
+
+        let positions = positions(builder);
+        assert!(
+            positions.windows(2).all(|pair| pair[0] <= pair[1]),
+            "default chain is not wire-to-application: {positions:?}"
+        );
+        assert_eq!(
+            vec![
+                InterceptorSlot::NackResponder as usize,
+                InterceptorSlot::NackGenerator as usize,
+                InterceptorSlot::TwccReceiver as usize,
+                InterceptorSlot::ReceiverReport as usize,
+                InterceptorSlot::SenderReport as usize,
+            ],
+            positions
+        );
+    }
+
+    /// A bare number puts an interceptor between two named slots — the reason they are spaced.
+    #[test]
+    fn a_custom_interceptor_fits_between_named_slots() {
+        let mut media_engine = MediaEngine::default();
+        let builder = configure_twcc(RegistryBuilder::new(), &mut media_engine)
+            .expect("twcc")
+            .at(250usize, interceptor::NoopInterceptor::new(false));
+
+        assert_eq!(
+            vec![
+                InterceptorSlot::TwccSender as usize,
+                250,
+                InterceptorSlot::TwccReceiver as usize
+            ],
+            positions(builder)
+        );
+    }
+
+    /// Sharing a slot is allowed, and the sort is stable, so the one added later sits
+    /// application-ward of the one added first.
+    #[test]
+    fn interceptors_sharing_a_slot_keep_the_order_they_were_added() {
+        let builder = RegistryBuilder::new()
+            .at(
+                InterceptorSlot::Pacer,
+                interceptor::NoopInterceptor::new(false),
+            )
+            .at(
+                InterceptorSlot::Pacer,
+                interceptor::NoopInterceptor::new(true),
+            );
+
+        assert_eq!(
+            vec![
+                InterceptorSlot::Pacer as usize,
+                InterceptorSlot::Pacer as usize
+            ],
+            positions(builder)
+        );
     }
 }

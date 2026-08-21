@@ -3,10 +3,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{error, trace};
-use rtc::interceptor::Registry;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::interceptor_registry::{
+    RegistryBuilder, register_default_interceptors,
+};
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -178,10 +179,10 @@ async fn run(
     media_engine.register_codec(audio_codec, RtpCodecKind::Audio)?;
     media_engine.register_codec(video_codec, RtpCodecKind::Video)?;
 
-    let registry = Registry::new();
+    let builder = RegistryBuilder::new();
 
     // Use the default set of Interceptors
-    let registry = register_default_interceptors(registry, &mut media_engine)?;
+    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
 
     // Create RTC peer connection configuration
     let config = RTCConfigurationBuilder::new()

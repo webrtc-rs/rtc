@@ -223,7 +223,7 @@ impl Interceptor for IntervalPliInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::InterceptorChain;
+    use crate::chain::Chain;
     use crate::stream_info::RTCPFeedback;
     use sansio::Protocol;
 
@@ -250,7 +250,7 @@ mod tests {
         msg
     }
 
-    fn plis(chain: &mut InterceptorChain) -> Vec<u32> {
+    fn plis(chain: &mut Chain) -> Vec<u32> {
         let mut out = Vec::new();
         while let Some(pkt) = chain.poll_write() {
             if let Packet::Rtcp(packets) = &pkt.message.packet {
@@ -267,8 +267,8 @@ mod tests {
         out
     }
 
-    fn chain(interval: Duration) -> InterceptorChain {
-        InterceptorChain::new(vec![Box::new(IntervalPliInterceptor::new(interval))])
+    fn chain(interval: Duration) -> Chain {
+        Chain::new(vec![Box::new(IntervalPliInterceptor::new(interval))])
     }
 
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         let now = Instant::now();
         // Deliberately not the only interceptor, and not the one the application holds: under nesting
         // this arrangement is exactly what made `force_pli` unreachable.
-        let mut chain = InterceptorChain::new(vec![
+        let mut chain = Chain::new(vec![
             Box::new(IntervalPliInterceptor::new(Duration::ZERO)),
             Box::new(crate::TwccSenderBuilder::new().build()),
         ]);
@@ -408,8 +408,7 @@ mod tests {
     #[test]
     fn a_force_pli_attribute_is_not_consumed() {
         let now = Instant::now();
-        let mut chain =
-            InterceptorChain::new(vec![Box::new(IntervalPliInterceptor::new(Duration::ZERO))]);
+        let mut chain = Chain::new(vec![Box::new(IntervalPliInterceptor::new(Duration::ZERO))]);
         chain.bind_remote_stream(&stream_info(7));
         // A newly bound stream is asked for a keyframe the first time the interceptor is handed a
         // clock, and a carrier packet supplies one — so clear that out first, leaving only what

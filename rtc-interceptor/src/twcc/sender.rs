@@ -163,7 +163,7 @@ impl Interceptor for TwccSenderInterceptor {
 mod tests {
     use super::*;
     use crate::AttributedPacket;
-    use crate::chain::InterceptorChain;
+    use crate::chain::Chain;
     use crate::stream_info::RTPHeaderExtension;
     use sansio::Protocol;
     use shared::TransportContext;
@@ -210,8 +210,8 @@ mod tests {
             .map(|e| e.transport_sequence)
     }
 
-    fn chain() -> InterceptorChain {
-        let mut chain = InterceptorChain::new(vec![Box::new(TwccSenderBuilder::new().build())]);
+    fn chain() -> Chain {
+        let mut chain = Chain::new(vec![Box::new(TwccSenderBuilder::new().build())]);
         chain.bind_local_stream(&stream_info(1, 5));
         chain
     }
@@ -310,7 +310,7 @@ mod tests {
             fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
         }
         // index 0 = wireward of the tagger at index 1, so it acts *after* on the write walk.
-        let mut chain = InterceptorChain::new(vec![
+        let mut chain = Chain::new(vec![
             Box::new(Recorder::default()),
             Box::new(TwccSenderBuilder::new().build()),
         ]);
