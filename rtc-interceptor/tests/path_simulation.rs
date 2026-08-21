@@ -363,3 +363,70 @@ fn a_full_bottleneck_queue_refuses_packets() {
         "the refused packet is reported lost, which is what the far end would observe"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// P7-04 — the delay trend, against the fixtures
+// ---------------------------------------------------------------------------------------
+
+/// The delay trend must separate the two fixtures: flat on a steady path, clearly positive on a
+/// queueing one. Everything P7-05 and P7-06 do rests on that separation being real.
+///
+/// Note what this does **not** cover: the fixture offers one packet every 10 ms, well outside the
+/// 5 ms burst interval, so every packet is its own group and the accumulator's grouping is a no-op
+/// here. Widening or disabling the burst interval leaves this test green. Grouping is pinned by
+/// `gcc::arrival_group`'s own tests instead, against hand-built bursts.
+#[test]
+fn the_delay_trend_separates_a_steady_path_from_a_queueing_one() {
+    use rtc_interceptor::SlopeEstimator;
+
+    let trend_over = |profile: PathProfile| -> f64 {
+        let epoch = Instant::now();
+        let mut path = Path::new(profile, epoch);
+        let mut slope = SlopeEstimator::new();
+        let mut offered = Vec::new();
+
+        for step in 0..150u64 {
+            let at = epoch + Duration::from_millis(step * 10);
+            path.offer(at, step as u16, PACKET_BITS);
+            offered.push(at);
+            path.drain_to(at);
+        }
+        path.drain_to(epoch + Duration::from_secs(60));
+
+        for arrival in path.take_arrivals() {
+            let Some(at) = arrival.at else { continue };
+            let index = usize::from(arrival.twcc_sequence_number);
+            slope.accumulate(&PacketReport {
+                ssrc: SSRC,
+                id: index as u64,
+                rtp_sequence_number: arrival.twcc_sequence_number,
+                is_twcc: true,
+                twcc_sequence_number: arrival.twcc_sequence_number,
+                size: (PACKET_BITS / 8.0) as usize,
+                arrived: true,
+                departure: offered[index],
+                // The far end's clock: an offset from the run's start.
+                arrival: Some(at.duration_since(epoch)),
+                ecn: rtcp::transport_feedbacks::cc_feedback_report::Ecn::default(),
+            });
+        }
+        slope.flush();
+        slope.estimate_ms()
+    };
+
+    let steady = trend_over(PathProfile::steady());
+    let queueing = trend_over(PathProfile::queue_building());
+
+    assert!(
+        steady.abs() < 1.0,
+        "a steady path must read flat, got {steady}"
+    );
+    assert!(
+        queueing > 5.0,
+        "a queue building must read clearly positive, got {queueing}"
+    );
+    assert!(
+        queueing > steady + 5.0,
+        "the two fixtures must be separable: steady {steady}, queueing {queueing}"
+    );
+}

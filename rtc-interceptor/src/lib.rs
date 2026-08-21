@@ -224,6 +224,7 @@ pub(crate) mod registry;
 
 pub(crate) mod cc;
 pub(crate) mod flexfec;
+pub(crate) mod gcc;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
@@ -241,6 +242,12 @@ pub use cc::interceptor::{
     DEFAULT_PRUNE_HORIZON as CONGESTION_CONTROL_DEFAULT_PRUNE_HORIZON,
 };
 pub use flexfec::bit_array::BitArray;
+pub use gcc::arrival_group::{
+    ArrivalGroup, ArrivalGroupAccumulator, DEFAULT_BURST_INTERVAL as GCC_DEFAULT_BURST_INTERVAL,
+    InterGroupDelay,
+};
+pub use gcc::kalman::Kalman;
+pub use gcc::slope::{DelayTrend, SlopeEstimator};
 pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
 pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
 pub use flexfec::draft03::encoder::FlexFec03Encoder;
