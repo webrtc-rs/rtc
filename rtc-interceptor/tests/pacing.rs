@@ -156,6 +156,12 @@ impl Harness {
     ///
     /// With no event channel the estimate travels as an attribute on an outgoing packet, which is
     /// how a congestion controller application-ward of the pacer would deliver it.
+    /// Tell the pacer a new target rate.
+    ///
+    /// On the **read** leg, because that is the only one the estimate can cross on: the congestion
+    /// controller is wire-*ward* of the pacer, so on the write leg it never sees a packet before the
+    /// pacer does. It attaches the attribute to the inbound feedback packet that produced the
+    /// estimate, and the pacer reads it on the way past.
     fn retarget(&mut self, bits_per_second: f64) {
         let mut msg = TaggedPacket {
             now: self.epoch,
@@ -164,8 +170,8 @@ impl Harness {
         };
         msg.message
             .add(Attribute::TargetBitrateChanged { bits_per_second });
-        self.chain.handle_write(msg).expect("handle_write");
-        while self.chain.poll_write().is_some() {}
+        self.chain.handle_read(msg).expect("handle_read");
+        while self.chain.poll_read().is_some() {}
     }
 
     fn tick(&mut self, at: Duration) {

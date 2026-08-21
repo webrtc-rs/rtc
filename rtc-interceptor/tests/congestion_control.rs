@@ -423,3 +423,44 @@ fn a_retransmission_is_recorded_as_a_separate_departure() {
         "each transmission gets its own transport-wide number"
     );
 }
+
+/// P7-03: the estimate actually reaches the pacer and changes what it does.
+///
+/// This is the point at which #840's second requirement is met — an application can supply its own
+/// `BandwidthEstimator` and watch the pacer follow it, with no GCC anywhere.
+///
+/// Asserted as a *schedule*, not an eventuality: the budget is a pure function of the instants
+/// handed in, so halving the target must halve the release rate, exactly.
+#[test]
+fn the_pacer_follows_the_estimate() {
+    let epoch = Instant::now();
+    let estimator = Recorder::new(BITRATE);
+    let mut chain = chain(estimator.clone());
+    chain.bind_local_stream(&stream());
+
+    // At 1.2 Mb/s with a one-packet burst, a 12 000-bit packet leaves every 10 ms.
+    let before = send_and_drain(&mut chain, epoch, 4);
+    let spacing_before = before[3].duration_since(before[0]) / 3;
+
+    // Halve the estimate and let it ride out on a feedback packet.
+    estimator.set_target(BITRATE / 2.0);
+    chain
+        .handle_read(twcc_feedback(epoch + Duration::from_millis(200), 0, 4))
+        .expect("read");
+    while chain.poll_read().is_some() {}
+
+    let after = send_and_drain(&mut chain, epoch + Duration::from_millis(300), 4);
+    let spacing_after = after[3].duration_since(after[0]) / 3;
+
+    assert!(
+        spacing_after > spacing_before,
+        "halving the target must slow the pacer: {spacing_before:?} → {spacing_after:?}"
+    );
+    // Half the rate is twice the spacing. Allow a millisecond of slack for the 1 ms test clock.
+    let expected = spacing_before * 2;
+    assert!(
+        spacing_after.abs_diff(expected) <= Duration::from_millis(1),
+        "half the rate should be twice the spacing: expected about {expected:?}, got \
+         {spacing_after:?}"
+    );
+}
