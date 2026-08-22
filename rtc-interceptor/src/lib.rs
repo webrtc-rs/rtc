@@ -222,7 +222,9 @@ pub(crate) mod chain;
 pub(crate) mod noop;
 pub(crate) mod registry;
 
+pub(crate) mod cc;
 pub(crate) mod flexfec;
+pub(crate) mod gcc;
 pub(crate) mod intervalpli;
 pub(crate) mod jitterbuffer;
 pub(crate) mod nack;
@@ -234,6 +236,11 @@ pub(crate) mod rtpfb;
 pub(crate) mod stream_info;
 pub(crate) mod twcc;
 
+pub use cc::estimator::{BandwidthEstimator, ConstantBitrate, EstimatorStats};
+pub use cc::interceptor::{
+    CongestionControlBuilder, CongestionControlInterceptor,
+    DEFAULT_PRUNE_HORIZON as CONGESTION_CONTROL_DEFAULT_PRUNE_HORIZON,
+};
 pub use flexfec::bit_array::BitArray;
 pub use flexfec::coverage::{MAX_FEC_PACKETS, MAX_MEDIA_PACKETS, ProtectionCoverage};
 pub use flexfec::draft03::decoder::{FlexFec03Decoder, ParseError as FlexFecParseError};
@@ -243,6 +250,28 @@ pub use flexfec::draft03::sender::{
     DEFAULT_NUM_FEC_PACKETS, DEFAULT_NUM_MEDIA_PACKETS, FlexFec03SendBuilder,
     FlexFec03SendInterceptor,
 };
+pub use gcc::arrival_group::{
+    ArrivalGroup, ArrivalGroupAccumulator, DEFAULT_BURST_INTERVAL as GCC_DEFAULT_BURST_INTERVAL,
+    InterGroupDelay,
+};
+pub use gcc::estimator::{
+    DEFAULT_INITIAL_BITRATE as GCC_INITIAL_BITRATE, DEFAULT_MAX_BITRATE as GCC_MAX_BITRATE,
+    DEFAULT_MIN_BITRATE as GCC_MIN_BITRATE, Gcc,
+};
+pub use gcc::kalman::Kalman;
+pub use gcc::loss::{
+    DEFAULT_HIGH_LOSS as GCC_HIGH_LOSS, DEFAULT_LOSS_INTERVAL as GCC_LOSS_INTERVAL,
+    DEFAULT_LOW_LOSS as GCC_LOW_LOSS, LossController,
+};
+pub use gcc::overuse::{DEFAULT_OVERUSE_TIME as GCC_DEFAULT_OVERUSE_TIME, OveruseDetector, Usage};
+pub use gcc::rate_calc::{DEFAULT_WINDOW as GCC_RATE_WINDOW, RateCalculator};
+pub use gcc::rate_control::{
+    DEFAULT_DECREASE_FACTOR as GCC_DECREASE_FACTOR, DEFAULT_INCREASE_FACTOR as GCC_INCREASE_FACTOR,
+    DEFAULT_RATE_CONTROL_INTERVAL as GCC_RATE_CONTROL_INTERVAL, RateController,
+};
+pub use gcc::slope::{DelayTrend, SlopeEstimator};
+pub use gcc::state::RateControlState;
+pub use gcc::threshold::{AdaptiveThreshold, DEFAULT_INITIAL_MS as GCC_THRESHOLD_INITIAL_MS};
 pub use intervalpli::generator::{
     DEFAULT_INTERVAL as INTERVAL_PLI_DEFAULT_INTERVAL, IntervalPliInterceptor,
 };

@@ -61,7 +61,6 @@ pub(crate) struct Chain {
     interceptors: Vec<Box<dyn Interceptor>>,
     read_outs: VecDeque<TaggedPacket>,
     write_outs: VecDeque<TaggedPacket>,
-    event_outs: VecDeque<()>,
 }
 
 impl Chain {

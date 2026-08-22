@@ -128,6 +128,25 @@ impl IntervalPliInterceptor {
         !self.interval.is_zero()
     }
 
+    /// Act on an [`Attribute::ForcePli`] if `msg` carries one.
+    ///
+    /// Called from **both** legs. An interceptor's request arrives on whichever leg the packet it
+    /// annotated was travelling, and an application's arrives on the write leg — `rtc`'s handler
+    /// injects its carrier at the application end, so a read-only check would silently ignore
+    /// every request an application ever made.
+    ///
+    /// Observed, not consumed: the packet carries on with the attribute still attached, so anything
+    /// further along the walk sees both the request and the PLIs it produced.
+    fn observe_force_pli(&mut self, msg: &TaggedPacket) {
+        if let Some(Attribute::ForcePli { ssrcs }) =
+            msg.message.get(&Attribute::ForcePli { ssrcs: None })
+        {
+            let targets = self.targets(ssrcs.as_ref());
+            self.queue_plis(msg.now, &targets);
+            self.arm(msg.now);
+        }
+    }
+
     /// SSRCs that are bound, from a request naming some or all of them.
     ///
     /// A PLI for a stream nobody is receiving has no destination, so unbound SSRCs are dropped.
@@ -155,13 +174,7 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for IntervalPliInterceptor {
 
         // A keyframe request arrives as an attribute on a packet rather than out of band: with no
         // event channel, that is how one interceptor tells another something.
-        if let Some(Attribute::ForcePli { ssrcs }) =
-            msg.message.get(&Attribute::ForcePli { ssrcs: None })
-        {
-            let targets = self.targets(ssrcs.as_ref());
-            self.queue_plis(msg.now, &targets);
-            self.arm(msg.now);
-        }
+        self.observe_force_pli(&msg);
 
         self.read_queue.push_back(msg);
         Ok(())
@@ -172,6 +185,11 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for IntervalPliInterceptor {
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.observe(msg.now);
+
+        // The leg an application's request arrives on.
+        self.observe_force_pli(&msg);
+
         self.write_queue.push_back(msg);
         Ok(())
     }

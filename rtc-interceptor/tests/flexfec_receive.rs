@@ -450,3 +450,97 @@ fn a_packet_is_recovered_at_most_once() {
         .count();
     assert_eq!(1, hundreds, "recovered once, forwarded once");
 }
+
+// ---------------------------------------------------------------------------------------
+// CC-PRE-04 — what a recovered packet means to the NACK generator
+// ---------------------------------------------------------------------------------------
+
+/// `Attribute::RecoveredByFec` documents itself as *"a NACK generator that sees this must not ask
+/// for the packet again"*. This asks whether that needs an attribute check at all.
+///
+/// The chain ordering already arranges it: the FEC decoder is wire-ward of the NACK generator, so a
+/// recovered packet reaches the generator on the read walk like any other arrival and fills the gap
+/// in its receive log. The generator then has nothing to ask for — not because it inspected an
+/// attribute, but because the packet is *there*.
+///
+/// If this passes with no attribute check anywhere, the attribute's claim is about a mechanism that
+/// does not exist, and the doc is what needs fixing.
+#[test]
+fn a_recovered_packet_stops_the_nack_generator_asking_for_it() {
+    use rtc_interceptor::{NackGeneratorBuilder, RTCPFeedback};
+    use std::time::Duration;
+
+    const NACK_INTERVAL: Duration = Duration::from_millis(100);
+
+    let media = block(200, 5);
+    let repair = encode(&media, 2);
+
+    // Wire-to-application: FEC decoder, then NACK generator — the shipped ordering.
+    let mut chain = Registry::new()
+        .with(FlexFec03ReceiveBuilder::new().build())
+        .with(
+            NackGeneratorBuilder::new()
+                .with_interval(NACK_INTERVAL)
+                .build(),
+        )
+        .build();
+
+    let stream = StreamInfo {
+        ssrc: MEDIA_SSRC,
+        ssrc_fec: Some(REPAIR_SSRC),
+        payload_type: 96,
+        payload_type_fec: Some(REPAIR_PT),
+        clock_rate: 90_000,
+        rtcp_feedback: vec![RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: String::new(),
+        }],
+        ..Default::default()
+    };
+    chain.bind_remote_stream(&stream);
+
+    let epoch = Instant::now();
+    let mut receive = |chain: &mut dyn Interceptor, packet: &rtp::Packet| {
+        chain
+            .handle_read(TaggedPacket {
+                now: epoch,
+                transport: TransportContext::default(),
+                message: AttributedPacket::new(Packet::Rtp(packet.clone())),
+            })
+            .expect("handle_read");
+        while chain.poll_read().is_some() {}
+    };
+
+    // 202 is lost, then rebuilt from the repair packets — all before the NACK timer fires.
+    for packet in media.iter().filter(|p| p.header.sequence_number != 202) {
+        receive(&mut chain, packet);
+    }
+    for packet in &repair {
+        receive(&mut chain, packet);
+    }
+
+    chain
+        .handle_timeout(epoch + NACK_INTERVAL * 2)
+        .expect("handle_timeout");
+
+    let mut asked_for = Vec::new();
+    while let Some(packet) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
+            for rtcp_packet in rtcp_packets {
+                if let Some(nack) = rtcp_packet
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>(
+                    ) {
+                    for pair in &nack.nacks {
+                        asked_for.push(pair.packet_id);
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        !asked_for.contains(&202),
+        "the generator asked for a packet FEC had already rebuilt: {asked_for:?}"
+    );
+}

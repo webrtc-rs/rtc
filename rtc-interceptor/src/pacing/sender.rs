@@ -173,6 +173,24 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for PacerInterceptor {
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        // Follow the congestion controller's estimate.
+        //
+        // It arrives on the **read** leg because that is the only one it can cross on. The
+        // controller is wire-most, so on the write leg it is the last interceptor to see a packet
+        // and anything it attached would already have gone past here. On the read leg it is the
+        // first, and this is downstream of it — so the feedback packet that produced the estimate
+        // carries it here on its way to the application.
+        //
+        // Observed, not consumed: the packet carries on with the attribute attached, so anything
+        // further along reads the same number.
+        if let Some(Attribute::TargetBitrateChanged { bits_per_second }) =
+            msg.message.get(&Attribute::TargetBitrateChanged {
+                bits_per_second: 0.0,
+            })
+        {
+            self.pacer.set_target_bitrate(*bits_per_second);
+        }
+
         self.read_queue.push_back(msg);
         Ok(())
     }
@@ -182,17 +200,10 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for PacerInterceptor {
     }
 
     fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        // Follow the congestion controller's estimate. It rides on an outgoing packet because
-        // the controller is application-ward of the pacer and nothing else connects the two;
-        // observed rather than consumed, so whatever picks the encoder bitrate reads the same
-        // number from the same packet.
-        if let Some(Attribute::TargetBitrateChanged { bits_per_second }) =
-            msg.message.get(&Attribute::TargetBitrateChanged {
-                bits_per_second: 0.0,
-            })
-        {
-            self.pacer.set_target_bitrate(*bits_per_second);
-        }
+        // No estimate is read here. It was, once — but the congestion controller sits wire-*ward*
+        // of the pacer, so on the write leg it never sees a packet before this interceptor does and
+        // the branch had no possible producer. If an application-set target is ever wanted it comes
+        // back with its own `RTCEvent` variant, and a test.
 
         // RTCP is control traffic and mostly time-sensitive — feedback is only useful while it is
         // fresh — so it is not paced.

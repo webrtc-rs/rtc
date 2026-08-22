@@ -4,7 +4,7 @@ use super::send_buffer::SendBuffer;
 use super::stream_supports_nack;
 use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{AttributedPacket, Packet, TaggedPacket};
+use crate::{Attribute, AttributedPacket, Packet, TaggedPacket};
 use sansio::Protocol;
 use shared::TransportContext;
 use shared::error::Error;
@@ -158,10 +158,14 @@ impl NackResponderInterceptor {
                 original_packet.clone()
             };
 
+            // Tagged so a send history downstream counts it as new bytes on the wire rather
+            // than as the original transmission. A bandwidth estimator that cannot tell the two
+            // apart under-counts exactly when the path is lossy — it sees fewer bytes than are
+            // really being sent, infers headroom, and raises the target during loss.
             self.write_queue.push_back(TaggedPacket {
                 now,
                 transport: TransportContext::default(),
-                message: AttributedPacket::new(Packet::Rtp(packet)),
+                message: AttributedPacket::new(Packet::Rtp(packet)).with(Attribute::Retransmission),
             });
         }
     }
