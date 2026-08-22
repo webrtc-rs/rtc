@@ -21,8 +21,8 @@ pub enum Slot {
     /// Congestion control: send history and feedback ingest.
     ///
     /// The only position that sees every byte that leaves, because nothing exits the chain except
-    /// through the interceptors ahead of it. named here so an estimator of your own
-    /// has a landmark.
+    /// through the interceptors ahead of it. Named here so an estimator of your own has a
+    /// landmark.
     CongestionControl = 1_000,
     /// `TwccSenderInterceptor` — assigns the transport-wide sequence number the send history keys on.
     TwccSender = 2_000,
@@ -265,10 +265,15 @@ impl Registry {
 
     /// Assemble the interceptor chain.
     ///
-    /// [`NoopInterceptor`] is appended last, so every chain decides what becomes of inbound RTCP.
-    /// That is a property of a chain rather than something a caller opts into: left out, an
-    /// application would get a stream of control traffic it never asked for, and the omission
-    /// would look like working code.
+    /// [`NoopInterceptor`] is appended last, so every chain ends the inbound RTCP path. That is a
+    /// property of a chain rather than something a caller opts into: left out, an application would
+    /// get a stream of control traffic it never asked for, and the omission would look like working
+    /// code.
+    ///
+    /// What gets past it is decided per packet, by an interceptor attaching
+    /// [`Attribute::DeliverToApplication`](crate::Attribute::DeliverToApplication) to the ones it
+    /// vouches for — the component that knows which packets an application can act on is the one
+    /// that makes the call, rather than a switch here that could only say "all of it or none".
     pub fn build(self) -> impl Interceptor {
         // No sort: a `BTreeMap` is already in key order, and `Slot` orders by distance from the
         // wire, which is the order the chain runs in.
