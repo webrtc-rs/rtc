@@ -1,12 +1,10 @@
-use crate::peer_connection::event::{
-    RTCEvent, RTCEventInternal, RTCPeerConnectionEvent, TaggedRTCEventInternal,
-};
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use interceptor::{Attribute, AttributedPacket, Interceptor, Packet, TaggedPacket};
-use log::{debug, trace, warn};
+use interceptor::{Attribute, Interceptor, Packet, TaggedPacket};
+use log::{debug, trace};
 use rtcp::header::{FORMAT_CCFB, PacketType};
 use rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
@@ -202,28 +200,19 @@ impl<'a>
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_read() {
-                // Attributes are how information crosses interceptors; this is where the ones
-                // that mean something beyond the chain are translated into events the application
-                // already polls for. Connection-level facts only — a per-packet attribute like
-                // `RecoveredByFec` means nothing to an application and stops here.
+                // Attributes are how information crosses interceptors, and this is where the ones
+                // that mean something beyond the chain are recorded. The estimate reaches the
+                // application through `get_stats` rather than through an event of its own: it is
+                // one more number about the send side, and it belongs with the rest of them.
                 for attribute in &packet.message.attributes {
                     if let Attribute::TargetBitrateChanged { bits_per_second } = attribute {
-                        // #840's stats half. The estimate is one number for the connection, while
-                        // `target_bitrate` is reported per outbound stream — with a single stream
-                        // they are the same thing. Splitting one estimate across simulcast layers
-                        // is an allocation problem, and belongs wherever that allocation is made
-                        // rather than here.
+                        // The estimate is one number for the connection, while `target_bitrate` is
+                        // reported per outbound stream — with a single stream they are the same
+                        // thing. Splitting one estimate across simulcast layers is an allocation
+                        // problem, and belongs wherever that allocation is made rather than here.
                         for stream in self.stats.outbound_rtp_streams.values_mut() {
                             stream.target_bitrate = *bits_per_second;
                         }
-                        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                            now: packet.now,
-                            event: RTCEventInternal::RTCPeerConnectionEvent(
-                                RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(
-                                    *bits_per_second,
-                                ),
-                            ),
-                        });
                     }
                 }
 
@@ -290,12 +279,6 @@ impl<'a>
                     _ => {}
                 }
 
-                // The carrier's work is done: every interceptor has seen its attributes. An
-                // empty RTCP packet on the wire would be a malformed datagram, so it stops here.
-                if matches!(&packet.message.packet, Packet::Rtcp(packets) if packets.is_empty()) {
-                    continue;
-                }
-
                 self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
                     now: packet.now,
                     transport: packet.transport,
@@ -312,29 +295,6 @@ impl<'a>
         if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt.event {
             debug!("interceptor recv dtls handshake complete");
             self.ctx.is_dtls_handshake_complete = true;
-        }
-
-        // An application's request becomes an attribute on a carrier packet. The write walk starts
-        // at the application end, so an attribute injected here is seen by *every* interceptor —
-        // which is what makes this the general application-to-chain command channel rather than a
-        // special case for any one of them.
-        if let RTCEventInternal::RTCEvent(event) = &evt.event {
-            let attribute = match event {
-                RTCEvent::ForcePli { ssrcs } => Attribute::ForcePli {
-                    ssrcs: ssrcs.clone(),
-                },
-            };
-
-            // An empty RTCP packet: inert to every interceptor that does not read attributes, and
-            // dropped again by `poll_write` below so it never reaches the wire.
-            let carrier = TaggedPacket {
-                now: evt.now,
-                transport: Default::default(),
-                message: AttributedPacket::new(Packet::Rtcp(Vec::new())).with(attribute),
-            };
-            if let Err(err) = self.interceptor.handle_write(carrier) {
-                warn!("interceptor rejected an application event: {err}");
-            }
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -370,30 +330,25 @@ impl<'a>
 
 #[cfg(test)]
 mod boundary_tests {
-    //! The last hop, in both directions (P7-08a, P7-08b).
+    //! The last hop inbound: an attribute becomes a statistic.
     //!
     //! `Ein`/`Eout` on the interceptor trait are `()`, so an attribute riding on a packet is the
     //! only channel between interceptors. It carries information as far as the end of the chain and
-    //! no further — everything here is about what happens at that end, where attributes become
-    //! events and events become attributes.
+    //! no further — these tests are about what happens at that end, where the congestion
+    //! controller's estimate stops being chain business and becomes something `get_stats` reports.
 
     use super::*;
     use crate::statistics::accumulator::OutboundRtpStreamAccumulator;
-    use interceptor::StreamInfo;
+    use interceptor::{AttributedPacket, StreamInfo};
     use sansio::Protocol;
     use shared::TransportContext;
 
-    /// A stand-in for a chain, so a test can put an arbitrary attribute on the read leg and see
-    /// exactly what came back down the write leg. A real chain cannot be made to emit an arbitrary
-    /// attribute from outside, which is precisely what needs checking here.
+    /// A stand-in for a chain, so a test can put an arbitrary attribute on the read leg. A real
+    /// chain cannot be made to emit one from outside, which is what needs checking here.
     #[derive(Default)]
     struct FakeChain {
         reads: VecDeque<TaggedPacket>,
         writes: VecDeque<TaggedPacket>,
-        /// What the handler pushed down the write leg: its attributes, and whether the packet
-        /// carrying them was an empty RTCP one. `TaggedPacket` is not `Clone`, and these two facts
-        /// are the whole of what the injection contract promises.
-        written: Vec<(Vec<Attribute>, bool)>,
     }
 
     impl Protocol<TaggedPacket, TaggedPacket, ()> for FakeChain {
@@ -411,10 +366,6 @@ mod boundary_tests {
             self.reads.pop_front()
         }
         fn handle_write(&mut self, msg: TaggedPacket) -> Result<()> {
-            self.written.push((
-                msg.message.attributes.clone(),
-                matches!(&msg.message.packet, Packet::Rtcp(packets) if packets.is_empty()),
-            ));
             self.writes.push_back(msg);
             Ok(())
         }
@@ -461,11 +412,9 @@ mod boundary_tests {
         }
     }
 
-    /// **P7-08a.** An estimate arriving as an attribute becomes an event the application already
-    /// polls for, and lands in the stats it already reads. Without this the estimator can run
-    /// perfectly and no one outside the chain ever learns what it decided.
+    /// The estimate lands in the stats, which is the whole of how it reaches an application.
     #[test]
-    fn an_estimate_becomes_an_event_and_a_stat() {
+    fn an_estimate_becomes_a_stat() {
         let mut ctx = connected();
         let mut chain = FakeChain::default();
         let mut stats = RTCStatsAccumulator::default();
@@ -485,48 +434,42 @@ mod boundary_tests {
 
         let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
         let message = handler.poll_read();
-        let event = handler.poll_event();
 
         assert!(
             message.is_none(),
             "the carrier is not a message — an empty RTCP packet means nothing to an application"
         );
-        assert!(
-            matches!(
-                event,
-                Some(TaggedRTCEventInternal {
-                    event: RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(rate)
-                    ),
-                    ..
-                }) if rate == 750_000.0
-            ),
-            "the estimate must surface as an event"
-        );
         assert_eq!(
             750_000.0, stats.outbound_rtp_streams[&7].target_bitrate,
-            "and must reach the stats #840 asks for"
+            "the estimate must reach the stats, or nothing outside the chain ever learns it"
         );
     }
 
     /// A per-packet attribute is chain business. `RecoveredByFec` tells the NACK generator not to
     /// ask for a packet again; an application has nothing to do with it, so it stops here.
     #[test]
-    fn a_per_packet_attribute_produces_no_event() {
+    fn a_per_packet_attribute_changes_no_stats() {
         let mut ctx = connected();
         let mut chain = FakeChain::default();
         let mut stats = RTCStatsAccumulator::default();
+        stats.outbound_rtp_streams.insert(
+            7,
+            OutboundRtpStreamAccumulator {
+                ssrc: 7,
+                ..Default::default()
+            },
+        );
 
-        let mut packet = carrier(Attribute::RecoveredByFec);
-        packet.message.packet = Packet::Rtcp(Vec::new());
-        chain.handle_read(packet).expect("seed");
+        chain
+            .handle_read(carrier(Attribute::RecoveredByFec))
+            .expect("seed");
 
         let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
         while handler.poll_read().is_some() {}
 
-        assert!(
-            handler.poll_event().is_none(),
-            "only connection-level facts cross the boundary"
+        assert_eq!(
+            0.0, stats.outbound_rtp_streams[&7].target_bitrate,
+            "only the estimate writes this field"
         );
     }
 
@@ -553,87 +496,6 @@ mod boundary_tests {
         assert!(
             handler.poll_read().is_some(),
             "dropping the carrier must not drop RTCP the application asked for"
-        );
-    }
-
-    /// **P7-08b.** An application's request becomes an attribute on a carrier and enters the chain
-    /// at the write leg's start, so *every* interceptor sees it. This is the general command
-    /// channel: adding a second command means adding a match arm, not a second mechanism.
-    #[test]
-    fn a_request_becomes_an_attribute_on_the_write_leg() {
-        let mut ctx = connected();
-        let mut chain = FakeChain::default();
-        let mut stats = RTCStatsAccumulator::default();
-
-        {
-            let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
-            handler
-                .handle_event(TaggedRTCEventInternal {
-                    now: Instant::now(),
-                    event: RTCEventInternal::RTCEvent(RTCEvent::ForcePli {
-                        ssrcs: Some(vec![42]),
-                    }),
-                })
-                .expect("event");
-        }
-
-        assert_eq!(1, chain.written.len(), "the request must enter the chain");
-        let (attributes, is_carrier) = &chain.written[0];
-        assert!(
-            *is_carrier,
-            "on a carrier: inert to every interceptor that does not read attributes"
-        );
-        assert!(
-            matches!(
-                attributes.as_slice(),
-                [Attribute::ForcePli { ssrcs: Some(ssrcs) }] if ssrcs == &vec![42]
-            ),
-            "carrying the request itself, got {attributes:?}"
-        );
-    }
-
-    /// And the carrier stops at the boundary on the way back out. An empty RTCP packet on the wire
-    /// is a malformed datagram; the far end is entitled to drop the whole compound.
-    #[test]
-    fn the_carrier_never_reaches_the_wire() {
-        let mut ctx = connected();
-        let mut chain = FakeChain::default();
-        let mut stats = RTCStatsAccumulator::default();
-
-        chain
-            .handle_write(carrier(Attribute::ForcePli { ssrcs: None }))
-            .expect("seed");
-
-        let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
-
-        assert!(
-            handler.poll_write().is_none(),
-            "an empty RTCP packet must not be sent"
-        );
-    }
-
-    /// A genuine outbound packet is untouched by the drop, so the invariant costs nothing.
-    #[test]
-    fn a_real_outbound_packet_is_unaffected() {
-        let mut ctx = connected();
-        let mut chain = FakeChain::default();
-        let mut stats = RTCStatsAccumulator::default();
-
-        chain
-            .handle_write(TaggedPacket {
-                now: Instant::now(),
-                transport: TransportContext::default(),
-                message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(
-                    PictureLossIndication::default(),
-                )])),
-            })
-            .expect("seed");
-
-        let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
-
-        assert!(
-            handler.poll_write().is_some(),
-            "real RTCP must still be sent"
         );
     }
 }

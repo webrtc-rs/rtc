@@ -285,28 +285,6 @@ pub enum RTCPeerConnectionEvent {
     /// See [icecandidate](https://www.w3.org/TR/webrtc/#event-icecandidate)
     OnIceCandidateEvent(RTCPeerConnectionIceEvent),
 
-    /// Fired when the congestion controller's estimate of the available bandwidth changes.
-    ///
-    /// The value is in bits per second, and it is the rate the pacer is now releasing at — there is
-    /// no hidden headroom factor between this number and the wire.
-    ///
-    /// Only fired when a chain carries congestion control, which is not the default: see
-    /// [`configure_congestion_control`](crate::peer_connection::configuration::interceptor_registry::configure_congestion_control).
-    /// An application that encodes media should follow it, since sending above the estimate is what
-    /// builds the queue the estimate is trying to drain.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use rtc::peer_connection::event::RTCPeerConnectionEvent;
-    /// # fn handle_event(event: RTCPeerConnectionEvent) {
-    /// if let RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(bits_per_second) = event {
-    ///     println!("encode at no more than {bits_per_second} b/s");
-    /// }
-    /// # }
-    /// ```
-    OnTargetBitrateChangeEvent(f64),
-
     /// Fired when an error occurs during ICE candidate gathering.
     ///
     /// This event provides details about errors encountered while gathering
@@ -540,30 +518,12 @@ pub enum RTCPeerConnectionEvent {
     OnTrack(RTCTrackEvent),
 }
 
-/// Something the application asks the interceptor chain to do.
+/// Reserved for future use.
 ///
-/// The inbound half of the event channel: an application hands one to
-/// [`RTCPeerConnection::handle_event`](crate::peer_connection::RTCPeerConnection::handle_event) and
-/// the interceptor handler turns it into an [`Attribute`](crate::interceptor::Attribute) on a
-/// carrier packet, which then crosses every interceptor on the write walk.
-///
-/// Not to be confused with [`RTCPeerConnectionEvent`], which travels the other way — out of
-/// `poll_event`, reporting what happened.
+/// This enum is currently empty but reserved for potential future event types.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum RTCEvent {
-    /// Ask the keyframe generator to send a Picture Loss Indication now.
-    ///
-    /// `None` asks for every bound remote stream; naming SSRCs asks only for those, and ones
-    /// nobody is receiving are ignored — a PLI for a stream with no receiver has no destination.
-    ///
-    /// This is what an SFU needs when a new viewer joins: the publisher has to be asked for a
-    /// keyframe, and only the application knows a viewer arrived.
-    ForcePli {
-        /// Which streams to request a keyframe for, or `None` for all of them.
-        ssrcs: Option<Vec<u32>>,
-    },
-}
+pub enum RTCEvent {}
 
 /// An [`RTCEvent`] together with the instant its condition was observed at.
 ///

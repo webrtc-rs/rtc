@@ -9,7 +9,7 @@ pub(crate) mod srtp;
 
 use crate::peer_connection::RTCPeerConnection;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEvent, TaggedRTCEventInternal};
+use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEvent};
 use crate::peer_connection::handler::datachannel::{DataChannelHandler, DataChannelHandlerContext};
 use crate::peer_connection::handler::demuxer::{DemuxerHandler, DemuxerHandlerContext};
 use crate::peer_connection::handler::dtls::{DtlsHandler, DtlsHandlerContext};
@@ -372,29 +372,13 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
         self.pipeline_context.write_outs.pop_front()
     }
 
-    /// Hand the chain something the application wants done.
-    ///
-    /// The event travels the pipeline as [`RTCEventInternal::RTCEvent`]; the interceptor handler
-    /// turns it into an attribute on a carrier packet and injects it on the write leg, so every
-    /// interceptor sees it.
     fn handle_event(&mut self, evt: TaggedRTCEvent) -> Result<(), Self::Error> {
-        let mut intermediate_eins = VecDeque::from([TaggedRTCEventInternal {
-            now: evt.now,
-            event: RTCEventInternal::RTCEvent(evt.event),
-        }]);
-
-        for_each_handler!(forward: process_handler!(self, handler, {
-            while let Some(evt) = intermediate_eins.pop_front() {
-                if let Err(err) = handler.handle_event(evt) {
-                    warn!("{}.handle_event got error: {}", handler.name(), err);
-                }
-            }
-            while let Some(evt) = handler.poll_event() {
-                intermediate_eins.push_back(evt);
-            }
-        }));
-
-        Ok(())
+        // `RTCEvent` is `pub enum RTCEvent {}` — uninhabited, reserved for future use — so no
+        // caller can construct one and this arm is unreachable. Diverging on the empty match
+        // keeps that fact in the type system, and avoids inventing an instant to wrap the
+        // event with when there is none to be had. C3-03 replaces this with `evt.now` once
+        // the public channel carries a timestamp.
+        match evt.event {}
     }
 
     fn poll_event(&mut self) -> Option<Self::Eout> {

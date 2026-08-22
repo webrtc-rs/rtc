@@ -3,7 +3,7 @@
 use super::stream_supports_pli;
 use crate::Interceptor;
 use crate::stream_info::StreamInfo;
-use crate::{Attribute, AttributedPacket, Packet, TaggedPacket};
+use crate::{AttributedPacket, Packet, TaggedPacket};
 use sansio::Protocol;
 use shared::TransportContext;
 use shared::error::Error;
@@ -20,14 +20,6 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(3);
 /// It only generates, and what it generates is RTCP, so its position is fixed by nothing except
 /// being on the application side of the pacer — as everything that generates is, so that what it
 /// produces is still metered on its way out.
-///
-/// # Forcing a keyframe
-///
-/// Attach [`Attribute::ForcePli`] to a packet handed to `handle_read`. Under the nested design
-/// this was an inherent method, `force_pli`, which became unreachable the moment anything wrapped
-/// this interceptor — it was dead code in practice. An attribute rides on a packet through the
-/// walk and reaches this interceptor wherever it sits, and is not consumed, so anything further
-/// on sees both the request and the PLI it produced.
 ///
 /// Sans-I/O has no clock of its own, so the interval is measured from the first `Instant` the
 /// interceptor is handed, whether that arrives via `handle_read` or `handle_timeout`.
@@ -55,8 +47,8 @@ impl Default for IntervalPliInterceptor {
 impl IntervalPliInterceptor {
     /// A generator asking every bound stream for a keyframe every `interval`.
     ///
-    /// A zero interval disables periodic requests, leaving only [`Attribute::ForcePli`] —
-    /// matching upstream, which creates no ticker when its interval is not positive.
+    /// A zero interval disables periodic requests entirely, matching upstream, which creates no
+    /// ticker when its interval is not positive.
     pub fn new(interval: Duration) -> Self {
         Self {
             read_queue: VecDeque::new(),
@@ -128,25 +120,6 @@ impl IntervalPliInterceptor {
         !self.interval.is_zero()
     }
 
-    /// Act on an [`Attribute::ForcePli`] if `msg` carries one.
-    ///
-    /// Called from **both** legs. An interceptor's request arrives on whichever leg the packet it
-    /// annotated was travelling, and an application's arrives on the write leg — `rtc`'s handler
-    /// injects its carrier at the application end, so a read-only check would silently ignore
-    /// every request an application ever made.
-    ///
-    /// Observed, not consumed: the packet carries on with the attribute still attached, so anything
-    /// further along the walk sees both the request and the PLIs it produced.
-    fn observe_force_pli(&mut self, msg: &TaggedPacket) {
-        if let Some(Attribute::ForcePli { ssrcs }) =
-            msg.message.get(&Attribute::ForcePli { ssrcs: None })
-        {
-            let targets = self.targets(ssrcs.as_ref());
-            self.queue_plis(msg.now, &targets);
-            self.arm(msg.now);
-        }
-    }
-
     /// SSRCs that are bound, from a request naming some or all of them.
     ///
     /// A PLI for a stream nobody is receiving has no destination, so unbound SSRCs are dropped.
@@ -174,7 +147,6 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for IntervalPliInterceptor {
 
         // A keyframe request arrives as an attribute on a packet rather than out of band: with no
         // event channel, that is how one interceptor tells another something.
-        self.observe_force_pli(&msg);
 
         self.read_queue.push_back(msg);
         Ok(())
@@ -188,7 +160,6 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for IntervalPliInterceptor {
         self.observe(msg.now);
 
         // The leg an application's request arrives on.
-        self.observe_force_pli(&msg);
 
         self.write_queue.push_back(msg);
         Ok(())
@@ -256,18 +227,6 @@ mod tests {
         }
     }
 
-    /// A packet carrying a keyframe request. With no event channel, an attribute on a packet is
-    /// how one interceptor asks another for something.
-    fn force_pli(now: Instant, ssrcs: Option<Vec<u32>>) -> TaggedPacket {
-        let mut msg = TaggedPacket {
-            now,
-            transport: Default::default(),
-            message: AttributedPacket::new(Packet::Rtp(rtp::Packet::default())),
-        };
-        msg.message.add(Attribute::ForcePli { ssrcs });
-        msg
-    }
-
     fn plis(chain: &mut Chain) -> Vec<u32> {
         let mut out = Vec::new();
         while let Some(pkt) = chain.poll_write() {
@@ -332,78 +291,9 @@ mod tests {
         assert_eq!(None, chain.poll_timeout(), "and stops asking to be woken");
     }
 
-    // -----------------------------------------------------------------------------------
-    // ForcePli — the capability that replaces an unreachable inherent method
-    // -----------------------------------------------------------------------------------
-
-    /// The whole point of the event: this reaches the generator **through the chain**, which the
-    /// inherent `force_pli` could not do once anything wrapped the interceptor.
+    /// A zero interval means the one immediate request and nothing after it.
     #[test]
-    fn force_pli_reaches_the_generator_through_the_chain() {
-        let now = Instant::now();
-        // Deliberately not the only interceptor, and not the one the application holds: under nesting
-        // this arrangement is exactly what made `force_pli` unreachable.
-        let mut chain = Chain::new(vec![
-            Box::new(IntervalPliInterceptor::new(Duration::ZERO)),
-            Box::new(crate::TwccSenderBuilder::new().build()),
-        ]);
-        chain.bind_remote_stream(&stream_info(7));
-        // A newly bound stream is asked for a keyframe the first time the interceptor is handed a
-        // clock, and a carrier packet supplies one — so clear that out first, leaving only what
-        // the request itself produces.
-        chain.handle_timeout(now).unwrap();
-        plis(&mut chain);
-
-        chain
-            .handle_read(force_pli(now, None))
-            .expect("handle_read");
-
-        assert_eq!(vec![7], plis(&mut chain));
-    }
-
-    #[test]
-    fn force_pli_can_name_specific_streams() {
-        let now = Instant::now();
-        let mut chain = chain(Duration::ZERO);
-        chain.bind_remote_stream(&stream_info(7));
-        chain.bind_remote_stream(&stream_info(8));
-        // A newly bound stream is asked for a keyframe the first time the interceptor is handed a
-        // clock, and a carrier packet supplies one — so clear that out first, leaving only what
-        // the request itself produces.
-        chain.handle_timeout(now).unwrap();
-        plis(&mut chain);
-
-        chain
-            .handle_read(force_pli(now, Some(vec![8])))
-            .expect("handle_read");
-
-        assert_eq!(vec![8], plis(&mut chain), "only the one named");
-    }
-
-    #[test]
-    fn force_pli_ignores_streams_that_are_not_bound() {
-        let now = Instant::now();
-        let mut chain = chain(Duration::ZERO);
-        chain.bind_remote_stream(&stream_info(7));
-        // A newly bound stream is asked for a keyframe the first time the interceptor is handed a
-        // clock, and a carrier packet supplies one — so clear that out first, leaving only what
-        // the request itself produces.
-        chain.handle_timeout(now).unwrap();
-        plis(&mut chain);
-
-        chain
-            .handle_read(force_pli(now, Some(vec![999])))
-            .expect("handle_read");
-
-        assert!(
-            plis(&mut chain).is_empty(),
-            "a PLI for a stream nobody receives has no destination"
-        );
-    }
-
-    /// A zero interval means no periodic requests, but forcing still works.
-    #[test]
-    fn a_zero_interval_disables_only_the_periodic_requests() {
+    fn a_zero_interval_disables_the_periodic_requests() {
         let now = Instant::now();
         let mut chain = chain(Duration::ZERO);
         chain.bind_remote_stream(&stream_info(7));
@@ -414,38 +304,5 @@ mod tests {
 
         chain.handle_timeout(now + Duration::from_secs(60)).unwrap();
         assert!(plis(&mut chain).is_empty());
-
-        chain
-            .handle_read(force_pli(now, None))
-            .expect("handle_read");
-        assert_eq!(vec![7], plis(&mut chain), "forcing still works");
-    }
-
-    /// A request rides in on a packet and the packet carries on, so anything after this
-    /// interceptor sees both the request and the PLI it produced.
-    #[test]
-    fn a_force_pli_attribute_is_not_consumed() {
-        let now = Instant::now();
-        let mut chain = Chain::new(vec![Box::new(IntervalPliInterceptor::new(Duration::ZERO))]);
-        chain.bind_remote_stream(&stream_info(7));
-        // A newly bound stream is asked for a keyframe the first time the interceptor is handed a
-        // clock, and a carrier packet supplies one — so clear that out first, leaving only what
-        // the request itself produces.
-        chain.handle_timeout(now).unwrap();
-        plis(&mut chain);
-
-        let mut carrier = TaggedPacket {
-            now,
-            transport: Default::default(),
-            message: AttributedPacket::new(Packet::Rtp(rtp::Packet::default())),
-        };
-        carrier.message.add(Attribute::ForcePli { ssrcs: None });
-        chain.handle_read(carrier).expect("handle_read");
-
-        assert_eq!(vec![7], plis(&mut chain), "the request was acted on");
-        assert!(
-            chain.poll_read().is_some(),
-            "and the packet that carried it carried on"
-        );
     }
 }

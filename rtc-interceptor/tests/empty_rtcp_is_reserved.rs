@@ -180,28 +180,9 @@ fn generators_under_traffic_emit_no_empty_rtcp() {
     );
 }
 
-/// The one construction site that builds an RTCP packet from a variable-length list:
-/// `IntervalPliInterceptor::queue_plis`. A keyframe request naming only SSRCs nobody is receiving
-/// filters down to an empty target list, and without its early return that becomes a compound RTCP
-/// packet with no packets in it.
-///
-/// The tests above do not reach this: with no stream bound the PLI timer never arms, and with one
-/// bound the target list is never empty. This is the case that falsifies.
-#[test]
-fn forcing_a_keyframe_for_unbound_streams_emits_no_empty_rtcp() {
-    let epoch = Instant::now();
-    let mut chain = generators();
-    chain.bind_remote_stream(&stream());
-
-    // Clear the ask-on-bind request, so what follows is only what the forced request produces.
-    chain.handle_timeout(epoch).expect("timeout");
-    drain(&mut chain, "ask-on-bind");
-
-    let mut carrier = rtp(epoch + TICK, 1);
-    carrier.message.add(Attribute::ForcePli {
-        ssrcs: Some(vec![SSRC.wrapping_add(1)]),
-    });
-    chain.handle_read(carrier).expect("read");
-
-    drain(&mut chain, "keyframe request for an unbound stream");
-}
+// `IntervalPliInterceptor::queue_plis` guards against an empty target list, and that guard is now
+// unreachable from a test: the periodic path only fires with at least one bound stream, `arm`
+// refuses to start without one, and unbinding the last stream clears the timer. The route that did
+// reach it — a keyframe request naming only unbound SSRCs — went with the request mechanism. The
+// guard stays because the hazard it names is real for any future caller; the tests above still
+// cover the invariant for every generator that emits on its own.
