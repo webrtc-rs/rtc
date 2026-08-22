@@ -131,7 +131,7 @@
 
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::rtp_transceiver::rtp_sender::rtcp_parameters::{
-    TYPE_RTCP_FB_NACK, TYPE_RTCP_FB_TRANSPORT_CC,
+    TYPE_RTCP_FB_ACK, TYPE_RTCP_FB_NACK, TYPE_RTCP_FB_TRANSPORT_CC,
 };
 use crate::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpHeaderExtensionCapability, RTCRtpHeaderExtensionParameters,
@@ -140,7 +140,7 @@ use crate::rtp_transceiver::rtp_sender::{
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::{
     BandwidthEstimator, CongestionControlBuilder, NackGeneratorBuilder, NackResponderBuilder,
-    PacerBuilder, ReceiverReportBuilder, SenderReportBuilder, TwccReceiverBuilder,
+    PacerBuilder, ReceiverReportBuilder, Rfc8888Builder, SenderReportBuilder, TwccReceiverBuilder,
     TwccSenderBuilder,
 };
 
@@ -614,13 +614,19 @@ pub enum CongestionFeedback {
 
 /// Configure send-side congestion control around `estimator`.
 ///
-/// Places three interceptors, at the slots the chain contract reserves for them:
+/// Places interceptors at the slots the chain contract reserves for them:
 ///
 /// | Slot | Interceptor | Why there |
 /// |---|---|---|
 /// | [`Slot::CongestionControl`] | send history and feedback ingest | the only position that sees every byte that leaves |
 /// | [`Slot::TwccSender`] | transport-wide sequence numbers | so the history keys on a number that already exists |
 /// | [`Slot::Pacer`] | paces departures | above the two, so `packet.now` is the release instant |
+/// | [`Slot::TwccReceiver`] or [`Slot::Rfc8888`] | records arrivals, reports them to the remote | an arrival recorder, so it precedes the jitter buffer |
+///
+/// The first three are this endpoint's own control loop: number what leaves, ingest the feedback
+/// that comes back, pace to the result. The recorder is the other half — it serves the *remote's*
+/// estimator, and without it a symmetric pair of peers running this helper would both wait for
+/// feedback neither ever sends.
 ///
 /// The order is declared, not implied by the order these are added, so this composes with
 /// [`configure_nack`] and the rest in any sequence.
@@ -659,22 +665,39 @@ pub fn configure_congestion_control<E: BandwidthEstimator + 'static>(
 ) -> Result<Registry> {
     // The remote needs to know how to report. RFC 8888 needs no header extension — it reports
     // against the RTP sequence number — so only TWCC registers one.
-    if feedback == CongestionFeedback::Twcc {
-        for kind in [RtpCodecKind::Video, RtpCodecKind::Audio] {
-            media_engine.register_feedback(
-                RTCPFeedback {
-                    typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
-                    parameter: "".to_owned(),
-                },
-                kind,
-            );
-            media_engine.register_header_extension(
-                RTCRtpHeaderExtensionCapability {
-                    uri: sdp::extmap::TRANSPORT_CC_URI.to_owned(),
-                },
-                kind,
-                None,
-            )?;
+    for kind in [RtpCodecKind::Video, RtpCodecKind::Audio] {
+        match feedback {
+            CongestionFeedback::Twcc => {
+                media_engine.register_feedback(
+                    RTCPFeedback {
+                        typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
+                        parameter: "".to_owned(),
+                    },
+                    kind,
+                );
+                media_engine.register_header_extension(
+                    RTCRtpHeaderExtensionCapability {
+                        uri: sdp::extmap::TRANSPORT_CC_URI.to_owned(),
+                    },
+                    kind,
+                    None,
+                )?;
+            }
+            CongestionFeedback::Rfc8888 => {
+                // `a=rtcp-fb:<pt> ack ccfb` (RFC 8888 §5). Without it the remote has no reason to
+                // send CCFB, and an estimator that never receives feedback holds its initial rate
+                // for the life of the connection without reporting anything wrong.
+                //
+                // No header extension: RFC 8888 reports against the RTP sequence number, which is
+                // in every packet already.
+                media_engine.register_feedback(
+                    RTCPFeedback {
+                        typ: TYPE_RTCP_FB_ACK.to_owned(),
+                        parameter: "ccfb".to_owned(),
+                    },
+                    kind,
+                );
+            }
         }
     }
 
@@ -685,12 +708,17 @@ pub fn configure_congestion_control<E: BandwidthEstimator + 'static>(
         )
         .with(Slot::Pacer, PacerBuilder::new().build());
 
-    // The sequence numbers the history keys on. RFC 8888 needs none.
+    // The other half of the loop: what this endpoint reports about what it *receives*, so the
+    // remote's estimator has something to work with. One recorder or the other, never both —
+    // they do the same job in different formats, and a remote hearing both counts every packet
+    // twice.
     Ok(match feedback {
-        CongestionFeedback::Twcc => {
-            registry.with(Slot::TwccSender, TwccSenderBuilder::new().build())
-        }
-        CongestionFeedback::Rfc8888 => registry,
+        CongestionFeedback::Twcc => registry
+            // The sequence numbers the send history keys on. Only TWCC needs them; RFC 8888
+            // reports against the RTP sequence number.
+            .with(Slot::TwccSender, TwccSenderBuilder::new().build())
+            .with(Slot::TwccReceiver, TwccReceiverBuilder::new().build()),
+        CongestionFeedback::Rfc8888 => registry.with(Slot::Rfc8888, Rfc8888Builder::new().build()),
     })
 }
 
@@ -821,6 +849,7 @@ mod slot_order_tests {
                 Slot::Pacer,
                 Slot::NackResponder,
                 Slot::NackGenerator,
+                Slot::TwccReceiver,
             ],
             slots(&registry)
         );
@@ -843,7 +872,7 @@ mod slot_order_tests {
         .expect("congestion control");
 
         assert_eq!(
-            vec![Slot::CongestionControl, Slot::Pacer,],
+            vec![Slot::CongestionControl, Slot::Pacer, Slot::Rfc8888],
             slots(&registry),
             "RFC 8888 needs no transport-wide sequence numbers"
         );
@@ -911,6 +940,72 @@ mod slot_order_tests {
                 (Slot::SenderReport, "SenderReportInterceptor".to_owned()),
             ],
             registry.slots()
+        );
+    }
+
+    /// The recorder this helper places and the one `register_default_interceptors` places share a
+    /// slot, so a chain that asks for both carries one of them, not two. Two arrival recorders
+    /// would report every packet to the remote twice, and its estimator cannot tell the reports
+    /// apart — it would read the path as carrying double what it does.
+    #[test]
+    fn the_twcc_recorder_is_not_registered_twice() {
+        use interceptor::Gcc;
+
+        let mut media_engine = MediaEngine::default();
+        let registry = register_default_interceptors(Registry::new(), &mut media_engine)
+            .expect("default interceptors");
+        let registry = configure_congestion_control(
+            registry,
+            Gcc::default(),
+            CongestionFeedback::Twcc,
+            &mut media_engine,
+        )
+        .expect("congestion control");
+
+        let recorders = registry
+            .slots()
+            .into_iter()
+            .filter(|(slot, _)| *slot == Slot::TwccReceiver)
+            .count();
+        assert_eq!(
+            1, recorders,
+            "one arrival recorder, however many helpers asked for one"
+        );
+    }
+
+    /// RFC 8888 alongside the defaults is the case slots do **not** de-duplicate: the two recorders
+    /// sit at different positions, so both survive and the remote is told about every packet twice.
+    ///
+    /// Asserted as it behaves today rather than as it should behave, so the hazard is visible and
+    /// this test fails the moment someone fixes it.
+    #[test]
+    fn rfc8888_alongside_the_defaults_leaves_two_recorders() {
+        use interceptor::Gcc;
+
+        let mut media_engine = MediaEngine::default();
+        let registry = register_default_interceptors(Registry::new(), &mut media_engine)
+            .expect("default interceptors");
+        let registry = configure_congestion_control(
+            registry,
+            Gcc::default(),
+            CongestionFeedback::Rfc8888,
+            &mut media_engine,
+        )
+        .expect("congestion control");
+
+        let recorders: Vec<Slot> = registry
+            .slots()
+            .into_iter()
+            .map(|(slot, _)| slot)
+            .filter(|slot| *slot == Slot::TwccReceiver || *slot == Slot::Rfc8888)
+            .collect();
+
+        assert_eq!(
+            vec![Slot::TwccReceiver, Slot::Rfc8888],
+            recorders,
+            "known gap: different slots, so nothing de-duplicates them — an RFC 8888 chain has to \
+             be built without `register_default_interceptors`, or `Registry` needs a way to drop a \
+             slot"
         );
     }
 }
