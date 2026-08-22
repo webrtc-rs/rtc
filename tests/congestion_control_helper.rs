@@ -31,6 +31,7 @@ fn an_application_can_supply_its_own_estimator() {
             ),
             (Slot::TwccSender, "TwccSenderInterceptor".to_owned()),
             (Slot::Pacer, "PacerInterceptor".to_owned()),
+            (Slot::TwccReceiver, "TwccReceiverInterceptor".to_owned()),
         ],
         registry.slots(),
         "the estimator the application brought is the one in the chain"
@@ -60,10 +61,11 @@ fn rfc8888_is_selectable() {
                 "CongestionControlInterceptor<Gcc>".to_owned()
             ),
             (Slot::Pacer, "PacerInterceptor".to_owned()),
+            (Slot::Rfc8888, "Rfc8888Interceptor".to_owned()),
         ],
         registry.slots(),
-        "no TWCC sender: RFC 8888 reports against the RTP sequence number and needs none, and a \
-         second sender would number every packet twice"
+        "no TWCC sender: RFC 8888 reports against the RTP sequence number and needs none. The \
+         recorder is the RFC 8888 one, so both halves of the loop speak the same format"
     );
 
     let _chain = registry.build();
