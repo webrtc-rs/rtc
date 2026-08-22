@@ -18,11 +18,11 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use rtc::interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder};
+use rtc::interceptor::Registry as RtcRegistry;
+use rtc::interceptor::{ReceiverReportBuilder, Registry, SenderReportBuilder, Slot};
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -93,11 +93,13 @@ async fn test_custom_interceptor_registry_with_rtcp_reports() -> Result<()> {
     // Using shorter intervals to ensure reports are generated during the test
     let registry = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
         )
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -422,11 +424,13 @@ async fn test_sender_report_generation_on_rtp_send() -> Result<()> {
     // Use short interval to ensure SR is generated during test
     let registry = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
         )
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -707,13 +711,12 @@ async fn test_register_default_interceptors_helper() -> Result<()> {
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
     // Use the helper function to register default interceptors
-    let builder = RegistryBuilder::new();
+    let registry = RtcRegistry::new();
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            builder,
+            registry,
             &mut media_engine,
-        )?
-        .build();
+        )?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

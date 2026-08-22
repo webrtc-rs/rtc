@@ -16,10 +16,10 @@ use std::time::Instant;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, TwccSenderBuilder};
+/// use rtc_interceptor::{Slot, Registry, TwccSenderBuilder};
 ///
 /// let chain = Registry::new()
-///     .with(TwccSenderBuilder::new().build())
+///     .with(Slot::TwccSender, TwccSenderBuilder::new().build())
 ///     .build();
 /// ```
 #[derive(Default)]

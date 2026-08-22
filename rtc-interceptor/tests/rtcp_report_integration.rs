@@ -8,7 +8,7 @@
 
 use rtc_interceptor::{
     AttributedPacket, Interceptor, Packet, ReceiverReportBuilder, Registry, SenderReportBuilder,
-    StreamInfo, TaggedPacket,
+    Slot, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -81,6 +81,7 @@ fn test_sender_report_interceptor_generates_sr_on_timeout() {
     // Build an interceptor chain with SenderReportInterceptor
     let mut chain = Registry::new()
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -139,6 +140,7 @@ fn test_sender_report_interceptor_generates_sr_on_timeout() {
 fn test_sender_report_tracks_packet_statistics() {
     let mut chain = Registry::new()
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -192,6 +194,7 @@ fn test_sender_report_tracks_packet_statistics() {
 fn test_sender_report_multiple_streams() {
     let mut chain = Registry::new()
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -262,6 +265,7 @@ fn test_sender_report_multiple_streams() {
 fn test_receiver_report_interceptor_generates_rr_on_timeout() {
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -317,6 +321,7 @@ fn test_receiver_report_interceptor_generates_rr_on_timeout() {
 fn test_receiver_report_tracks_sequence_numbers() {
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -373,6 +378,7 @@ fn test_receiver_report_tracks_sequence_numbers() {
 fn test_receiver_report_detects_packet_loss() {
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -435,11 +441,13 @@ fn test_combined_sender_and_receiver_interceptors() {
     // Build a chain with both interceptors
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
         )
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -517,11 +525,13 @@ fn test_combined_sender_and_receiver_interceptors() {
 fn test_interceptor_chain_unbind_streams() {
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
         )
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(50))
                 .build(),
@@ -593,6 +603,7 @@ fn test_interceptor_chain_unbind_streams() {
 fn test_receiver_processes_sender_report() {
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -669,7 +680,10 @@ fn test_report_interval_is_respected() {
     let interval = Duration::from_millis(200);
 
     let mut chain = Registry::new()
-        .with(SenderReportBuilder::new().with_interval(interval).build())
+        .with(
+            Slot::SenderReport,
+            SenderReportBuilder::new().with_interval(interval).build(),
+        )
         .build();
 
     let ssrc = 0x12121212;
@@ -745,11 +759,13 @@ fn test_poll_timeout_returns_earliest() {
 
     let mut chain = Registry::new()
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(rr_interval)
                 .build(),
         )
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(sr_interval)
                 .build(),

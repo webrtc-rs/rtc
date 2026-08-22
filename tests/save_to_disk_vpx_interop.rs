@@ -13,9 +13,9 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use rtc::interceptor::Registry as RtcRegistry;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -174,15 +174,14 @@ async fn test_save_to_disk_vpx_webrtc_to_rtc() -> Result<()> {
     media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
 
-    let builder = RegistryBuilder::new();
+    let registry = RtcRegistry::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            builder,
+            registry,
             &mut media_engine,
-        )?
-        .build();
+        )?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

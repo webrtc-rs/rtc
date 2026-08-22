@@ -3,12 +3,11 @@ use bytes::BytesMut;
 use clap::Parser;
 use env_logger::Target;
 use log::{debug, error, trace};
-use rtc::interceptor::{Interceptor, Packet, StreamInfo, TaggedPacket};
+use rtc::interceptor::{Attribute, Interceptor, Packet, StreamInfo, TaggedPacket};
+use rtc::interceptor::{Registry, Slot};
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::{
-    RegistryBuilder, register_default_interceptors,
-};
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -49,7 +48,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(86400); // 1 day
 pub struct RtcpForwarderBuilder;
 
 impl RtcpForwarderBuilder {
-    /// Create a new builder.
+    /// Create a new registry.
     pub fn new() -> Self {
         Self
     }
@@ -81,10 +80,13 @@ impl RtcpForwarderBuilder {
 /// # Where it belongs
 ///
 /// **Last**, so every interceptor that reads RTCP has already seen the whole of it before this one
-/// narrows it down. It also needs [`Registry::with_rtcp_readable`], because what it passes on still
-/// has to get past the terminus that ends the inbound RTCP path: on the belt, a packet an
-/// interceptor emits rejoins the list *behind* itself, so there is no position from which to
-/// forward past the end of the chain.
+/// narrows it down.
+///
+/// What it keeps, it marks with [`Attribute::DeliverToApplication`]; without that the terminus
+/// drops it like any other inbound RTCP. Re-emitting a copy would not work — on the belt, a packet
+/// an interceptor emits rejoins the list *behind* itself, so there is no position from which to
+/// forward past the end of the chain. Marking is what gets past it, and it keeps the judgement
+/// per-packet: everything this does not mark still stops at the terminus, which is the point.
 pub struct RtcpForwarderInterceptor {
     read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
@@ -115,6 +117,8 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for RtcpForwarderInterceptor {
                 return Ok(());
             }
             msg.message.packet = Packet::Rtcp(requests);
+            // Inbound RTCP stops at the terminus unless something vouches for it. This is that.
+            msg.message.add(Attribute::DeliverToApplication);
         }
         self.read_queue.push_back(msg);
         Ok(())
@@ -266,14 +270,16 @@ async fn run_peer_connection(
 
     // Inbound RTCP is for the interceptors by default; a keyframe request is about a stream this
     // program only relays, so the application has to see that one.
-    let builder = RegistryBuilder::new().with_rtcp_readable();
+    let registry = Registry::new();
 
     // Use the default set of Interceptors
-    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
 
     // Application-most, so every interceptor has already seen the whole of the inbound RTCP
     // before this one narrows it to keyframe requests.
-    let registry = registry.with(RtcpForwarderBuilder::new().build());
+    // An interceptor of the application's own, so it takes a position of its own: past the
+    // report generators at 10_000 and 11_000, whose output it exists to observe.
+    let registry = registry.with(Slot::from(11_500), RtcpForwarderBuilder::new().build());
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

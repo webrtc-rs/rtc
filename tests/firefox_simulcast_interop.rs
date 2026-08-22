@@ -12,11 +12,10 @@
 use anyhow::Result;
 use std::time::Instant;
 
+use rtc::interceptor::Registry;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::{
-    RegistryBuilder, register_default_interceptors,
-};
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngine;
 use rtc::peer_connection::sdp::RTCSessionDescription;
@@ -40,8 +39,8 @@ fn build_answerer() -> Result<rtc::peer_connection::RTCPeerConnection> {
             None,
         )?;
     }
-    let builder = RegistryBuilder::new();
-    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+    let registry = Registry::new();
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
     let config = RTCConfigurationBuilder::new().build();
     Ok(RTCPeerConnectionBuilder::new()
         .with_configuration(config)

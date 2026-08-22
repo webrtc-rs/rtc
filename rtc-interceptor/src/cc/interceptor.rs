@@ -31,10 +31,10 @@ struct LocalStream {
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{CongestionControlBuilder, ConstantBitrate, Registry};
+/// use rtc_interceptor::{Slot, CongestionControlBuilder, ConstantBitrate, Registry};
 ///
 /// let chain = Registry::new()
-///     .with(CongestionControlBuilder::new(ConstantBitrate::new(1_000_000.0)).build())
+///     .with(Slot::CongestionControl, CongestionControlBuilder::new(ConstantBitrate::new(1_000_000.0)).build())
 ///     .build();
 /// # let _ = chain;
 /// ```

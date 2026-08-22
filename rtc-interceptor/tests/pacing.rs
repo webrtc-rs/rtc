@@ -10,7 +10,7 @@
 //! instant the application enqueued.
 
 use rtc_interceptor::{
-    Attribute, AttributedPacket, Interceptor, PacerBuilder, Packet, Registry, StreamInfo,
+    Attribute, AttributedPacket, Interceptor, PacerBuilder, Packet, Registry, Slot, StreamInfo,
     TaggedPacket,
 };
 use sansio::Protocol;
@@ -102,13 +102,18 @@ impl Harness {
         let marker_released = Arc::clone(&released);
 
         let chain = Registry::new()
-            .with(Marker {
-                released: marker_released,
-                epoch,
-                read_queue: VecDeque::new(),
-                write_queue: VecDeque::new(),
-            })
             .with(
+                // Wire-ward of the pacer at 3_000, so it sees what the pacer released.
+                Slot::from(2_500),
+                Marker {
+                    released: marker_released,
+                    epoch,
+                    read_queue: VecDeque::new(),
+                    write_queue: VecDeque::new(),
+                },
+            )
+            .with(
+                Slot::Pacer,
                 PacerBuilder::new()
                     .with_target_bitrate(BITRATE)
                     .with_burst_bits(burst_bits)
@@ -589,6 +594,7 @@ fn the_queue_is_bounded_and_refuses_new_arrivals_when_full() {
     let epoch = Instant::now();
     let mut chain = Registry::new()
         .with(
+            Slot::Pacer,
             PacerBuilder::new()
                 .with_target_bitrate(BITRATE)
                 .with_queue_limit(3)

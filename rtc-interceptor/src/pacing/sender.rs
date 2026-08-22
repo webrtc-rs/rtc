@@ -21,10 +21,10 @@ pub const DEFAULT_QUEUE_LIMIT: usize = 4096;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{PacerBuilder, Registry};
+/// use rtc_interceptor::{Slot, PacerBuilder, Registry};
 ///
 /// let chain = Registry::new()
-///     .with(PacerBuilder::new().with_target_bitrate(2_000_000.0).build())
+///     .with(Slot::Pacer, PacerBuilder::new().with_target_bitrate(2_000_000.0).build())
 ///     .build();
 /// ```
 pub struct PacerBuilder {

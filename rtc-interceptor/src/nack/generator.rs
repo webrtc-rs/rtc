@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, NackGeneratorBuilder};
+/// use rtc_interceptor::{Slot, Registry, NackGeneratorBuilder};
 /// use std::time::Duration;
 ///
 /// let chain = Registry::new()
-///     .with(NackGeneratorBuilder::new()
+///     .with(Slot::NackGenerator, NackGeneratorBuilder::new()
 ///         .with_size(512)
 ///         .with_interval(Duration::from_millis(100))
 ///         .with_skip_last_n(2)

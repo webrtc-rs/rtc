@@ -18,10 +18,10 @@
 /// 6. Test verifies webrtc received packets from all 3 simulcast layers
 use anyhow::Result;
 use bytes::BytesMut;
+use rtc::interceptor::Registry as RtcRegistry;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -188,15 +188,14 @@ async fn test_simulcast_rtc_to_webrtc() -> Result<()> {
         )?;
     }
 
-    let builder = RegistryBuilder::new();
+    let registry = RtcRegistry::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            builder,
+            registry,
             &mut media_engine,
-        )?
-        .build();
+        )?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

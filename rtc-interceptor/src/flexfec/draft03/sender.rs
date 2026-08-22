@@ -20,10 +20,10 @@ pub const DEFAULT_NUM_FEC_PACKETS: u32 = 2;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{FlexFec03SendBuilder, Registry};
+/// use rtc_interceptor::{Slot, FlexFec03SendBuilder, Registry};
 ///
 /// let chain = Registry::new()
-///     .with(FlexFec03SendBuilder::new().with_num_fec_packets(1).build())
+///     .with(Slot::FecEncoder, FlexFec03SendBuilder::new().with_num_fec_packets(1).build())
 ///     .build();
 /// ```
 pub struct FlexFec03SendBuilder {

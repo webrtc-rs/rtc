@@ -11,7 +11,7 @@
 
 use rtc_interceptor::{
     AttributedPacket, FlexFec03Encoder, FlexFec03ReceiveBuilder, Interceptor, Packet, Registry,
-    StreamInfo, TaggedPacket,
+    Slot, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -81,12 +81,16 @@ impl Harness {
         // The marker sits application-ward of the decoder, so it sees what the decoder passes on:
         // repair packets swallowed, recovered ones added.
         let chain = Registry::new()
-            .with(FlexFec03ReceiveBuilder::new().build())
-            .with(Marker {
-                seen: marker_seen,
-                read_queue: VecDeque::new(),
-                write_queue: VecDeque::new(),
-            })
+            .with(Slot::FecDecoder, FlexFec03ReceiveBuilder::new().build())
+            .with(
+                // Application-ward of the FEC decoder at 6_000, so it sees recovered packets.
+                Slot::from(6_500),
+                Marker {
+                    seen: marker_seen,
+                    read_queue: VecDeque::new(),
+                    write_queue: VecDeque::new(),
+                },
+            )
             .build();
 
         Self {
@@ -477,8 +481,9 @@ fn a_recovered_packet_stops_the_nack_generator_asking_for_it() {
 
     // Wire-to-application: FEC decoder, then NACK generator — the shipped ordering.
     let mut chain = Registry::new()
-        .with(FlexFec03ReceiveBuilder::new().build())
+        .with(Slot::FecDecoder, FlexFec03ReceiveBuilder::new().build())
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_interval(NACK_INTERVAL)
                 .build(),
@@ -500,7 +505,7 @@ fn a_recovered_packet_stops_the_nack_generator_asking_for_it() {
     chain.bind_remote_stream(&stream);
 
     let epoch = Instant::now();
-    let mut receive = |chain: &mut dyn Interceptor, packet: &rtp::Packet| {
+    let receive = |chain: &mut dyn Interceptor, packet: &rtp::Packet| {
         chain
             .handle_read(TaggedPacket {
                 now: epoch,

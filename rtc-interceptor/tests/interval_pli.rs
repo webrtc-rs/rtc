@@ -5,11 +5,9 @@
 //! it asks for, when it stops, and that an idle chain is not woken for nothing.
 
 use rtc_interceptor::{
-    Attribute, AttributedPacket, Interceptor, IntervalPliInterceptor, Packet, RTCPFeedback,
-    Registry, StreamInfo, TaggedPacket,
+    Interceptor, IntervalPliInterceptor, Packet, RTCPFeedback, Registry, Slot, StreamInfo,
 };
 use sansio::Protocol;
-use shared::TransportContext;
 use std::time::{Duration, Instant};
 
 const INTERVAL: Duration = Duration::from_secs(1);
@@ -17,7 +15,7 @@ const INTERVAL: Duration = Duration::from_secs(1);
 fn chain() -> Box<dyn Interceptor> {
     Box::new(
         Registry::new()
-            .with(IntervalPliInterceptor::new(INTERVAL))
+            .with(Slot::IntervalPli, IntervalPliInterceptor::new(INTERVAL))
             .build(),
     )
 }
@@ -252,7 +250,10 @@ fn poll_timeout_is_none_until_a_stream_is_bound_and_running() {
 fn a_zero_interval_disables_periodic_requests() {
     let epoch = Instant::now();
     let mut chain = Registry::new()
-        .with(IntervalPliInterceptor::new(Duration::ZERO))
+        .with(
+            Slot::IntervalPli,
+            IntervalPliInterceptor::new(Duration::ZERO),
+        )
         .build();
 
     chain.bind_remote_stream(&pli_stream(1));

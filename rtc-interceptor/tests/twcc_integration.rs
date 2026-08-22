@@ -7,8 +7,8 @@
 //! - Properly tracks stream binding/unbinding
 
 use rtc_interceptor::{
-    AttributedPacket, Interceptor, Packet, RTPHeaderExtension, Registry, StreamInfo, TaggedPacket,
-    TwccReceiverBuilder, TwccSenderBuilder,
+    AttributedPacket, Interceptor, Packet, RTPHeaderExtension, Registry, Slot, StreamInfo,
+    TaggedPacket, TwccReceiverBuilder, TwccSenderBuilder,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -137,7 +137,7 @@ fn extract_twcc_seq(rtp: &rtp::Packet, ext_id: u8) -> Option<u16> {
 #[test]
 fn test_twcc_sender_adds_sequence_numbers() {
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .build();
 
     let ssrc = 0x12345678;
@@ -177,7 +177,7 @@ fn test_twcc_sender_adds_sequence_numbers() {
 #[test]
 fn test_twcc_sender_multiple_streams_share_counter() {
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .build();
 
     let ssrc1 = 0x11111111;
@@ -213,7 +213,7 @@ fn test_twcc_sender_multiple_streams_share_counter() {
 #[test]
 fn test_twcc_sender_ignores_streams_without_twcc() {
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .build();
 
     let ssrc = 0x12345678;
@@ -238,7 +238,7 @@ fn test_twcc_sender_ignores_streams_without_twcc() {
 #[test]
 fn test_twcc_sender_sequence_wraparound() {
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .build();
 
     let ssrc = 0x12345678;
@@ -286,6 +286,7 @@ fn test_twcc_sender_sequence_wraparound() {
 fn test_twcc_receiver_generates_feedback_on_timeout() {
     let mut chain = Registry::new()
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -345,6 +346,7 @@ fn test_twcc_receiver_generates_feedback_on_timeout() {
 fn test_twcc_receiver_feedback_contains_packet_info() {
     let mut chain = Registry::new()
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -412,6 +414,7 @@ fn test_twcc_receiver_feedback_contains_packet_info() {
 fn test_twcc_receiver_ignores_streams_without_twcc() {
     let mut chain = Registry::new()
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -464,7 +467,10 @@ fn test_twcc_receiver_ignores_streams_without_twcc() {
 fn test_twcc_receiver_configurable_interval() {
     let interval = Duration::from_millis(50);
     let mut chain = Registry::new()
-        .with(TwccReceiverBuilder::new().with_interval(interval).build())
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new().with_interval(interval).build(),
+        )
         .build();
 
     let ssrc = 0x12345678;
@@ -491,8 +497,9 @@ fn test_twcc_receiver_configurable_interval() {
 fn test_combined_twcc_sender_and_receiver() {
     // Build chain with both sender (for outgoing) and receiver (for incoming)
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -576,8 +583,9 @@ fn test_combined_twcc_sender_and_receiver() {
 #[test]
 fn test_twcc_unbind_stops_processing() {
     let mut chain = Registry::new()
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -632,6 +640,7 @@ fn test_twcc_unbind_stops_processing() {
 fn test_twcc_multiple_remote_streams() {
     let mut chain = Registry::new()
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
@@ -714,17 +723,20 @@ fn test_full_interceptor_chain_with_reports_and_twcc() {
     // Build a full chain with SR, RR, and TWCC
     let mut chain = Registry::new()
         .with(
+            Slot::SenderReport,
             SenderReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
         )
         .with(
+            Slot::ReceiverReport,
             ReceiverReportBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),
         )
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .with(
+            Slot::TwccReceiver,
             TwccReceiverBuilder::new()
                 .with_interval(Duration::from_millis(100))
                 .build(),

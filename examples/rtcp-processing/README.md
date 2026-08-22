@@ -27,11 +27,15 @@ media data, RTCP provides out-of-band statistics and control information for an 
 responses, congestion control, etc.) and does **not** reach the application via `poll_read()`. It is control traffic
 the interceptors act on, not media the application asked for.
 
-`Registry::with_rtcp_readable()` says otherwise, and then RTCP arrives from `poll_read()` alongside the media:
+To see it, put an interceptor in the chain that attaches `Attribute::DeliverToApplication` to the packets you want.
+The terminus that ends the inbound RTCP path passes those through, and they arrive from `poll_read()` alongside the
+media. The choice is per-packet: an SFU relaying keyframe requests marks those and leaves alone the receiver reports
+its own chain is already acting on.
 
 ```rust
-// Inbound RTCP is readable by the application as well as acted on by the interceptors.
-let builder = RegistryBuilder::new().with_rtcp_readable();
+// `DeliverRtcp` is this example's own interceptor: it marks inbound RTCP so the terminus lets it past.
+// Application-ward of everything the default chain registers, so those have acted on the packet first.
+let builder = Registry::new().with(Slot::from(14_000), DeliverRtcp::default());
 
 // Register default interceptors (NACK, reports, TWCC, etc.)
 let registry = register_default_interceptors(builder, & mut media_engine) ?;
@@ -137,7 +141,7 @@ Event loop exited
 
 ## API Usage
 
-With `with_rtcp_readable()` on the chain, RTCP packets become available via `poll_read()`:
+With a marking interceptor on the chain, RTCP packets become available via `poll_read()`:
 
 ```rust
 while let Some(message) = peer_connection.poll_read() {
@@ -157,8 +161,12 @@ _ => {}
 }
 ```
 
-**Note:** Without `with_rtcp_readable()`, you will **not** receive `RTCMessage::RtcpPacket` messages — inbound RTCP is
-consumed internally by the interceptor chain.
+**Note:** Without an interceptor marking packets with `Attribute::DeliverToApplication`, you will **not** receive
+`RTCMessage::RtcpPacket` messages — inbound RTCP is consumed internally by the interceptor chain.
+
+Marking is the mechanism because a copy cannot outrun the terminus: a chain is a flat list, and what an interceptor
+emits from `poll_read` rejoins that list *behind* itself, where the terminus is still ahead of it. A marked packet
+finishes the walk normally and the terminus reads the mark.
 
 ## Sending RTCP Packets
 

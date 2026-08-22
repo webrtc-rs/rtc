@@ -7,7 +7,8 @@
 //! repair packet returned from a local queue would skip all of that.
 
 use rtc_interceptor::{
-    AttributedPacket, FlexFec03SendBuilder, Interceptor, Packet, Registry, StreamInfo, TaggedPacket,
+    AttributedPacket, FlexFec03SendBuilder, Interceptor, Packet, Registry, Slot, StreamInfo,
+    TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -85,12 +86,17 @@ impl Harness {
         let marker_sent = Arc::clone(&sent);
 
         let chain = Registry::new()
-            .with(Marker {
-                sent: marker_sent,
-                read_queue: VecDeque::new(),
-                write_queue: VecDeque::new(),
-            })
             .with(
+                // Wire-ward of the FEC encoder at 5_000, so it sees the repair packets it emits.
+                Slot::from(4_500),
+                Marker {
+                    sent: marker_sent,
+                    read_queue: VecDeque::new(),
+                    write_queue: VecDeque::new(),
+                },
+            )
+            .with(
+                Slot::FecEncoder,
                 FlexFec03SendBuilder::new()
                     .with_num_media_packets(num_media_packets)
                     .with_num_fec_packets(num_fec_packets)

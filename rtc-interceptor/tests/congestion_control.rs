@@ -6,13 +6,16 @@
 
 use rtc_interceptor::{
     Attribute, AttributedPacket, BandwidthEstimator, CongestionControlBuilder, Interceptor,
-    PacerBuilder, Packet, PacketReport, RTCPFeedback, RTPHeaderExtension, Registry, StreamInfo,
-    TaggedPacket, TwccSenderBuilder,
+    PacerBuilder, Packet, PacketReport, RTCPFeedback, RTPHeaderExtension, Registry, Slot,
+    StreamInfo, TaggedPacket, TwccSenderBuilder,
 };
 use sansio::Protocol;
 use shared::TransportContext;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+mod rtcp_to_application;
+use rtcp_to_application::DeliverRtcp;
 
 const TRANSPORT_CC_URI: &str =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
@@ -61,10 +64,14 @@ fn chain(estimator: Recorder) -> impl Interceptor {
     Registry::new()
         // So a test can see the feedback packet the estimate rides out on. The real consumer is
         // the pacer, which reads the attribute mid-chain and needs no such thing.
-        .with_rtcp_readable()
-        .with(CongestionControlBuilder::new(estimator).build())
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::from(14_000), DeliverRtcp::new())
         .with(
+            Slot::CongestionControl,
+            CongestionControlBuilder::new(estimator).build(),
+        )
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
+        .with(
+            Slot::Pacer,
             PacerBuilder::new()
                 .with_target_bitrate(BITRATE)
                 .with_burst_bits(12_000.0)
@@ -290,7 +297,10 @@ fn a_changed_estimate_rides_out_on_the_feedback_packet() {
 #[test]
 fn an_idle_interceptor_asks_for_no_wakeup() {
     let mut chain = Registry::new()
-        .with(CongestionControlBuilder::new(Recorder::new(BITRATE)).build())
+        .with(
+            Slot::CongestionControl,
+            CongestionControlBuilder::new(Recorder::new(BITRATE)).build(),
+        )
         .build();
 
     assert_eq!(None, chain.poll_timeout());
@@ -313,8 +323,8 @@ fn unacknowledged_packets_are_written_off_after_the_prune_horizon() {
         .with_prune_horizon(horizon)
         .build();
     let mut chain = Registry::new()
-        .with(interceptor)
-        .with(TwccSenderBuilder::new().build())
+        .with(Slot::CongestionControl, interceptor)
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
         .build();
     chain.bind_local_stream(&stream());
 
@@ -355,10 +365,13 @@ fn a_retransmission_is_recorded_as_a_separate_departure() {
     let estimator = Recorder::new(BITRATE);
 
     let mut chain = Registry::new()
-        .with_rtcp_readable()
-        .with(CongestionControlBuilder::new(estimator.clone()).build())
-        .with(TwccSenderBuilder::new().build())
-        .with(NackResponderBuilder::new().build())
+        .with(Slot::from(14_000), DeliverRtcp::new())
+        .with(
+            Slot::CongestionControl,
+            CongestionControlBuilder::new(estimator.clone()).build(),
+        )
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
+        .with(Slot::NackResponder, NackResponderBuilder::new().build())
         .build();
 
     let mut info = stream();

@@ -407,7 +407,7 @@ impl RTCConfiguration {
 
 /// Builder for creating RTCConfiguration instances.
 ///
-/// This builder provides a fluent API for configuring WebRTC peer connection settings:
+/// This registry provides a fluent API for configuring WebRTC peer connection settings:
 /// - ICE servers (STUN/TURN) for NAT traversal
 /// - Transport policies (which ICE candidates to use)
 /// - Bundle and RTCP mux policies

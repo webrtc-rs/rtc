@@ -17,12 +17,11 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use rtc::interceptor::{Interceptor, Packet, StreamInfo, TaggedPacket};
+use rtc::interceptor::Registry as RtcRegistry;
+use rtc::interceptor::{Attribute, Interceptor, Packet, Slot, StreamInfo, TaggedPacket};
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::{
-    RegistryBuilder, register_default_interceptors,
-};
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_VP8, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
@@ -98,13 +97,71 @@ impl RtcpForwarderBuilder {
 /// # Where it belongs
 ///
 /// **Last**, so every interceptor that reads RTCP has already seen the whole of it before this one
-/// narrows it down. It also needs [`Registry::with_rtcp_readable`], because what it passes on still
-/// has to get past the terminus that ends the inbound RTCP path — on the belt, a packet an
-/// interceptor emits rejoins *behind* itself, so no position exists from which to forward past the
-/// end of the chain.
+/// narrows it down.
+///
+/// What it keeps, it marks with [`Attribute::DeliverToApplication`]; inbound RTCP stops at the
+/// terminus otherwise. Re-emitting a copy would not help — on the belt, a packet an interceptor
+/// emits rejoins *behind* itself, so no position exists from which to forward past the end of the
+/// chain. Marking works because it does not try to: the packet finishes the walk and the terminus
+/// reads the mark.
 pub struct RtcpForwarderInterceptor {
     read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
+}
+
+/// Hands every inbound RTCP packet to the application, for the arm of this test that wants the lot.
+///
+/// The counterpart to [`RtcpForwarderInterceptor`]: same mechanism, no predicate. Together they are
+/// what replaced a chain-wide "deliver inbound RTCP" switch — the choice is per-packet now, made by
+/// an interceptor that knows which packets the application can act on.
+#[derive(Default)]
+struct DeliverAllRtcp {
+    read_queue: VecDeque<TaggedPacket>,
+    write_queue: VecDeque<TaggedPacket>,
+}
+
+impl Protocol<TaggedPacket, TaggedPacket, ()> for DeliverAllRtcp {
+    type Rout = TaggedPacket;
+    type Wout = TaggedPacket;
+    type Eout = ();
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
+        if matches!(msg.message.packet, Packet::Rtcp(_)) {
+            msg.message.add(Attribute::DeliverToApplication);
+        }
+        self.read_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_read(&mut self) -> Option<Self::Rout> {
+        self.read_queue.pop_front()
+    }
+
+    fn handle_write(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
+        self.write_queue.push_back(msg);
+        Ok(())
+    }
+
+    fn poll_write(&mut self) -> Option<Self::Wout> {
+        self.write_queue.pop_front()
+    }
+
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_timeout(&mut self) -> Option<Self::Time> {
+        None
+    }
+}
+
+impl Interceptor for DeliverAllRtcp {
+    fn bind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_local_stream(&mut self, _info: &StreamInfo) {}
+    fn bind_remote_stream(&mut self, _info: &StreamInfo) {}
+    fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 }
 
 /// Whether an RTCP packet is a request for a keyframe.
@@ -133,6 +190,7 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for RtcpForwarderInterceptor {
                 return Ok(());
             }
             msg.message.packet = Packet::Rtcp(requests);
+            msg.message.add(Attribute::DeliverToApplication);
         }
         self.read_queue.push_back(msg);
         Ok(())
@@ -215,17 +273,16 @@ fn create_rtc_peer_config_with_rtcp_forwarder(
     };
     media_engine.register_codec(video_codec, RtpCodecKind::Video)?;
 
-    // Create registry with default interceptors. `with_rtcp_readable` is what lets inbound RTCP
-    // past the terminus at the end of the chain; without it nothing an interceptor forwards can
-    // reach the application.
-    let builder = RegistryBuilder::new().with_rtcp_readable();
-    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+    let registry = RtcRegistry::new();
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
 
-    // Application-most, so every interceptor has already seen the whole of the inbound RTCP.
+    // Inbound RTCP reaches the application only if something marks it. Both arms mark; they differ
+    // in what they are willing to vouch for. Application-most either way, so every interceptor has
+    // already seen the whole of the inbound RTCP before it is narrowed.
     let registry = if keyframe_requests_only {
-        registry.with(RtcpForwarderBuilder::new().build())
+        registry.with(Slot::from(14_000), RtcpForwarderBuilder::new().build())
     } else {
-        registry
+        registry.with(Slot::from(14_000), DeliverAllRtcp::default())
     };
 
     let config = RTCConfigurationBuilder::new()

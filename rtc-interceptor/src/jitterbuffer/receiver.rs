@@ -47,11 +47,11 @@ const DISCONTINUITY: Duration = Duration::from_secs(10);
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{JitterBufferBuilder, Registry};
+/// use rtc_interceptor::{Slot, JitterBufferBuilder, Registry};
 /// use std::time::Duration;
 ///
 /// let chain = Registry::new()
-///     .with(JitterBufferBuilder::new().with_depth(Duration::from_millis(80)).build())
+///     .with(Slot::JitterBuffer, JitterBufferBuilder::new().with_depth(Duration::from_millis(80)).build())
 ///     .build();
 /// ```
 pub struct JitterBufferBuilder {

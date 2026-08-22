@@ -8,7 +8,7 @@
 
 use rtc_interceptor::{
     AttributedPacket, Interceptor, NackGeneratorBuilder, NackResponderBuilder, Packet,
-    RTCPFeedback, Registry, StreamInfo, TaggedPacket,
+    RTCPFeedback, Registry, Slot, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -126,6 +126,7 @@ fn create_nack_packet(
 fn test_nack_generator_detects_packet_loss() {
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -176,6 +177,7 @@ fn test_nack_generator_detects_packet_loss() {
 fn test_nack_generator_no_nack_for_sequential_packets() {
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -229,6 +231,7 @@ fn test_nack_generator_no_nack_for_sequential_packets() {
 fn test_nack_generator_ignores_streams_without_nack_support() {
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -284,7 +287,10 @@ fn test_nack_generator_ignores_streams_without_nack_support() {
 #[test]
 fn test_nack_responder_retransmits_packet() {
     let mut chain = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     let ssrc = 0xABCDEF00;
@@ -347,7 +353,10 @@ fn test_nack_responder_retransmits_packet() {
 #[test]
 fn test_nack_responder_rtx_retransmission() {
     let mut chain = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     let ssrc = 0xABCDEF00;
@@ -402,7 +411,10 @@ fn test_nack_responder_rtx_retransmission() {
 #[test]
 fn test_nack_responder_ignores_expired_packets() {
     let mut chain = Registry::new()
-        .with(NackResponderBuilder::new().with_size(4).build()) // Small buffer
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(4).build(),
+        ) // Small buffer
         .build();
 
     let ssrc = 0xABCDEF00;
@@ -457,12 +469,16 @@ fn test_combined_nack_generator_and_responder() {
     // Build chain with both generator (for receiving) and responder (for sending)
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
                 .build(),
         )
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     let local_ssrc = 0x11111111;
@@ -552,12 +568,16 @@ fn test_combined_nack_generator_and_responder() {
 fn test_nack_unbind_stops_processing() {
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
                 .build(),
         )
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     let local_ssrc = 0x11111111;
@@ -624,6 +644,7 @@ fn test_nack_unbind_stops_processing() {
 fn test_nack_multiple_streams() {
     let mut chain = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -712,7 +733,10 @@ fn test_nack_example_simulation() {
     // === SENDER SETUP ===
     // Sender uses NACK Responder to buffer packets and respond to NACKs
     let mut sender = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     sender.bind_local_stream(&nack_stream_info(SSRC));
@@ -721,6 +745,7 @@ fn test_nack_example_simulation() {
     // Receiver uses NACK Generator to detect packet loss and generate NACKs
     let mut receiver = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -860,7 +885,10 @@ fn test_nack_example_with_rtx() {
 
     // === SENDER SETUP WITH RTX ===
     let mut sender = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
 
     sender.bind_local_stream(&nack_rtx_stream_info(SSRC, RTX_SSRC, RTX_PT));
@@ -868,6 +896,7 @@ fn test_nack_example_with_rtx() {
     // === RECEIVER SETUP ===
     let mut receiver = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -979,12 +1008,16 @@ fn test_continuous_stream_with_nack_recovery() {
     const TOTAL_PACKETS: u16 = 100;
 
     let mut sender = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
     sender.bind_local_stream(&nack_stream_info(SSRC));
 
     let mut receiver = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(20))
@@ -1111,12 +1144,16 @@ fn test_nack_sequence_wraparound() {
     const SSRC: u32 = 5000;
 
     let mut sender = Registry::new()
-        .with(NackResponderBuilder::new().with_size(512).build())
+        .with(
+            Slot::NackResponder,
+            NackResponderBuilder::new().with_size(512).build(),
+        )
         .build();
     sender.bind_local_stream(&nack_stream_info(SSRC));
 
     let mut receiver = Registry::new()
         .with(
+            Slot::NackGenerator,
             NackGeneratorBuilder::new()
                 .with_size(512)
                 .with_interval(Duration::from_millis(50))
@@ -1235,7 +1272,7 @@ fn a_retransmission_is_tagged_and_an_original_is_not() {
     let epoch = Instant::now();
 
     let mut chain = Registry::new()
-        .with(NackResponderBuilder::new().build())
+        .with(Slot::NackResponder, NackResponderBuilder::new().build())
         .build();
     chain.bind_local_stream(&nack_stream_info(SSRC));
 
