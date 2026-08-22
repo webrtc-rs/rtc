@@ -630,3 +630,34 @@ fn gcc_ignores_loss_inside_the_band() {
         "5% loss on an otherwise healthy path must not cost capacity: {start} → {end}"
     );
 }
+
+/// **Recovery after a step change.** A bottleneck that widens fivefold: the estimator has to climb
+/// back into the new capacity rather than staying where the congestion left it.
+///
+/// The fourth path shape, and the only one that measures recovery rather than reaction. An
+/// estimator that backs off correctly and then never climbs again passes every other test here
+/// while making a call that never recovers from one bad moment — which is the failure users
+/// actually report.
+#[test]
+fn gcc_climbs_back_after_the_path_widens() {
+    let widen_after = Duration::from_secs(3);
+    let trajectory = gcc_trajectory(
+        PathProfile::recovering(),
+        1_200,
+        Some(widen_after),
+        1_200_000.0,
+    );
+
+    // A trajectory sample every 100 ms, so the widening lands 30 samples in.
+    let widen_index = (widen_after.as_millis() / 100) as usize;
+    let before = trajectory[..widen_index.min(trajectory.len())]
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let after = *trajectory.last().expect("a trajectory");
+
+    assert!(
+        after > before,
+        "a path that widened must be climbed back into: bottomed out at {before}, ended at {after}"
+    );
+}
