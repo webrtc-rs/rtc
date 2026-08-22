@@ -69,7 +69,7 @@ impl Slot {
     /// Where this sits, as a distance from the wire.
     ///
     /// The named slots are the thousands; a custom one is whatever it was built from.
-    pub const fn position(self) -> usize {
+    pub const fn slot(self) -> usize {
         match self {
             Self::CongestionControl => 1_000,
             Self::TwccSender => 2_000,
@@ -98,7 +98,7 @@ impl From<usize> for Slot {
 
 impl From<Slot> for usize {
     fn from(slot: Slot) -> Self {
-        slot.position()
+        slot.slot()
     }
 }
 
@@ -108,10 +108,10 @@ impl From<Slot> for usize {
 // derived `Ord` compares *declaration* order, so `Slot::Custom(1_500)` would sort after
 // `JitterBuffer` rather than between `CongestionControl` and `TwccSender` — which is the whole
 // point of allowing a custom one. Two values that compare `Equal` must also be `==`, and a sort by
-// slot must put a custom position where its number says, so both come from `position`.
+// slot must put a custom position where its number says, so both come from [`Slot::slot`].
 impl PartialEq for Slot {
     fn eq(&self, other: &Self) -> bool {
-        self.position() == other.position()
+        self.slot() == other.slot()
     }
 }
 
@@ -125,13 +125,13 @@ impl PartialOrd for Slot {
 
 impl Ord for Slot {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.position().cmp(&other.position())
+        self.slot().cmp(&other.slot())
     }
 }
 
 impl std::hash::Hash for Slot {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.position().hash(state);
+        self.slot().hash(state);
     }
 }
 
@@ -544,7 +544,7 @@ mod tests {
         for pair in named.windows(2) {
             assert_eq!(
                 1_000,
-                pair[1].position() - pair[0].position(),
+                pair[1].slot() - pair[0].slot(),
                 "{:?} and {:?} must stay a thousand apart",
                 pair[0],
                 pair[1]
