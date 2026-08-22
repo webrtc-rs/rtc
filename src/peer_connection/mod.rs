@@ -388,13 +388,13 @@ use std::time::Instant;
 /// use rtc::peer_connection::RTCPeerConnectionBuilder;
 /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
 /// use rtc::peer_connection::configuration::interceptor_registry::{
-///     RegistryBuilder, register_default_interceptors,
+///     Registry, register_default_interceptors,
 /// };
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut media_engine = MediaEngine::default();
-/// let builder = RegistryBuilder::new();
-/// let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+/// let registry = Registry::new();
+/// let registry = register_default_interceptors(registry, &mut media_engine)?;
 ///
 /// let pc = RTCPeerConnectionBuilder::new()
 ///     .with_media_engine(media_engine)
@@ -554,13 +554,13 @@ impl RTCPeerConnectionBuilder {
     /// use rtc::peer_connection::RTCPeerConnectionBuilder;
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
     /// use rtc::peer_connection::configuration::interceptor_registry::{
-    ///     RegistryBuilder, register_default_interceptors,
+    ///     Registry, register_default_interceptors,
     /// };
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut media_engine = MediaEngine::default();
-    /// let builder = RegistryBuilder::new();
-    /// let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+    /// let registry = Registry::new();
+    /// let registry = register_default_interceptors(registry, &mut media_engine)?;
     ///
     /// let pc = RTCPeerConnectionBuilder::new()
     ///     .with_media_engine(media_engine)
@@ -579,7 +579,7 @@ impl RTCPeerConnectionBuilder {
     /// ```
     /// # use std::time::Instant;
     /// use rtc::peer_connection::configuration::interceptor_registry::{
-    ///     RegistryBuilder, register_default_interceptors,
+    ///     Registry, register_default_interceptors,
     /// };
     /// use rtc::peer_connection::configuration::media_engine::MediaEngine;
     /// use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
@@ -591,7 +591,7 @@ impl RTCPeerConnectionBuilder {
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut media_engine = MediaEngine::default();
     /// let registry =
-    ///     register_default_interceptors(RegistryBuilder::new(), &mut media_engine)?.build();
+    ///     register_default_interceptors(Registry::new(), &mut media_engine)?;
     ///
     /// let session = Session {
     ///     peer_connection: RTCPeerConnectionBuilder::new()

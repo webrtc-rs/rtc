@@ -15,17 +15,17 @@ use std::time::{Duration, Instant};
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, ReceiverReportBuilder};
+/// use rtc_interceptor::{Slot, Registry, ReceiverReportBuilder};
 /// use std::time::Duration;
 ///
 /// // With default interval (1 second)
 /// let chain = Registry::new()
-///     .with(ReceiverReportBuilder::new().build())
+///     .with(Slot::ReceiverReport, ReceiverReportBuilder::new().build())
 ///     .build();
 ///
 /// // With custom interval
 /// let chain = Registry::new()
-///     .with(ReceiverReportBuilder::new().with_interval(Duration::from_millis(500)).build())
+///     .with(Slot::ReceiverReport, ReceiverReportBuilder::new().with_interval(Duration::from_millis(500)).build())
 ///     .build();
 /// ```
 pub struct ReceiverReportBuilder {
@@ -54,11 +54,11 @@ impl ReceiverReportBuilder {
     /// # Example
     ///
     /// ```
-    /// use rtc_interceptor::{ReceiverReportBuilder, Registry};
+    /// use rtc_interceptor::{ReceiverReportBuilder, Registry, Slot};
     /// use std::time::Duration;
     ///
-    /// // The builder is generic over the next layer, so its type is pinned by `with`.
     /// let registry = Registry::new().with(
+    ///     Slot::ReceiverReport,
     ///     ReceiverReportBuilder::new()
     ///         .with_interval(Duration::from_millis(500))
     ///         .build(),
@@ -76,10 +76,10 @@ impl ReceiverReportBuilder {
     /// # Example
     ///
     /// ```
-    /// use rtc_interceptor::{Registry, ReceiverReportBuilder};
+    /// use rtc_interceptor::{Slot, Registry, ReceiverReportBuilder};
     ///
     /// let registry = Registry::new()
-    ///     .with(ReceiverReportBuilder::new().build());
+    ///     .with(Slot::ReceiverReport, ReceiverReportBuilder::new().build());
     /// ```
     pub fn build(self) -> ReceiverReportInterceptor {
         ReceiverReportInterceptor::new(self.interval)
@@ -98,10 +98,10 @@ impl ReceiverReportBuilder {
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, ReceiverReportBuilder};
+/// use rtc_interceptor::{Slot, Registry, ReceiverReportBuilder};
 ///
 /// let chain = Registry::new()
-///     .with(ReceiverReportBuilder::new().build())
+///     .with(Slot::ReceiverReport, ReceiverReportBuilder::new().build())
 ///     .build();
 /// ```
 pub struct ReceiverReportInterceptor {

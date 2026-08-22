@@ -10,7 +10,8 @@
 //! sees them exactly as it would a live packet (the chain contract's rule 2).
 
 use rtc_interceptor::{
-    AttributedPacket, Interceptor, JitterBufferBuilder, Packet, Registry, StreamInfo, TaggedPacket,
+    AttributedPacket, Interceptor, JitterBufferBuilder, Packet, Registry, Slot, StreamInfo,
+    TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -97,17 +98,22 @@ impl Harness {
         // than what arrives.
         let chain = Registry::new()
             .with(
+                Slot::JitterBuffer,
                 JitterBufferBuilder::new()
                     .with_depth(depth)
                     .with_capacity(capacity)
                     .build(),
             )
-            .with(Marker {
-                released: marker_released,
-                epoch,
-                read_queue: VecDeque::new(),
-                write_queue: VecDeque::new(),
-            })
+            .with(
+                // Application-ward of the jitter buffer at 13_000, so it records playout.
+                Slot::from(13_500),
+                Marker {
+                    released: marker_released,
+                    epoch,
+                    read_queue: VecDeque::new(),
+                    write_queue: VecDeque::new(),
+                },
+            )
             .build();
 
         Self {

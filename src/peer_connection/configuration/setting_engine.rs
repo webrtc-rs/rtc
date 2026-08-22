@@ -427,11 +427,11 @@ impl SettingEngine {
     }
 }
 
-/// Fluent builder for [`SettingEngine`].
+/// Fluent registry for [`SettingEngine`].
 ///
 /// Mirrors [`RTCConfigurationBuilder`](crate::peer_connection::configuration::RTCConfigurationBuilder),
 /// so a peer connection is configured in one style throughout rather than switching between a
-/// fluent builder and a sequence of `&mut self` setters.
+/// fluent registry and a sequence of `&mut self` setters.
 ///
 /// [`build`](Self::build) is infallible: every setting is either always valid or normalised on
 /// the way in, so there is no failure mode to report.
@@ -439,7 +439,7 @@ impl SettingEngine {
 pub struct SettingEngineBuilder(SettingEngine);
 
 impl SettingEngineBuilder {
-    /// A builder with every setting at its default.
+    /// A registry with every setting at its default.
     pub fn new() -> Self {
         Self::default()
     }

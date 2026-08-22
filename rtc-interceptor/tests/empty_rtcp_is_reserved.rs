@@ -19,13 +19,16 @@
 //! if any empty RTCP packet reaches the end of the chain.
 
 use rtc_interceptor::{
-    Attribute, AttributedPacket, Interceptor, IntervalPliInterceptor, NackGeneratorBuilder, Packet,
+    AttributedPacket, Interceptor, IntervalPliInterceptor, NackGeneratorBuilder, Packet,
     RTCPFeedback, RTPHeaderExtension, ReceiverReportBuilder, Registry, Rfc8888Builder,
-    SenderReportBuilder, StreamInfo, TaggedPacket, TwccReceiverBuilder,
+    SenderReportBuilder, Slot, StreamInfo, TaggedPacket, TwccReceiverBuilder,
 };
 use sansio::Protocol;
 use shared::TransportContext;
 use std::time::{Duration, Instant};
+
+mod rtcp_to_application;
+use rtcp_to_application::DeliverRtcp;
 
 const TRANSPORT_CC_URI: &str =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
@@ -35,17 +38,33 @@ const TICK: Duration = Duration::from_millis(50);
 
 /// Every interceptor in the crate that generates RTCP, in one chain.
 ///
-/// `with_rtcp_readable` so inbound RTCP is not dropped at the terminus — this test wants to see
-/// everything that reaches either end, not only what an application would normally be shown.
+/// A `DeliverRtcp` at the application end so inbound RTCP is not dropped at the terminus — this
+/// test wants to see everything that reaches either end, not only what an application would
+/// normally be shown.
 fn generators() -> impl Interceptor {
     Registry::new()
-        .with_rtcp_readable()
-        .with(NackGeneratorBuilder::new().with_interval(TICK).build())
-        .with(TwccReceiverBuilder::new().with_interval(TICK).build())
-        .with(Rfc8888Builder::new().with_interval(TICK).build())
-        .with(ReceiverReportBuilder::new().with_interval(TICK).build())
-        .with(SenderReportBuilder::new().with_interval(TICK).build())
-        .with(IntervalPliInterceptor::new(TICK))
+        .with(Slot::from(14_000), DeliverRtcp::new())
+        .with(
+            Slot::NackGenerator,
+            NackGeneratorBuilder::new().with_interval(TICK).build(),
+        )
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new().with_interval(TICK).build(),
+        )
+        .with(
+            Slot::Rfc8888,
+            Rfc8888Builder::new().with_interval(TICK).build(),
+        )
+        .with(
+            Slot::ReceiverReport,
+            ReceiverReportBuilder::new().with_interval(TICK).build(),
+        )
+        .with(
+            Slot::SenderReport,
+            SenderReportBuilder::new().with_interval(TICK).build(),
+        )
+        .with(Slot::IntervalPli, IntervalPliInterceptor::new(TICK))
         .build()
 }
 
@@ -100,7 +119,7 @@ fn rtp(now: Instant, sequence_number: u16) -> TaggedPacket {
 /// Drain both ends, panicking on any empty RTCP packet. Returns how many packets were seen.
 fn drain(chain: &mut impl Interceptor, whence: &str) -> usize {
     let mut seen = 0;
-    let mut check = |packet: &TaggedPacket| {
+    let check = |packet: &TaggedPacket| {
         if let Packet::Rtcp(rtcp_packets) = &packet.message.packet {
             assert!(
                 !rtcp_packets.is_empty(),

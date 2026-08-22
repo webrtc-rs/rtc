@@ -16,10 +16,10 @@ use std::time::Instant;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, NackResponderBuilder};
+/// use rtc_interceptor::{Slot, Registry, NackResponderBuilder};
 ///
 /// let chain = Registry::new()
-///     .with(NackResponderBuilder::new()
+///     .with(Slot::NackResponder, NackResponderBuilder::new()
 ///         .with_size(1024)
 ///         .build())
 ///     .build();

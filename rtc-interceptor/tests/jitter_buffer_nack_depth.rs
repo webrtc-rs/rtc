@@ -20,7 +20,7 @@
 
 use rtc_interceptor::{
     AttributedPacket, Interceptor, JitterBufferBuilder, NackGeneratorBuilder, Packet, RTCPFeedback,
-    Registry, StreamInfo, TaggedPacket,
+    Registry, Slot, StreamInfo, TaggedPacket,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -117,17 +117,25 @@ impl Harness {
         // the marker at the application-most slot records what is finally played out.
         let chain = Registry::new()
             .with(
+                Slot::NackGenerator,
                 NackGeneratorBuilder::new()
                     .with_interval(NACK_INTERVAL)
                     .with_skip_last_n(0)
                     .build(),
             )
-            .with(JitterBufferBuilder::new().with_depth(depth).build())
-            .with(Marker {
-                released: marker_released,
-                read_queue: VecDeque::new(),
-                write_queue: VecDeque::new(),
-            })
+            .with(
+                Slot::JitterBuffer,
+                JitterBufferBuilder::new().with_depth(depth).build(),
+            )
+            .with(
+                // Application-ward of the jitter buffer at 13_000, so it records playout.
+                Slot::from(13_500),
+                Marker {
+                    released: marker_released,
+                    read_queue: VecDeque::new(),
+                    write_queue: VecDeque::new(),
+                },
+            )
             .build();
 
         let mut harness = Self {

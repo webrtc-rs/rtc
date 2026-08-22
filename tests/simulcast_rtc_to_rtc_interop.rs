@@ -12,10 +12,10 @@
 /// 6. Test verifies answerer received packets from all 3 simulcast layers
 use anyhow::Result;
 use bytes::BytesMut;
+use rtc::interceptor::Registry;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::RegistryBuilder;
 use rtc::peer_connection::configuration::media_engine::{
     MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine,
 };
@@ -107,15 +107,14 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
-    let builder = RegistryBuilder::new();
+    let registry = Registry::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            builder,
+            registry,
             &mut answerer_media_engine,
-        )?
-        .build();
+        )?;
 
     let answerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {
@@ -174,15 +173,14 @@ async fn test_simulcast_rtc_to_rtc() -> Result<()> {
         )?;
     }
 
-    let builder = RegistryBuilder::new();
+    let registry = Registry::new();
 
     // Use the default set of Interceptors
     let registry =
         rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors(
-            builder,
+            registry,
             &mut offerer_media_engine,
-        )?
-        .build();
+        )?;
 
     let offerer_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

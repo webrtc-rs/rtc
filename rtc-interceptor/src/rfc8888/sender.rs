@@ -24,11 +24,11 @@ pub const DEFAULT_MAX_REPORT_SIZE: usize = 1200;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, Rfc8888Builder};
+/// use rtc_interceptor::{Slot, Registry, Rfc8888Builder};
 /// use std::time::Duration;
 ///
 /// let chain = Registry::new()
-///     .with(Rfc8888Builder::new().with_interval(Duration::from_millis(50)).build())
+///     .with(Slot::Rfc8888, Rfc8888Builder::new().with_interval(Duration::from_millis(50)).build())
 ///     .build();
 /// ```
 pub struct Rfc8888Builder {

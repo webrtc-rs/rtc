@@ -6,7 +6,7 @@
 //! from PRE-01, since a report that cannot be encoded and decoded is worth nothing.
 
 use rtc_interceptor::{
-    AttributedPacket, Interceptor, Packet, Registry, Rfc8888Builder, StreamInfo, TaggedPacket,
+    AttributedPacket, Interceptor, Packet, Registry, Rfc8888Builder, Slot, StreamInfo, TaggedPacket,
 };
 use rtcp::transport_feedbacks::cc_feedback_report::CcFeedbackReport;
 use sansio::Protocol;
@@ -27,6 +27,7 @@ impl Harness {
     fn new() -> Self {
         let chain = Registry::new()
             .with(
+                Slot::Rfc8888,
                 Rfc8888Builder::new()
                     .with_interval(INTERVAL)
                     .with_sender_ssrc(SENDER_SSRC)

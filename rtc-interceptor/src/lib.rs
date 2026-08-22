@@ -79,19 +79,19 @@
 //! ```
 //! use rtc_interceptor::{
 //!     NackGeneratorBuilder, NackResponderBuilder, ReceiverReportBuilder,
-//!     Registry, SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
+//!     Registry, SenderReportBuilder, Slot, TwccReceiverBuilder, TwccSenderBuilder,
 //! };
 //! use std::time::Duration;
 //!
 //! // Listed wire-to-application, which is the order they run in on the read path and the
 //! // reverse of the order they run in on the write path.
 //! let chain = Registry::new()
-//!     .with(TwccSenderBuilder::new().build())
-//!     .with(NackResponderBuilder::new().build())
-//!     .with(NackGeneratorBuilder::new().build())
-//!     .with(TwccReceiverBuilder::new().build())
-//!     .with(ReceiverReportBuilder::new().build())
-//!     .with(SenderReportBuilder::new().with_interval(Duration::from_secs(1)).build())
+//!     .with(Slot::TwccSender, TwccSenderBuilder::new().build())
+//!     .with(Slot::NackResponder, NackResponderBuilder::new().build())
+//!     .with(Slot::NackGenerator, NackGeneratorBuilder::new().build())
+//!     .with(Slot::TwccReceiver, TwccReceiverBuilder::new().build())
+//!     .with(Slot::ReceiverReport, ReceiverReportBuilder::new().build())
+//!     .with(Slot::SenderReport, SenderReportBuilder::new().with_interval(Duration::from_secs(1)).build())
 //!     .build();
 //!
 //! // `build` appends [`NoopInterceptor`] last, so inbound RTCP — control traffic the interceptors
@@ -105,13 +105,13 @@
 //! hold one without a type parameter and two connections with different chains share a collection:
 //!
 //! ```
-//! use rtc_interceptor::{NackGeneratorBuilder, Registry, SenderReportBuilder};
+//! use rtc_interceptor::{Slot, NackGeneratorBuilder, Registry, SenderReportBuilder};
 //!
 //! # let nack_enabled = true; // e.g. from configuration, negotiated SDP, …
 //! let chain = if nack_enabled {
-//!     Registry::new().with(NackGeneratorBuilder::new().build()).build()
+//!     Registry::new().with(Slot::NackGenerator, NackGeneratorBuilder::new().build()).build()
 //! } else {
-//!     Registry::new().with(SenderReportBuilder::new().build()).build()
+//!     Registry::new().with(Slot::SenderReport, SenderReportBuilder::new().build()).build()
 //! };
 //! ```
 //!
@@ -122,7 +122,7 @@
 //! Before interceptors can process packets for a stream, the stream must be bound:
 //!
 //! ```
-//! use rtc_interceptor::{Interceptor, RTCPFeedback, RTPHeaderExtension, Registry, StreamInfo};
+//! use rtc_interceptor::{Slot, Interceptor, RTCPFeedback, RTPHeaderExtension, Registry, StreamInfo};
 //!
 //! let mut chain = Registry::new().build();
 //!
@@ -157,7 +157,7 @@
 //! because the queue is what the next interceptor is fed from:
 //!
 //! ```
-//! use rtc_interceptor::{Interceptor, Registry, StreamInfo, TaggedPacket};
+//! use rtc_interceptor::{Slot, Interceptor, Registry, StreamInfo, TaggedPacket};
 //! use sansio::Protocol;
 //! use std::collections::VecDeque;
 //! use std::time::Instant;
@@ -204,7 +204,7 @@
 //!     fn unbind_remote_stream(&mut self, _info: &StreamInfo) {}
 //! }
 //!
-//! let chain = Registry::new().with(Counter::default()).build();
+//! let chain = Registry::new().with(Slot::NackGenerator, Counter::default()).build();
 //! # let _ = chain;
 //! ```
 //!
@@ -291,7 +291,7 @@ pub use pacing::sender::{
     PacerBuilder, PacerInterceptor,
 };
 pub use packet::{Attribute, AttributedPacket, Packet, TaggedPacket};
-pub use registry::Registry;
+pub use registry::{Registry, Slot};
 pub use report::receiver::{ReceiverReportBuilder, ReceiverReportInterceptor};
 pub use report::sender::{SenderReportBuilder, SenderReportInterceptor};
 pub use rfc8888::recorder::CcFeedbackRecorder;
@@ -375,8 +375,7 @@ pub trait Interceptor:
 /// An interceptor whose concrete type has been erased.
 ///
 /// `Interceptor` is object safe, which is what lets a chain be a flat list of these rather than a
-/// tower of nested types. Name it when an application chooses an interceptor at runtime and hands
-/// the result to [`Registry::with_boxed`].
+/// tower of nested types.
 pub type BoxedInterceptor = Box<dyn Interceptor>;
 
 impl<P: Interceptor + ?Sized> Interceptor for Box<P> {

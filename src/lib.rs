@@ -409,7 +409,7 @@
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::configuration::interceptor_registry::{
-//!     RegistryBuilder, register_default_interceptors,
+//!     Registry, register_default_interceptors,
 //! };
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -422,8 +422,8 @@
 //! // - TWCC Receiver: Congestion control feedback
 //! //
 //! // `build` sorts them wire-to-application, so the order these are asked for does not matter.
-//! let builder = RegistryBuilder::new();
-//! let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+//! let registry = Registry::new();
+//! let registry = register_default_interceptors(registry, &mut media_engine)?;
 //!
 //! // Build peer connection with interceptors
 //! let mut pc = RTCPeerConnectionBuilder::new()
@@ -442,7 +442,7 @@
 //! use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::configuration::interceptor_registry::{
-//!     RegistryBuilder,
+//!     Registry,
 //!     configure_nack,
 //!     configure_rtcp_reports,
 //!     configure_twcc,
@@ -450,14 +450,14 @@
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
-//! let builder = RegistryBuilder::new();
+//! let registry = Registry::new();
 //!
 //! // Ask for what you want, in any order — each interceptor carries the slot it belongs in.
-//! let builder = configure_nack(builder, &mut media_engine);     // Packet loss recovery
-//! let builder = configure_rtcp_reports(builder);                // SR/RR statistics
-//! let builder = configure_twcc(builder, &mut media_engine)?;    // Full TWCC (sender + receiver)
+//! let registry = configure_nack(registry, &mut media_engine);     // Packet loss recovery
+//! let registry = configure_rtcp_reports(registry);                // SR/RR statistics
+//! let registry = configure_twcc(registry, &mut media_engine)?;    // Full TWCC (sender + receiver)
 //!
-//! let registry = builder.build();
+//! let registry = registry;
 //!
 //! let mut pc = RTCPeerConnectionBuilder::new()
 //!     .with_media_engine(media_engine)
@@ -478,7 +478,7 @@
 //! ```no_run
 //! # use std::time::Instant;
 //! use rtc::peer_connection::configuration::interceptor_registry::{
-//!     RegistryBuilder, register_default_interceptors,
+//!     Registry, register_default_interceptors,
 //! };
 //! use rtc::peer_connection::configuration::media_engine::MediaEngine;
 //! use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
@@ -491,7 +491,7 @@
 //! # fn example(with_nack: bool) -> Result<(), Box<dyn std::error::Error>> {
 //! let mut media_engine = MediaEngine::default();
 //! let registry =
-//!     register_default_interceptors(RegistryBuilder::new(), &mut media_engine)?.build();
+//!     register_default_interceptors(Registry::new(), &mut media_engine)?;
 //!
 //! let mut sessions: Vec<Session> = Vec::new();
 //! sessions.push(Session {

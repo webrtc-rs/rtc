@@ -20,11 +20,11 @@ const DEFAULT_INTERVAL: Duration = Duration::from_millis(100);
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{Registry, TwccReceiverBuilder};
+/// use rtc_interceptor::{Slot, Registry, TwccReceiverBuilder};
 /// use std::time::Duration;
 ///
 /// let chain = Registry::new()
-///     .with(TwccReceiverBuilder::new()
+///     .with(Slot::TwccReceiver, TwccReceiverBuilder::new()
 ///         .with_interval(Duration::from_millis(100))
 ///         .build())
 ///     .build();

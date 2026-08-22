@@ -23,14 +23,13 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use log::{debug, error, trace};
 use rtc::data_channel::RTCDataChannelId;
+use rtc::interceptor::Registry;
 use rtc::media::io::ogg_reader::{
     OggHeader, OggHeaderType, OggReader, OpusTags, parse_opus_head, parse_opus_tags,
 };
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
-use rtc::peer_connection::configuration::interceptor_registry::{
-    RegistryBuilder, register_default_interceptors,
-};
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_OPUS, MediaEngine};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -525,8 +524,8 @@ async fn handle_whep_connection(
 
     media_engine.register_codec(opus_codec.clone(), RtpCodecKind::Audio)?;
 
-    let builder = RegistryBuilder::new();
-    let registry = register_default_interceptors(builder, &mut media_engine)?.build();
+    let registry = Registry::new();
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
 
     let config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![RTCIceServer {

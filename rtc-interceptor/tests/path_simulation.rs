@@ -10,8 +10,8 @@ mod path_simulator;
 use path_simulator::{Arrival, Path, PathProfile, twcc_feedback_for};
 use rtc_interceptor::{
     AttributedPacket, BandwidthEstimator, CongestionControlBuilder, Interceptor, PacerBuilder,
-    Packet, PacketReport, RTCPFeedback, RTPHeaderExtension, Registry, StreamInfo, TaggedPacket,
-    TwccSenderBuilder,
+    Packet, PacketReport, RTCPFeedback, RTPHeaderExtension, Registry, Slot, StreamInfo,
+    TaggedPacket, TwccSenderBuilder,
 };
 use sansio::Protocol;
 use shared::TransportContext;
@@ -109,9 +109,13 @@ fn run(
     let estimator = Recorder::default();
 
     let mut chain = Registry::new()
-        .with(CongestionControlBuilder::new(estimator.clone()).build())
-        .with(TwccSenderBuilder::new().build())
         .with(
+            Slot::CongestionControl,
+            CongestionControlBuilder::new(estimator.clone()).build(),
+        )
+        .with(Slot::TwccSender, TwccSenderBuilder::new().build())
+        .with(
+            Slot::Pacer,
             PacerBuilder::new()
                 .with_target_bitrate(OFFERED_BITS_PER_SECOND)
                 .with_burst_bits(PACKET_BITS)

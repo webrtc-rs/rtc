@@ -17,9 +17,12 @@ use std::time::Instant;
 /// Handing it onward by default would give an application a stream of control traffic it did not
 /// ask for and cannot act on, mixed in with its media — so by default it stops here.
 ///
-/// An application that *does* read RTCP asks for it when building the chain, with
-/// [`Registry::with_rtcp_readable`](crate::Registry::with_rtcp_readable). See below for why that is
-/// the only way to get it.
+/// An application that *does* read RTCP puts an interceptor of its own in the chain and has it
+/// attach [`Attribute::DeliverToApplication`] to the packets it wants. That makes delivery a
+/// per-packet judgement, made by the one component that knows which packets matter: an SFU
+/// forwarding PLIs wants those and not the receiver reports its own chain is already acting on. A
+/// chain-wide switch could only offer "all of it or none of it", and every application that wanted
+/// one kind of packet had to take the lot and filter afterwards.
 ///
 /// # Where this belongs in the chain
 ///
@@ -28,7 +31,7 @@ use std::time::Instant;
 /// never see a NACK. [`Registry::build`](crate::Registry::build) appends it for that reason,
 /// rather than leaving the position to each caller.
 ///
-/// # Why an interceptor of your own cannot do it instead
+/// # Why marking is the mechanism, and not re-emitting a copy
 ///
 /// Under the nested chain an application could add an interceptor that kept a copy of each RTCP
 /// packet and returned it from its own `poll_read` ahead of delegating inward. That worked because
@@ -38,8 +41,9 @@ use std::time::Instant;
 /// On the belt it does not. What an interceptor emits from `poll_read` rejoins the belt **behind
 /// itself**, so it arrives here like any other packet and is dropped like any other packet — the
 /// original *and* the copy, twice over. Since this is always the last interceptor, no position
-/// exists from which to forward past it, which is why the decision belongs to whoever builds the
-/// chain rather than to an interceptor in it.
+/// exists from which to forward past it. Marking the packet works precisely because it does not try
+/// to get around this one: the packet travels the whole chain as normal, and this reads the mark
+/// when it arrives.
 ///
 /// # Naming
 ///
@@ -48,22 +52,14 @@ use std::time::Instant;
 /// quietly made.
 #[derive(Default)]
 pub struct NoopInterceptor {
-    rtcp_readable: bool,
     read_queue: VecDeque<TaggedPacket>,
     write_queue: VecDeque<TaggedPacket>,
 }
 
 impl NoopInterceptor {
-    /// A terminus.
-    ///
-    /// `rtcp_readable` decides whether inbound RTCP carries on to the application after every
-    /// interceptor has seen it. [`Registry::build`](crate::Registry::build) supplies it from
-    /// [`Registry::with_rtcp_readable`](crate::Registry::with_rtcp_readable).
-    pub fn new(rtcp_readable: bool) -> Self {
-        Self {
-            rtcp_readable,
-            ..Default::default()
-        }
+    /// A terminus
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -81,19 +77,18 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
             return Ok(());
         }
 
-        // Inbound RTCP is for the interceptors. Three ways past this point:
+        // Inbound RTCP is for the interceptors. Two ways past this point:
         //
-        // 1. the chain asked for it wholesale — `Registry::with_rtcp_readable`;
-        // 2. an interceptor judged this particular packet worth forwarding, by attaching
+        // 1. an interceptor judged this particular packet worth forwarding, by attaching
         //    `Attribute::DeliverToApplication` — the per-packet judgement, made by whichever
         //    interceptor is qualified to make it;
-        // 3. it carries attributes an interceptor attached for something beyond the chain. The
-        //    *payload* still stops here — the application did not ask for RTCP and handing it one
+        // 2. it carries attributes an interceptor attached for something beyond the chain. The
+        //    *payload* still stops here — nothing asked for this packet, and handing it over
         //    because an interceptor annotated it would be a surprise — but the packet carries on
         //    as an empty-RTCP carrier so the attributes reach the crate boundary.
         //
         // Anything else ends here.
-        if self.rtcp_readable || msg.message.has(&Attribute::DeliverToApplication) {
+        if msg.message.has(&Attribute::DeliverToApplication) {
             self.read_queue.push_back(msg);
         } else if !msg.message.attributes.is_empty() {
             msg.message.packet = Packet::Rtcp(Vec::new());
@@ -126,7 +121,7 @@ impl Interceptor for NoopInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AttributedPacket, Registry, StreamInfo};
+    use crate::{AttributedPacket, Registry, Slot, StreamInfo};
     use sansio::Protocol;
     use shared::TransportContext;
     use shared::error::Error;
@@ -222,7 +217,7 @@ mod tests {
         }
         let counter = Counter::default();
         let seen = counter.seen.clone();
-        let mut chain = Registry::new().with(counter).build();
+        let mut chain = Registry::new().with(Slot::NackGenerator, counter).build();
 
         chain.handle_read(packet(Packet::Rtcp(vec![]))).unwrap();
 
@@ -299,19 +294,6 @@ mod carrier_tests {
         assert!(
             matches!(&delivered.message.packet, Packet::Rtcp(packets) if !packets.is_empty()),
             "this packet was judged worth delivering, payload and all"
-        );
-    }
-
-    /// And with the chain-wide flag the payload passes regardless, as it always did.
-    #[test]
-    fn rtcp_readable_still_passes_everything() {
-        let mut chain = Registry::new().with_rtcp_readable().build();
-        chain.handle_read(annotated(None)).unwrap();
-
-        let delivered = chain.poll_read().expect("forwarded");
-        assert!(
-            matches!(&delivered.message.packet, Packet::Rtcp(packets) if !packets.is_empty()),
-            "with_rtcp_readable means the application wants the RTCP itself"
         );
     }
 }

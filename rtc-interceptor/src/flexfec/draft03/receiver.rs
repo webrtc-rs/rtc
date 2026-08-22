@@ -28,10 +28,10 @@ use std::time::Instant;
 /// # Example
 ///
 /// ```
-/// use rtc_interceptor::{FlexFec03ReceiveBuilder, Registry};
+/// use rtc_interceptor::{Slot, FlexFec03ReceiveBuilder, Registry};
 ///
 /// let chain = Registry::new()
-///     .with(FlexFec03ReceiveBuilder::new().build())
+///     .with(Slot::FecDecoder, FlexFec03ReceiveBuilder::new().build())
 ///     .build();
 /// ```
 #[derive(Default)]
