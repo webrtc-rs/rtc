@@ -52,7 +52,8 @@
 //! carrying [`Attribute`]s that say what happened to it on the way. No interceptor holds a
 //! reference to another; [`Registry`] assembles the list and walks it. [`Registry::build`] appends
 //! [`NoopInterceptor`] last, so inbound RTCP stops before the application — control traffic the
-//! interceptors act on is not media the caller asked for.
+//! interceptors act on is not media the caller asked for. An interceptor that wants a particular
+//! packet delivered anyway attaches [`Attribute::DeliverToApplication`] to it.
 //!
 //! # Direction
 //!
@@ -83,8 +84,9 @@
 //! };
 //! use std::time::Duration;
 //!
-//! // Listed wire-to-application, which is the order they run in on the read path and the
-//! // reverse of the order they run in on the write path.
+//! // The slot decides the position, not the order of these calls; they are listed
+//! // wire-to-application here only because that reads the way the chain runs — forwards on the
+//! // read path, and in reverse on the write path.
 //! let chain = Registry::new()
 //!     .with(Slot::TwccSender, TwccSenderBuilder::new().build())
 //!     .with(Slot::NackResponder, NackResponderBuilder::new().build())
@@ -95,7 +97,8 @@
 //!     .build();
 //!
 //! // `build` appends [`NoopInterceptor`] last, so inbound RTCP — control traffic the interceptors
-//! // above act on — stops there rather than arriving mixed in with the application's media.
+//! // above act on — stops there rather than arriving mixed in with the application's media. To
+//! // receive some of it, add an interceptor that marks those packets `DeliverToApplication`.
 //! # let _ = chain;
 //! ```
 //!

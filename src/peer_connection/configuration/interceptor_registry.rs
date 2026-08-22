@@ -11,9 +11,11 @@
 //!
 //! # Interceptor Chain Architecture
 //!
-//! A chain is a flat list of interceptors ordered by **distance from the wire**: the first added
-//! is closest to the network, the last closest to the application. Direction is a property of the
-//! walk rather than of the list:
+//! A chain is a flat list of interceptors ordered by **distance from the wire**: the first is
+//! closest to the network, the last closest to the application. Each interceptor declares that
+//! distance as a [`Slot`](crate::interceptor::Slot), so the position is a property of the
+//! interceptor rather than of the order the helpers below happened to be called in — which is what
+//! lets them be called in any order. Direction is a property of the walk rather than of the list:
 //!
 //! ```text
 //! read   (network → application)   forward:  first → … → last
@@ -42,7 +44,9 @@
 //!
 //! When adding an interceptor that **delays** a packet (jitter buffer, pacer) or **generates**
 //! one (FEC repair, a recovered packet), its position stops being a preference and becomes a
-//! correctness property. The rules that govern it are documented on
+//! correctness property. The named slots carry those rules; one of your own goes at
+//! `Slot::from(n)`, and they are spaced a thousand apart so there is room between any two. The
+//! rules are documented on [`Slot`](crate::interceptor::Slot),
 //! [`Registry`](crate::interceptor::Registry) and on the interceptor trait itself.
 //!
 //! # Quick Start

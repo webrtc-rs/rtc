@@ -76,7 +76,14 @@ pub enum Attribute {
     ///
     /// [`NoopInterceptor`](crate::NoopInterceptor) ends the inbound RTCP path unless the packet
     /// carries this, which makes forwarding a per-packet judgement by whichever interceptor is
-    /// qualified to make it, rather than a chain-wide setting.
+    /// qualified to make it, rather than a chain-wide setting. An SFU relaying keyframe requests
+    /// marks those and leaves the receiver reports its own chain is acting on alone; a chain-wide
+    /// switch could only offer all of it or none.
+    ///
+    /// Usually attached by an interceptor the application supplies, since the application is what
+    /// knows which packets it can act on. Attaching it is the only way past the terminus:
+    /// re-emitting a copy does not work, because what an interceptor emits from `poll_read` rejoins
+    /// the belt *behind* itself, where the terminus is still ahead of it.
     DeliverToApplication,
 
     /// The congestion controller's estimate, in bits per second.
