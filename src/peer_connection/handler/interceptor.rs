@@ -1,9 +1,11 @@
-use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
+use crate::peer_connection::event::{
+    RTCEventInternal, RTCPeerConnectionEvent, TaggedRTCEventInternal,
+};
 use crate::peer_connection::message::internal::{
     RTCMessageInternal, RTPMessage, TaggedRTCMessageInternal,
 };
 use crate::statistics::accumulator::RTCStatsAccumulator;
-use interceptor::{Interceptor, Packet, TaggedPacket};
+use interceptor::{Attribute, Interceptor, Packet, TaggedPacket};
 use log::{debug, trace};
 use rtcp::header::{FORMAT_CCFB, PacketType};
 use rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
@@ -200,6 +202,38 @@ impl<'a>
     fn poll_read(&mut self) -> Option<Self::Rout> {
         if self.ctx.is_dtls_handshake_complete {
             while let Some(packet) = self.interceptor.poll_read() {
+                // Attributes are how information crosses interceptors; this is where the ones
+                // that mean something beyond the chain are translated into events the application
+                // already polls for. Connection-level facts only — a per-packet attribute like
+                // `RecoveredByFec` means nothing to an application and stops here.
+                for attribute in &packet.message.attributes {
+                    if let Attribute::TargetBitrateChanged { bits_per_second } = attribute {
+                        // #840's stats half. The estimate is one number for the connection, while
+                        // `target_bitrate` is reported per outbound stream — with a single stream
+                        // they are the same thing. Splitting one estimate across simulcast layers
+                        // is an allocation problem, and belongs wherever that allocation is made
+                        // rather than here.
+                        for stream in self.stats.outbound_rtp_streams.values_mut() {
+                            stream.target_bitrate = *bits_per_second;
+                        }
+                        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                            now: packet.now,
+                            event: RTCEventInternal::RTCPeerConnectionEvent(
+                                RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(
+                                    *bits_per_second,
+                                ),
+                            ),
+                        });
+                    }
+                }
+
+                // An empty RTCP packet is an attribute carrier, not a message: the terminus strips
+                // an annotated report down to this so its attributes can reach here. Its work is
+                // done, and surfacing it would hand the application a packet with nothing in it.
+                if matches!(&packet.message.packet, Packet::Rtcp(packets) if packets.is_empty()) {
+                    continue;
+                }
+
                 if let Packet::Rtcp(rtcp_packet) = &packet.message.packet {
                     trace!("Interceptor forwarded a RTCP packet {:?}", rtcp_packet);
                 }
@@ -272,7 +306,6 @@ impl<'a>
         if let RTCEventInternal::DTLSHandshakeComplete(_, _) = &evt.event {
             debug!("interceptor recv dtls handshake complete");
             self.ctx.is_dtls_handshake_complete = true;
-            // self.interceptor.handle_event(());
         }
 
         self.ctx.event_outs.push_back(evt);
@@ -303,5 +336,186 @@ impl<'a>
 
     fn close(&mut self) -> Result<()> {
         self.interceptor.close()
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    //! The last hop inbound (P7-08a).
+    //!
+    //! `Ein`/`Eout` on the interceptor trait are `()`, so an attribute riding on a packet is the
+    //! only channel between interceptors. It carries information as far as the end of the chain and
+    //! no further — everything here is about what happens at that end, where an attribute becomes
+    //! an event the application already polls for.
+
+    use super::*;
+    use crate::statistics::accumulator::OutboundRtpStreamAccumulator;
+    use interceptor::{AttributedPacket, StreamInfo};
+    use sansio::Protocol;
+    use shared::TransportContext;
+
+    /// A stand-in for a chain, so a test can put an arbitrary attribute on the read leg and see
+    /// exactly what came back down the write leg. A real chain cannot be made to emit an arbitrary
+    /// attribute from outside, which is precisely what needs checking here.
+    #[derive(Default)]
+    struct FakeChain {
+        reads: VecDeque<TaggedPacket>,
+        writes: VecDeque<TaggedPacket>,
+    }
+
+    impl Protocol<TaggedPacket, TaggedPacket, ()> for FakeChain {
+        type Rout = TaggedPacket;
+        type Wout = TaggedPacket;
+        type Eout = ();
+        type Error = Error;
+        type Time = Instant;
+
+        fn handle_read(&mut self, msg: TaggedPacket) -> Result<()> {
+            self.reads.push_back(msg);
+            Ok(())
+        }
+        fn poll_read(&mut self) -> Option<TaggedPacket> {
+            self.reads.pop_front()
+        }
+        fn handle_write(&mut self, msg: TaggedPacket) -> Result<()> {
+            self.writes.push_back(msg);
+            Ok(())
+        }
+        fn poll_write(&mut self) -> Option<TaggedPacket> {
+            self.writes.pop_front()
+        }
+        fn handle_event(&mut self, _: ()) -> Result<()> {
+            Ok(())
+        }
+        fn poll_event(&mut self) -> Option<()> {
+            None
+        }
+        fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+            Ok(())
+        }
+        fn poll_timeout(&mut self) -> Option<Instant> {
+            None
+        }
+        fn close(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Interceptor for FakeChain {
+        fn bind_local_stream(&mut self, _: &StreamInfo) {}
+        fn unbind_local_stream(&mut self, _: &StreamInfo) {}
+        fn bind_remote_stream(&mut self, _: &StreamInfo) {}
+        fn unbind_remote_stream(&mut self, _: &StreamInfo) {}
+    }
+
+    fn carrier(attribute: Attribute) -> TaggedPacket {
+        TaggedPacket {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtcp(Vec::new())).with(attribute),
+        }
+    }
+
+    /// A context past the handshake — before it, the handler bypasses the chain entirely.
+    fn connected() -> InterceptorHandlerContext {
+        InterceptorHandlerContext {
+            is_dtls_handshake_complete: true,
+            ..Default::default()
+        }
+    }
+
+    /// **P7-08a.** An estimate arriving as an attribute becomes an event the application already
+    /// polls for, and lands in the stats it already reads. Without this the estimator can run
+    /// perfectly and no one outside the chain ever learns what it decided.
+    #[test]
+    fn an_estimate_becomes_an_event_and_a_stat() {
+        let mut ctx = connected();
+        let mut chain = FakeChain::default();
+        let mut stats = RTCStatsAccumulator::default();
+        stats.outbound_rtp_streams.insert(
+            7,
+            OutboundRtpStreamAccumulator {
+                ssrc: 7,
+                ..Default::default()
+            },
+        );
+
+        chain
+            .handle_read(carrier(Attribute::TargetBitrateChanged {
+                bits_per_second: 750_000.0,
+            }))
+            .expect("seed");
+
+        let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
+        let message = handler.poll_read();
+        let event = handler.poll_event();
+
+        assert!(
+            message.is_none(),
+            "the carrier is not a message — an empty RTCP packet means nothing to an application"
+        );
+        assert!(
+            matches!(
+                event,
+                Some(TaggedRTCEventInternal {
+                    event: RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(rate)
+                    ),
+                    ..
+                }) if rate == 750_000.0
+            ),
+            "the estimate must surface as an event"
+        );
+        assert_eq!(
+            750_000.0, stats.outbound_rtp_streams[&7].target_bitrate,
+            "and must reach the stats #840 asks for"
+        );
+    }
+
+    /// A per-packet attribute is chain business. `RecoveredByFec` tells the NACK generator not to
+    /// ask for a packet again; an application has nothing to do with it, so it stops here.
+    #[test]
+    fn a_per_packet_attribute_produces_no_event() {
+        let mut ctx = connected();
+        let mut chain = FakeChain::default();
+        let mut stats = RTCStatsAccumulator::default();
+
+        let mut packet = carrier(Attribute::RecoveredByFec);
+        packet.message.packet = Packet::Rtcp(Vec::new());
+        chain.handle_read(packet).expect("seed");
+
+        let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
+        while handler.poll_read().is_some() {}
+
+        assert!(
+            handler.poll_event().is_none(),
+            "only connection-level facts cross the boundary"
+        );
+    }
+
+    /// A real RTCP packet still reaches the application when it asked for one — the carrier drop
+    /// keys on emptiness, not on RTCP.
+    #[test]
+    fn a_real_report_still_reaches_the_application() {
+        let mut ctx = connected();
+        let mut chain = FakeChain::default();
+        let mut stats = RTCStatsAccumulator::default();
+
+        chain
+            .handle_read(TaggedPacket {
+                now: Instant::now(),
+                transport: TransportContext::default(),
+                message: AttributedPacket::new(Packet::Rtcp(vec![Box::new(
+                    ReceiverReport::default(),
+                )])),
+            })
+            .expect("seed");
+
+        let mut handler = InterceptorHandler::new(&mut ctx, &mut chain, &mut stats);
+
+        assert!(
+            handler.poll_read().is_some(),
+            "dropping the carrier must not drop RTCP the application asked for"
+        );
     }
 }

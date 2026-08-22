@@ -285,6 +285,28 @@ pub enum RTCPeerConnectionEvent {
     /// See [icecandidate](https://www.w3.org/TR/webrtc/#event-icecandidate)
     OnIceCandidateEvent(RTCPeerConnectionIceEvent),
 
+    /// Fired when the congestion controller's estimate of the available bandwidth changes.
+    ///
+    /// The value is in bits per second, and it is the rate the pacer is now releasing at — there is
+    /// no hidden headroom factor between this number and the wire.
+    ///
+    /// Only fired when a chain carries congestion control, which is not the default: see
+    /// [`configure_congestion_control`](crate::peer_connection::configuration::interceptor_registry::configure_congestion_control).
+    /// An application that encodes media should follow it, since sending above the estimate is what
+    /// builds the queue the estimate is trying to drain.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use rtc::peer_connection::event::RTCPeerConnectionEvent;
+    /// # fn handle_event(event: RTCPeerConnectionEvent) {
+    /// if let RTCPeerConnectionEvent::OnTargetBitrateChangeEvent(bits_per_second) = event {
+    ///     println!("encode at no more than {bits_per_second} b/s");
+    /// }
+    /// # }
+    /// ```
+    OnTargetBitrateChangeEvent(f64),
+
     /// Fired when an error occurs during ICE candidate gathering.
     ///
     /// This event provides details about errors encountered while gathering

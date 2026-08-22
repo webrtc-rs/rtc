@@ -1,7 +1,7 @@
 //! Where the inbound RTCP path ends.
 
 use crate::Interceptor;
-use crate::{Packet, StreamInfo, TaggedPacket};
+use crate::{Attribute, Packet, StreamInfo, TaggedPacket};
 use sansio::Protocol;
 use shared::error::Error;
 use std::collections::VecDeque;
@@ -74,13 +74,29 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for NoopInterceptor {
     type Error = Error;
     type Time = Instant;
 
-    fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
-        let keep = match msg.message.packet {
-            Packet::Rtp(_) => true,
-            // The end of the line for inbound control traffic, unless the chain asked for it.
-            Packet::Rtcp(_) => self.rtcp_readable,
-        };
-        if keep {
+    fn handle_read(&mut self, mut msg: TaggedPacket) -> Result<(), Self::Error> {
+        // RTP is media the application asked for; it always passes.
+        if matches!(msg.message.packet, Packet::Rtp(_)) {
+            self.read_queue.push_back(msg);
+            return Ok(());
+        }
+
+        // Inbound RTCP is for the interceptors. Three ways past this point:
+        //
+        // 1. the chain asked for it wholesale — `Registry::with_rtcp_readable`;
+        // 2. an interceptor judged this particular packet worth forwarding, by attaching
+        //    `Attribute::DeliverToApplication` — the per-packet judgement, made by whichever
+        //    interceptor is qualified to make it;
+        // 3. it carries attributes an interceptor attached for something beyond the chain. The
+        //    *payload* still stops here — the application did not ask for RTCP and handing it one
+        //    because an interceptor annotated it would be a surprise — but the packet carries on
+        //    as an empty-RTCP carrier so the attributes reach the crate boundary.
+        //
+        // Anything else ends here.
+        if self.rtcp_readable || msg.message.has(&Attribute::DeliverToApplication) {
+            self.read_queue.push_back(msg);
+        } else if !msg.message.attributes.is_empty() {
+            msg.message.packet = Packet::Rtcp(Vec::new());
             self.read_queue.push_back(msg);
         }
         Ok(())
@@ -212,5 +228,90 @@ mod tests {
 
         assert_eq!(1, seen.load(std::sync::atomic::Ordering::Relaxed));
         assert!(chain.poll_read().is_none(), "but it stops at the terminus");
+    }
+}
+
+#[cfg(test)]
+mod carrier_tests {
+    use super::*;
+    use crate::{Attribute, AttributedPacket, Registry};
+    use sansio::Protocol;
+    use shared::TransportContext;
+    use std::time::Instant;
+
+    fn annotated(attribute: Option<Attribute>) -> TaggedPacket {
+        let mut message = AttributedPacket::new(Packet::Rtcp(vec![Box::new(
+            rtcp::receiver_report::ReceiverReport::default(),
+        )]));
+        if let Some(attribute) = attribute {
+            message.add(attribute);
+        }
+        TaggedPacket {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message,
+        }
+    }
+
+    /// An annotated report is stripped, not dropped: the payload stops here — the application did
+    /// not ask for RTCP — but the attributes carry on to the crate boundary, which is the only way
+    /// a bandwidth estimate reaches the application.
+    #[test]
+    fn an_annotated_report_passes_on_as_an_empty_carrier() {
+        let mut chain = Registry::new().build();
+        chain
+            .handle_read(annotated(Some(Attribute::TargetBitrateChanged {
+                bits_per_second: 750_000.0,
+            })))
+            .unwrap();
+
+        let carrier = chain.poll_read().expect("the attributes must get through");
+        assert!(
+            matches!(&carrier.message.packet, Packet::Rtcp(packets) if packets.is_empty()),
+            "the payload must be stripped: the application did not ask for RTCP"
+        );
+        assert!(
+            carrier.message.has(&Attribute::TargetBitrateChanged {
+                bits_per_second: 0.0
+            }),
+            "but the attribute must survive"
+        );
+    }
+
+    /// A report nobody annotated is still dropped, exactly as before.
+    #[test]
+    fn an_unannotated_report_still_stops_here() {
+        let mut chain = Registry::new().build();
+        chain.handle_read(annotated(None)).unwrap();
+        assert!(chain.poll_read().is_none());
+    }
+
+    /// `DeliverToApplication` is the per-packet judgement its documentation always described:
+    /// this one packet goes on **with its payload**, without turning RTCP on chain-wide.
+    #[test]
+    fn deliver_to_application_keeps_the_payload() {
+        let mut chain = Registry::new().build();
+        chain
+            .handle_read(annotated(Some(Attribute::DeliverToApplication)))
+            .unwrap();
+
+        let delivered = chain.poll_read().expect("forwarded");
+        assert!(
+            matches!(&delivered.message.packet, Packet::Rtcp(packets) if !packets.is_empty()),
+            "this packet was judged worth delivering, payload and all"
+        );
+    }
+
+    /// And with the chain-wide flag the payload passes regardless, as it always did.
+    #[test]
+    fn rtcp_readable_still_passes_everything() {
+        let mut chain = Registry::new().with_rtcp_readable().build();
+        chain.handle_read(annotated(None)).unwrap();
+
+        let delivered = chain.poll_read().expect("forwarded");
+        assert!(
+            matches!(&delivered.message.packet, Packet::Rtcp(packets) if !packets.is_empty()),
+            "with_rtcp_readable means the application wants the RTCP itself"
+        );
     }
 }
