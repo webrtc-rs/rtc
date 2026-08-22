@@ -21,3 +21,7 @@ rand.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+
+[[bench]]
+name = "congestion_control"
+harness = false
