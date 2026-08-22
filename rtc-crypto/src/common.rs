@@ -202,13 +202,14 @@ impl CbcCipher for AesCbc {
             .try_into()
             .map_err(|_| invalid_nonce(AES_BLOCK_LEN, iv.len()))?;
 
-        for chunk in blocks.chunks_exact_mut(AES_BLOCK_LEN) {
-            for (byte, prior) in chunk.iter_mut().zip(previous) {
+        // `check_blocks` has already rejected a length that is not a whole number of blocks, so the
+        // remainder this returns is empty and the array chunks are the whole input.
+        for block in blocks.as_chunks_mut::<AES_BLOCK_LEN>().0 {
+            for (byte, prior) in block.iter_mut().zip(previous) {
                 *byte ^= prior;
             }
-            let block: &mut [u8; AES_BLOCK_LEN] = chunk.try_into().expect("exact AES block");
             self.key.encrypt(block);
-            previous.copy_from_slice(block);
+            previous = *block;
         }
         Ok(())
     }
@@ -220,9 +221,10 @@ impl CbcCipher for AesCbc {
             .try_into()
             .map_err(|_| invalid_nonce(AES_BLOCK_LEN, iv.len()))?;
 
-        for chunk in blocks.chunks_exact_mut(AES_BLOCK_LEN) {
-            let ciphertext: [u8; AES_BLOCK_LEN] = chunk.try_into().expect("exact AES block");
-            let block: &mut [u8; AES_BLOCK_LEN] = chunk.try_into().expect("exact AES block");
+        for block in blocks.as_chunks_mut::<AES_BLOCK_LEN>().0 {
+            // The ciphertext masks the *next* block, so it has to be kept before decryption
+            // overwrites it in place.
+            let ciphertext = *block;
             self.key.decrypt(block);
             for (byte, prior) in block.iter_mut().zip(previous) {
                 *byte ^= prior;

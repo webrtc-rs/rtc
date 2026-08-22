@@ -122,7 +122,7 @@ impl RTCPeerConnection {
             IceTransport::new(now, agent_config, crypto_provider.clone(), ice_transport_id)?;
 
         // Create the DTLS transport
-        let certificates = configuration.certificates.drain(..).collect();
+        let certificates = std::mem::take(&mut configuration.certificates);
         let dtls_transport = DtlsTransport::new(RTCDtlsTransportConfig {
             id: dtls_transport_id,
             ice_transport_id,

@@ -134,8 +134,9 @@ use crate::rtp_transceiver::rtp_sender::{
 };
 use crate::rtp_transceiver::{PayloadType, SSRC};
 use interceptor::{
-    BoxedInterceptor, Interceptor, NackGeneratorBuilder, NackResponderBuilder,
-    ReceiverReportBuilder, Registry, SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
+    BandwidthEstimator, BoxedInterceptor, CongestionControlBuilder, Interceptor,
+    NackGeneratorBuilder, NackResponderBuilder, PacerBuilder, ReceiverReportBuilder, Registry,
+    SenderReportBuilder, TwccReceiverBuilder, TwccSenderBuilder,
 };
 use shared::error::Result;
 
@@ -809,6 +810,104 @@ pub fn configure_twcc_receiver_only(
     ))
 }
 
+/// Which feedback format the remote should report arrivals with.
+///
+/// **One or the other, never both** (D7). Both resolve into the same `PacketReport`s and the
+/// estimator cannot tell them apart, so a chain carrying both senders counts every packet twice and
+/// the estimate is wrong by a factor of two in the direction that causes congestion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum CongestionFeedback {
+    /// Transport-wide congestion control. The default: browsers support it.
+    #[default]
+    Twcc,
+    /// RFC 8888 congestion control feedback. Carries ECN, which TWCC cannot.
+    Rfc8888,
+}
+
+/// Configure send-side congestion control around `estimator`.
+///
+/// Places three interceptors, at the slots the chain contract reserves for them:
+///
+/// | Slot | Interceptor | Why there |
+/// |---|---|---|
+/// | [`InterceptorSlot::CongestionControl`] | send history and feedback ingest | the only position that sees every byte that leaves |
+/// | [`InterceptorSlot::TwccSender`] | transport-wide sequence numbers | so the history keys on a number that already exists |
+/// | [`InterceptorSlot::Pacer`] | paces departures | above the two, so `packet.now` is the release instant |
+///
+/// The order is declared, not implied by the order these are added, so this composes with
+/// [`configure_nack`] and the rest in any sequence.
+///
+/// # Not a default (D6)
+///
+/// Congestion control implies pacing, pacing implies queueing delay, and that is not something an
+/// application should acquire without asking. [`register_default_interceptors`] does not call this.
+///
+/// # Example
+///
+/// ```
+/// use rtc::interceptor::Gcc;
+/// use rtc::peer_connection::configuration::interceptor_registry::{
+///     CongestionFeedback, RegistryBuilder, configure_congestion_control,
+/// };
+/// use rtc::peer_connection::configuration::media_engine::MediaEngine;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut media_engine = MediaEngine::default();
+/// let builder = configure_congestion_control(
+///     RegistryBuilder::new(),
+///     Gcc::default(),
+///     CongestionFeedback::Twcc,
+///     &mut media_engine,
+/// )?;
+/// let registry = builder.build();
+/// # Ok(())
+/// # }
+/// ```
+pub fn configure_congestion_control<E: BandwidthEstimator + 'static>(
+    builder: RegistryBuilder,
+    estimator: E,
+    feedback: CongestionFeedback,
+    media_engine: &mut MediaEngine,
+) -> Result<RegistryBuilder> {
+    // The remote needs to know how to report. RFC 8888 needs no header extension — it reports
+    // against the RTP sequence number — so only TWCC registers one.
+    if feedback == CongestionFeedback::Twcc {
+        for kind in [RtpCodecKind::Video, RtpCodecKind::Audio] {
+            media_engine.register_feedback(
+                RTCPFeedback {
+                    typ: TYPE_RTCP_FB_TRANSPORT_CC.to_owned(),
+                    parameter: "".to_owned(),
+                },
+                kind,
+            );
+            media_engine.register_header_extension(
+                RTCRtpHeaderExtensionCapability {
+                    uri: sdp::extmap::TRANSPORT_CC_URI.to_owned(),
+                },
+                kind,
+                None,
+            )?;
+        }
+    }
+
+    let builder = builder
+        .at(
+            InterceptorSlot::CongestionControl,
+            CongestionControlBuilder::new(estimator).build(),
+        )
+        .at(InterceptorSlot::Pacer, PacerBuilder::new().build());
+
+    // The sequence numbers the history keys on. RFC 8888 needs none.
+    Ok(match feedback {
+        CongestionFeedback::Twcc => builder.at(
+            InterceptorSlot::TwccSender,
+            TwccSenderBuilder::new().build(),
+        ),
+        CongestionFeedback::Rfc8888 => builder,
+    })
+}
+
 /// Creates a [`StreamInfo`](interceptor::StreamInfo) from RTC types for interceptor binding.
 ///
 /// This helper converts RTC codec and header extension information into the format
@@ -913,6 +1012,81 @@ mod slot_order_tests {
                 InterceptorSlot::SenderReport as usize,
             ],
             positions
+        );
+    }
+
+    /// The three slots congestion control occupies land wire-to-application, whatever order the
+    /// helpers ran in. Getting this wrong means the send history records a packet *before* the
+    /// TWCC sender has numbered it, and the estimator cannot match feedback to what it sent.
+    #[test]
+    fn congestion_control_occupies_its_three_slots_in_order() {
+        use interceptor::Gcc;
+
+        let mut media_engine = MediaEngine::default();
+        // Deliberately after another helper, to show the order does not matter.
+        let builder = configure_nack(RegistryBuilder::new(), &mut media_engine);
+        let builder = configure_congestion_control(
+            builder,
+            Gcc::default(),
+            CongestionFeedback::Twcc,
+            &mut media_engine,
+        )
+        .expect("congestion control");
+
+        assert_eq!(
+            vec![
+                InterceptorSlot::CongestionControl as usize,
+                InterceptorSlot::TwccSender as usize,
+                InterceptorSlot::Pacer as usize,
+                InterceptorSlot::NackResponder as usize,
+                InterceptorSlot::NackGenerator as usize,
+            ],
+            positions(builder)
+        );
+    }
+
+    /// **D7.** RFC 8888 reports against the RTP sequence number, so it needs no TWCC sender — and
+    /// must not get one. Two senders would number every packet twice and the estimator, which
+    /// cannot tell the formats apart, would count every packet twice with it.
+    #[test]
+    fn rfc8888_does_not_also_install_the_twcc_sender() {
+        use interceptor::Gcc;
+
+        let mut media_engine = MediaEngine::default();
+        let builder = configure_congestion_control(
+            RegistryBuilder::new(),
+            Gcc::default(),
+            CongestionFeedback::Rfc8888,
+            &mut media_engine,
+        )
+        .expect("congestion control");
+
+        assert_eq!(
+            vec![
+                InterceptorSlot::CongestionControl as usize,
+                InterceptorSlot::Pacer as usize,
+            ],
+            positions(builder),
+            "RFC 8888 needs no transport-wide sequence numbers"
+        );
+    }
+
+    /// **D6.** Congestion control implies pacing, pacing implies queueing delay, and that is not
+    /// something an application should acquire without asking.
+    #[test]
+    fn the_default_chain_has_no_congestion_control() {
+        let mut media_engine = MediaEngine::default();
+        let builder = register_default_interceptors(RegistryBuilder::new(), &mut media_engine)
+            .expect("default interceptors");
+
+        let slots = positions(builder);
+        assert!(
+            !slots.contains(&(InterceptorSlot::CongestionControl as usize)),
+            "no estimator by default: {slots:?}"
+        );
+        assert!(
+            !slots.contains(&(InterceptorSlot::Pacer as usize)),
+            "and no pacer by default: {slots:?}"
         );
     }
 
