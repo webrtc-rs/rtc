@@ -540,12 +540,30 @@ pub enum RTCPeerConnectionEvent {
     OnTrack(RTCTrackEvent),
 }
 
-/// Reserved for future use.
+/// Something the application asks the interceptor chain to do.
 ///
-/// This enum is currently empty but reserved for potential future event types.
+/// The inbound half of the event channel: an application hands one to
+/// [`RTCPeerConnection::handle_event`](crate::peer_connection::RTCPeerConnection::handle_event) and
+/// the interceptor handler turns it into an [`Attribute`](crate::interceptor::Attribute) on a
+/// carrier packet, which then crosses every interceptor on the write walk.
+///
+/// Not to be confused with [`RTCPeerConnectionEvent`], which travels the other way — out of
+/// `poll_event`, reporting what happened.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum RTCEvent {}
+pub enum RTCEvent {
+    /// Ask the keyframe generator to send a Picture Loss Indication now.
+    ///
+    /// `None` asks for every bound remote stream; naming SSRCs asks only for those, and ones
+    /// nobody is receiving are ignored — a PLI for a stream with no receiver has no destination.
+    ///
+    /// This is what an SFU needs when a new viewer joins: the publisher has to be asked for a
+    /// keyframe, and only the application knows a viewer arrived.
+    ForcePli {
+        /// Which streams to request a keyframe for, or `None` for all of them.
+        ssrcs: Option<Vec<u32>>,
+    },
+}
 
 /// An [`RTCEvent`] together with the instant its condition was observed at.
 ///

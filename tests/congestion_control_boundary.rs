@@ -1,15 +1,15 @@
-//! The crate boundary translates attributes into events (P7-08a).
+//! The crate boundary translates attributes to events, and events to attributes (P7-08a, P7-08b).
 //!
 //! `Ein`/`Eout` on the interceptor trait are `()`, so an attribute riding on a packet is the only
 //! way information crosses an interceptor. That gets it as far as the end of the chain and no
-//! further — these tests are about the last hop, and about the carrier that makes it possible when
-//! there is no real packet going the same way.
+//! further — these tests are about the last hop, in both directions, and about the carrier that
+//! makes it possible when there is no real packet going the same way.
 
 use rtc::interceptor::{
     Attribute, AttributedPacket, Gcc, Interceptor, Packet, StreamInfo, TaggedPacket,
 };
 use rtc::peer_connection::configuration::interceptor_registry::{
-    CongestionFeedback, RegistryBuilder, configure_congestion_control,
+    CongestionFeedback, InterceptorSlot, RegistryBuilder, configure_congestion_control,
 };
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use sansio::Protocol;
@@ -97,5 +97,70 @@ fn an_unannotated_report_still_stops_at_the_terminus() {
     assert!(
         chain.poll_read().is_none(),
         "inbound RTCP is for the interceptors unless something asked for it"
+    );
+}
+
+/// **P7-08b, the interceptor half.** A carrier injected at the application end crosses the whole
+/// write walk, so an interceptor anywhere in the chain can act on it.
+#[test]
+fn a_command_carrier_crosses_every_interceptor() {
+    use rtc::interceptor::IntervalPliInterceptor;
+    use std::time::Duration;
+
+    let mut chain = RegistryBuilder::new()
+        .at(
+            InterceptorSlot::IntervalPli,
+            IntervalPliInterceptor::new(Duration::ZERO),
+        )
+        .build()
+        .build();
+
+    let stream = StreamInfo {
+        ssrc: 42,
+        rtcp_feedback: vec![rtc::interceptor::RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: "pli".to_owned(),
+        }],
+        ..Default::default()
+    };
+    chain.bind_remote_stream(&stream);
+    chain.handle_timeout(Instant::now()).expect("timeout");
+    while chain.poll_write().is_some() {}
+
+    // The shape the handler injects: an empty RTCP packet carrying only an attribute.
+    chain
+        .handle_write(TaggedPacket {
+            now: Instant::now(),
+            transport: TransportContext::default(),
+            message: AttributedPacket::new(Packet::Rtcp(Vec::new()))
+                .with(Attribute::ForcePli { ssrcs: None }),
+        })
+        .expect("write");
+
+    let mut plis = 0;
+    let mut carriers = 0;
+    while let Some(packet) = chain.poll_write() {
+        match &packet.message.packet {
+            Packet::Rtcp(packets) if packets.is_empty() => carriers += 1,
+            Packet::Rtcp(packets) => {
+                plis += packets
+                    .iter()
+                    .filter(|p| {
+                        p.as_any()
+                            .is::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>()
+                    })
+                    .count();
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        1, plis,
+        "the request must reach the generator on the write leg"
+    );
+    assert_eq!(
+        1, carriers,
+        "and the carrier itself comes back out, for the handler to drop"
     );
 }
