@@ -89,12 +89,6 @@ pub enum Attribute {
         bits_per_second: f64,
     },
 
-    /// Ask the keyframe generator to send a Picture Loss Indication now.
-    ForcePli {
-        /// Which streams to request a keyframe for, or `None` for all of them.
-        ssrcs: Option<Vec<u32>>,
-    },
-
     /// Anything an application defines, so this enum is never a bottleneck on it.
     ///
     /// `Arc` rather than `Box` so an attributed packet stays cheap to clone — the NACK responder
@@ -113,7 +107,6 @@ impl std::fmt::Debug for Attribute {
                 .debug_struct("TargetBitrateChanged")
                 .field("bits_per_second", bits_per_second)
                 .finish(),
-            Self::ForcePli { ssrcs } => f.debug_struct("ForcePli").field("ssrcs", ssrcs).finish(),
             // The payload is `dyn Any`, which is not `Debug`.
             Self::Custom(_) => f.write_str("Custom(..)"),
         }
