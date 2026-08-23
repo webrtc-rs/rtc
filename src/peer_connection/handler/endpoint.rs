@@ -397,12 +397,22 @@ where
                 // handle_rtp_message before reaching here, so payload_type is the
                 // primary codec's. FEC de-encapsulation is still TODO (see #12).
                 {
-                    Some(codec.rtp_codec.clone())
+                    Some((codec.rtp_codec.clone(), rtp_header.payload_type))
                 } else {
                     None
                 };
 
-                if let Some(codec) = track_codec {
+                if let Some((codec, payload_type)) = track_codec {
+                    let parameters = receiver.get_parameters(self.media_engine);
+                    RTCRtpReceiverInternal::interceptor_remote_stream_op(
+                        self.interceptor,
+                        true,
+                        ssrc,
+                        payload_type,
+                        &codec,
+                        &parameters.rtp_parameters.header_extensions,
+                    );
+
                     // Set valid Codec for track when received the first RTP packet for such ssrc stream
                     // assert not inserting new entry
                     let new_entry = receiver.track_mut().set_codec_by_ssrc(codec, ssrc);
