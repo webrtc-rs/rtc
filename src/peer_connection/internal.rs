@@ -855,11 +855,14 @@ where
                         }],
                     ));
 
-                    receiver.interceptor_remote_streams_op(
-                        &self.media_engine,
-                        &mut self.interceptor,
-                        true,
-                    );
+                    // Deliberately no `interceptor_remote_streams_op` here. It bound nothing: that
+                    // walks the track's codings and skips any whose codec does not resolve, and the
+                    // codec above is `Default::default()` — deferred until the first RTP packet
+                    // names a payload type. So the call read as "bound", always did nothing, and
+                    // the streams stayed unbound for the life of the connection.
+                    //
+                    // The bind happens once the codec is known, in the endpoint handler's
+                    // `find_track_id_by_ssrc`.
                 } else if only_one_rtp_transceiver {
                     // If the remote SDP has only one media rtp transceiver, the ssrc doesn't have to be explicitly declared
                     // here, we should add a track but with 0 ssrc. The reason is to provide stream_id and track_id information for later usage
