@@ -2740,3 +2740,269 @@ fn test_association_shutdown_during_write() -> Result<()> {
 
     Ok(())
 }*/
+
+use crate::association::stream::StreamEvent;
+
+/// Deliver every queued inbound packet to the server ONE AT A TIME, and after
+/// each one poll association events and drain every `Readable` stream
+/// immediately — exactly what `rtc`'s SCTP handler does
+/// (rtc-0.20.3/src/peer_connection/handler/sctp.rs: `Event::Stream(Readable)`
+/// => `while let Some(chunks) = stream.read_sctp()?`). This models the most
+/// attentive application possible: it cannot read any sooner than this.
+fn deliver_to_server_rtc_style(
+    pair: &mut Pair,
+    server_ch: AssociationHandle,
+) -> (Vec<Vec<u8>>, Vec<String>) {
+    let mut delivered: Vec<Vec<u8>> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let client_addr = pair.client.addr;
+
+    while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
+        if let Some((ch, event)) =
+            pair.server
+                .endpoint
+                .handle(recv_time, client_addr, ecn, packet.into())
+        {
+            match event {
+                DatagramEvent::NewAssociation(conn) => {
+                    pair.server.associations.insert(ch, conn);
+                }
+                DatagramEvent::AssociationEvent(event) => {
+                    if let Some(conn) = pair.server.associations.get_mut(&ch) {
+                        conn.handle_event(event);
+                    }
+                }
+            }
+        }
+
+        let conn = pair.server.associations.get_mut(&server_ch).unwrap();
+        let mut readable: Vec<u16> = Vec::new();
+        while let Some(event) = conn.poll() {
+            if let Event::Stream(StreamEvent::Readable { id }) = event {
+                readable.push(id);
+            }
+        }
+        for id in readable {
+            match conn.stream(id) {
+                Ok(mut s) => loop {
+                    match s.read_sctp() {
+                        Ok(Some(chunks)) => {
+                            let mut buf = vec![0u8; 256 * 1024];
+                            match chunks.read(&mut buf) {
+                                Ok(n) => delivered.push(buf[..n].to_vec()),
+                                Err(e) => errors.push(format!("chunks.read: {e}")),
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            errors.push(format!("read_sctp(si={id}): {e}"));
+                            break;
+                        }
+                    }
+                },
+                Err(e) => errors.push(format!("stream(si={id}): {e}")),
+            }
+        }
+    }
+    (delivered, errors)
+}
+
+/// webrtc-rs/webrtc#822 in the 0.20.x rewrite.
+///
+/// `handle_data` drops incoming DATA when the receive buffer is full, unless it
+/// is a *missing* chunk with `tsn < payload_queue.get_last_tsn_received()`. If
+/// the buffer filled with incomplete fragment sets — which pin `n_bytes` in the
+/// reassembly queue and can only be released by the fragment that completes
+/// them — while everything received so far is cumulatively acked, then
+/// `payload_queue` is empty, `get_last_tsn_received()` is `None`, and the
+/// completing chunk is dropped on every retransmission, forever. The receiver
+/// window never reopens: a permanent zero-window deadlock the application
+/// cannot observe or break.
+///
+/// This is the code KPS patches on webrtc-sctp 0.13.0; rtc-sctp 0.20.3 carries
+/// it verbatim (same `can_push` / `get_last_tsn_received` branch, same
+/// `get_my_receiver_window_credit` accounting over reassembly-queue bytes).
+#[test]
+fn kps_repro_822_tail_of_burst_at_full_buffer_must_not_deadlock() -> Result<()> {
+    const RECV_BUF: u32 = 4096;
+    let si: u16 = 1;
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, RECV_BUF)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    let (vtag, tsn0, sport, dport) = {
+        let a = pair.client_conn_mut(client_ch);
+        (
+            a.peer_verification_tag,
+            a.my_next_tsn,
+            a.source_port,
+            a.destination_port,
+        )
+    };
+
+    let frag = vec![0xABu8; 1024];
+    let n_head = 5; // 5 KiB of head fragments > RECV_BUF
+    let mut send = |pair: &mut Pair, tsn: u32, beginning: bool, ending: bool| -> Result<()> {
+        let packet = Packet {
+            common_header: CommonHeader {
+                source_port: sport,
+                destination_port: dport,
+                verification_tag: vtag,
+            },
+            chunks: vec![Box::new(ChunkPayloadData {
+                beginning_fragment: beginning,
+                ending_fragment: ending,
+                tsn,
+                stream_identifier: si,
+                stream_sequence_number: 1, // ssn 0 was the DCEP hello
+                payload_type: PayloadProtocolIdentifier::Binary,
+                user_data: Bytes::from(frag.clone()),
+                ..Default::default()
+            })],
+        };
+        pair.server
+            .inbound
+            .push_back((pair.time, None, packet.marshal()?));
+        Ok(())
+    };
+
+    // One message, fragmented: everything except the final fragment.
+    for i in 0..n_head {
+        send(&mut pair, tsn0 + i, i == 0, false)?;
+    }
+    let (delivered, errors) = deliver_to_server_rtc_style(&mut pair, server_ch);
+    assert!(delivered.is_empty(), "message is incomplete, nothing to deliver");
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+
+    // MECHANISM CHECK: buffer full purely from pinned fragments, and everything
+    // received is cumulatively acked, so payload_queue is empty.
+    let (credit, pq_empty) = {
+        let a = pair.server_conn_mut(server_ch);
+        (a.get_my_receiver_window_credit(), a.payload_queue.is_empty())
+    };
+    println!("receiver window credit = {credit}, payload_queue empty = {pq_empty}");
+    assert_eq!(0, credit, "mechanism not exercised: receive buffer is not full");
+    assert!(
+        pq_empty,
+        "mechanism not exercised: payload_queue must be empty for \
+         get_last_tsn_received() to return None"
+    );
+
+    // The final fragment — the only chunk that can complete the pinned set and
+    // let the application drain. Retransmitted as T3-rtx would.
+    for attempt in 0..5 {
+        send(&mut pair, tsn0 + n_head, false, true)?;
+        let (delivered, errors) = deliver_to_server_rtc_style(&mut pair, server_ch);
+        println!(
+            "attempt {attempt}: delivered {} message(s), credit now {}, errors {errors:?}",
+            delivered.len(),
+            pair.server_conn_mut(server_ch).get_my_receiver_window_credit()
+        );
+        if !delivered.is_empty() {
+            let total: usize = delivered.iter().map(|d| d.len()).sum();
+            assert_eq!(
+                (n_head as usize + 1) * frag.len(),
+                total,
+                "complete message expected"
+            );
+            return Ok(());
+        }
+    }
+
+    panic!(
+        "permanent zero-window deadlock: the in-sequence chunk that completes the \
+         pinned fragment set was dropped on every retransmission; receiver window \
+         credit is still {}",
+        pair.server_conn_mut(server_ch).get_my_receiver_window_credit()
+    );
+}
+
+/// Side effect of porting KPS patch a73a0a8 (webrtc-sctp) into rtc-sctp 0.20.3.
+///
+/// The patch's own claim is "this admits at most one chunk per cumulative-ack
+/// advance, so the buffer bound is preserved". That holds only if the accepted
+/// chunk does NOT itself advance the cumulative ack — but the accepted chunk is
+/// `peer_last_tsn + 1`, i.e. exactly the one that does. So for a reader that is
+/// simply slow (in-order complete messages piling up unread), every chunk
+/// qualifies and `max_receive_buffer_size` stops bounding anything.
+///
+/// Measures the peak reassembly-queue occupancy against the configured bound.
+#[test]
+fn kps_822_patch_side_effect_receive_buffer_bound() -> Result<()> {
+    const RECV_BUF: u32 = 64 * 1024;
+    let si: u16 = 6;
+    let n_messages: u32 = 130;
+    let sbuf = vec![0x5Au8; 1000];
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::Normal, RECV_BUF)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    for _ in 0..n_messages {
+        pair.client_stream(client_ch, si)?
+            .write_sctp(&Bytes::from(sbuf.clone()), PayloadProtocolIdentifier::Binary)?;
+    }
+
+    // The application never reads. Step a bounded number of times so an actual
+    // deadlock cannot hang the test.
+    let mut peak = 0usize;
+    for _ in 0..2000 {
+        if !pair.step() {
+            break;
+        }
+        let bytes = pair
+            .server_conn_mut(server_ch)
+            .streams
+            .get(&si)
+            .map(|s| s.get_num_bytes_in_reassembly_queue())
+            .unwrap_or(0);
+        peak = peak.max(bytes);
+    }
+
+    let unread = pair.client_conn_mut(client_ch).buffered_amount();
+    println!(
+        "max_receive_buffer_size = {RECV_BUF}, peak reassembly bytes at a \
+         never-reading receiver = {peak}, sender still holds {unread} bytes"
+    );
+    // The bound is checked before pushing, so overshooting by one message is
+    // normal and expected; overshooting by the whole transfer is not.
+    let tolerance = RECV_BUF as usize + 2 * sbuf.len();
+    assert!(
+        peak <= tolerance,
+        "receive buffer bound defeated: {peak} bytes queued at a receiver \
+         configured for at most {RECV_BUF} (tolerance {tolerance})"
+    );
+    assert!(
+        unread > 0,
+        "flow control is not holding anything back at the sender"
+    );
+    Ok(())
+}
+
+/// Deliver the queued packets without draining any stream — the application
+/// simply never reads.
+fn deliver_to_server_rtc_style_no_read(pair: &mut Pair, server_ch: AssociationHandle) -> usize {
+    let client_addr = pair.client.addr;
+    let mut n = 0;
+    while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
+        if let Some((ch, event)) =
+            pair.server
+                .endpoint
+                .handle(recv_time, client_addr, ecn, packet.into())
+        {
+            match event {
+                DatagramEvent::NewAssociation(conn) => {
+                    pair.server.associations.insert(ch, conn);
+                }
+                DatagramEvent::AssociationEvent(event) => {
+                    if let Some(conn) = pair.server.associations.get_mut(&ch) {
+                        conn.handle_event(event);
+                    }
+                }
+            }
+        }
+        let conn = pair.server.associations.get_mut(&server_ch).unwrap();
+        while conn.poll().is_some() {}
+        n += 1;
+    }
+    n
+}

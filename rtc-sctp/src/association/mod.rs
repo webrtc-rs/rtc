@@ -137,9 +137,9 @@ pub struct Association {
     bytes_received: usize,
     bytes_sent: usize,
 
-    peer_verification_tag: u32,
+    pub(crate) peer_verification_tag: u32,
     my_verification_tag: u32,
-    my_next_tsn: u32,
+    pub(crate) my_next_tsn: u32,
     peer_last_tsn: u32,
     // for RTT measurement
     min_tsn2measure_rtt: u32,
@@ -166,13 +166,13 @@ pub struct Association {
     local_addr: SocketAddr,
     transport_protocol: TransportProtocol,
 
-    source_port: u16,
-    destination_port: u16,
+    pub(crate) source_port: u16,
+    pub(crate) destination_port: u16,
     my_max_num_inbound_streams: u16,
     my_max_num_outbound_streams: u16,
     my_cookie: Option<ParamStateCookie>,
 
-    payload_queue: PayloadQueue,
+    pub(crate) payload_queue: PayloadQueue,
     inflight_queue: PayloadQueue,
     pending_queue: PendingQueue,
     control_queue: VecDeque<Packet>,
@@ -776,6 +776,10 @@ impl Association {
         self.max_message_size = max_message_size;
     }
 
+    fn has_readable_data(&self) -> bool {
+        self.streams.values().any(|s| s.reassembly_queue.is_readable())
+    }
+
     /// unregister_stream un-registers a stream from the association
     /// The caller should hold the association write lock.
     fn unregister_stream(&mut self, stream_identifier: StreamId, reason: AssociationError) {
@@ -1259,6 +1263,15 @@ impl Association {
                             self.payload_queue.push(d.clone(), self.peer_last_tsn);
                             stream_handle_data = true; //s.handle_data(d.clone());
                         }
+                    } else if d.tsn == self.peer_last_tsn.wrapping_add(1)
+                        && !self.has_readable_data()
+                    {
+                        debug!(
+                            "[{}] receive buffer full, but accepted as the in-sequence chunk (tsn={} ssn={}) that unblocks reassembly",
+                            self.side, d.tsn, d.stream_sequence_number
+                        );
+                        self.payload_queue.push(d.clone(), self.peer_last_tsn);
+                        stream_handle_data = true;
                     } else {
                         debug!(
                             "[{}] receive buffer full. dropping DATA with tsn={} ssn={}",
