@@ -2740,3 +2740,385 @@ fn test_association_shutdown_during_write() -> Result<()> {
 
     Ok(())
 }*/
+
+use crate::association::stream::StreamEvent;
+
+/// Deliver every queued inbound packet to the server ONE AT A TIME, and after
+/// each one poll association events and drain every `Readable` stream
+/// immediately — exactly what `rtc`'s SCTP handler does
+/// (rtc-0.20.3/src/peer_connection/handler/sctp.rs: `Event::Stream(Readable)`
+/// => `while let Some(chunks) = stream.read_sctp()?`). This models the most
+/// attentive application possible: it cannot read any sooner than this.
+fn deliver_to_server_rtc_style(
+    pair: &mut Pair,
+    server_ch: AssociationHandle,
+) -> (Vec<Vec<u8>>, Vec<String>) {
+    let mut delivered: Vec<Vec<u8>> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let client_addr = pair.client.addr;
+
+    while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
+        if let Some((ch, event)) =
+            pair.server
+                .endpoint
+                .handle(recv_time, client_addr, ecn, packet.into())
+        {
+            match event {
+                DatagramEvent::NewAssociation(conn) => {
+                    pair.server.associations.insert(ch, conn);
+                }
+                DatagramEvent::AssociationEvent(event) => {
+                    if let Some(conn) = pair.server.associations.get_mut(&ch) {
+                        conn.handle_event(event);
+                    }
+                }
+            }
+        }
+
+        let conn = pair.server.associations.get_mut(&server_ch).unwrap();
+        let mut readable: Vec<u16> = Vec::new();
+        while let Some(event) = conn.poll() {
+            if let Event::Stream(StreamEvent::Readable { id }) = event {
+                readable.push(id);
+            }
+        }
+        for id in readable {
+            match conn.stream(id) {
+                Ok(mut s) => loop {
+                    match s.read_sctp() {
+                        Ok(Some(chunks)) => {
+                            let mut buf = vec![0u8; 256 * 1024];
+                            match chunks.read(&mut buf) {
+                                Ok(n) => delivered.push(buf[..n].to_vec()),
+                                Err(e) => errors.push(format!("chunks.read: {e}")),
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            errors.push(format!("read_sctp(si={id}): {e}"));
+                            break;
+                        }
+                    }
+                },
+                Err(e) => errors.push(format!("stream(si={id}): {e}")),
+            }
+        }
+    }
+    (delivered, errors)
+}
+
+/// webrtc-rs/webrtc#816 in the 0.20.x rewrite — the case the rewrite DOES fix.
+///
+/// A peer writes a message and immediately resets the stream (what a data
+/// channel close does). rtc-sctp emits that as two packets, DATA first; the
+/// application drains on the `Readable` event from the first packet before the
+/// RECONFIG in the second is ever processed. Under webrtc-sctp 0.13.0 the same
+/// sequence lost the data, because `read_sctp` returned EOF on `read_shutdown`
+/// without draining the reassembly queue — the bug KPS patches.
+///
+/// PASSES on rtc-sctp 0.20.3. See the `kps_repro_816_*` tests for the two
+/// orderings that still lose the data.
+#[test]
+fn kps_816_write_then_reset_delivered_in_order_survives() -> Result<()> {
+    let si: u16 = 1;
+    let msg: Vec<u8> = b"payload-that-must-survive-the-reset".to_vec();
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    // Write and reset with no server read in between.
+    let n = pair
+        .client_stream(client_ch, si)?
+        .write_sctp(&msg.clone().into(), PayloadProtocolIdentifier::Binary)?;
+    assert_eq!(msg.len(), n);
+    pair.client_stream(client_ch, si)?.stop()?; // RFC 6525 outgoing reset
+
+    // Flush the client's packets into the server's inbound queue, then feed
+    // them to the server the way a real rtc application would consume them.
+    pair.drive_client();
+
+    // MECHANISM CHECK: how many packets carry the write+reset, and does the
+    // reset actually get applied? If the reset landed in a later packet than
+    // the DATA, the application would have drained in between and the test
+    // would prove nothing.
+    let n_packets = pair.server.inbound.len();
+    let (delivered, errors) = deliver_to_server_rtc_style(&mut pair, server_ch);
+    let stream_after = pair.server_conn_mut(server_ch).stream(si).is_ok();
+
+    println!("inbound packets carrying write+reset = {n_packets}");
+    println!("server still has stream {si} afterwards = {stream_after}");
+    println!("delivered = {delivered:?}");
+    println!("errors    = {errors:?}");
+    assert_eq!(
+        2, n_packets,
+        "rtc-sctp gathers control chunks into their own packet, so write+reset \
+         is two packets"
+    );
+    assert!(
+        !stream_after,
+        "mechanism not exercised: the incoming reset was never applied \
+         (the stream is still registered on the receiver)"
+    );
+    assert_eq!(
+        vec![msg],
+        delivered,
+        "data written before a stream reset was lost at the receiver (errors: {errors:?})"
+    );
+    Ok(())
+}
+
+/// webrtc-rs/webrtc#816 in the 0.20.x rewrite — the case that actually bit KPS.
+///
+/// The peer that writes-then-closes is `pion` (a Go WebRTC stack), and pion
+/// bundles the RECONFIG with the DATA it is resetting: one SCTP packet,
+/// `sender_last_tsn` == the TSN of the DATA chunk in the same packet. RFC 6525
+/// then applies the reset in the same `handle()` call that delivered the data,
+/// so "drain on Readable" gives the application no window at all.
+///
+/// rtc-sctp never emits that packet itself (control chunks are gathered into a
+/// separate packet from DATA), so it is crafted here.
+#[test]
+fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
+    let si: u16 = 1;
+    let msg = Bytes::from_static(b"payload-that-must-survive-the-bundled-reset");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    // Build one packet: DATA(tsn) + RECONFIG(sender_last_tsn = tsn) — pion's
+    // write-then-close on a data channel.
+    let (vtag, tsn, sport, dport) = {
+        let a = pair.client_conn_mut(client_ch);
+        (
+            a.peer_verification_tag,
+            a.my_next_tsn,
+            a.source_port,
+            a.destination_port,
+        )
+    };
+    let packet = Packet {
+        common_header: CommonHeader {
+            source_port: sport,
+            destination_port: dport,
+            verification_tag: vtag,
+        },
+        chunks: vec![
+            Box::new(ChunkPayloadData {
+                beginning_fragment: true,
+                ending_fragment: true,
+                tsn,
+                stream_identifier: si,
+                stream_sequence_number: 1, // 0 was the DCEP hello in establish_session_pair
+                payload_type: PayloadProtocolIdentifier::Binary,
+                user_data: msg.clone(),
+                ..Default::default()
+            }),
+            Box::new(ChunkReconfig {
+                param_a: Some(Box::new(ParamOutgoingResetRequest {
+                    reconfig_request_sequence_number: 100,
+                    reconfig_response_sequence_number: 0,
+                    sender_last_tsn: tsn,
+                    stream_identifiers: vec![si],
+                })),
+                ..Default::default()
+            }),
+        ],
+    };
+    pair.server
+        .inbound
+        .push_back((pair.time, None, packet.marshal()?));
+
+    let n_packets = pair.server.inbound.len();
+    let (delivered, errors) = deliver_to_server_rtc_style(&mut pair, server_ch);
+    let stream_after = pair.server_conn_mut(server_ch).stream(si).is_ok();
+
+    println!("inbound packets = {n_packets}");
+    println!("server still has stream {si} afterwards = {stream_after}");
+    println!("delivered = {:?}", delivered.iter().map(|d| String::from_utf8_lossy(d).to_string()).collect::<Vec<_>>());
+    println!("errors    = {errors:?}");
+
+    assert_eq!(1, n_packets, "mechanism: DATA and RECONFIG must share one packet");
+    assert!(
+        !stream_after,
+        "mechanism not exercised: the bundled reset was never applied"
+    );
+    assert_eq!(
+        vec![msg.to_vec()],
+        delivered,
+        "data bundled with the stream reset was lost at the receiver (errors: {errors:?})"
+    );
+    Ok(())
+}
+
+/// webrtc-rs/webrtc#816 in the 0.20.x rewrite — no crafted packet needed.
+///
+/// rtc-sctp emits the write-then-close as two packets (control chunks are
+/// gathered separately from DATA). Deliver them in the other order — which any
+/// network may do, and which is the order a sender that gathers its control
+/// queue first would produce anyway. The RECONFIG arrives with
+/// `sender_last_tsn` ahead of `peer_last_tsn`, so it is deferred
+/// (`ReconfigResult::InProgress`) and stored. When the DATA then arrives,
+/// `handle_data` -> `handle_peer_last_tsn_and_acknowledgement` retries the
+/// stored request *in the same `handle()` call*, unregistering the stream
+/// before the application is ever handed the `Readable` event for the data
+/// that came in with it.
+#[test]
+fn kps_repro_816_reordered_reset_before_data_must_not_lose_data() -> Result<()> {
+    let si: u16 = 1;
+    let msg = Bytes::from_static(b"payload-that-must-survive-the-reordered-reset");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    let n = pair
+        .client_stream(client_ch, si)?
+        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    assert_eq!(msg.len(), n);
+    pair.client_stream(client_ch, si)?.stop()?;
+
+    pair.drive_client();
+    let n_packets = pair.server.inbound.len();
+    assert_eq!(2, n_packets, "expected DATA and RECONFIG in separate packets");
+
+    // Swap the two packets: RECONFIG first, DATA second.
+    let mut pkts: Vec<_> = pair.server.inbound.drain(..).collect();
+    pkts.reverse();
+    pair.server.inbound.extend(pkts);
+
+    let (delivered, errors) = deliver_to_server_rtc_style(&mut pair, server_ch);
+    let stream_after = pair.server_conn_mut(server_ch).stream(si).is_ok();
+
+    println!("server still has stream {si} afterwards = {stream_after}");
+    println!(
+        "delivered = {:?}",
+        delivered
+            .iter()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .collect::<Vec<_>>()
+    );
+    println!("errors    = {errors:?}");
+
+    assert!(
+        !stream_after,
+        "mechanism not exercised: the deferred reset was never applied"
+    );
+    assert_eq!(
+        vec![msg.to_vec()],
+        delivered,
+        "data lost when the stream reset was processed ahead of the data it resets \
+         (errors: {errors:?})"
+    );
+    Ok(())
+}
+
+/// The reset is what gets deferred, not the unregistration — so the two
+/// invariants that shape has to keep:
+///
+///   * `Association::close()` still clears every stream, including one holding
+///     unread data. Nothing will ever drain it, so deferring there would leak.
+///   * a reset held back for an undrained stream is answered In Progress and
+///     performed once the application takes the data, without waiting for the
+///     peer to retransmit its RECONFIG.
+#[test]
+fn kps_816_close_unregisters_streams_holding_unread_data() -> Result<()> {
+    let si: u16 = 1;
+    let msg = Bytes::from_static(b"never collected");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    pair.client_stream(client_ch, si)?
+        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    pair.drive_client();
+    let _ = deliver_to_server_rtc_style_no_read(&mut pair, server_ch);
+
+    {
+        let a = pair.server_conn_mut(server_ch);
+        assert!(
+            a.streams
+                .get(&si)
+                .is_some_and(|s| s.reassembly_queue.is_readable()),
+            "precondition: the server is holding a message the application never read"
+        );
+        a.close(AssociationError::LocallyClosed)?;
+        assert!(
+            a.streams.is_empty(),
+            "close() must unregister every stream; deferring on unread data would leak \
+             a stream nothing can ever drain"
+        );
+    }
+    Ok(())
+}
+
+/// Deliver the queued packets without draining any stream — the application
+/// simply never reads.
+fn deliver_to_server_rtc_style_no_read(pair: &mut Pair, server_ch: AssociationHandle) -> usize {
+    let client_addr = pair.client.addr;
+    let mut n = 0;
+    while let Some((recv_time, ecn, packet)) = pair.server.inbound.pop_front() {
+        if let Some((ch, event)) =
+            pair.server
+                .endpoint
+                .handle(recv_time, client_addr, ecn, packet.into())
+        {
+            match event {
+                DatagramEvent::NewAssociation(conn) => {
+                    pair.server.associations.insert(ch, conn);
+                }
+                DatagramEvent::AssociationEvent(event) => {
+                    if let Some(conn) = pair.server.associations.get_mut(&ch) {
+                        conn.handle_event(event);
+                    }
+                }
+            }
+        }
+        let conn = pair.server.associations.get_mut(&server_ch).unwrap();
+        while conn.poll().is_some() {}
+        n += 1;
+    }
+    n
+}
+
+#[test]
+fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> {
+    let si: u16 = 1;
+    let msg = Bytes::from_static(b"collected late");
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    pair.client_stream(client_ch, si)?
+        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    pair.client_stream(client_ch, si)?.stop()?;
+    pair.drive_client();
+
+    // Reset ahead of the data, and the application does not read: the reset must
+    // be held, not performed.
+    let mut pkts: Vec<_> = pair.server.inbound.drain(..).collect();
+    pkts.reverse();
+    pair.server.inbound.extend(pkts);
+    deliver_to_server_rtc_style_no_read(&mut pair, server_ch);
+
+    assert!(
+        pair.server_conn_mut(server_ch).stream(si).is_ok(),
+        "the reset must be deferred while the application still has data to collect"
+    );
+
+    // Now the application collects it — and that alone must complete the reset,
+    // with no RECONFIG retransmission from the peer.
+    let mut buf = vec![0u8; 64];
+    let chunks = pair
+        .server_stream(server_ch, si)?
+        .read_sctp()?
+        .expect("the held data must still be there");
+    let n = chunks.read(&mut buf)?;
+    assert_eq!(&buf[..n], &msg[..], "the held data must be intact");
+
+    // read_sctp retries the deferred request as the queue runs dry.
+    let _ = pair.server_stream(server_ch, si).and_then(|mut s| s.read_sctp());
+    assert!(
+        pair.server_conn_mut(server_ch).stream(si).is_err(),
+        "once drained, the deferred reset must be performed"
+    );
+    Ok(())
+}
