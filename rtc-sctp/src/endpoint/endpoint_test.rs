@@ -2934,10 +2934,19 @@ fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
 
     println!("inbound packets = {n_packets}");
     println!("server still has stream {si} afterwards = {stream_after}");
-    println!("delivered = {:?}", delivered.iter().map(|d| String::from_utf8_lossy(d).to_string()).collect::<Vec<_>>());
+    println!(
+        "delivered = {:?}",
+        delivered
+            .iter()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .collect::<Vec<_>>()
+    );
     println!("errors    = {errors:?}");
 
-    assert_eq!(1, n_packets, "mechanism: DATA and RECONFIG must share one packet");
+    assert_eq!(
+        1, n_packets,
+        "mechanism: DATA and RECONFIG must share one packet"
+    );
     assert!(
         !stream_after,
         "mechanism not exercised: the bundled reset was never applied"
@@ -2978,7 +2987,10 @@ fn kps_repro_816_reordered_reset_before_data_must_not_lose_data() -> Result<()> 
 
     pair.drive_client();
     let n_packets = pair.server.inbound.len();
-    assert_eq!(2, n_packets, "expected DATA and RECONFIG in separate packets");
+    assert_eq!(
+        2, n_packets,
+        "expected DATA and RECONFIG in separate packets"
+    );
 
     // Swap the two packets: RECONFIG first, DATA second.
     let mut pkts: Vec<_> = pair.server.inbound.drain(..).collect();
@@ -3115,7 +3127,9 @@ fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> 
     assert_eq!(&buf[..n], &msg[..], "the held data must be intact");
 
     // read_sctp retries the deferred request as the queue runs dry.
-    let _ = pair.server_stream(server_ch, si).and_then(|mut s| s.read_sctp());
+    let _ = pair
+        .server_stream(server_ch, si)
+        .and_then(|mut s| s.read_sctp());
     assert!(
         pair.server_conn_mut(server_ch).stream(si).is_err(),
         "once drained, the deferred reset must be performed"
