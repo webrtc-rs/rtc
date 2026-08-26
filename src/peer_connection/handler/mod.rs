@@ -167,6 +167,7 @@ impl RTCPeerConnection {
     /// Never affected by data-channel back-pressure. Media arrives over SRTP and is subject to
     /// none of SCTP's flow control, so a caller throttling a slow data-channel consumer must
     /// still be able to deliver video — draining this is how.
+    #[doc(hidden)]
     pub fn poll_media_read(&mut self) -> Option<TaggedRTCMessage> {
         self.pipeline_context.media_read_outs.pop_front()
     }
@@ -177,6 +178,7 @@ impl RTCPeerConnection {
     /// bytes in SCTP's reassembly queue, which lowers the receiver-window credit advertised in
     /// every SACK, which tells the peer to slow down. Stop calling it while the application is
     /// behind, resume when it catches up.
+    #[doc(hidden)]
     pub fn poll_data_read(&mut self) -> Option<TaggedRTCMessage> {
         self.pipeline_context.data_read_outs.pop_front()
     }
