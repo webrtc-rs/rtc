@@ -127,7 +127,12 @@ impl Stream<'_> {
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier)
             && (s.state == RecvSendState::ReadWritable || s.state == RecvSendState::Readable)
         {
-            Ok(s.reassembly_queue.read())
+            let chunks = s.reassembly_queue.read();
+            if !s.reassembly_queue.is_readable() {
+                self.association
+                    .retry_deferred_resets(self.stream_identifier);
+            }
+            Ok(chunks)
         } else {
             Err(Error::ErrStreamClosed)
         }

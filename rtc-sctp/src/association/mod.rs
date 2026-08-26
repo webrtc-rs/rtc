@@ -137,9 +137,9 @@ pub struct Association {
     bytes_received: usize,
     bytes_sent: usize,
 
-    peer_verification_tag: u32,
+    pub(crate) peer_verification_tag: u32,
     my_verification_tag: u32,
-    my_next_tsn: u32,
+    pub(crate) my_next_tsn: u32,
     peer_last_tsn: u32,
     // for RTT measurement
     min_tsn2measure_rtt: u32,
@@ -166,13 +166,13 @@ pub struct Association {
     local_addr: SocketAddr,
     transport_protocol: TransportProtocol,
 
-    source_port: u16,
-    destination_port: u16,
+    pub(crate) source_port: u16,
+    pub(crate) destination_port: u16,
     my_max_num_inbound_streams: u16,
     my_max_num_outbound_streams: u16,
     my_cookie: Option<ParamStateCookie>,
 
-    payload_queue: PayloadQueue,
+    pub(crate) payload_queue: PayloadQueue,
     inflight_queue: PayloadQueue,
     pending_queue: PendingQueue,
     control_queue: VecDeque<Packet>,
@@ -787,6 +787,36 @@ impl Association {
             });
             s.state = RecvSendState::Closed;
         }
+    }
+
+    /// Re-run any reset request that was answered In Progress because
+    /// `stream_identifier` still had data the application had not collected
+    /// Called when that stream drains.
+    ///
+    /// The reply is queued like any other control packet; a request naming
+    /// several streams is retried as a whole and simply defers again if another
+    /// of its streams is still readable.
+    pub(crate) fn retry_deferred_resets(&mut self, stream_identifier: StreamId) {
+        let pending: Vec<ParamOutgoingResetRequest> = self
+            .reconfig_requests
+            .values()
+            .filter(|p| p.stream_identifiers.contains(&stream_identifier))
+            .cloned()
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+
+        let mut reply = vec![];
+        for p in pending {
+            if let Err(err) = self.reset_streams_if_any(&p, true, &mut reply) {
+                debug!("[{}] retry of deferred reset failed: {:?}", self.side, err);
+            }
+        }
+        for packet in reply {
+            self.control_queue.push_back(packet);
+        }
+        self.awake_write_loop();
     }
 
     /// set_state atomically sets the state of the Association.
@@ -1963,6 +1993,24 @@ impl Association {
         }
     }
 
+    /// Streams named by `p` that still hold a complete message the application
+    /// has not collected, so a reset naming them cannot be performed yet.
+    ///
+    /// Only *readable* data counts: an incomplete fragment set can never be
+    /// completed once the peer has reset, so it is discardable and must not
+    /// hold the reset open forever.
+    fn streams_awaiting_drain(&self, p: &ParamOutgoingResetRequest) -> Vec<StreamId> {
+        p.stream_identifiers
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.streams
+                    .get(id)
+                    .is_some_and(|s| s.reassembly_queue.is_readable())
+            })
+            .collect()
+    }
+
     fn reset_streams_if_any(
         &mut self,
         p: &ParamOutgoingResetRequest,
@@ -1977,7 +2025,13 @@ impl Association {
                 "[{}] resetStream(): senderLastTSN={} <= peer_last_tsn={}",
                 self.side, p.sender_last_tsn, self.peer_last_tsn
             );
+
+            let draining = self.streams_awaiting_drain(p);
+
             for id in &p.stream_identifiers {
+                if draining.contains(id) {
+                    continue;
+                }
                 if self.streams.contains_key(id) {
                     if respond {
                         sis_to_reset.push(*id);
@@ -1985,8 +2039,17 @@ impl Association {
                     self.unregister_stream(*id, AssociationError::Reset);
                 }
             }
-            self.reconfig_requests
-                .remove(&p.reconfig_request_sequence_number);
+
+            if draining.is_empty() {
+                self.reconfig_requests
+                    .remove(&p.reconfig_request_sequence_number);
+            } else {
+                debug!(
+                    "[{}] resetStream(): deferring reset of {:?}, application has not drained",
+                    self.side, draining
+                );
+                result = ReconfigResult::InProgress;
+            }
         } else {
             debug!(
                 "[{}] resetStream(): senderLastTSN={} > peer_last_tsn={}",
