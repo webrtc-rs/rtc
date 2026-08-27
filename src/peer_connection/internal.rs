@@ -188,6 +188,7 @@ impl RTCPeerConnection {
             pipeline_context,
             data_channels: HashMap::new(),
             rtp_transceivers: Vec::new(),
+            now,
             greater_mid: -1,
             sdp_origin: Origin::default(),
             last_offer: String::new(),

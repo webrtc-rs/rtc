@@ -235,6 +235,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     type Time = Instant;
 
     fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        self.observe(msg.now);
         let mut intermediate_routs = VecDeque::new();
         intermediate_routs.push_back(TaggedRTCMessageInternal {
             now: msg.now,
@@ -321,6 +322,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn handle_write(&mut self, msg: TaggedRTCMessage) -> Result<(), Self::Error> {
+        self.observe(msg.now);
         let now = msg.now;
         let rtc_message_internal = match msg.message {
             RTCMessage::DataChannelMessage(data_channel_id, data_channel_message) => {
@@ -418,6 +420,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
     }
 
     fn handle_timeout(&mut self, now: Instant) -> Result<(), Self::Error> {
+        self.observe(now);
         for_each_handler!(forward: process_handler!(self, handler, {
             handler.handle_timeout(now)?;
         }));

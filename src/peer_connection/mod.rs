@@ -690,6 +690,14 @@ pub struct RTCPeerConnection {
     pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal>,
 
+    /// The newest instant a caller has supplied, seeded at construction.
+    ///
+    /// Synchronous sans-I/O methods - `poll_*`, `close`, `create_data_channel` - have no
+    /// `now` parameter, so when one needs the time it uses the instant retained from the last
+    /// `handle_*`. Refreshed by `observe()` from every inbound instant; see the design's
+    /// section 9.3 for why there is no monotonicity assert alongside the `max`.
+    now: Instant,
+
     greater_mid: isize,
     sdp_origin: Origin,
     last_offer: String,
@@ -701,6 +709,12 @@ pub struct RTCPeerConnection {
 }
 
 impl RTCPeerConnection {
+    /// Records the newest instant a caller has supplied, for the synchronous methods that
+    /// have no `now` parameter. See the `now` field's comment and the design's section 9.3.
+    fn observe(&mut self, now: Instant) {
+        self.now = now.max(self.now);
+    }
+
     /// Creates an SDP offer to start a new WebRTC connection to a remote peer.
     ///
     /// The offer includes information about the attached media tracks, codecs and options supported
@@ -1892,6 +1906,19 @@ impl RTCPeerConnection {
             && data_channel.data_channel.is_none()
         {
             data_channel.dial(handle.0)?;
+            // Set the DCEP handshake deadline, exactly as the SCTPHandshakeComplete handler
+            // does for channels dialed during the initial connection: a lost
+            // DATA_CHANNEL_ACK must not leave a channel dialed here Connecting forever.
+            // Negotiated channels have no DCEP handshake and get no deadline.
+            // `create_data_channel` is a synchronous sans-I/O method with no `now` parameter,
+            // so the retained instant (the last one a `handle_*` supplied) anchors the timeout.
+            if !data_channel.negotiated {
+                data_channel.handshake_deadline = self
+                    .setting_engine
+                    .data_channel
+                    .dcep_handshake_timeout
+                    .map(|timeout| self.now + timeout);
+            }
         }
 
         self.data_channels.insert(id, data_channel);
@@ -2628,6 +2655,31 @@ mod tests {
             RTCDataChannelState::Connecting,
             "a dialed in-band channel stays Connecting until its DATA_CHANNEL_ACK arrives"
         );
+    }
+
+    /// In-band channels dialed after SCTP connects set the DCEP handshake deadline.
+    #[test]
+    fn post_sctp_in_band_channel_sets_handshake_deadline() {
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+
+        // Simulate an existing SCTP association (post-connection), so the channel is dialed
+        // immediately rather than at SCTPHandshakeComplete.
+        pc.sctp_transport_mut()
+            .sctp_associations
+            .insert(AssociationHandle(0), sctp::Association::default());
+
+        let _dc = pc.create_data_channel("test", None).unwrap();
+
+        let internal = pc
+            .data_channels
+            .values()
+            .next()
+            .expect("data channel must be stored internally");
+        assert!(internal.data_channel.is_some());
+        assert!(internal.handshake_deadline.is_some());
+        assert_eq!(internal.ready_state, RTCDataChannelState::Connecting);
     }
 
     // ---- Rollback (RFC 8829, Section 5.7) ----
