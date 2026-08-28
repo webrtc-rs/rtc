@@ -1,15 +1,22 @@
+use crate::data_channel::RTCDataChannelHandle;
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
-use shared::error::Result;
+use shared::error::{Error, Result};
 use std::time::Instant;
 
 #[derive(Clone)]
 pub(crate) struct RTCDataChannelInternal {
-    pub(crate) id: RTCDataChannelId,
+    pub(crate) handle: RTCDataChannelHandle,
+    /// The SCTP stream identifier for this channel.
+    ///
+    /// `None` until the DTLS role has been negotiated and the SCTP transport has connected
+    /// (W3C section 6.1 step 18 / section 6.1.1.3). Negotiated channels with an explicit id and channels
+    /// created after the transport is connected are assigned one immediately.
+    pub(crate) stream_id: Option<RTCDataChannelId>,
     pub(crate) label: String,
     pub(crate) ordered: bool,
     pub(crate) max_packet_life_time: Option<u16>,
@@ -41,7 +48,8 @@ pub(crate) struct RTCDataChannelInternal {
 impl Default for RTCDataChannelInternal {
     fn default() -> Self {
         Self {
-            id: 0,
+            handle: RTCDataChannelHandle::new(0),
+            stream_id: None,
             label: "".to_string(),
             ordered: false,
             max_packet_life_time: None,
@@ -61,9 +69,11 @@ impl Default for RTCDataChannelInternal {
 
 impl RTCDataChannelInternal {
     /// create the DataChannel object before the networking is set up.
-    pub(crate) fn new(id: RTCDataChannelId, params: DataChannelParameters) -> Self {
+    pub(crate) fn new(handle: RTCDataChannelHandle, params: DataChannelParameters) -> Self {
+        let stream_id = params.negotiated;
         Self {
-            id,
+            handle,
+            stream_id,
             label: params.label,
             protocol: params.protocol,
             negotiated: params.negotiated.is_some(),
@@ -97,8 +107,9 @@ impl RTCDataChannelInternal {
             negotiated: self.negotiated,
         };
 
+        let stream_id = self.stream_id.ok_or(Error::ErrDataChannelNotOpen)?;
         let mut data_channel =
-            ::datachannel::data_channel::DataChannel::dial(config, association_handle, self.id)?;
+            ::datachannel::data_channel::DataChannel::dial(config, association_handle, stream_id)?;
         data_channel.set_buffered_amount_low_threshold(self.buffered_amount_low_threshold)?;
         data_channel.set_buffered_amount_high_threshold(self.buffered_amount_high_threshold)?;
 
@@ -117,6 +128,7 @@ impl RTCDataChannelInternal {
     }
 
     pub(crate) fn accept(
+        handle: RTCDataChannelHandle,
         association_handle: usize,
         stream_id: u16,
         ppi: PayloadProtocolIdentifier,
@@ -138,7 +150,7 @@ impl RTCDataChannelInternal {
             );
 
         let mut data_channel_internal = RTCDataChannelInternal::new(
-            stream_id,
+            handle,
             DataChannelParameters {
                 label: data_channel_config.label.clone(),
                 protocol: data_channel_config.protocol.clone(),
@@ -148,6 +160,7 @@ impl RTCDataChannelInternal {
                 negotiated: None,
             },
         );
+        data_channel_internal.stream_id = Some(stream_id);
         data_channel_internal.data_channel = Some(data_channel);
         data_channel_internal.ready_state = RTCDataChannelState::Open;
 

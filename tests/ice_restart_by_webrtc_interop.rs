@@ -246,7 +246,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
                     if let Some(dc) = rtc_pc.data_channel(channel_id) {
-                        log::info!("RTC data channel '{}'-'{}' opened", dc.label(), dc.id());
+                        log::info!("RTC data channel '{}'-'{:?}' opened", dc.label(), dc.id());
                         rtc_dc_id = Some(channel_id);
                     }
                 }
@@ -333,7 +333,7 @@ async fn test_ice_restart_interop() -> Result<()> {
                 event
             {
                 if let Some(dc) = rtc_pc.data_channel(channel_id) {
-                    log::info!("RTC data channel '{}'-'{}' opened", dc.label(), dc.id());
+                    log::info!("RTC data channel '{}'-'{:?}' opened", dc.label(), dc.id());
                     rtc_dc_id = Some(channel_id);
                 }
             }

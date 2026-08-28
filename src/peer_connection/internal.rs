@@ -187,6 +187,9 @@ impl RTCPeerConnection {
             can_trickle_ice_candidates: None,
             pipeline_context,
             data_channels: HashMap::new(),
+            data_channel_handle_allocator: 0,
+            pending_data_channel_handles: Vec::new(),
+            data_channel_ids: HashMap::new(),
             rtp_transceivers: Vec::new(),
             now,
             greater_mid: -1,
@@ -992,23 +995,29 @@ impl RTCPeerConnection {
         );
     }
 
-    pub(crate) fn generate_data_channel_id(&self) -> Result<RTCDataChannelId> {
+    pub(crate) fn generate_data_channel_id(&self, role: RTCDtlsRole) -> Result<RTCDataChannelId> {
         let mut id = 0u16;
-        if self.dtls_transport().role() != RTCDtlsRole::Client {
+        if role == RTCDtlsRole::Server {
             id += 1;
         }
 
-        // Create map of ids so we can compare without double-looping each time.
-        let ids: HashSet<RTCDataChannelId> = self.data_channels.keys().cloned().collect();
+        // Create map of ids so we can compare without double-looping each time. The reverse map
+        // (`data_channel_ids`) holds every assigned stream id (negotiated channels, accepted
+        // remote channels, and locally-created channels assigned on the connected procedure),
+        // while pending local channels have no id yet and cannot collide.
+        let ids: HashSet<RTCDataChannelId> = self.data_channel_ids.keys().copied().collect();
         // The negotiated stream count bounds data channel ids, but only once it is known: a
         // channel may be created before the association exists, and until it connects there is
         // nothing to bound against. This matches W3C §6.1.1.3, which applies the limit at the
         // connected procedure rather than at creation.
+        // `max` is a count of SCTP streams (`RTCSctpTransport.maxChannels`), so valid stream ids
+        // span `0..max` and the highest usable id is `max - 1`. See `assign_pending_ids` for the
+        // connected-procedure counterpart.
         let max = self
             .sctp_transport()
             .max_channels()
             .unwrap_or(SCTP_MAX_CHANNELS);
-        while id < max.saturating_sub(1) {
+        while id < max {
             if ids.contains(&id) {
                 id += 2;
             } else {

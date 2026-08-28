@@ -198,7 +198,7 @@ async fn run_main_loop() -> Result<()> {
                     )) => {
                         if let Some(dc) = pc.data_channel(channel_id) {
                             println!(
-                                "{} - Data channel '{}'-'{}' open",
+                                "{} - Data channel '{}'-'{:?}' open",
                                 chrono::Local::now().format("%H:%M:%S"),
                                 dc.label(),
                                 dc.id()

@@ -525,7 +525,7 @@ async fn run_peer(
                                 RTCDataChannelEvent::OnOpen(channel_id) => {
                                     data_channel_id = Some(channel_id);
                                     if let Some(dc) = negotiation.peer_connection().data_channel(channel_id) {
-                                        info!("[{}] Data channel '{}-{}' opened", role, dc.label(), dc.id());
+                                        info!("[{}] Data channel '{}'-'{:?}' opened", role, dc.label(), dc.id());
                                     }
                                 }
                                 _ => {}

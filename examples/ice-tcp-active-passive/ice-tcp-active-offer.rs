@@ -322,7 +322,7 @@ async fn main() -> Result<()> {
                 }
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
                     if let Some(dc) = peer_connection.data_channel(channel_id) {
-                        println!("[Offer] Data channel '{}'-'{}' open", dc.label(), dc.id());
+                        println!("[Offer] Data channel '{}'-'{:?}' open", dc.label(), dc.id());
                         data_channel_id = Some(channel_id);
                         last_send = Instant::now();
                     }

@@ -53,6 +53,32 @@ pub(crate) mod state;
 /// Each data channel has a unique 16-bit identifier within its peer connection.
 pub type RTCDataChannelId = u16;
 
+/// Stable handle for a data channel within a particular peer connection.
+///
+/// The connection keeps channels in a map keyed by this handle. It is assigned at
+/// `create_data_channel` time and never changes, unlike the stream identifier
+/// (`RTCDataChannelId`), which is only assigned once the DTLS role has been
+/// negotiated and the SCTP transport is connected (W3C section 6.1 step 18 and section 6.1.1.3).
+///
+/// This type addresses a channel before its stream id is known.
+/// [`RTCDataChannel::id`] exposes the stream id once assigned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct RTCDataChannelHandle(pub(crate) usize);
+
+impl RTCDataChannelHandle {
+    /// Constructs a handle. Intended for tests and bindings that read handles from
+    /// the core; handles otherwise come from [`RTCPeerConnection::create_data_channel`].
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for RTCDataChannelHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 pub use init::RTCDataChannelInit;
 
 pub use message::RTCDataChannelMessage;
@@ -71,11 +97,19 @@ pub use state::RTCDataChannelState;
 /// * [W3C WebRTC - RTCDataChannel](https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel)
 /// * [MDN - RTCDataChannel](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel)
 pub struct RTCDataChannel<'a> {
-    pub(crate) id: RTCDataChannelId,
+    pub(crate) handle: RTCDataChannelHandle,
     pub(crate) peer_connection: &'a mut RTCPeerConnection,
 }
 
 impl RTCDataChannel<'_> {
+    /// The stable handle for this data channel, assigned at creation and never changed.
+    ///
+    /// [`RTCDataChannel::id`] returns the stream id once assigned; this handle is the stable
+    /// identity used internally to address the channel before then.
+    pub fn handle(&self) -> RTCDataChannelHandle {
+        self.handle
+    }
+
     /// label represents a label that can be used to distinguish this
     /// DataChannel object from other DataChannel objects. Scripts are
     /// allowed to create multiple DataChannel objects with the same label.
@@ -84,7 +118,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .label
             .as_str()
@@ -97,7 +131,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .ordered
     }
@@ -109,7 +143,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .max_packet_life_time
     }
@@ -121,7 +155,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .max_retransmits
     }
@@ -133,7 +167,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .protocol
             .as_str()
@@ -146,7 +180,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .negotiated
     }
@@ -157,8 +191,13 @@ impl RTCDataChannel<'_> {
     /// yet been negotiated. Otherwise, it will return the ID that was either
     /// selected by the script or generated. After the ID is set to a non-null
     /// value, it will not change.
-    pub fn id(&self) -> RTCDataChannelId {
-        self.id
+    pub fn id(&self) -> Option<RTCDataChannelId> {
+        // Per W3C section 6.1 step 18 the identifier is null until the DTLS role has been negotiated
+        // and the SCTP transport connected; this returns `None` until then.
+        self.peer_connection
+            .data_channels
+            .get(&self.handle)?
+            .stream_id
     }
 
     /// ready_state represents the state of the DataChannel object.
@@ -167,7 +206,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .ready_state
     }
@@ -183,7 +222,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .buffered_amount_high_threshold
     }
@@ -196,7 +235,7 @@ impl RTCDataChannel<'_> {
         let dc = self
             .peer_connection
             .data_channels
-            .get_mut(&self.id)
+            .get_mut(&self.handle)
             .unwrap();
         dc.buffered_amount_high_threshold = threshold;
         if let Some(data_channel) = dc.data_channel.as_mut() {
@@ -215,7 +254,7 @@ impl RTCDataChannel<'_> {
         // so, unwrap() here is safe.
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .unwrap()
             .buffered_amount_low_threshold
     }
@@ -228,7 +267,7 @@ impl RTCDataChannel<'_> {
         let dc = self
             .peer_connection
             .data_channels
-            .get_mut(&self.id)
+            .get_mut(&self.handle)
             .unwrap();
         dc.buffered_amount_low_threshold = threshold;
         if let Some(data_channel) = dc.data_channel.as_mut() {
@@ -246,7 +285,7 @@ impl RTCDataChannel<'_> {
         let dc = self
             .peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .ok_or(Error::ErrDataChannelClosed)?;
 
         if dc.data_channel.is_none() {
@@ -268,10 +307,16 @@ impl RTCDataChannel<'_> {
     pub fn send(&mut self, now: Instant, data: BytesMut) -> Result<()> {
         self.ensure_sendable()?;
         let data_len = data.len();
+        let stream_id = self
+            .peer_connection
+            .data_channels
+            .get(&self.handle)
+            .and_then(|dc| dc.stream_id)
+            .ok_or(Error::ErrDataChannelNotOpen)?;
         self.peer_connection.handle_write(TaggedRTCMessage {
             now,
             message: RTCMessage::DataChannelMessage(
-                self.id,
+                stream_id,
                 RTCDataChannelMessage {
                     is_string: false,
                     data,
@@ -281,7 +326,7 @@ impl RTCDataChannel<'_> {
         // Count only after a successful enqueue, so a failed send never leaks the
         // counter upward (those bytes never entered the SCTP send pipeline). This
         // is the synchronous send-boundary accounting used for back-pressure.
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.handle) {
             dc.outstanding_bytes += data_len;
         }
         Ok(())
@@ -294,17 +339,23 @@ impl RTCDataChannel<'_> {
         self.ensure_sendable()?;
         let data = BytesMut::from(s.into().as_str());
         let data_len = data.len();
+        let stream_id = self
+            .peer_connection
+            .data_channels
+            .get(&self.handle)
+            .and_then(|dc| dc.stream_id)
+            .ok_or(Error::ErrDataChannelNotOpen)?;
         self.peer_connection.handle_write(TaggedRTCMessage {
             now,
             message: RTCMessage::DataChannelMessage(
-                self.id,
+                stream_id,
                 RTCDataChannelMessage {
                     is_string: true,
                     data,
                 },
             ),
         })?;
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.handle) {
             dc.outstanding_bytes += data_len;
         }
         Ok(())
@@ -318,14 +369,14 @@ impl RTCDataChannel<'_> {
     pub fn outstanding_bytes(&self) -> usize {
         self.peer_connection
             .data_channels
-            .get(&self.id)
+            .get(&self.handle)
             .map(|dc| dc.outstanding_bytes)
             .unwrap_or(0)
     }
 
     /// Closes the data channel.
     pub fn close(&mut self) -> Result<()> {
-        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.id) {
+        if let Some(dc) = self.peer_connection.data_channels.get_mut(&self.handle) {
             if dc.ready_state == RTCDataChannelState::Closed {
                 return Ok(());
             }

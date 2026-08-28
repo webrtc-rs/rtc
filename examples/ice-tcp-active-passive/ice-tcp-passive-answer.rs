@@ -242,7 +242,11 @@ async fn main() -> Result<()> {
                         channel_id,
                     )) => {
                         if let Some(dc) = pc.data_channel(channel_id) {
-                            println!("[Answer] Data channel '{}'-'{}' open", dc.label(), dc.id());
+                            println!(
+                                "[Answer] Data channel '{}'-'{:?}' open",
+                                dc.label(),
+                                dc.id()
+                            );
                             data_channel_id = Some(channel_id);
                             last_send = Instant::now();
                         }

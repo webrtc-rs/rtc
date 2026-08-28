@@ -1,3 +1,4 @@
+use crate::data_channel::RTCDataChannelHandle;
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::internal::RTCDataChannelInternal;
 use crate::data_channel::message::RTCDataChannelMessage;
@@ -9,12 +10,14 @@ use crate::peer_connection::event::{
 use crate::peer_connection::message::internal::{
     ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, TaggedRTCMessageInternal,
 };
+use crate::peer_connection::transport::RTCDtlsRole;
+use crate::peer_connection::transport::sctp::SCTP_MAX_CHANNELS;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use log::{debug, warn};
 use sctp::PayloadProtocolIdentifier;
 use shared::TransportContext;
 use shared::error::{Error, Result};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 pub(crate) struct DataChannelHandlerContext {
@@ -51,24 +54,47 @@ impl DataChannelHandlerContext {
 /// DataChannelHandler implements DataChannel Protocol handling
 pub(crate) struct DataChannelHandler<'a> {
     ctx: &'a mut DataChannelHandlerContext,
-    data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    data_channels: &'a mut HashMap<RTCDataChannelHandle, RTCDataChannelInternal>,
+    /// Handles of locally-created channels whose stream id is still unassigned (DTLS role not yet
+    /// resolved / SCTP not connected), in creation order.
+    pending_handles: &'a mut Vec<RTCDataChannelHandle>,
+    /// Reverse lookup stream id -> handle, for channels that have been assigned a stream id.
+    data_channel_ids: &'a mut HashMap<RTCDataChannelId, RTCDataChannelHandle>,
+    /// Handle allocator, shared with `RTCPeerConnection`, so accepted (remote) channels get a
+    /// distinct handle.
+    handle_allocator: &'a mut usize,
     stats: &'a mut RTCStatsAccumulator,
     /// Configured DCEP handshake timeout for in-band channels. `None` disables it.
     dcep_handshake_timeout: Option<Duration>,
+    /// The local DTLS role, resolved once the remote description has been applied.
+    dtls_role: RTCDtlsRole,
+    /// The negotiated SCTP channel cap, known once the SCTP association is connected.
+    max_channels: Option<u16>,
 }
 
 impl<'a> DataChannelHandler<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         ctx: &'a mut DataChannelHandlerContext,
-        data_channels: &'a mut HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+        data_channels: &'a mut HashMap<RTCDataChannelHandle, RTCDataChannelInternal>,
+        pending_handles: &'a mut Vec<RTCDataChannelHandle>,
+        data_channel_ids: &'a mut HashMap<RTCDataChannelId, RTCDataChannelHandle>,
+        handle_allocator: &'a mut usize,
         stats: &'a mut RTCStatsAccumulator,
         dcep_handshake_timeout: Option<Duration>,
+        dtls_role: RTCDtlsRole,
+        max_channels: Option<u16>,
     ) -> Self {
         DataChannelHandler {
             ctx,
             data_channels,
+            pending_handles,
+            data_channel_ids,
+            handle_allocator,
             stats,
             dcep_handshake_timeout,
+            dtls_role,
+            max_channels,
         }
     }
 
@@ -84,27 +110,103 @@ impl<'a> DataChannelHandler<'a> {
         &mut self,
         now: Instant,
         transport: TransportContext,
-        id: RTCDataChannelId,
+        handle: RTCDataChannelHandle,
     ) -> Result<()> {
         let dc = self
             .data_channels
-            .get(&id)
+            .get(&handle)
             .ok_or(Error::ErrDataChannelNotExisted)?;
+        // A channel only opens once its stream id has been assigned (on the connected
+        // procedure), so the event always carries a stream id.
+        let stream_id = dc.stream_id.ok_or(Error::ErrDataChannelNotExisted)?;
 
         self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
             now,
             transport,
             message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(ApplicationMessage {
-                data_channel_id: id,
+                data_channel_id: stream_id,
                 data_channel_event: DataChannelEvent::Open,
             })),
         });
 
         self.stats.peer_connection.on_data_channel_opened();
         self.stats
-            .get_or_create_data_channel(id, &dc.label, &dc.protocol)
+            .get_or_create_data_channel(stream_id, &dc.label, &dc.protocol)
             .on_state_changed(RTCDataChannelState::Open);
         Ok(())
+    }
+
+    /// Assign stream ids to pending local channels once the DTLS role is resolved.
+    ///
+    /// Implements W3C WebRTC section 6.1.1.3 step 4.2 / RFC 8832 section 6.
+    /// Channels that cannot be assigned an id are closed and the application is notified.
+    fn assign_pending_ids(&mut self, now: Instant) {
+        let pending = std::mem::take(self.pending_handles);
+        // `max` is a count of streams, so valid ids span `0..max` and the top id (`max - 1`)
+        // is usable.
+        let max = self.max_channels.unwrap_or(SCTP_MAX_CHANNELS);
+        let mut used: HashSet<RTCDataChannelId> = self.data_channel_ids.keys().copied().collect();
+        let mut closed = Vec::new();
+        for handle in pending {
+            // Closed channels cannot be dialed, so they must not consume a stream id.
+            if let Some(dc) = self.data_channels.get(&handle)
+                && (dc.ready_state == RTCDataChannelState::Closed
+                    || dc.ready_state == RTCDataChannelState::Closing)
+            {
+                continue;
+            }
+            let mut id = 0u16;
+            if self.dtls_role == RTCDtlsRole::Server {
+                id += 1;
+            }
+            let mut found = None;
+            while id < max {
+                if !used.contains(&id) {
+                    found = Some(id);
+                    break;
+                }
+                id += 2;
+            }
+            match found {
+                Some(stream_id) => {
+                    if let Some(dc) = self.data_channels.get_mut(&handle) {
+                        dc.stream_id = Some(stream_id);
+                        self.data_channel_ids.insert(stream_id, handle);
+                        // Reserve the id for later handles in this batch, so two pending
+                        // channels cannot be assigned the same stream id.
+                        used.insert(stream_id);
+                    }
+                }
+                None => {
+                    closed.push(handle);
+                }
+            }
+        }
+        for handle in closed {
+            if let Some(mut dc) = self.data_channels.remove(&handle) {
+                let _ = dc.close();
+                // The channel never received a stream id, so it cannot be keyed by one.
+                // Notify the application with the stable handle so the event routes to the right
+                // channel rather than via the defaulted stream id 0. Error first, then close
+                // (W3C section 6.2.7).
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnDataChannel(
+                            RTCDataChannelEvent::OnErrorByHandle(handle),
+                        ),
+                    ),
+                });
+                self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnDataChannel(
+                            RTCDataChannelEvent::OnCloseByHandle(handle),
+                        ),
+                    ),
+                });
+            }
+        }
     }
 }
 
@@ -128,11 +230,19 @@ impl<'a>
                 msg.transport.peer_addr
             );
 
+            // Defensive assignment in case DATA_CHANNEL_ACK arrives before SCTPHandshakeComplete.
+            self.assign_pending_ids(now);
+
             let stream_id = message.stream_id;
             let transport = msg.transport;
 
-            let opened = if let Some(data_channel_internal) = self.data_channels.get_mut(&stream_id)
-            {
+            let handle = self.data_channel_ids.get(&stream_id).copied();
+
+            let (handle, opened) = if let Some(handle) = handle {
+                let data_channel_internal = self
+                    .data_channels
+                    .get_mut(&handle)
+                    .ok_or(Error::ErrDataChannelNotExisted)?;
                 // A closed channel is terminal: ignore any late DCEP or user data.
                 if data_channel_internal.ready_state == RTCDataChannelState::Closed {
                     return Ok(());
@@ -154,29 +264,33 @@ impl<'a>
                     data_channel_internal.handshake_deadline = None;
                     opened = true;
                 }
-                opened
+                (handle, opened)
             } else {
+                // Incoming (remote) channel: assign a fresh handle and record its stream id.
+                let handle = RTCDataChannelHandle::new(*self.handle_allocator);
+                *self.handle_allocator += 1;
                 let data_channel_internal = RTCDataChannelInternal::accept(
+                    handle,
                     message.association_handle,
-                    message.stream_id,
+                    stream_id,
                     message.ppi,
                     &message.payload,
                 )?;
 
-                self.data_channels
-                    .insert(message.stream_id, data_channel_internal);
-                true
+                self.data_channels.insert(handle, data_channel_internal);
+                self.data_channel_ids.insert(stream_id, handle);
+                (handle, true)
             };
 
             if opened {
-                self.emit_data_channel_opened(now, transport, stream_id)?;
+                self.emit_data_channel_opened(now, transport, handle)?;
             }
 
             // Get label/protocol before taking mutable borrow for the loop
             let (label, protocol) = {
                 let dc = self
                     .data_channels
-                    .get(&stream_id)
+                    .get(&handle)
                     .ok_or(Error::ErrDataChannelNotExisted)?;
                 (dc.label.clone(), dc.protocol.clone())
             };
@@ -187,12 +301,12 @@ impl<'a>
             // discarded on close/timeout.
             let is_open = self
                 .data_channels
-                .get(&stream_id)
+                .get(&handle)
                 .is_some_and(|dc| dc.ready_state == RTCDataChannelState::Open);
 
             let data_channel = self
                 .data_channels
-                .get_mut(&stream_id)
+                .get_mut(&handle)
                 .ok_or(Error::ErrDataChannelNotExisted)?
                 .data_channel
                 .as_mut()
@@ -276,18 +390,23 @@ impl<'a>
             {
                 let data_len = data.len();
                 let channel_id = message.data_channel_id;
+                let handle = self
+                    .data_channel_ids
+                    .get(&channel_id)
+                    .copied()
+                    .ok_or(Error::ErrDataChannelNotExisted)?;
 
                 // Get label/protocol before taking mutable borrow
                 let dc_internal = self
                     .data_channels
-                    .get(&channel_id)
+                    .get(&handle)
                     .ok_or(Error::ErrDataChannelNotExisted)?;
                 let label = dc_internal.label.clone();
                 let protocol = dc_internal.protocol.clone();
 
                 let data_channel = self
                     .data_channels
-                    .get_mut(&channel_id)
+                    .get_mut(&handle)
                     .ok_or(Error::ErrDataChannelNotExisted)?
                     .data_channel
                     .as_mut()
@@ -347,6 +466,9 @@ impl<'a>
         let now = evt.now;
         match evt.event {
             RTCEventInternal::SCTPHandshakeComplete(association_handle) => {
+                // Assign stream ids before dialing (W3C section 6.1.1.3).
+                self.assign_pending_ids(now);
+
                 // Out-of-band negotiated channels have no DCEP handshake, so they are
                 // open immediately and fire the open event here. In-band channels stay
                 // connecting until their `DATA_CHANNEL_ACK` arrives in `handle_read`.
@@ -358,10 +480,14 @@ impl<'a>
                     if data_channel_internal.ready_state == RTCDataChannelState::Connecting
                         && data_channel_internal.data_channel.is_none()
                     {
+                        // A channel can only be dialed once its stream id is assigned.
+                        let _stream_id = data_channel_internal
+                            .stream_id
+                            .ok_or(Error::ErrDataChannelNotExisted)?;
                         data_channel_internal.dial(association_handle)?;
 
                         if data_channel_internal.negotiated {
-                            opened.push(data_channel_internal.id);
+                            opened.push(data_channel_internal.handle);
                         } else {
                             // In-band channels have a DCEP handshake to complete; arm a
                             // deadline so a lost ACK cannot leave them Connecting forever.
@@ -387,13 +513,15 @@ impl<'a>
                     }
                 }
 
-                for id in opened {
-                    self.emit_data_channel_opened(now, TransportContext::default(), id)?;
+                for handle in opened {
+                    self.emit_data_channel_opened(now, TransportContext::default(), handle)?;
                 }
             }
 
             RTCEventInternal::SCTPStreamClosed(_association_handle, stream_id) => {
-                if let Some(dc) = self.data_channels.remove(&stream_id) {
+                if let Some(handle) = self.data_channel_ids.remove(&stream_id)
+                    && let Some(dc) = self.data_channels.remove(&handle)
+                {
                     // A channel already closed by handshake timeout has already fired OnClose
                     // and been counted; do not emit or count it twice.
                     if !dc.close_emitted {
@@ -419,7 +547,9 @@ impl<'a>
                 // Pure accounting: SCTP released (acked or abandoned) `n_bytes` of
                 // this channel's outgoing buffer. Decrement the synchronous send
                 // back-pressure counter; do NOT forward the event further.
-                if let Some(dc) = self.data_channels.get_mut(&stream_id) {
+                if let Some(handle) = self.data_channel_ids.get(&stream_id).copied()
+                    && let Some(dc) = self.data_channels.get_mut(&handle)
+                {
                     dc.outstanding_bytes = dc.outstanding_bytes.saturating_sub(n_bytes);
                 }
             }
@@ -448,12 +578,13 @@ impl<'a>
                 && dc.ready_state == RTCDataChannelState::Connecting
                 && deadline <= now
             {
-                timed_out.push(dc.id);
+                timed_out.push(dc.handle);
             }
         }
 
-        for id in timed_out {
-            if let Some(dc) = self.data_channels.get_mut(&id) {
+        for handle in timed_out {
+            if let Some(dc) = self.data_channels.get_mut(&handle) {
+                let stream_id = dc.stream_id;
                 dc.handshake_deadline = None;
                 dc.ready_state = RTCDataChannelState::Closed;
                 if let Some(data_channel) = dc.data_channel.as_mut() {
@@ -461,15 +592,19 @@ impl<'a>
                 }
 
                 self.stats.peer_connection.on_data_channel_closed();
-                self.stats
-                    .get_or_create_data_channel(id, &dc.label, &dc.protocol)
-                    .on_state_changed(RTCDataChannelState::Closed);
+                if let Some(stream_id) = stream_id {
+                    self.stats
+                        .get_or_create_data_channel(stream_id, &dc.label, &dc.protocol)
+                        .on_state_changed(RTCDataChannelState::Closed);
+                }
 
                 dc.close_emitted = true;
                 self.ctx.event_outs.push_back(TaggedRTCEventInternal {
                     now,
                     event: RTCEventInternal::RTCPeerConnectionEvent(
-                        RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(id)),
+                        RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
+                            stream_id.unwrap_or(0),
+                        )),
                     ),
                 });
             }
@@ -498,7 +633,8 @@ impl<'a>
 
 #[cfg(test)]
 mod tests {
-    //! Timing contract for the DCEP handshake-complete signal.
+    //! Timing contract for the DCEP handshake-complete signal and for the connected-procedure
+    //! id assignment.
     //!
     //! These drive `DataChannelHandler` directly and pin
     //! *when* the open event fires and `ready_state` flips, which the integration
@@ -515,9 +651,65 @@ mod tests {
     use sansio::Protocol;
     use shared::marshal::Marshal;
 
-    fn in_band_channel(id: u16) -> RTCDataChannelInternal {
-        RTCDataChannelInternal::new(
-            id,
+    /// Test harness, mimicking the `RTCPeerConnection`-owned fields that `DataChannelHandler`
+    /// borrows. `handler()` returns a short-lived `DataChannelHandler` borrowing the harness.
+    struct Harness {
+        ctx: DataChannelHandlerContext,
+        data_channels: HashMap<RTCDataChannelHandle, RTCDataChannelInternal>,
+        pending: Vec<RTCDataChannelHandle>,
+        ids: HashMap<RTCDataChannelId, RTCDataChannelHandle>,
+        allocator: usize,
+        stats: RTCStatsAccumulator,
+        dtls_role: RTCDtlsRole,
+        max_channels: Option<u16>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let now = Instant::now();
+            Self {
+                ctx: DataChannelHandlerContext::new(now),
+                data_channels: HashMap::new(),
+                pending: Vec::new(),
+                ids: HashMap::new(),
+                allocator: 100,
+                stats: RTCStatsAccumulator::new(),
+                dtls_role: RTCDtlsRole::Client,
+                max_channels: None,
+            }
+        }
+
+        fn add(&mut self, handle: usize, stream_id: u16) {
+            assert!(
+                self.data_channels
+                    .insert(
+                        RTCDataChannelHandle::new(handle),
+                        in_band_channel(handle, stream_id),
+                    )
+                    .is_none()
+            );
+            self.ids
+                .insert(stream_id, RTCDataChannelHandle::new(handle));
+        }
+
+        fn handler(&mut self, timeout: Option<Duration>) -> DataChannelHandler<'_> {
+            DataChannelHandler::new(
+                &mut self.ctx,
+                &mut self.data_channels,
+                &mut self.pending,
+                &mut self.ids,
+                &mut self.allocator,
+                &mut self.stats,
+                timeout,
+                self.dtls_role,
+                self.max_channels,
+            )
+        }
+    }
+
+    fn in_band_channel(handle: usize, stream_id: u16) -> RTCDataChannelInternal {
+        let mut dc = RTCDataChannelInternal::new(
+            RTCDataChannelHandle::new(handle),
             DataChannelParameters {
                 label: "timing-test".to_string(),
                 protocol: String::new(),
@@ -526,21 +718,25 @@ mod tests {
                 max_retransmits: None,
                 negotiated: None,
             },
-        )
+        );
+        dc.stream_id = Some(stream_id);
+        dc
     }
 
-    fn negotiated_channel(id: u16) -> RTCDataChannelInternal {
-        RTCDataChannelInternal::new(
-            id,
+    fn negotiated_channel(handle: usize, stream_id: u16) -> RTCDataChannelInternal {
+        let mut dc = RTCDataChannelInternal::new(
+            RTCDataChannelHandle::new(handle),
             DataChannelParameters {
                 label: "timing-test".to_string(),
                 protocol: String::new(),
                 ordered: true,
                 max_packet_life_time: None,
                 max_retransmits: None,
-                negotiated: Some(id),
+                negotiated: Some(stream_id),
             },
-        )
+        );
+        dc.stream_id = Some(stream_id);
+        dc
     }
 
     fn ack(association_handle: usize, stream_id: u16) -> DataChannelMessage {
@@ -578,21 +774,33 @@ mod tests {
             .collect()
     }
 
+    /// The open events emitted so far, as stream ids (the public-facing identity).
+    fn open_ids(ctx: &DataChannelHandlerContext) -> Vec<RTCDataChannelId> {
+        ctx.read_outs
+            .iter()
+            .filter_map(|m| match &m.message {
+                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(app))
+                    if matches!(app.data_channel_event, DataChannelEvent::Open) =>
+                {
+                    Some(app.data_channel_id)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// An in-band channel is dialed at `SCTPHandshakeComplete` but stays
     /// `Connecting` with no open event; the open event fires exactly once, and
     /// `ready_state` flips to `Open`, only when the peer's `DATA_CHANNEL_ACK`
     /// is processed.
     #[test]
     fn in_band_channel_fires_open_only_when_ack_is_processed() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, in_band_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.add(1, 1);
 
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -601,7 +809,7 @@ mod tests {
                 .unwrap();
         }
 
-        let dc = data_channels.get(&1).unwrap();
+        let dc = h.data_channels.get(&RTCDataChannelHandle::new(1)).unwrap();
         assert!(
             dc.data_channel.is_some(),
             "SCTPHandshakeComplete must dial the in-band channel"
@@ -612,7 +820,7 @@ mod tests {
             "an in-band channel must stay Connecting after the SCTP handshake"
         );
         assert!(
-            ctx.read_outs.iter().all(|m| !matches!(
+            h.ctx.read_outs.iter().all(|m| !matches!(
                 &m.message,
                 RTCMessageInternal::Dtls(DTLSMessage::DataChannel(app))
                     if matches!(app.data_channel_event, DataChannelEvent::Open)
@@ -621,8 +829,7 @@ mod tests {
         );
 
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_read(TaggedRTCMessageInternal {
                     now,
@@ -633,30 +840,21 @@ mod tests {
         }
 
         assert_eq!(
-            data_channels.get(&1).unwrap().ready_state,
+            h.data_channels
+                .get(&RTCDataChannelHandle::new(1))
+                .unwrap()
+                .ready_state,
             RTCDataChannelState::Open,
             "ready_state flips to Open exactly when the ACK is processed"
         );
 
-        let open_events: Vec<u16> = ctx
-            .read_outs
-            .iter()
-            .filter_map(|m| match &m.message {
-                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(app))
-                    if matches!(app.data_channel_event, DataChannelEvent::Open) =>
-                {
-                    Some(app.data_channel_id)
-                }
-                _ => None,
-            })
-            .collect();
         assert_eq!(
-            open_events,
+            open_ids(&h.ctx),
             vec![1],
             "exactly one open event, fired on the ACK"
         );
         assert_eq!(
-            stats.peer_connection.data_channels_opened, 1,
+            h.stats.peer_connection.data_channels_opened, 1,
             "open stats recorded exactly once"
         );
     }
@@ -665,13 +863,13 @@ mod tests {
     /// immediately and fires the open event at `SCTPHandshakeComplete`.
     #[test]
     fn negotiated_channel_fires_open_at_handshake_complete() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, negotiated_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.data_channels
+            .insert(RTCDataChannelHandle::new(1), negotiated_channel(1, 1));
+        h.ids.insert(1, RTCDataChannelHandle::new(1));
 
-        let mut handler = DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+        let mut handler = h.handler(None);
         handler
             .handle_event(TaggedRTCEventInternal {
                 now,
@@ -679,7 +877,7 @@ mod tests {
             })
             .unwrap();
 
-        let dc = data_channels.get(&1).unwrap();
+        let dc = h.data_channels.get(&RTCDataChannelHandle::new(1)).unwrap();
         assert_eq!(
             dc.ready_state,
             RTCDataChannelState::Open,
@@ -690,25 +888,13 @@ mod tests {
             "a negotiated channel has no DCEP handshake deadline"
         );
 
-        let open_events: Vec<u16> = ctx
-            .read_outs
-            .iter()
-            .filter_map(|m| match &m.message {
-                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(app))
-                    if matches!(app.data_channel_event, DataChannelEvent::Open) =>
-                {
-                    Some(app.data_channel_id)
-                }
-                _ => None,
-            })
-            .collect();
         assert_eq!(
-            open_events,
+            open_ids(&h.ctx),
             vec![1],
             "exactly one open event at SCTPHandshakeComplete for a negotiated channel"
         );
         assert_eq!(
-            stats.peer_connection.data_channels_opened, 1,
+            h.stats.peer_connection.data_channels_opened, 1,
             "open stats recorded for the negotiated channel"
         );
     }
@@ -716,14 +902,16 @@ mod tests {
     /// `emit_data_channel_opened` returns an error when the channel does not exist.
     #[test]
     fn emit_data_channel_opened_missing_channel_returns_error() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        let mut stats = RTCStatsAccumulator::new();
 
-        let mut handler = DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+        let mut handler = h.handler(None);
         let err = handler
-            .emit_data_channel_opened(now, TransportContext::default(), 99)
+            .emit_data_channel_opened(
+                now,
+                TransportContext::default(),
+                RTCDataChannelHandle::new(99),
+            )
             .unwrap_err();
         assert_eq!(err, Error::ErrDataChannelNotExisted);
     }
@@ -733,16 +921,13 @@ mod tests {
     /// `data_channel.is_none()` guard is what excludes it.
     #[test]
     fn sctp_handshake_complete_does_not_redial() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, in_band_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.add(1, 1);
 
         // Fire SCTPHandshakeComplete once; this dials the channel and queues its OPEN.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -750,17 +935,16 @@ mod tests {
                 })
                 .unwrap();
         }
-        let first_writes = ctx.write_outs.len();
+        let first_writes = h.ctx.write_outs.len();
         assert!(
             first_writes >= 1,
             "dialing must queue the DATA_CHANNEL_OPEN"
         );
-        ctx.write_outs.clear();
+        h.ctx.write_outs.clear();
 
         // Fire it again: no new dial, so nothing new is queued.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -769,7 +953,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            ctx.write_outs.len(),
+            h.ctx.write_outs.len(),
             0,
             "a second SCTPHandshakeComplete must not re-dial the channel"
         );
@@ -779,15 +963,14 @@ mod tests {
     /// must be ignored: it must not flip state or emit an open event.
     #[test]
     fn ack_on_closed_channel_is_ignored() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        let mut dc = in_band_channel(1);
+        let mut dc = in_band_channel(1, 1);
         dc.ready_state = RTCDataChannelState::Closed;
-        data_channels.insert(1, dc);
-        let mut stats = RTCStatsAccumulator::new();
+        h.data_channels.insert(RTCDataChannelHandle::new(1), dc);
+        h.ids.insert(1, RTCDataChannelHandle::new(1));
 
-        let mut handler = DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+        let mut handler = h.handler(None);
         handler
             .handle_read(TaggedRTCMessageInternal {
                 now,
@@ -797,12 +980,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            data_channels.get(&1).unwrap().ready_state,
+            h.data_channels
+                .get(&RTCDataChannelHandle::new(1))
+                .unwrap()
+                .ready_state,
             RTCDataChannelState::Closed,
             "a closed channel must ignore a late ACK"
         );
         assert!(
-            !message_events(&ctx)
+            !message_events(&h.ctx)
                 .iter()
                 .any(|e| matches!(e, DataChannelEvent::Open)),
             "no open event may fire for a closed channel"
@@ -813,17 +999,14 @@ mod tests {
     /// to Closed, fires OnClose and is counted exactly once (closed without opened).
     #[test]
     fn in_band_channel_times_out_without_ack() {
+        let mut h = Harness::new();
         let now = Instant::now();
         let timeout = Duration::from_millis(100);
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, in_band_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.add(1, 1);
 
         // Dial the in-band channel and arm a deadline.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -834,8 +1017,7 @@ mod tests {
 
         // A deadline must be reported.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             let deadline = handler
                 .poll_timeout()
                 .expect("a dialed in-band channel must have a deadline");
@@ -845,12 +1027,11 @@ mod tests {
         // Advance past the deadline and let handle_timeout fire.
         let later = now + timeout + Duration::from_secs(1);
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             handler.handle_timeout(later).unwrap();
         }
 
-        let dc = data_channels.get(&1).unwrap();
+        let dc = h.data_channels.get(&RTCDataChannelHandle::new(1)).unwrap();
         assert_eq!(
             dc.ready_state,
             RTCDataChannelState::Closed,
@@ -861,13 +1042,14 @@ mod tests {
             "timeout must clear the deadline"
         );
         assert!(
-            !message_events(&ctx)
+            !message_events(&h.ctx)
                 .iter()
                 .any(|e| matches!(e, DataChannelEvent::Open)),
             "no open event for a timed-out channel"
         );
 
-        let closes = ctx
+        let closes = h
+            .ctx
             .event_outs
             .iter()
             .filter(|e| {
@@ -881,13 +1063,12 @@ mod tests {
             .count();
         assert_eq!(closes, 1, "exactly one OnClose for the timed-out channel");
 
-        assert_eq!(stats.peer_connection.data_channels_opened, 0);
-        assert_eq!(stats.peer_connection.data_channels_closed, 1);
+        assert_eq!(h.stats.peer_connection.data_channels_opened, 0);
+        assert_eq!(h.stats.peer_connection.data_channels_closed, 1);
 
         // No further deadlines remain.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             assert!(
                 handler.poll_timeout().is_none(),
                 "no deadline after the timeout fired"
@@ -899,16 +1080,13 @@ mod tests {
     /// after the channel opens, with the open event first.
     #[test]
     fn pre_open_data_is_buffered_until_open() {
+        let mut h = Harness::new();
         let now = Instant::now();
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, in_band_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.add(1, 1);
 
         // Dial first.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -919,8 +1097,7 @@ mod tests {
 
         // A user data message arrives while the channel is still Connecting.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_read(TaggedRTCMessageInternal {
                     now,
@@ -934,7 +1111,7 @@ mod tests {
 
         // No message event yet.
         assert!(
-            !message_events(&ctx)
+            !message_events(&h.ctx)
                 .iter()
                 .any(|e| matches!(e, DataChannelEvent::Message(_))),
             "no message may be delivered before the channel is open"
@@ -943,8 +1120,7 @@ mod tests {
         // The ACK arrives: the channel opens and the buffered message is delivered,
         // with the open event first.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, None);
+            let mut handler = h.handler(None);
             handler
                 .handle_read(TaggedRTCMessageInternal {
                     now,
@@ -954,7 +1130,7 @@ mod tests {
                 .unwrap();
         }
 
-        let events = message_events(&ctx);
+        let events = message_events(&h.ctx);
         assert!(
             matches!(events.first(), Some(DataChannelEvent::Open)),
             "open event must fire first"
@@ -969,16 +1145,13 @@ mod tests {
     /// out: it must never be delivered to the application.
     #[test]
     fn pre_open_data_is_dropped_on_timeout() {
+        let mut h = Harness::new();
         let now = Instant::now();
         let timeout = Duration::from_millis(100);
-        let mut ctx = DataChannelHandlerContext::new(now);
-        let mut data_channels = HashMap::new();
-        data_channels.insert(1, in_band_channel(1));
-        let mut stats = RTCStatsAccumulator::new();
+        h.add(1, 1);
 
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             handler
                 .handle_event(TaggedRTCEventInternal {
                     now,
@@ -989,8 +1162,7 @@ mod tests {
 
         // Buffer a user message while Connecting.
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             handler
                 .handle_read(TaggedRTCMessageInternal {
                     now,
@@ -1005,16 +1177,287 @@ mod tests {
         // Time out; the channel closes and the buffered message must not be delivered.
         let later = now + timeout + Duration::from_secs(1);
         {
-            let mut handler =
-                DataChannelHandler::new(&mut ctx, &mut data_channels, &mut stats, Some(timeout));
+            let mut handler = h.handler(Some(timeout));
             handler.handle_timeout(later).unwrap();
         }
 
         assert!(
-            !message_events(&ctx)
+            !message_events(&h.ctx)
                 .iter()
                 .any(|e| matches!(e, DataChannelEvent::Message(_))),
             "a buffered message must never be delivered after the timeout"
+        );
+    }
+
+    /// Pending (pre-connection) local channels are assigned ids in creation order at the
+    /// connected procedure, using the resolved DTLS role's parity, and channels that cannot be
+    /// assigned an id (the negotiated max channel count is exhausted) are closed.
+    ///
+    /// The stream cap is a count of streams, so `max = 4` admits ids `0..3`; server parity (odd)
+    /// admits `1` and `3`, exercising the top usable id (`max - 1 = 3`).
+    #[test]
+    fn assign_pending_ids_respects_max_channels_and_closes_overflow() {
+        let mut h = Harness::new();
+        h.dtls_role = RTCDtlsRole::Server;
+        h.max_channels = Some(4);
+
+        // Three in-band channels created while the DTLS role was still Auto: no stream id yet.
+        let first = RTCDataChannelHandle::new(1);
+        let second = RTCDataChannelHandle::new(2);
+        let third = RTCDataChannelHandle::new(3);
+        for handle in [first, second, third] {
+            h.data_channels.insert(
+                handle,
+                RTCDataChannelInternal::new(
+                    handle,
+                    DataChannelParameters {
+                        label: "deferred".to_string(),
+                        protocol: String::new(),
+                        ordered: true,
+                        max_packet_life_time: None,
+                        max_retransmits: None,
+                        negotiated: None,
+                    },
+                ),
+            );
+        }
+        h.pending = vec![first, second, third];
+
+        let now = Instant::now();
+        {
+            let mut handler = h.handler(None);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::SCTPHandshakeComplete(0),
+                })
+                .unwrap();
+        }
+
+        // Server parity (odd) with a cap of 4 streams admits two ids: 1 and 3. The first two
+        // pending channels get them; the third has no id left and is closed and removed.
+        assert_eq!(
+            h.data_channels.get(&first).unwrap().stream_id,
+            Some(1),
+            "the first pending channel gets the server-parity id 1"
+        );
+        assert_eq!(
+            h.data_channels.get(&second).unwrap().stream_id,
+            Some(3),
+            "the second pending channel gets the top server-parity id 3 (max - 1)"
+        );
+        assert!(
+            h.data_channels.get(&third).is_none(),
+            "the third pending channel is closed when the id space is exhausted"
+        );
+        assert!(h.pending.is_empty(), "pending handles are consumed");
+        assert_eq!(
+            h.ids.get(&1),
+            Some(&first),
+            "the first assigned id is registered in the reverse map"
+        );
+        assert_eq!(
+            h.ids.get(&3),
+            Some(&second),
+            "the top assigned id is registered in the reverse map"
+        );
+    }
+
+    /// Two pending channels must never be handed the same stream id, even when both share the
+    /// role's parity: the first reserves its id and the second takes the next free one.
+    #[test]
+    fn assign_pending_ids_assigns_distinct_ids_across_a_batch() {
+        let mut h = Harness::new();
+        h.dtls_role = RTCDtlsRole::Client;
+        h.max_channels = Some(8);
+
+        let first = RTCDataChannelHandle::new(1);
+        let second = RTCDataChannelHandle::new(2);
+        for handle in [first, second] {
+            h.data_channels.insert(
+                handle,
+                RTCDataChannelInternal::new(
+                    handle,
+                    DataChannelParameters {
+                        label: "deferred".to_string(),
+                        protocol: String::new(),
+                        ordered: true,
+                        max_packet_life_time: None,
+                        max_retransmits: None,
+                        negotiated: None,
+                    },
+                ),
+            );
+        }
+        h.pending = vec![first, second];
+
+        let now = Instant::now();
+        {
+            let mut handler = h.handler(None);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::SCTPHandshakeComplete(0),
+                })
+                .unwrap();
+        }
+
+        let first_id = h.data_channels.get(&first).unwrap().stream_id;
+        let second_id = h.data_channels.get(&second).unwrap().stream_id;
+        assert_eq!(first_id, Some(0), "client parity starts at even id 0");
+        assert_eq!(
+            second_id,
+            Some(2),
+            "the second pending channel gets the next even id"
+        );
+        assert_ne!(
+            first_id, second_id,
+            "two pending channels must not share a stream id"
+        );
+    }
+
+    /// Closed pending channels do not consume a stream id.
+    #[test]
+    fn closed_pending_channel_skipped_by_assign_pending_ids() {
+        let mut h = Harness::new();
+        h.dtls_role = RTCDtlsRole::Client;
+        let closed = RTCDataChannelHandle::new(1);
+        let live = RTCDataChannelHandle::new(2);
+        for handle in [closed, live] {
+            h.data_channels.insert(
+                handle,
+                RTCDataChannelInternal::new(
+                    handle,
+                    DataChannelParameters {
+                        label: "deferred".to_string(),
+                        protocol: String::new(),
+                        ordered: true,
+                        max_packet_life_time: None,
+                        max_retransmits: None,
+                        negotiated: None,
+                    },
+                ),
+            );
+        }
+        // Close the first channel before SCTPHandshakeComplete.
+        h.data_channels.get_mut(&closed).unwrap().close().unwrap();
+        assert_eq!(
+            h.data_channels.get(&closed).unwrap().ready_state,
+            RTCDataChannelState::Closed
+        );
+        h.pending = vec![closed, live];
+
+        let now = Instant::now();
+        {
+            let mut handler = h.handler(None);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::SCTPHandshakeComplete(0),
+                })
+                .unwrap();
+        }
+
+        assert!(h.pending.is_empty());
+        assert_eq!(h.data_channels.get(&closed).unwrap().stream_id, None);
+        assert_eq!(h.data_channels.get(&live).unwrap().stream_id, Some(0));
+        assert!(!h.ids.values().any(|handle| *handle == closed));
+        assert_eq!(h.ids.get(&0), Some(&live));
+    }
+
+    /// An id-exhausted pending channel is closed and the application receives OnError then OnClose.
+    #[test]
+    fn assign_pending_ids_overflow_fires_error_and_close() {
+        let mut h = Harness::new();
+        h.dtls_role = RTCDtlsRole::Client;
+        // A cap of 2 streams admits one client-parity id (0); the second channel overflows.
+        h.max_channels = Some(2);
+
+        let first = RTCDataChannelHandle::new(1);
+        let second = RTCDataChannelHandle::new(2);
+        for handle in [first, second] {
+            h.data_channels.insert(
+                handle,
+                RTCDataChannelInternal::new(
+                    handle,
+                    DataChannelParameters {
+                        label: "overflow".to_string(),
+                        protocol: String::new(),
+                        ordered: true,
+                        max_packet_life_time: None,
+                        max_retransmits: None,
+                        negotiated: None,
+                    },
+                ),
+            );
+        }
+        h.pending = vec![first, second];
+
+        let now = Instant::now();
+        {
+            let mut handler = h.handler(None);
+            handler
+                .handle_event(TaggedRTCEventInternal {
+                    now,
+                    event: RTCEventInternal::SCTPHandshakeComplete(0),
+                })
+                .unwrap();
+        }
+
+        assert_eq!(h.data_channels.get(&first).unwrap().stream_id, Some(0));
+        assert!(h.data_channels.get(&second).is_none());
+
+        let errors = h
+            .ctx
+            .event_outs
+            .iter()
+            .filter(|e| {
+                matches!(
+                    &e.event,
+                    RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnDataChannel(
+                            RTCDataChannelEvent::OnErrorByHandle(_)
+                        )
+                    )
+                )
+            })
+            .count();
+        let closes = h
+            .ctx
+            .event_outs
+            .iter()
+            .filter(|e| {
+                matches!(
+                    &e.event,
+                    RTCEventInternal::RTCPeerConnectionEvent(
+                        RTCPeerConnectionEvent::OnDataChannel(
+                            RTCDataChannelEvent::OnCloseByHandle(_)
+                        )
+                    )
+                )
+            })
+            .count();
+        assert_eq!(errors, 1);
+        assert_eq!(closes, 1);
+
+        // OnErrorByHandle must precede OnCloseByHandle (section 6.2.7).
+        let events: Vec<_> = h
+            .ctx
+            .event_outs
+            .iter()
+            .filter_map(|e| match &e.event {
+                RTCEventInternal::RTCPeerConnectionEvent(
+                    RTCPeerConnectionEvent::OnDataChannel(dc_event),
+                ) => Some(dc_event.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(
+                events.first(),
+                Some(RTCDataChannelEvent::OnErrorByHandle(_))
+            ),
+            "OnErrorByHandle must precede OnCloseByHandle"
         );
     }
 }

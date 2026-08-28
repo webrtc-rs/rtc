@@ -22,7 +22,7 @@ use env_logger::Target;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use log::{debug, error, trace};
-use rtc::data_channel::RTCDataChannelId;
+use rtc::data_channel::{RTCDataChannelHandle, RTCDataChannelId};
 use rtc::interceptor::Registry;
 use rtc::media::io::ogg_reader::{
     OggHeader, OggHeaderType, OggReader, OpusTags, parse_opus_head, parse_opus_tags,
@@ -560,8 +560,11 @@ async fn handle_whep_connection(
 
     let audio_sender_id = peer_connection.add_track(output_track)?;
 
-    // Create data channel for playlist control
-    let playlist_channel_id = peer_connection.create_data_channel("playlist", None)?.id();
+    // Create data channel for playlist control. The stream id is only assigned once the SCTP
+    // transport connects (W3C section 6.1 step 18), so the channel is tracked by its stable handle.
+    let playlist_channel_handle = peer_connection
+        .create_data_channel("playlist", None)?
+        .handle();
 
     // Set remote description
     let offer = RTCSessionDescription::offer(offer_sdp)?;
@@ -607,7 +610,7 @@ async fn handle_whep_connection(
         peer_connection,
         tracks,
         audio_sender_id,
-        playlist_channel_id,
+        playlist_channel_handle,
         ssrc,
         opus_codec,
     )
@@ -621,7 +624,7 @@ async fn run_peer_connection(
     mut peer_connection: RTCPeerConnection,
     tracks: Arc<Vec<OggTrack>>,
     audio_sender_id: RTCRtpSenderId,
-    playlist_channel_id: RTCDataChannelId,
+    playlist_channel_handle: RTCDataChannelHandle,
     ssrc: SSRC,
     codec: RTCRtpCodecParameters,
 ) -> Result<()> {
@@ -629,6 +632,9 @@ async fn run_peer_connection(
     let current_page = Arc::new(AtomicUsize::new(0));
     let switch_track = Arc::new(AtomicI32::new(-1)); // -1 means no switch requested
     let mut connected = false;
+    // The playlist channel's stream id, assigned once the SCTP transport connects; used to
+    // filter inbound messages and to look the channel up for sends.
+    let mut playlist_stream_id: Option<RTCDataChannelId> = None;
 
     // Create packetizer
     let mut packetizer = rtp::packetizer::new_packetizer(
@@ -672,7 +678,9 @@ async fn run_peer_connection(
                         connected = true;
 
                         // Send initial playlist
-                        if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
+                        if let Some(mut dc) =
+                            peer_connection.data_channel_handle(playlist_channel_handle)
+                        {
                             let playlist_msg = build_playlist_message(
                                 &tracks,
                                 current_track.load(Ordering::SeqCst),
@@ -688,7 +696,7 @@ async fn run_peer_connection(
                     }
                 }
                 RTCPeerConnectionEvent::OnDataChannel(dc_event) => match dc_event {
-                    RTCDataChannelEvent::OnOpen(_) => {}
+                    RTCDataChannelEvent::OnOpen(stream_id) => playlist_stream_id = Some(stream_id),
                     RTCDataChannelEvent::OnClose(_) => {}
                     _ => {}
                 },
@@ -699,7 +707,7 @@ async fn run_peer_connection(
         // Process data channel messages
         while let Some(TaggedRTCMessage { message, .. }) = peer_connection.poll_read() {
             if let RTCMessage::DataChannelMessage(dc_id, dc_message) = message {
-                if dc_id == playlist_channel_id {
+                if Some(dc_id) == playlist_stream_id {
                     let command = String::from_utf8_lossy(&dc_message.data)
                         .trim()
                         .to_lowercase();
@@ -709,7 +717,7 @@ async fn run_peer_connection(
                         &current_track,
                         &switch_track,
                         &mut peer_connection,
-                        playlist_channel_id,
+                        playlist_channel_handle,
                     );
                 }
             }
@@ -769,7 +777,9 @@ async fn run_peer_connection(
                         current_page.store(0, Ordering::SeqCst);
 
                         // Send now playing
-                        if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
+                        if let Some(mut dc) =
+                            peer_connection.data_channel_handle(playlist_channel_handle)
+                        {
                             let now_msg = build_now_playing_message(&tracks, switch as usize);
                             let _ = dc.send_text(Instant::now(), now_msg);
                         }
@@ -783,7 +793,9 @@ async fn run_peer_connection(
                     current_page.store(0, Ordering::SeqCst);
 
                     // Send now playing
-                    if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
+                    if let Some(mut dc) =
+                        peer_connection.data_channel_handle(playlist_channel_handle)
+                    {
                         let now_msg = build_now_playing_message(&tracks, next as usize);
                         let _ = dc.send_text(Instant::now(), now_msg);
                     }
@@ -849,7 +861,7 @@ fn handle_playlist_command(
     current_track: &AtomicI32,
     switch_track: &AtomicI32,
     peer_connection: &mut RTCPeerConnection,
-    playlist_channel_id: RTCDataChannelId,
+    playlist_channel_handle: RTCDataChannelHandle,
 ) {
     let limit = tracks.len() as i32;
     let current = current_track.load(Ordering::SeqCst);
@@ -863,7 +875,7 @@ fn handle_playlist_command(
             next = wrap_prev(current, limit);
         }
         "list" => {
-            if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
+            if let Some(mut dc) = peer_connection.data_channel_handle(playlist_channel_handle) {
                 let msg = build_playlist_message(tracks, current);
                 let _ = dc.send_text(Instant::now(), msg);
             }
@@ -883,7 +895,7 @@ fn handle_playlist_command(
 
     switch_track.store(next, Ordering::SeqCst);
 
-    if let Some(mut dc) = peer_connection.data_channel(playlist_channel_id) {
+    if let Some(mut dc) = peer_connection.data_channel_handle(playlist_channel_handle) {
         let msg = build_playlist_message(tracks, next);
         let _ = dc.send_text(Instant::now(), msg);
     }

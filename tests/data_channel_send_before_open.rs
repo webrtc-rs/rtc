@@ -71,10 +71,12 @@ fn send_on_a_closed_channel_reports_closed() -> Result<()> {
     let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
 
     let mut dc = pc.create_data_channel("probe", Some(RTCDataChannelInit::default()))?;
-    let id = dc.id();
+    let handle = dc.handle();
     dc.close()?;
 
-    let mut dc = pc.data_channel(id).expect("handle survives close");
+    let mut dc = pc
+        .data_channel_handle(handle)
+        .expect("handle survives close");
     assert_ne!(
         dc.send(Instant::now(), BytesMut::from(&b"dropped"[..])),
         Ok(()),

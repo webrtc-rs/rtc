@@ -260,7 +260,7 @@ async fn main() -> Result<()> {
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(channel_id)) => {
                     if let Some(dc) = peer_connection.data_channel(channel_id) {
                         println!(
-                            "Data channel '{}'-'{}' open. Random messages will now be sent every 5 seconds",
+                            "Data channel '{}'-'{:?}' open. Random messages will now be sent every 5 seconds",
                             dc.label(),
                             dc.id()
                         );

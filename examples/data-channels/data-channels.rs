@@ -239,7 +239,7 @@ async fn run(
                             let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
-                            println!("Data channel '{}'-'{}' open", dc.label(), dc.id());
+                            println!("Data channel '{}'-'{:?}' open", dc.label(), dc.id());
                         }
                         _ => {}
                     }

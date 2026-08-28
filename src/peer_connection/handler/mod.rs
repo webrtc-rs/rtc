@@ -196,11 +196,18 @@ impl RTCPeerConnection {
     }
 
     pub(crate) fn get_datachannel_handler(&mut self) -> DataChannelHandler<'_> {
+        let dtls_role = self.dtls_transport().role();
+        let max_channels = self.sctp_transport().max_channels();
         DataChannelHandler::new(
             &mut self.pipeline_context.datachannel_handler_context,
             &mut self.data_channels,
+            &mut self.pending_data_channel_handles,
+            &mut self.data_channel_ids,
+            &mut self.data_channel_handle_allocator,
             &mut self.pipeline_context.stats,
             self.setting_engine.data_channel.dcep_handshake_timeout,
+            dtls_role,
+            max_channels,
         )
     }
 

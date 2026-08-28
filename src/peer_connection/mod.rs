@@ -254,7 +254,9 @@ pub mod transport;
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
-use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataChannelInternal};
+use crate::data_channel::{
+    RTCDataChannel, RTCDataChannelHandle, RTCDataChannelId, internal::RTCDataChannelInternal,
+};
 use crate::media_stream::track::MediaStreamTrack;
 use crate::peer_connection::configuration::media_engine::MediaEngine;
 use crate::peer_connection::configuration::setting_engine::{SctpMaxMessageSize, SettingEngine};
@@ -689,7 +691,15 @@ pub struct RTCPeerConnection {
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
     pub(crate) pipeline_context: PipelineContext,
-    pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    pub(crate) data_channels: HashMap<RTCDataChannelHandle, RTCDataChannelInternal>,
+    /// Allocator for `RTCDataChannelHandle` values. Handles are never reused.
+    pub(crate) data_channel_handle_allocator: usize,
+    /// Handles of locally-created channels whose stream id has not yet been assigned (the DTLS
+    /// role has not been resolved / SCTP not connected). Kept in creation order so the connected
+    /// procedure assigns ids in W3C section 6.1.1.3 order.
+    pub(crate) pending_data_channel_handles: Vec<RTCDataChannelHandle>,
+    /// Reverse lookup from stream id to handle for channels that have a stream id.
+    pub(crate) data_channel_ids: HashMap<RTCDataChannelId, RTCDataChannelHandle>,
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal>,
 
     /// The newest instant a caller has supplied, seeded at construction.
@@ -1856,7 +1866,8 @@ impl RTCPeerConnection {
             ..Default::default()
         };
 
-        let mut id = self.generate_data_channel_id()?;
+        let handle = RTCDataChannelHandle::new(self.data_channel_handle_allocator);
+        self.data_channel_handle_allocator += 1;
 
         // `None` means "the dictionary defaults", which is what `RTCDataChannelInit::default()`
         // spells out. Taking that route rather than leaving `params` on its derived default
@@ -1890,27 +1901,42 @@ impl RTCPeerConnection {
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #12)
         params.negotiated = options.negotiated;
 
-        if let Some(negotiated_id) = &params.negotiated {
-            if self.data_channels.contains_key(negotiated_id) {
-                return Err(Error::ErrOperationError);
-            }
-            id = *negotiated_id;
+        if let Some(stream_id) = params.negotiated
+            && self.data_channel_ids.contains_key(&stream_id)
+        {
+            return Err(Error::ErrOperationError);
         }
 
-        let mut data_channel = RTCDataChannelInternal::new(id, params);
-
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #23)
-        // Open the channel's data transport immediately when an SCTP association already exists.
-        if let Some(handle) = self
+        // W3C section 6.1 createDataChannel, step 18.
+        // Negotiated channels use the provided id. If the SCTP association already exists, the
+        // role is resolved so generate the id now. Otherwise defer to the connected procedure.
+        let sctp_association = self
             .sctp_transport()
             .sctp_associations
             .keys()
             .next()
-            .copied()
+            .copied();
+        let stream_id = if params.negotiated.is_some() {
+            params.negotiated
+        } else if sctp_association.is_some() {
+            Some(self.generate_data_channel_id(self.dtls_transport().role())?)
+        } else {
+            None
+        };
+
+        let mut data_channel = RTCDataChannelInternal::new(handle, params);
+        data_channel.stream_id = stream_id;
+
+        // W3C section 6.1 createDataChannel, step 23.
+        // Open the data transport immediately when an SCTP association already exists.
+        // Negotiated channels open straight away, so emit OnOpen here too.
+        let mut opened_immediately = false;
+        if let Some(association) = sctp_association
+            && stream_id.is_some()
             && data_channel.ready_state == RTCDataChannelState::Connecting
             && data_channel.data_channel.is_none()
         {
-            data_channel.dial(handle.0)?;
+            data_channel.dial(association.0)?;
             // Set the DCEP handshake deadline, exactly as the SCTPHandshakeComplete handler
             // does for channels dialed during the initial connection: a lost
             // DATA_CHANNEL_ACK must not leave a channel dialed here Connecting forever.
@@ -1924,25 +1950,30 @@ impl RTCPeerConnection {
                     .dcep_handshake_timeout
                     .map(|timeout| self.now + timeout);
             }
+            opened_immediately =
+                data_channel.negotiated && data_channel.ready_state == RTCDataChannelState::Open;
         }
 
-        // A negotiated channel opens immediately; fire the open event here because the
-        // SCTPHandshakeComplete handler runs only at SCTP connect, so it never fires
-        // for a channel dialed after the connection is already up.
-        if data_channel.negotiated && data_channel.ready_state == RTCDataChannelState::Open {
+        let opened_id = data_channel.stream_id;
+        self.data_channels.insert(handle, data_channel);
+        if let Some(stream_id) = stream_id {
+            self.data_channel_ids.insert(stream_id, handle);
+        } else {
+            self.pending_data_channel_handles.push(handle);
+        }
+
+        if opened_immediately && let Some(opened_id) = opened_id {
             self.pipeline_context
                 .event_outs
                 .push_back(RTCPeerConnectionEvent::OnDataChannel(
-                    RTCDataChannelEvent::OnOpen(id),
+                    RTCDataChannelEvent::OnOpen(opened_id),
                 ));
         }
-
-        self.data_channels.insert(id, data_channel);
 
         self.trigger_negotiation_needed();
 
         Ok(RTCDataChannel {
-            id,
+            handle,
             peer_connection: self,
         })
     }
@@ -2223,11 +2254,29 @@ impl RTCPeerConnection {
         Ok(self.add_rtp_transceiver(transceiver))
     }
 
-    /// data_channel provides the access to RTCDataChannel object with the given id
+    /// data_channel provides the access to RTCDataChannel object with the given stream id
     pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
-        if self.data_channels.contains_key(&id) {
+        let handle = self.data_channel_ids.get(&id).copied()?;
+        if self.data_channels.contains_key(&handle) {
             Some(RTCDataChannel {
-                id,
+                handle,
+                peer_connection: self,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Looks up a data channel by its stable handle.
+    ///
+    /// Addresses a channel by `RTCDataChannelHandle`; `data_channel(id)` addresses one by stream id.
+    pub fn data_channel_handle(
+        &mut self,
+        handle: RTCDataChannelHandle,
+    ) -> Option<RTCDataChannel<'_>> {
+        if self.data_channels.contains_key(&handle) {
+            Some(RTCDataChannel {
+                handle,
                 peer_connection: self,
             })
         } else {
@@ -2699,9 +2748,8 @@ mod tests {
     }
 
     /// A negotiated channel created after the SCTP association is up is dialed immediately and
-    /// opens straight away; it must emit `OnOpen`, which the `SCTPHandshakeComplete`
-    /// handler would otherwise supply for negotiated channels dialed during the initial
-    /// connection.
+    /// opens straight away; it must emit `OnOpen`, which the `SCTPHandshakeComplete` handler
+    /// would otherwise supply for negotiated channels dialed during the initial connection.
     #[test]
     fn negotiated_channel_created_after_sctp_emits_on_open() {
         let mut pc = RTCPeerConnectionBuilder::new()
@@ -2725,9 +2773,9 @@ mod tests {
             )
             .unwrap();
 
-        // Immediately open, carrying its negotiated id.
+        // Immediately open, with an id assigned at creation.
         assert_eq!(dc.ready_state(), RTCDataChannelState::Open);
-        assert_eq!(dc.id(), 7);
+        assert_eq!(dc.id(), Some(7));
 
         // The OnOpen event must be queued for the application.
         let opens: Vec<_> = pc
@@ -2753,20 +2801,19 @@ mod tests {
             .build(Instant::now())
             .unwrap();
 
-        // An SCTP association is required so the in-band channel is dialed (and registered)
-        // at creation. While the DTLS role is still Auto, parity is server-side (odd), so the
-        // in-band channel gets id 1.
+        // An SCTP association is required so the in-band channel's id is assigned at creation
+        // (client parity: 0) and registered in the reverse map.
         pc.sctp_transport_mut()
             .sctp_associations
             .insert(AssociationHandle(0), sctp::Association::default());
 
         let in_band = pc.create_data_channel("in-band", None).unwrap();
-        assert_eq!(in_band.id(), 1);
+        assert_eq!(in_band.id(), Some(0));
 
         let err = match pc.create_data_channel(
             "negotiated",
             Some(RTCDataChannelInit {
-                negotiated: Some(1),
+                negotiated: Some(0),
                 ..Default::default()
             }),
         ) {

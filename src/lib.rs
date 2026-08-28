@@ -529,7 +529,7 @@
 //! };
 //!
 //! let mut dc = pc.create_data_channel("my-channel", Some(init))?;
-//! let channel_id = dc.id();
+//! let channel_id = dc.id().expect("data channel id is assigned once negotiated");
 //!
 //! // Send text message
 //! dc.send_text(Instant::now(), "Hello, WebRTC!")?;

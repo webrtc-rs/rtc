@@ -2,7 +2,7 @@
 //!
 //! Events related to RTCDataChannel lifecycle and buffering state changes.
 
-use crate::data_channel::RTCDataChannelId;
+use crate::data_channel::{RTCDataChannelHandle, RTCDataChannelId};
 
 /// Events that can be emitted by an RTCDataChannel.
 ///
@@ -106,6 +106,15 @@ pub enum RTCDataChannelEvent {
     /// This event is fired when the channel is fully closed and no longer usable.
     /// No more data can be sent or received.
     OnClose(RTCDataChannelId),
+
+    /// Data channel failed before a stream id could be assigned (e.g. SCTP stream
+    /// exhaustion). Keyed by the stable `RTCDataChannelHandle` instead of a stream
+    /// id, and addressed directly by handle, because the channel never received one.
+    OnErrorByHandle(RTCDataChannelHandle),
+
+    /// Data channel closed before a stream id could be assigned (see
+    /// `OnErrorByHandle`). Keyed by the stable `RTCDataChannelHandle`.
+    OnCloseByHandle(RTCDataChannelHandle),
 
     /// Buffered amount dropped below the low-water mark.
     ///

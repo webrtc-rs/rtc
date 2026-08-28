@@ -251,12 +251,12 @@ async fn run(
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
                             println!(
-                                "Data channel '{}'-'{}' open. Random messages will now be sent every {} seconds",
+                                "Data channel '{}'-'{:?}' open. Random messages will now be sent every {} seconds",
                                 dc.label(),
                                 dc.id(),
                                 send_interval.as_secs()
                             );
-                            data_channel_opened = Some(dc.id());
+                            data_channel_opened = Some(channel_id);
                             data_channel_last_sent = Instant::now();
                         }
                         RTCDataChannelEvent::OnClose(channel_id) => {
@@ -347,7 +347,7 @@ async fn run(
 
                         close_after -= 1;
                         if close_after <=  0 {
-                            println!("Sent times out. Closing data channel '{}'-'{}'.", dc.label(), dc.id());
+                            println!("Sent times out. Closing data channel '{}'-'{:?}'.", dc.label(), dc.id());
                             let _ = dc.close();
                         }
                     }

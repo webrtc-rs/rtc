@@ -247,8 +247,8 @@ async fn run(
                             let dc = peer_connection
                                 .data_channel(channel_id)
                                 .ok_or(Error::ErrDataChannelClosed)?;
-                            println!("Data channel '{}'-'{}' open", dc.label(), dc.id());
-                            data_channel_opened = Some(dc.id());
+                            println!("Data channel '{}'-'{:?}' open", dc.label(), dc.id());
+                            data_channel_opened = Some(channel_id);
                         }
                         RTCDataChannelEvent::OnClose(channel_id) => {
                             println!("Data channel '{}' closed.", channel_id);
