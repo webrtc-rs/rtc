@@ -58,6 +58,9 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [Play from Disk FEC](play-from-disk-fec): The play-from-disk-fec demonstrates how to use FlexFEC-03 while sending
   video to your Chrome-based browser from a file saved to disk. A custom interceptor stands at the wire and drops media
   packets after they have been protected, so the browser recovers them from the repair stream.
+- ✅ [Save to Disk FEC](save-to-disk-fec): The save-to-disk-fec demonstrates how to use the FlexFEC-03 decoder while
+  receiving video from the play-from-disk-fec example, rebuilding the packets that example dropped and saving the
+  result to disk.
 - ✅ [Bandwidth Estimation From Disk](bandwidth-estimation-from-disk): bandwidth-estimation-from-disk demonstrates how to
   use Bandwidth Estimation APIs.
 
@@ -82,9 +85,6 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 
 ### TODO
 
-- 🚧  [Save to Disk FEC](save-to-disk-fec): The save-to-disk-fec demonstrates how to use FlexFEC-03 decoder while
-  receiving
-  video from play-from-disk-fec example.
 - 🚧 [Quick Switch](TODO): quick-switch demonstrates how to quickly switch between multiple videos using WebRTC. Similiar
   to how sites like TikTok quickly swipe between videos.
 - 🚧 [SCTP Interleaving Inspector](TODO): example uses rtc-ice, rtc-dtls, rtc-sctp, and rtc-datachannel directly so
