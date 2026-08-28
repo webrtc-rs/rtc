@@ -1813,6 +1813,12 @@ pub enum Error {
     #[error("both max_packet_life_time and max_retransmits was set")]
     ErrRetransmitsOrPacketLifeTime,
 
+    /// ErrOperationError indicates an operation was rejected because it conflicts
+    /// with existing state (e.g. creating a negotiated data channel whose stream
+    /// id is already in use, W3C section 6.1 createDataChannel step 18).
+    #[error("operation error")]
+    ErrOperationError,
+
     /// ErrCodecNotFound is returned when a codec search to the Media Engine fails
     #[error("codec not found")]
     ErrCodecNotFound,

@@ -1891,6 +1891,9 @@ impl RTCPeerConnection {
         params.negotiated = options.negotiated;
 
         if let Some(negotiated_id) = &params.negotiated {
+            if self.data_channels.contains_key(negotiated_id) {
+                return Err(Error::ErrOperationError);
+            }
             id = *negotiated_id;
         }
 
@@ -2741,6 +2744,36 @@ mod tests {
             vec![7],
             "post-SCTP negotiated channel must emit OnOpen(7)"
         );
+    }
+
+    /// A negotiated stream id already in use is rejected with ErrOperationError.
+    #[test]
+    fn negotiated_id_collision_returns_operation_error() {
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+
+        // An SCTP association is required so the in-band channel is dialed (and registered)
+        // at creation. While the DTLS role is still Auto, parity is server-side (odd), so the
+        // in-band channel gets id 1.
+        pc.sctp_transport_mut()
+            .sctp_associations
+            .insert(AssociationHandle(0), sctp::Association::default());
+
+        let in_band = pc.create_data_channel("in-band", None).unwrap();
+        assert_eq!(in_band.id(), 1);
+
+        let err = match pc.create_data_channel(
+            "negotiated",
+            Some(RTCDataChannelInit {
+                negotiated: Some(1),
+                ..Default::default()
+            }),
+        ) {
+            Ok(_) => panic!("a negotiated channel must not reuse a live stream id"),
+            Err(err) => err,
+        };
+        assert_eq!(err, Error::ErrOperationError);
     }
 
     // ---- Rollback (RFC 8829, Section 5.7) ----
