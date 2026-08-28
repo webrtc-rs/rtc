@@ -705,12 +705,7 @@ impl MediaEngine {
         for codec in codecs {
             // Matched on both fields: `nack` and `nack pli` are distinct mechanisms that share a
             // type, so comparing types alone would drop the second one.
-            if !codec
-                .rtp_codec
-                .rtcp_feedback
-                .iter()
-                .any(|registered| *registered == feedback)
-            {
+            if !codec.rtp_codec.rtcp_feedback.contains(&feedback) {
                 codec.rtp_codec.rtcp_feedback.push(feedback.clone());
             }
         }

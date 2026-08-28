@@ -119,8 +119,13 @@ pub fn encode(b: &str) -> String {
 
 /// decode decodes the input from base64
 /// It can optionally unzip the input after decoding
+///
+/// Surrounding whitespace is ignored. The examples take this blob either from stdin — where
+/// [`must_read_stdin`] has already trimmed it — or from a file named by `--input-sdp-file`, which
+/// has not been trimmed by anything. Every text editor writes a trailing newline, so without this
+/// the file path fails on a blob that pastes into stdin perfectly well.
 pub fn decode(s: &str) -> Result<String> {
-    let b = BASE64_STANDARD.decode(s)?;
+    let b = BASE64_STANDARD.decode(s.trim())?;
     let s = String::from_utf8(b)?;
     Ok(s)
 }
