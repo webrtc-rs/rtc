@@ -262,7 +262,9 @@ use crate::peer_connection::configuration::{
     RTCConfiguration, RTCIceTransportPolicy,
     offer_answer_options::{RTCAnswerOptions, RTCOfferOptions},
 };
-use crate::peer_connection::event::RTCPeerConnectionEvent;
+use crate::peer_connection::event::{
+    RTCPeerConnectionEvent, data_channel_event::RTCDataChannelEvent,
+};
 use crate::peer_connection::handler::PipelineContext;
 use crate::peer_connection::handler::dtls::DtlsHandlerContext;
 use crate::peer_connection::handler::ice::IceHandlerContext;
@@ -1921,6 +1923,17 @@ impl RTCPeerConnection {
             }
         }
 
+        // A negotiated channel opens immediately; fire the open event here because the
+        // SCTPHandshakeComplete handler runs only at SCTP connect, so it never fires
+        // for a channel dialed after the connection is already up.
+        if data_channel.negotiated && data_channel.ready_state == RTCDataChannelState::Open {
+            self.pipeline_context
+                .event_outs
+                .push_back(RTCPeerConnectionEvent::OnDataChannel(
+                    RTCDataChannelEvent::OnOpen(id),
+                ));
+        }
+
         self.data_channels.insert(id, data_channel);
 
         self.trigger_negotiation_needed();
@@ -2680,6 +2693,54 @@ mod tests {
         assert!(internal.data_channel.is_some());
         assert!(internal.handshake_deadline.is_some());
         assert_eq!(internal.ready_state, RTCDataChannelState::Connecting);
+    }
+
+    /// A negotiated channel created after the SCTP association is up is dialed immediately and
+    /// opens straight away; it must emit `OnOpen`, which the `SCTPHandshakeComplete`
+    /// handler would otherwise supply for negotiated channels dialed during the initial
+    /// connection.
+    #[test]
+    fn negotiated_channel_created_after_sctp_emits_on_open() {
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+
+        // Simulate an existing SCTP association (post-connection), so the channel is dialed
+        // immediately rather than at SCTPHandshakeComplete.
+        pc.sctp_transport_mut()
+            .sctp_associations
+            .insert(AssociationHandle(0), sctp::Association::default());
+
+        let dc = pc
+            .create_data_channel(
+                "negotiated",
+                Some(RTCDataChannelInit {
+                    ordered: true,
+                    negotiated: Some(7),
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+
+        // Immediately open, carrying its negotiated id.
+        assert_eq!(dc.ready_state(), RTCDataChannelState::Open);
+        assert_eq!(dc.id(), 7);
+
+        // The OnOpen event must be queued for the application.
+        let opens: Vec<_> = pc
+            .pipeline_context
+            .event_outs
+            .iter()
+            .filter_map(|e| match e {
+                RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            opens,
+            vec![7],
+            "post-SCTP negotiated channel must emit OnOpen(7)"
+        );
     }
 
     // ---- Rollback (RFC 8829, Section 5.7) ----
