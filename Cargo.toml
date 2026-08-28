@@ -236,6 +236,11 @@ path = "examples/play-from-disk-fec/play-from-disk-fec.rs"
 bench = false
 
 [[example]]
+name = "bandwidth-estimation-from-disk"
+path = "examples/bandwidth-estimation-from-disk/bandwidth-estimation-from-disk.rs"
+bench = false
+
+[[example]]
 name = "play-from-disk-h26x"
 path = "examples/play-from-disk-h26x/play-from-disk-h26x.rs"
 bench = false
