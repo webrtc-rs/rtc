@@ -895,11 +895,17 @@ impl RTCPeerConnection {
                         }
 
                         if let Some(fec) = encoding.rtp_coding_parameters.fec.as_ref() {
+                            // `FEC-FR` (RFC 5956), not the older `FEC` semantic of RFC 4756:
+                            // FlexFEC repair flows are grouped under the FEC framework, and
+                            // `parse_media_section` below only recognises `FEC-FR`, so writing
+                            // `FEC` here produced an offer this crate could not parse back.
                             media = media.with_value_attribute(
                                 ATTR_KEY_SSRC_GROUP.to_owned(),
                                 format!(
                                     "{} {} {}",
-                                    SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION, ssrc, fec.ssrc
+                                    SEMANTIC_TOKEN_FORWARD_ERROR_CORRECTION_FRAMEWORK,
+                                    ssrc,
+                                    fec.ssrc
                                 ),
                             );
                         }

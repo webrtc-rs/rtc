@@ -1224,20 +1224,27 @@ impl RTCPeerConnection {
                 rtp_coding_parameters: RTCRtpCodingParameters {
                     rid: coding.rtp_coding_parameters.rid.to_owned(),
                     ssrc: coding.rtp_coding_parameters.ssrc.to_owned(),
-                    rtx: if is_rtx_enabled {
-                        Some(RTCRtpRtxParameters {
-                            ssrc: rand::random::<u32>(),
+                    // Whether there is a repair flow at all is the media engine's call: without a
+                    // codec registered to carry it, an `a=ssrc-group` naming a repair SSRC has no
+                    // `a=rtpmap` to give it a format, and that is an offer no peer can act on.
+                    //
+                    // Given one, the SSRC follows the same rule as the media SSRC on the line
+                    // above: what the application named is what gets used, and one is minted only
+                    // when the track left it unset.
+                    rtx: is_rtx_enabled.then(|| {
+                        coding.rtp_coding_parameters.rtx.clone().unwrap_or_else(|| {
+                            RTCRtpRtxParameters {
+                                ssrc: rand::random::<u32>(),
+                            }
                         })
-                    } else {
-                        None
-                    },
-                    fec: if is_fec_enabled {
-                        Some(RTCRtpFecParameters {
-                            ssrc: rand::random::<u32>(),
+                    }),
+                    fec: is_fec_enabled.then(|| {
+                        coding.rtp_coding_parameters.fec.clone().unwrap_or_else(|| {
+                            RTCRtpFecParameters {
+                                ssrc: rand::random::<u32>(),
+                            }
                         })
-                    } else {
-                        None
-                    },
+                    }),
                 },
                 codec: coding.codec.clone(),
                 ..Default::default()

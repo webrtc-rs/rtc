@@ -55,10 +55,13 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
 - ✅ [Play from Disk Playlist Control](play-from-disk-playlist-control): Streams Opus pages from multi or single track
   Ogg containers, exposes the playlist over an SCTP DataChannel, and lets the browser hop between tracks while showing
   artist/title metadata parsed from OpusTags.
+- ✅ [Play from Disk FEC](play-from-disk-fec): The play-from-disk-fec demonstrates how to use FlexFEC-03 while sending
+  video to your Chrome-based browser from a file saved to disk. A custom interceptor stands at the wire and drops media
+  packets after they have been protected, so the browser recovers them from the repair stream.
 
 ### Miscellaneous
 
-- ✅ [mDNS Query and Gather](mdns-query-and-gather) Example mdns-query-and-gather demonstrates webrtc-rs hides local ip
+- ✅ [mDNS Query and Gather](mdns-query-and-gather): Example mdns-query-and-gather demonstrates webrtc-rs hides local ip
   with mDNS.
 - ✅ [ICE Restart](ice-restart): The ice-restart demonstrates webrtc-rs ICE Restart abilities.
 - ✅ [Trickle ICE Host](trickle-ice-host) Example demonstrates WebRTC's Trickle ICE APIs to add Host type local
@@ -67,26 +70,29 @@ check [Pion Examples](https://github.com/pion/webrtc/tree/master/examples#readme
   type local candidate.
 - ✅ [Trickle ICE Relay](trickle-ice-relay): Example demonstrates how to add Relay (TURN)
   type local candidate.
-- ✅ [Trickle ICE](trickle-ice) Example trickle-ice demonstrates the comprehensive Trickle ICE APIs with all three types
+- ✅ [Trickle ICE](trickle-ice): Example trickle-ice demonstrates the comprehensive Trickle ICE APIs with all three types
   of ICE candidates. This is important to use since it allows ICE Gathering and Connecting to happen concurrently.
-- ✅ [ICE TCP](ice-tcp) Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
+- ✅ [ICE TCP](ice-tcp): Example ice-tcp demonstrates how a WebRTC connection can be made over TCP instead of UDP. By
   default, webrtc-rs only does UDP. webrtc-rs can be configured to use a TCP port with passive mode.
-- ✅ [ICE TCP Active-Passive](ice-tcp-active-passive) Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
+- ✅ [ICE TCP Active-Passive](ice-tcp-active-passive): Example ice-tcp-active-passive demonstrates RTC's ICE TCP active
   mode abilities.
 - ✅ [Stats](stats): Stats demonstrates how to use the webrtc-stats implementation provided by WebRTC-rs.
 
 ### TODO
 
-- 🚧 [Play from Disk FEC](TODO): The play-from-disk-fec demonstrates how to use forward error correction (FlexFEC-03)
-  while sending video to your Chrome-based browser from files saved to disk. The example is designed to drop 40% of the
-  media packets, but browser will recover them using the FEC packets and the delivered packets.
+- 🚧 [Bandwidth Estimation From Disk](TODO): bandwidth-estimation-from-disk demonstrates how to use Bandwidth Estimation
+  APIs.
+- 🚧 [Quick Switch](TODO): quick-switch demonstrates how to quickly switch between multiple videos using WebRTC. Similiar
+  to how sites like TikTok quickly swipe between videos
+- 🚧 [SCTP Interleaving Inspector](TODO): example uses rtc-ice, rtc-dtls, rtc-sctp, and rtc-datachannel directly so
+  it can intercept raw SCTP messages and parses them.
 
 ### Not Applicable
 
-- [x] [ICE Single Port](N/A) This example doesn't apply to sansio RTC because sansio RTC is I/O-free by design: The
+- [x] [ICE Single Port](N/A): This example doesn't apply to sansio RTC because sansio RTC is I/O-free by design: The
   library never creates or manages sockets. Your application creates UDP sockets and feeds data to handle_read(). Port
   multiplexing is already the application's responsibility.
-- [x] [ICE Proxy](N/A) This example doesn't apply to sansio RTC too, since Sansio RTC is I/O-free - it never creates
+- [x] [ICE Proxy](N/A): This example doesn't apply to sansio RTC too, since Sansio RTC is I/O-free - it never creates
   network connections. The application is responsible for all I/O.
 - [x] [Data Channels WHIP WHEP](N/A): This example doesn't apply to sansio RTC, since it demonstrates a WHIP/WHEP-like
   implementation.

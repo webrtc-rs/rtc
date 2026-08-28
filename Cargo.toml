@@ -231,6 +231,11 @@ path = "examples/play-from-disk-vpx/play-from-disk-vpx.rs"
 bench = false
 
 [[example]]
+name = "play-from-disk-fec"
+path = "examples/play-from-disk-fec/play-from-disk-fec.rs"
+bench = false
+
+[[example]]
 name = "play-from-disk-h26x"
 path = "examples/play-from-disk-h26x/play-from-disk-h26x.rs"
 bench = false

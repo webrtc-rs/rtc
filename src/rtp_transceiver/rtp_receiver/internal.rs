@@ -8,7 +8,7 @@ use crate::rtp_transceiver::rtp_receiver::rtp_contributing_source::{
 use crate::rtp_transceiver::rtp_sender::rtp_capabilities::RTCRtpCapabilities;
 use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, RtpCodecKind, codec_parameters_fuzzy_search, find_fec_payload_type,
-    find_rtx_payload_type,
+    find_rtx_payload_type, is_repair_codec, parse_rtx_apt,
 };
 use crate::rtp_transceiver::rtp_sender::rtp_codec_parameters::RTCRtpCodecParameters;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::RTCRtpCodingParameters;
@@ -147,6 +147,33 @@ impl RTCRtpReceiverInternal {
             if match_type != CodecMatch::None {
                 filtered_codecs.push(c);
             }
+        }
+
+        // Repair codecs survive the filter. They are not alternative media formats to choose
+        // between — they accompany whichever primary was chosen — so W3C `setCodecPreferences`
+        // leaves them in place, and dropping them here would produce an offer no peer can act on:
+        // an `a=ssrc-group:FEC-FR` naming a repair SSRC with no `a=rtpmap:<pt> flexfec-03/90000`
+        // to give it a format, and likewise `a=ssrc-group:FID` with no `rtx` codec.
+        for codec in &media_engine_codecs {
+            if !is_repair_codec(&codec.rtp_codec)
+                || filtered_codecs
+                    .iter()
+                    .any(|filtered| filtered.payload_type == codec.payload_type)
+            {
+                continue;
+            }
+
+            // An RTX codec repairs one specific primary (RFC 4588 `apt`), so it belongs here only
+            // when that primary survived. FEC and RED are not bound to a payload type and always do.
+            if let Some(apt) = parse_rtx_apt(&codec.rtp_codec.sdp_fmtp_line)
+                && !filtered_codecs
+                    .iter()
+                    .any(|filtered| filtered.payload_type == apt)
+            {
+                continue;
+            }
+
+            filtered_codecs.push(codec.clone());
         }
 
         filtered_codecs
