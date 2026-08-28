@@ -254,6 +254,23 @@ pub(crate) fn parse_rtx_apt(sdp_fmtp_line: &str) -> Option<PayloadType> {
         .find_map(|value| value.trim().parse::<PayloadType>().ok())
 }
 
+/// Whether `codec` repairs another stream rather than carrying media of its own.
+///
+/// Covers retransmission (RTX, RFC 4588) and forward error correction (FlexFEC, ULPFEC, RED).
+/// These are not alternative media formats a peer chooses between — they accompany whichever
+/// primary codec was chosen — which is why codec preferences leave them in place. See
+/// [setCodecPreferences](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-setcodecpreferences):
+///
+/// > Codecs of type RTX, RED and FEC are always supported […] and are not affected by this method.
+pub(crate) fn is_repair_codec(codec: &RTCRtpCodec) -> bool {
+    let mime_type = codec.mime_type.to_lowercase();
+    let subtype = mime_type
+        .split_once('/')
+        .map_or(mime_type.as_str(), |(_, subtype)| subtype);
+
+    matches!(subtype, "rtx" | "ulpfec" | "red") || subtype.starts_with("flexfec")
+}
+
 // For now, only FlexFEC is supported.
 pub(crate) fn find_fec_payload_type(haystack: &[RTCRtpCodecParameters]) -> Option<PayloadType> {
     for c in haystack {
