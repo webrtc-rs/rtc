@@ -407,7 +407,8 @@ impl<P: Interceptor + ?Sized> Interceptor for Box<P> {
 /// in `std` (`impl Read for &mut R`, `impl Iterator for &mut I`).
 ///
 /// This is only expressible because [`Interceptor`] does not require `'static`: `&'a mut P`
-/// outlives only `'a`. See [`Registry::boxed`], which carries that bound locally instead.
+/// outlives only `'a`. [`Registry::with`] is where the `'static` bound is asked for instead —
+/// locally, by the one method that has to box what it is given.
 impl<P: Interceptor + ?Sized> Interceptor for &mut P {
     fn bind_local_stream(&mut self, info: &StreamInfo) {
         (**self).bind_local_stream(info)
