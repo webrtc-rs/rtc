@@ -693,19 +693,26 @@ impl MediaEngine {
     }
 
     /// register_feedback adds feedback mechanism to already registered codecs.
+    ///
+    /// Registering the same mechanism twice is a no-op the second time.
     pub fn register_feedback(&mut self, feedback: RTCPFeedback, typ: RtpCodecKind) {
-        match typ {
-            RtpCodecKind::Video => {
-                for v in &mut self.video_codecs {
-                    v.rtp_codec.rtcp_feedback.push(feedback.clone());
-                }
+        let codecs = match typ {
+            RtpCodecKind::Video => &mut self.video_codecs,
+            RtpCodecKind::Audio => &mut self.audio_codecs,
+            _ => return,
+        };
+
+        for codec in codecs {
+            // Matched on both fields: `nack` and `nack pli` are distinct mechanisms that share a
+            // type, so comparing types alone would drop the second one.
+            if !codec
+                .rtp_codec
+                .rtcp_feedback
+                .iter()
+                .any(|registered| *registered == feedback)
+            {
+                codec.rtp_codec.rtcp_feedback.push(feedback.clone());
             }
-            RtpCodecKind::Audio => {
-                for a in &mut self.audio_codecs {
-                    a.rtp_codec.rtcp_feedback.push(feedback.clone());
-                }
-            }
-            _ => {}
         }
     }
 
@@ -1307,5 +1314,113 @@ mod default_rtx_codec_test {
                 codec.rtp_codec.mime_type
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod register_feedback_test {
+    use super::*;
+
+    fn video_codec(payload_type: PayloadType) -> RTCRtpCodecParameters {
+        RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: "".to_owned(),
+                rtcp_feedback: vec![],
+            },
+            payload_type,
+        }
+    }
+
+    fn feedback(typ: &str, parameter: &str) -> RTCPFeedback {
+        RTCPFeedback {
+            typ: typ.to_owned(),
+            parameter: parameter.to_owned(),
+        }
+    }
+
+    fn count(me: &MediaEngine, typ: &str, parameter: &str) -> usize {
+        me.video_codecs[0]
+            .rtp_codec
+            .rtcp_feedback
+            .iter()
+            .filter(|fb| fb.typ == typ && fb.parameter == parameter)
+            .count()
+    }
+
+    // `configure_congestion_control` and `configure_twcc_receiver_only` both need transport-cc,
+    // and an application that calls one alongside `register_default_interceptors` calls both.
+    // Without dedupe the codec accumulates one `a=rtcp-fb:<pt> transport-cc` per caller, and the
+    // answer goes out with the line repeated.
+    #[test]
+    fn registering_the_same_feedback_twice_adds_it_once() {
+        let mut me = MediaEngine::default();
+        me.register_codec(video_codec(96), RtpCodecKind::Video)
+            .unwrap();
+
+        me.register_feedback(feedback("transport-cc", ""), RtpCodecKind::Video);
+        me.register_feedback(feedback("transport-cc", ""), RtpCodecKind::Video);
+
+        assert_eq!(1, count(&me, "transport-cc", ""));
+    }
+
+    // The dedupe matches on type *and* parameter. `nack` and `nack pli` share a type but are
+    // different mechanisms, and comparing types alone would silently drop the second.
+    #[test]
+    fn feedback_of_the_same_type_with_different_parameters_both_register() {
+        let mut me = MediaEngine::default();
+        me.register_codec(video_codec(96), RtpCodecKind::Video)
+            .unwrap();
+
+        me.register_feedback(feedback("nack", ""), RtpCodecKind::Video);
+        me.register_feedback(feedback("nack", "pli"), RtpCodecKind::Video);
+
+        assert_eq!(1, count(&me, "nack", ""));
+        assert_eq!(1, count(&me, "nack", "pli"));
+    }
+
+    // A codec registered *after* the feedback does not have it — `register_feedback` only touches
+    // codecs already present. Pinning this so the dedupe is not mistaken for a guarantee that
+    // every codec ends up with every mechanism.
+    #[test]
+    fn feedback_applies_only_to_codecs_already_registered() {
+        let mut me = MediaEngine::default();
+        me.register_codec(video_codec(96), RtpCodecKind::Video)
+            .unwrap();
+        me.register_feedback(feedback("transport-cc", ""), RtpCodecKind::Video);
+        me.register_codec(video_codec(98), RtpCodecKind::Video)
+            .unwrap();
+
+        assert_eq!(1, count(&me, "transport-cc", ""));
+        assert!(me.video_codecs[1].rtp_codec.rtcp_feedback.is_empty());
+    }
+
+    // Audio and video are separate lists; registering for one must not reach the other.
+    #[test]
+    fn feedback_does_not_cross_between_audio_and_video() {
+        let mut me = MediaEngine::default();
+        me.register_codec(video_codec(96), RtpCodecKind::Video)
+            .unwrap();
+        me.register_codec(
+            RTCRtpCodecParameters {
+                rtp_codec: RTCRtpCodec {
+                    mime_type: MIME_TYPE_OPUS.to_owned(),
+                    clock_rate: 48000,
+                    channels: 2,
+                    sdp_fmtp_line: "".to_owned(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 111,
+            },
+            RtpCodecKind::Audio,
+        )
+        .unwrap();
+
+        me.register_feedback(feedback("transport-cc", ""), RtpCodecKind::Video);
+
+        assert_eq!(1, count(&me, "transport-cc", ""));
+        assert!(me.audio_codecs[0].rtp_codec.rtcp_feedback.is_empty());
     }
 }
