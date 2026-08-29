@@ -29,6 +29,7 @@
 
 use anyhow::Result;
 use bytes::BytesMut;
+use rtc::data_channel::{RTCDataChannelId, StreamId};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::{RTCDataChannelEvent, RTCPeerConnectionEvent};
@@ -96,15 +97,20 @@ fn parity_name(parity: u16) -> &'static str {
 }
 
 struct Outcome {
-    /// Stream ids each peer committed to at `create_data_channel` time.
-    offer_ids: Vec<u16>,
-    answer_ids: Vec<u16>,
+    /// The SCTP stream ids each peer ended up with, in creation order. `None` means the
+    /// channel never received one.
+    offer_ids: Vec<Option<StreamId>>,
+    answer_ids: Vec<Option<StreamId>>,
+    /// Whether every channel had `stream_id() == None` at creation time, i.e. whether
+    /// assignment was actually deferred rather than guessed.
+    offer_deferred: bool,
+    answer_deferred: bool,
     /// The DTLS role each peer negotiated, per its own transport stats.
     offer_role: RTCDtlsRole,
     answer_role: RTCDtlsRole,
-    /// Stream id -> label, for every channel each peer saw open.
-    offer_open: BTreeMap<u16, String>,
-    answer_open: BTreeMap<u16, String>,
+    /// Channel handle -> label, for every channel each peer saw open.
+    offer_open: BTreeMap<RTCDataChannelId, String>,
+    answer_open: BTreeMap<RTCDataChannelId, String>,
     connected: bool,
 }
 
@@ -139,20 +145,29 @@ async fn connect(offer_cfg: RTCDtlsRole, answer_cfg: RTCDtlsRole) -> Result<Outc
 
     // Both sides create channels while their DTLS role is still `Auto`. This is the
     // "both peers rapidly create data channels before the DTLS role is negotiated" case.
-    let mut offer_ids = Vec::new();
-    let mut answer_ids = Vec::new();
+    let mut offer_handles: Vec<RTCDataChannelId> = Vec::new();
+    let mut answer_handles: Vec<RTCDataChannelId> = Vec::new();
     for i in 0..CHANNELS_PER_PEER {
-        offer_ids.push(
+        offer_handles.push(
             offer_pc
                 .create_data_channel(&format!("offerer-{i}"), None)?
                 .id(),
         );
-        answer_ids.push(
+        answer_handles.push(
             answer_pc
                 .create_data_channel(&format!("answerer-{i}"), None)?
                 .id(),
         );
     }
+
+    // Before any SDP the DTLS role is unresolved, so RFC 8832 §6 supplies no parity and there
+    // is no correct stream id to hand out. W3C says the id "is initially null"; this is that.
+    let offer_deferred = offer_handles
+        .iter()
+        .all(|h| offer_pc.data_channel(*h).unwrap().stream_id().is_none());
+    let answer_deferred = answer_handles
+        .iter()
+        .all(|h| answer_pc.data_channel(*h).unwrap().stream_id().is_none());
 
     let offer = offer_pc.create_offer(None)?;
     offer_pc.set_local_description(Instant::now(), offer.clone())?;
@@ -161,8 +176,8 @@ async fn connect(offer_cfg: RTCDtlsRole, answer_cfg: RTCDtlsRole) -> Result<Outc
     answer_pc.set_local_description(Instant::now(), answer.clone())?;
     offer_pc.set_remote_description(Instant::now(), answer)?;
 
-    let mut offer_open: BTreeMap<u16, String> = BTreeMap::new();
-    let mut answer_open: BTreeMap<u16, String> = BTreeMap::new();
+    let mut offer_open: BTreeMap<RTCDataChannelId, String> = BTreeMap::new();
+    let mut answer_open: BTreeMap<RTCDataChannelId, String> = BTreeMap::new();
     let mut offer_connected = false;
     let mut answer_connected = false;
     // When both roles first became readable; starts the `CHANNEL_SETTLE` grace period.
@@ -298,12 +313,24 @@ async fn connect(offer_cfg: RTCDtlsRole, answer_cfg: RTCDtlsRole) -> Result<Outc
     let offer_role = negotiated_role(&mut offer_pc);
     let answer_role = negotiated_role(&mut answer_pc);
 
+    // The wire values, read back once the connected procedure has had its chance to assign.
+    let offer_ids = offer_handles
+        .iter()
+        .map(|h| offer_pc.data_channel(*h).and_then(|dc| dc.stream_id()))
+        .collect();
+    let answer_ids = answer_handles
+        .iter()
+        .map(|h| answer_pc.data_channel(*h).and_then(|dc| dc.stream_id()))
+        .collect();
+
     offer_pc.close().ok();
     answer_pc.close().ok();
 
     Ok(Outcome {
         offer_ids,
         answer_ids,
+        offer_deferred,
+        answer_deferred,
         offer_role,
         answer_role,
         offer_open,
@@ -322,18 +349,43 @@ fn violations(case: &str, out: &Outcome) -> Vec<String> {
         return failures;
     }
 
-    for (who, ids, role) in [
-        ("offerer", &out.offer_ids, out.offer_role),
-        ("answerer", &out.answer_ids, out.answer_role),
+    for (who, ids, role, deferred) in [
+        (
+            "offerer",
+            &out.offer_ids,
+            out.offer_role,
+            out.offer_deferred,
+        ),
+        (
+            "answerer",
+            &out.answer_ids,
+            out.answer_role,
+            out.answer_deferred,
+        ),
     ] {
+        if !deferred {
+            failures.push(format!(
+                "{case}: {who} assigned a stream id at create_data_channel time, before any \
+                 SDP fixed the DTLS role — W3C requires the id to be null until then"
+            ));
+        }
+
         if role == RTCDtlsRole::Unspecified {
             failures.push(format!(
                 "{case}: {who} never recorded a negotiated DTLS role"
             ));
             continue;
         }
+
+        if ids.iter().any(|id| id.is_none()) {
+            failures.push(format!(
+                "{case}: {who} left a channel without a stream id after connecting: {ids:?}"
+            ));
+            continue;
+        }
+
         let want = required_parity(role);
-        if ids.iter().any(|id| id % 2 != want) {
+        if ids.iter().flatten().any(|id| id % 2 != want) {
             failures.push(format!(
                 "{case}: {who} negotiated DTLS {role} so RFC 8832 §6 requires {} stream ids, \
                  but got {ids:?}",
@@ -355,8 +407,9 @@ fn violations(case: &str, out: &Outcome) -> Vec<String> {
         let collisions: Vec<_> = out
             .offer_ids
             .iter()
+            .flatten()
             .copied()
-            .filter(|id| out.answer_ids.contains(id))
+            .filter(|id| out.answer_ids.contains(&Some(*id)))
             .collect();
         if !collisions.is_empty() {
             failures.push(format!(
@@ -377,9 +430,7 @@ fn violations(case: &str, out: &Outcome) -> Vec<String> {
 /// uses odd ones, and the two sets are therefore disjoint. Runs all seven and reports every
 /// violation at once, so one run shows the whole shape of the bug rather than only the first
 /// case that trips.
-//TODO: https://github.com/webrtc-rs/rtc/issues/199
 #[tokio::test]
-#[ignore]
 async fn stream_id_parity_matches_negotiated_dtls_role_across_all_role_configurations() -> Result<()>
 {
     env_logger::builder()
@@ -436,9 +487,7 @@ async fn stream_id_parity_matches_negotiated_dtls_role_across_all_role_configura
 /// remote's `DATA_CHANNEL_OPEN` lands on a stream id a local channel already occupies, so the
 /// peer's channels are never surfaced as distinct channels and the expected label set never
 /// completes.
-//TODO: https://github.com/webrtc-rs/rtc/issues/199
 #[tokio::test]
-#[ignore]
 async fn colliding_stream_ids_prevent_both_peers_channels_from_opening() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)

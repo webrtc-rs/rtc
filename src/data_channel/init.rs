@@ -1,3 +1,5 @@
+use sctp::StreamId;
+
 /// Dictionary for configuring properties of an RTCDataChannel.
 ///
 /// The `RTCDataChannelInit` dictionary is used to configure the properties of a data channel
@@ -75,7 +77,7 @@ pub struct RTCDataChannelInit {
     /// Corresponds to the `negotiated` and `id` attributes in the [W3C specification].
     ///
     /// [W3C specification]: https://www.w3.org/TR/webrtc/#dom-rtcdatachannelinit-negotiated
-    pub negotiated: Option<u16>,
+    pub negotiated: Option<StreamId>,
 }
 
 impl Default for RTCDataChannelInit {

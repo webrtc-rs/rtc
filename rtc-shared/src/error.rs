@@ -1728,6 +1728,16 @@ pub enum Error {
     #[error("data channel is not open yet")]
     ErrDataChannelNotOpen,
 
+    /// ErrDataChannelStreamIdNotAssigned indicates an operation that needs the channel's SCTP
+    /// stream identifier ran before one was assigned.
+    ///
+    /// A data channel announced in-band has no stream identifier until the SCTP connected
+    /// procedure assigns one, because RFC 8832 section 6 ties its parity to the DTLS role:
+    /// even for the client, odd for the server. Until that role is resolved there is no
+    /// correct identifier to pick, so the channel carries none rather than a guess.
+    #[error("data channel stream identifier has not been assigned yet")]
+    ErrDataChannelStreamIdNotAssigned,
+
     /// ErrDataChannelNonExist indicates an operation executed when the data
     /// channel not existed.
     #[error("data channel not existed")]

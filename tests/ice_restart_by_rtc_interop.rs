@@ -14,6 +14,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
+use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
@@ -168,7 +169,7 @@ async fn test_ice_restart_by_rtc_interop() -> Result<()> {
         let _ = rtc_pc.create_data_channel("test", None)?;
         log::info!("RTC: Created data channel");
 
-        let mut dc_id: Option<u16> = None;
+        let mut dc_id: Option<RTCDataChannelId> = None;
         let mut buf = vec![0u8; 8192];
         let mut write_buf = BytesMut::new();
 
