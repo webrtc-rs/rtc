@@ -1279,16 +1279,48 @@ impl Association {
                     self.payload_queue.push(d.clone(), self.peer_last_tsn);
                     stream_handle_data = true;
                 } else {
-                    // Receive buffer is full
-                    if let Some(last_tsn) = self.payload_queue.get_last_tsn_received() {
-                        if sna32lt(d.tsn, *last_tsn) {
-                            debug!(
-                                "[{}] receive buffer full, but accepted as this is a missing chunk with tsn={} ssn={}",
-                                self.side, d.tsn, d.stream_sequence_number
-                            );
-                            self.payload_queue.push(d.clone(), self.peer_last_tsn);
-                            stream_handle_data = true; //s.handle_data(d.clone());
-                        }
+                    // Receive buffer is full. Two kinds of chunk are still worth taking,
+                    // because refusing them is not something the application can relieve by
+                    // draining.
+                    //
+                    // The first fills a gap below the highest TSN already queued.
+                    let fills_gap = self
+                        .payload_queue
+                        .get_last_tsn_received()
+                        .is_some_and(|last_tsn| sna32lt(d.tsn, *last_tsn));
+
+                    // The second is the next in-sequence chunk when nothing is readable at
+                    // all, and it is what keeps a full buffer from becoming permanent. Bytes
+                    // are released only when the application reads; `is_readable()` is
+                    // head-of-line blocked by an incomplete chunk set; and the chunk that
+                    // would complete that set is exactly `peer_last_tsn + 1`. Dropping it
+                    // leaves the window at zero with no way to reopen — every retransmission
+                    // is refused for the same reason, forever.
+                    // See <https://github.com/webrtc-rs/webrtc/issues/822>.
+                    //
+                    // Guarded on nothing being readable so this stays an escape from deadlock
+                    // rather than a licence to overrun the bound. A merely slow receiver has
+                    // data to take and must be made to take it. Without the guard, the chunk
+                    // accepted here is `peer_last_tsn + 1` — precisely the one that advances
+                    // the cumulative ack — so every chunk would qualify and
+                    // `max_receive_buffer_size` would stop bounding anything.
+                    let unblocks_reassembly =
+                        d.tsn == self.peer_last_tsn.wrapping_add(1) && !self.has_readable_data();
+
+                    if fills_gap || unblocks_reassembly {
+                        debug!(
+                            "[{}] receive buffer full, but accepted {} with tsn={} ssn={}",
+                            self.side,
+                            if fills_gap {
+                                "as this is a missing chunk"
+                            } else {
+                                "as the in-sequence chunk that unblocks reassembly"
+                            },
+                            d.tsn,
+                            d.stream_sequence_number
+                        );
+                        self.payload_queue.push(d.clone(), self.peer_last_tsn);
+                        stream_handle_data = true;
                     } else {
                         debug!(
                             "[{}] receive buffer full. dropping DATA with tsn={} ssn={}",
@@ -2171,6 +2203,18 @@ impl Association {
                 PayloadProtocolIdentifier::default(),
             )
         }
+    }
+
+    /// Whether any stream currently holds a complete message the application could read.
+    ///
+    /// Distinguishes a receiver that is merely slow — it has data to take, and back-pressure
+    /// should make it take it — from one wedged behind an incomplete chunk set, which cannot
+    /// drain anything however attentive it is. Only the second justifies accepting a chunk
+    /// into a full receive buffer.
+    fn has_readable_data(&self) -> bool {
+        self.streams
+            .values()
+            .any(|s| s.reassembly_queue.is_readable())
     }
 
     pub(crate) fn get_my_receiver_window_credit(&self) -> u32 {
