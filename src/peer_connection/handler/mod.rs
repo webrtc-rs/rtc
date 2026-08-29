@@ -211,6 +211,8 @@ impl RTCPeerConnection {
     pub(crate) fn get_interceptor_handler(&mut self) -> InterceptorHandler<'_> {
         InterceptorHandler::new(
             &mut self.pipeline_context.interceptor_handler_context,
+            &mut self.rtp_transceivers,
+            &self.media_engine,
             &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
@@ -220,8 +222,6 @@ impl RTCPeerConnection {
         EndpointHandler::new(
             &mut self.pipeline_context.endpoint_handler_context,
             &mut self.rtp_transceivers,
-            &self.media_engine,
-            &mut self.interceptor,
             &mut self.pipeline_context.stats,
         )
     }
