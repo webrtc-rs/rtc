@@ -947,7 +947,20 @@ impl RTCPeerConnection {
         }
 
         let mut connection_role = self.setting_engine.answering_dtls_role.to_connection_role();
-        if connection_role == ConnectionRole::Unspecified {
+        // RFC 5763 §5: "The answerer MUST use either a setup attribute value of setup:active or
+        // setup:passive." `actpass` is an offer-only value, so an answering role of
+        // `RTCDtlsRole::Auto` — which maps to it — means "no preference" and has to be resolved
+        // to a concrete role here, exactly like `Unspecified`.
+        //
+        // Letting `actpass` through leaves the role genuinely unnegotiated: the answerer falls
+        // back to its own `answering_dtls_role`, and the offerer, seeing no explicit role in the
+        // answer, falls back to *its* configured role. When those agree — e.g. an offerer pinned
+        // to `Client` answered by a peer configured `Auto` — both endpoints become the DTLS
+        // client, both wait for a ClientHello, and the handshake never completes.
+        if matches!(
+            connection_role,
+            ConnectionRole::Unspecified | ConnectionRole::Actpass
+        ) {
             connection_role = DEFAULT_DTLS_ROLE_ANSWER.to_connection_role();
 
             if let Some(remote_description) = self.remote_description()
