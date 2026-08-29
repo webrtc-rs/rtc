@@ -398,6 +398,11 @@ fn test_nack_responder_rtx_retransmission() {
             && rtp.header.payload_type == rtx_pt
         {
             rtx_found = true;
+            // The first thing any receiver checks: a version != 2 packet is
+            // discarded before ssrc, payload type or payload are ever looked
+            // at, so an RTX packet built from a defaulted header (version 0)
+            // passes every assertion below while being useless on the wire.
+            assert_eq!(rtp.header.version, 2, "RTX packet must be RTP version 2");
             // RTX payload should contain original sequence number
             assert!(rtp.payload.len() >= 2);
             let original_seq = u16::from_be_bytes([rtp.payload[0], rtp.payload[1]]);

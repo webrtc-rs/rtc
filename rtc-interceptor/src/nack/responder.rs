@@ -144,6 +144,12 @@ impl NackResponderInterceptor {
 
                 rtp::Packet {
                     header: rtp::header::Header {
+                        // Not left to `..Default::default()`: the default
+                        // header is version 0, and receivers discard
+                        // version != 2 before examining anything else, so a
+                        // defaulted RTX packet is dropped on arrival and the
+                        // NACKed gap never repairs.
+                        version: 2,
                         ssrc: ssrc_rtx,
                         payload_type: pt_rtx,
                         sequence_number: rtx_seq,
