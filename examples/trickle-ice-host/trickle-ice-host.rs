@@ -19,6 +19,7 @@ use futures_util::{SinkExt, StreamExt};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use log::{error, info, trace};
+use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::event::RTCDataChannelEvent;
@@ -152,7 +153,7 @@ async fn run_main_loop() -> Result<()> {
     let mut peer_connection: Option<RTCPeerConnection> = None;
     let mut udp_socket: Option<UdpSocket> = None;
     let mut local_addr: Option<SocketAddr> = None;
-    let mut data_channel_id: Option<u16> = None;
+    let mut data_channel_id: Option<RTCDataChannelId> = None;
     let mut last_send = Instant::now();
     let mut ws_stream: Option<WebSocketStream<TcpStream>> = None;
     let mut buf = vec![0; 2000];

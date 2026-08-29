@@ -124,10 +124,17 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
         negotiated: Some(NEGOTIATED_ID),
         ..Default::default()
     };
-    p.offer_pc
-        .create_data_channel("backpressure", Some(init.clone()))?;
-    p.answer_pc
-        .create_data_channel("backpressure", Some(init))?;
+    // `NEGOTIATED_ID` is the SCTP stream id the two sides agree on out-of-band. The handle
+    // returned here is a separate, connection-local identifier — it is what addresses the
+    // channel through `data_channel()` and what events carry.
+    let offer_dc = p
+        .offer_pc
+        .create_data_channel("backpressure", Some(init.clone()))?
+        .id();
+    let answer_dc = p
+        .answer_pc
+        .create_data_channel("backpressure", Some(init))?
+        .id();
 
     let offer = p.offer_pc.create_offer(None)?;
     p.offer_pc
@@ -189,7 +196,7 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
         if answerer_consuming {
             while let Some(TaggedRTCMessage { message, .. }) = p.answer_pc.poll_read() {
                 if let RTCMessage::DataChannelMessage(id, msg) = message {
-                    assert_eq!(id, NEGOTIATED_ID);
+                    assert_eq!(id, answer_dc);
                     let text = String::from_utf8_lossy(&msg.data);
                     let index: usize = text.parse().expect("message payload is its index");
                     received.push(index);
@@ -202,7 +209,7 @@ async fn test_slow_consumer_throttles_the_peer_without_losing_data() -> Result<(
         if offer_connected
             && dc_open
             && sent < MESSAGE_COUNT
-            && let Some(mut dc) = p.offer_pc.data_channel(NEGOTIATED_ID)
+            && let Some(mut dc) = p.offer_pc.data_channel(offer_dc)
             && dc.send_text(Instant::now(), sent.to_string()).is_ok()
         {
             sent += 1;

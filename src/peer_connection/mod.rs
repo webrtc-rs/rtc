@@ -253,6 +253,7 @@ pub mod transport;
 
 use crate::data_channel::init::RTCDataChannelInit;
 use crate::data_channel::parameters::DataChannelParameters;
+use crate::data_channel::registry::DataChannelRegistry;
 use crate::data_channel::state::RTCDataChannelState;
 use crate::data_channel::{RTCDataChannel, RTCDataChannelId, internal::RTCDataChannelInternal};
 use crate::media_stream::track::MediaStreamTrack;
@@ -316,7 +317,6 @@ use ice::candidate::{Candidate, unmarshal_candidate};
 use interceptor::{Interceptor, Registry};
 use shared::error::{Error, Result};
 use shared::util::math_rand_alpha;
-use std::collections::HashMap;
 use std::time::Instant;
 
 /// Builder for creating RTCPeerConnection instances.
@@ -687,7 +687,7 @@ pub struct RTCPeerConnection {
     // PeerConnection Internal State Machine
     //////////////////////////////////////////////////
     pub(crate) pipeline_context: PipelineContext,
-    pub(crate) data_channels: HashMap<RTCDataChannelId, RTCDataChannelInternal>,
+    pub(crate) data_channels: DataChannelRegistry,
     pub(super) rtp_transceivers: Vec<RTCRtpTransceiverInternal>,
 
     greater_mid: isize,
@@ -1853,8 +1853,6 @@ impl RTCPeerConnection {
             ..Default::default()
         };
 
-        let mut id = self.generate_data_channel_id()?;
-
         // `None` means "the dictionary defaults", which is what `RTCDataChannelInit::default()`
         // spells out. Taking that route rather than leaving `params` on its derived default
         // keeps a single definition of those defaults — notably `ordered`, which is `true`.
@@ -1885,29 +1883,52 @@ impl RTCPeerConnection {
         }
 
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #12)
+        //
+        // `negotiated` doubles as the out-of-band stream id. When it is set the id is fixed by
+        // the application and known now; when it is not, the channel is announced in-band and
+        // its stream id has to wait for the DTLS role, per RFC 8832 §6. Nothing is guessed
+        // here — see `assign_stream_ids`.
         params.negotiated = options.negotiated;
 
-        if let Some(negotiated_id) = &params.negotiated {
-            id = *negotiated_id;
-        }
-
-        let mut data_channel = RTCDataChannelInternal::new(id, params);
+        // The registry assigns the handle. Note this happens before any dial: the channel is
+        // addressable from the moment it exists, whether or not it has a stream id yet.
+        let id = self
+            .data_channels
+            .insert(RTCDataChannelInternal::new(params));
 
         // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #23)
-        // Open the channel's data transport immediately when an SCTP association already exists.
+        // Open the channel's data transport immediately when an SCTP association already
+        // exists. The DTLS role is necessarily resolved by then, so a stream id can be
+        // assigned right here rather than waiting for a connected procedure that has passed.
+        //
+        // The role guard is not redundant with the association check. In practice an
+        // association only exists once a description has been applied, which resolves the
+        // role — but if it somehow is not resolved, there is no correct parity to pick, and
+        // "wait for the connected procedure" is the right answer rather than an error. That is
+        // the ordinary path for every channel created before negotiation.
+        let dtls_role = self.dtls_transport().role();
         if let Some(handle) = self
             .sctp_transport()
             .sctp_associations
             .keys()
             .next()
             .copied()
-            && data_channel.ready_state == RTCDataChannelState::Connecting
-            && data_channel.data_channel.is_none()
+            && matches!(dtls_role, RTCDtlsRole::Client | RTCDtlsRole::Server)
         {
-            data_channel.dial(handle.0)?;
-        }
+            let max_channels = self.sctp_transport().max_channels();
+            self.data_channels
+                .assign_stream_ids(dtls_role, max_channels)?;
 
-        self.data_channels.insert(id, data_channel);
+            let data_channel = self
+                .data_channels
+                .get_mut(&id)
+                .ok_or(Error::ErrDataChannelNotExisted)?;
+            if data_channel.ready_state == RTCDataChannelState::Connecting
+                && data_channel.data_channel.is_none()
+            {
+                data_channel.dial(handle.0)?;
+            }
+        }
 
         self.trigger_negotiation_needed();
 
@@ -2195,7 +2216,7 @@ impl RTCPeerConnection {
 
     /// data_channel provides the access to RTCDataChannel object with the given id
     pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
-        if self.data_channels.contains_key(&id) {
+        if self.data_channels.contains(&id) {
             Some(RTCDataChannel {
                 id,
                 peer_connection: self,
@@ -2623,7 +2644,11 @@ mod tests {
             .unwrap();
 
         // Simulate an SCTP association so create_data_channel sees a transport
-        // that is ready to open streams.
+        // that is ready to open streams, and the resolved DTLS role that always accompanies
+        // one in practice — the association is built by `SCTPTransport::start`, which runs
+        // after `prepare_transport` has settled the role. Without it there is no correct
+        // stream-id parity to pick and the channel would rightly defer (RFC 8832 §6).
+        pc.dtls_transport_mut().dtls_role = RTCDtlsRole::Client;
         pc.sctp_transport_mut()
             .sctp_associations
             .insert(AssociationHandle(0), sctp::Association::default());
@@ -2640,6 +2665,34 @@ mod tests {
             internal.ready_state,
             RTCDataChannelState::Connecting,
             "a dialed in-band channel stays Connecting until its DATA_CHANNEL_ACK arrives"
+        );
+        assert_eq!(
+            internal.stream_id,
+            Some(0),
+            "the DTLS client must take an even stream id (RFC 8832 §6)"
+        );
+    }
+
+    /// The mirror of the case above: with no resolved DTLS role there is no correct parity, so
+    /// the channel is created without a stream id and waits for the connected procedure rather
+    /// than being dialed or rejected.
+    #[test]
+    fn create_data_channel_defers_stream_id_when_dtls_role_unresolved() {
+        let mut pc = RTCPeerConnectionBuilder::new()
+            .build(Instant::now())
+            .unwrap();
+        pc.sctp_transport_mut()
+            .sctp_associations
+            .insert(AssociationHandle(0), sctp::Association::default());
+
+        let dc = pc.create_data_channel("test", None).unwrap();
+        let id = dc.id();
+
+        let internal = pc.data_channels.get(&id).unwrap();
+        assert_eq!(internal.stream_id, None, "no parity is knowable yet");
+        assert!(
+            internal.data_channel.is_none(),
+            "a channel with no stream id cannot be dialed"
         );
     }
 

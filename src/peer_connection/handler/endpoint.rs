@@ -1,3 +1,4 @@
+use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
 use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
@@ -236,7 +237,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
     ) -> Result<()> {
         debug!("data channel is open for {:?}", transport_context);
         self.ctx.event_outs.push_back(TaggedRTCEventInternal {
@@ -253,7 +254,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
     ) -> Result<()> {
         debug!("data channel is close for {:?}", transport_context);
         self.ctx.event_outs.push_back(TaggedRTCEventInternal {
@@ -270,7 +271,7 @@ impl<'a> EndpointHandler<'a> {
         &mut self,
         now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
         data_channel_message: RTCDataChannelMessage,
     ) -> Result<()> {
         debug!("data channel recv message for {:?}", transport_context);

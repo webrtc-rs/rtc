@@ -16,7 +16,6 @@ use crate::peer_connection::transport::ice::candidate::{
     RTCIceCandidate, rtc_ice_candidates_from_ice_candidates,
 };
 use crate::peer_connection::transport::ice::candidate_type::RTCIceCandidateType;
-use crate::peer_connection::transport::sctp::SCTP_MAX_CHANNELS;
 use crate::peer_connection::transport::{RTCTransportId, TransportKind};
 use crate::rtp_transceiver::rtp_sender::RTCRtpCodec;
 use crate::rtp_transceiver::rtp_sender::rtp_coding_parameters::{
@@ -186,7 +185,7 @@ impl RTCPeerConnection {
             peer_connection_state: RTCPeerConnectionState::New,
             can_trickle_ice_candidates: None,
             pipeline_context,
-            data_channels: HashMap::new(),
+            data_channels: DataChannelRegistry::new(),
             rtp_transceivers: Vec::new(),
             greater_mid: -1,
             sdp_origin: Origin::default(),
@@ -989,33 +988,6 @@ impl RTCPeerConnection {
         self.pipeline_context.event_outs.push_back(
             RTCPeerConnectionEvent::OnConnectionStateChangeEvent(connection_state),
         );
-    }
-
-    pub(crate) fn generate_data_channel_id(&self) -> Result<RTCDataChannelId> {
-        let mut id = 0u16;
-        if self.dtls_transport().role() != RTCDtlsRole::Client {
-            id += 1;
-        }
-
-        // Create map of ids so we can compare without double-looping each time.
-        let ids: HashSet<RTCDataChannelId> = self.data_channels.keys().cloned().collect();
-        // The negotiated stream count bounds data channel ids, but only once it is known: a
-        // channel may be created before the association exists, and until it connects there is
-        // nothing to bound against. This matches W3C §6.1.1.3, which applies the limit at the
-        // connected procedure rather than at creation.
-        let max = self
-            .sctp_transport()
-            .max_channels()
-            .unwrap_or(SCTP_MAX_CHANNELS);
-        while id < max.saturating_sub(1) {
-            if ids.contains(&id) {
-                id += 2;
-            } else {
-                return Ok(id);
-            }
-        }
-
-        Err(Error::ErrMaxDataChannelID)
     }
 
     /// Called by the public `RTCRtpTransceiver::set_direction` when a transceiver's preferred

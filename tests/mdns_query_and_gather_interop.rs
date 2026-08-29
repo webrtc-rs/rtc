@@ -19,6 +19,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use rtc::data_channel::RTCDataChannelId;
 use rtc::ice::mdns::MulticastDnsMode;
 use rtc::mdns::{MDNS_PORT, MulticastSocket};
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
@@ -129,12 +130,12 @@ async fn run_rtc_event_loop(
     local_addr: std::net::SocketAddr,
     rtc_received_messages: &Arc<Mutex<Vec<String>>>,
     echo_messages: bool,
-) -> Result<(bool, bool, Option<u16>)> {
+) -> Result<(bool, bool, Option<RTCDataChannelId>)> {
     let mut pc_buf = vec![0u8; 2000];
     let mut mdns_buf = vec![0u8; 2000];
     let mut rtc_connected = false;
     let mut data_channel_opened = false;
-    let mut data_channel_id: Option<u16> = None;
+    let mut data_channel_id: Option<RTCDataChannelId> = None;
 
     // Process writes - route to appropriate socket based on port
     while let Some(msg) = rtc_pc.poll_write() {

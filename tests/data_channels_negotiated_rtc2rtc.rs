@@ -142,12 +142,17 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
         negotiated: Some(NEGOTIATED_ID),
         ..Default::default()
     };
-    runner
+    // `NEGOTIATED_ID` is the SCTP stream id both sides agreed on out-of-band. The handles
+    // below are separate, connection-local identifiers: they are what `data_channel()` takes
+    // and what events carry, and the two peers' handles need not match each other.
+    let offer_dc = runner
         .offer_pc
-        .create_data_channel("negotiated", Some(init.clone()))?;
-    runner
+        .create_data_channel("negotiated", Some(init.clone()))?
+        .id();
+    let answer_dc = runner
         .answer_pc
-        .create_data_channel("negotiated", Some(init))?;
+        .create_data_channel("negotiated", Some(init))?
+        .id();
 
     // Exchange offer/answer
     let offer = runner.offer_pc.create_offer(None)?;
@@ -197,7 +202,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
                     RTCPeerConnectionState::Connected,
                 ) => offer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
-                    assert_eq!(id, NEGOTIATED_ID, "offer opened unexpected channel id");
+                    assert_eq!(id, offer_dc, "offer opened unexpected channel id");
                     offer_dc_open = true;
                 }
                 _ => {}
@@ -211,7 +216,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
             ..
         }) = runner.offer_pc.poll_read()
         {
-            assert_eq!(id, NEGOTIATED_ID);
+            assert_eq!(id, offer_dc);
             offer_received.push(String::from_utf8_lossy(&msg.data).into_owned());
         }
 
@@ -230,7 +235,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
                     RTCPeerConnectionState::Connected,
                 ) => answer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
-                    assert_eq!(id, NEGOTIATED_ID, "answer opened unexpected channel id");
+                    assert_eq!(id, answer_dc, "answer opened unexpected channel id");
                     answer_dc_open = true;
                 }
                 _ => {}
@@ -244,7 +249,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
             ..
         }) = runner.answer_pc.poll_read()
         {
-            assert_eq!(id, NEGOTIATED_ID);
+            assert_eq!(id, answer_dc);
             answer_received.push(String::from_utf8_lossy(&msg.data).into_owned());
         }
 
@@ -253,7 +258,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
         if offer_connected && offer_dc_open && offer_sent < OFFER_TO_ANSWER {
             let mut dc = runner
                 .offer_pc
-                .data_channel(NEGOTIATED_ID)
+                .data_channel(offer_dc)
                 .expect("negotiated channel must exist once open");
             dc.send_text(Instant::now(), format!("o2a-{offer_sent}"))?;
             offer_sent += 1;
@@ -261,7 +266,7 @@ async fn test_negotiated_data_channel_bidirectional_messaging() -> Result<()> {
         if answer_connected && answer_dc_open && answer_sent < ANSWER_TO_OFFER {
             let mut dc = runner
                 .answer_pc
-                .data_channel(NEGOTIATED_ID)
+                .data_channel(answer_dc)
                 .expect("negotiated channel must exist once open");
             dc.send_text(Instant::now(), format!("a2o-{answer_sent}"))?;
             answer_sent += 1;
@@ -377,12 +382,17 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
         negotiated: Some(NEGOTIATED_ID),
         ..Default::default()
     };
-    runner
+    // `NEGOTIATED_ID` is the SCTP stream id both sides agreed on out-of-band. The handles
+    // below are separate, connection-local identifiers: they are what `data_channel()` takes
+    // and what events carry, and the two peers' handles need not match each other.
+    let offer_dc = runner
         .offer_pc
-        .create_data_channel("negotiated", Some(init.clone()))?;
-    runner
+        .create_data_channel("negotiated", Some(init.clone()))?
+        .id();
+    let answer_dc = runner
         .answer_pc
-        .create_data_channel("negotiated", Some(init))?;
+        .create_data_channel("negotiated", Some(init))?
+        .id();
 
     let offer = runner.offer_pc.create_offer(None)?;
     runner
@@ -428,7 +438,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
                     RTCPeerConnectionState::Connected,
                 ) => offer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
-                    assert_eq!(id, NEGOTIATED_ID);
+                    assert_eq!(id, offer_dc);
                     offer_dc_open = true;
                 }
                 _ => {}
@@ -449,7 +459,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
                     RTCPeerConnectionState::Connected,
                 ) => answer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id)) => {
-                    assert_eq!(id, NEGOTIATED_ID);
+                    assert_eq!(id, answer_dc);
                     answer_dc_open = true;
                 }
                 _ => {}
@@ -460,7 +470,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
             ..
         }) = runner.answer_pc.poll_read()
         {
-            assert_eq!(id, NEGOTIATED_ID);
+            assert_eq!(id, answer_dc);
             received += msg.data.len();
         }
 
@@ -469,7 +479,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
         if offer_connected && offer_dc_open && !sent {
             let mut dc = runner
                 .offer_pc
-                .data_channel(NEGOTIATED_ID)
+                .data_channel(offer_dc)
                 .expect("negotiated channel must exist once open");
             assert_eq!(
                 dc.outstanding_bytes(),
@@ -489,7 +499,7 @@ async fn test_data_channel_outstanding_bytes_tracks_send_and_drains() -> Result<
         if sent {
             let outstanding = runner
                 .offer_pc
-                .data_channel(NEGOTIATED_ID)
+                .data_channel(offer_dc)
                 .map(|dc| dc.outstanding_bytes())
                 .unwrap_or(0);
             peak_outstanding = peak_outstanding.max(outstanding);

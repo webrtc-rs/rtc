@@ -1,5 +1,3 @@
-use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::event::{RTCEventInternal, TaggedRTCEventInternal};
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
@@ -400,11 +398,7 @@ impl<'a>
                                 );
                                 self.ctx.event_outs.push_back(TaggedRTCEventInternal {
                                     now,
-                                    event: RTCEventInternal::RTCPeerConnectionEvent(
-                                        RTCPeerConnectionEvent::OnDataChannel(
-                                            RTCDataChannelEvent::OnBufferedAmountLow(id),
-                                        ),
-                                    ),
+                                    event: RTCEventInternal::SCTPBufferedAmountLow(ch.0, id),
                                 });
                             }
                             Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
@@ -414,11 +408,7 @@ impl<'a>
                                 );
                                 self.ctx.event_outs.push_back(TaggedRTCEventInternal {
                                     now,
-                                    event: RTCEventInternal::RTCPeerConnectionEvent(
-                                        RTCPeerConnectionEvent::OnDataChannel(
-                                            RTCDataChannelEvent::OnBufferedAmountHigh(id),
-                                        ),
-                                    ),
+                                    event: RTCEventInternal::SCTPBufferedAmountHigh(ch.0, id),
                                 });
                             }
                             Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {

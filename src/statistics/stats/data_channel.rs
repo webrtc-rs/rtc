@@ -5,6 +5,7 @@
 
 use super::RTCStats;
 use crate::data_channel::RTCDataChannelState;
+use sctp::StreamId;
 use serde::{Deserialize, Serialize};
 
 /// Statistics for a data channel.
@@ -25,8 +26,10 @@ pub struct RTCDataChannelStats {
 
     /// The data channel identifier.
     ///
-    /// This is the SCTP stream ID used for this data channel.
-    pub data_channel_identifier: u16,
+    /// This is the SCTP stream ID used for this data channel. It is 0 while the channel has
+    /// not been assigned one, which per RFC 8832 section 6 cannot happen before the DTLS role
+    /// is resolved.
+    pub data_channel_identifier: StreamId,
 
     /// The label assigned to the data channel.
     ///

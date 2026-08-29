@@ -590,6 +590,26 @@ pub(crate) enum RTCEventInternal {
         u16,   /*StreamID*/
         usize, /*n_bytes*/
     ),
+
+    /// A stream's outgoing buffer fell to or below its low threshold.
+    ///
+    /// Carries the SCTP stream id, because that is all the SCTP layer knows. The data channel
+    /// handler translates it into the public
+    /// [`RTCDataChannelEvent::OnBufferedAmountLow`](crate::peer_connection::event::RTCDataChannelEvent::OnBufferedAmountLow),
+    /// which names the channel by handle like every other application-facing event.
+    ///
+    /// Parameters:
+    /// - Association handle
+    /// - Stream ID
+    SCTPBufferedAmountLow(usize /*AssociationHandle*/, u16 /*StreamID*/),
+
+    /// A stream's outgoing buffer rose to or above its high threshold. The handle/stream-id
+    /// note on [`Self::SCTPBufferedAmountLow`] applies here too.
+    ///
+    /// Parameters:
+    /// - Association handle
+    /// - Stream ID
+    SCTPBufferedAmountHigh(usize /*AssociationHandle*/, u16 /*StreamID*/),
 }
 
 pub(crate) struct TaggedRTCEventInternal {

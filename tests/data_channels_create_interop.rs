@@ -19,6 +19,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
@@ -192,7 +193,7 @@ async fn test_data_channel_create_rtc_to_webrtc() -> Result<()> {
     let mut webrtc_connected = false;
     let mut message_sent = false;
     let mut rtc_data_channel_opened = false;
-    let mut rtc_dc_id: Option<u16> = None;
+    let mut rtc_dc_id: Option<RTCDataChannelId> = None;
 
     let test_message = "Hello from RTC!";
 

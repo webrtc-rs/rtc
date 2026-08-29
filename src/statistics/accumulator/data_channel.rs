@@ -3,6 +3,7 @@
 use crate::data_channel::RTCDataChannelState;
 use crate::statistics::stats::data_channel::RTCDataChannelStats;
 use crate::statistics::stats::{RTCStats, RTCStatsType};
+use sctp::StreamId;
 use shared::time::SystemInstant;
 use std::time::Instant;
 
@@ -11,8 +12,8 @@ use std::time::Instant;
 /// This struct tracks message/byte counters and state for a data channel.
 #[derive(Debug, Default)]
 pub struct DataChannelStatsAccumulator {
-    /// The data channel identifier.
-    pub data_channel_identifier: u16,
+    /// The SCTP stream identifier, or 0 while the channel has not been assigned one.
+    pub data_channel_identifier: StreamId,
     /// The label assigned to the data channel.
     pub label: String,
     /// The sub-protocol name.

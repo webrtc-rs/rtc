@@ -20,6 +20,7 @@ use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
 use log::{error, info};
+use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::RTCPeerConnectionBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
@@ -288,7 +289,7 @@ async fn main() -> Result<()> {
     // State
     let mut tcp_stream: Option<TcpStream> = None;
     let mut local_addr: Option<SocketAddr> = None;
-    let mut data_channel_id: Option<u16> = None;
+    let mut data_channel_id: Option<RTCDataChannelId> = None;
     let mut last_send = Instant::now();
     let mut buf = vec![0u8; 2000];
     let mut tcp_decoder = TcpFrameDecoder::new();
