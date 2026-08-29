@@ -600,15 +600,6 @@ async fn flexfec03_recovers_every_dropped_packet() -> Result<()> {
         "the drop filter should have discarded one packet in {DROP_ONE_IN}"
     );
 
-    // The claim: every packet the sender discarded was rebuilt by the decoder and handed on.
-    assert!(
-        dropped.is_subset(&recovered),
-        "these dropped sequence numbers were never recovered: {:?}\n\
-         dropped:   {dropped:?}\n\
-         recovered: {recovered:?}",
-        dropped.difference(&recovered).collect::<Vec<_>>()
-    );
-
     // And nothing else went astray, so the recovery above is the whole story rather than one
     // effect among several.
     let all: BTreeSet<u16> = (1..=MEDIA_PACKETS_TO_SEND).collect();
@@ -620,24 +611,32 @@ async fn flexfec03_recovers_every_dropped_packet() -> Result<()> {
         all.difference(&delivered).collect::<Vec<_>>()
     );
 
-    // What was rebuilt that had not been lost.
+    // Set equality in both directions: every dropped packet came back rebuilt, and nothing else
+    // was rebuilt.
     //
-    // This should be empty and is not: the first packet of the stream is always rebuilt as well,
-    // duplicating one the receiver already had. The cause is not in the codec. A remote stream is
-    // bound to the interceptors only once its codec can be resolved from an arriving RTP payload
-    // type (`endpoint.rs`, `find_track_id_by_ssrc`), and the endpoint sits application-ward of the
-    // chain — so the packet that triggers the bind has already traversed the chain by the time the
-    // bind happens. The decoder therefore never sees packet one, finds it missing when the first
-    // repair packet arrives, and dutifully rebuilds it.
-    //
-    // Pinned rather than tolerated. If the artifact ever spreads beyond that first packet this
-    // fails, and when the bind ordering is fixed the `is_empty` case below starts holding and this
-    // assertion can be tightened to set equality.
-    let spurious: BTreeSet<u16> = recovered.difference(&dropped).copied().collect();
+    // The second half is the one with history. Until stream establishment moved into the
+    // interceptor handler, sequence number 1 was always rebuilt as well — a duplicate of a packet
+    // that had arrived perfectly well — because the packet that resolved the stream's codec had
+    // already traversed the chain by the time the decoder was bound to it. See
+    // `handler/stream_establishment.rs`.
+    assert_eq!(
+        dropped,
+        recovered,
+        "every dropped sequence number must be recovered, and only those:\n\
+         dropped:   {dropped:?}\n\
+         recovered: {recovered:?}\n\
+         never recovered: {:?}\n\
+         rebuilt but never lost: {:?}",
+        dropped.difference(&recovered).collect::<Vec<_>>(),
+        recovered.difference(&dropped).collect::<Vec<_>>()
+    );
+
+    // A recovered packet must not also have arrived: that would mean the decoder rebuilt something
+    // it did not need to, and the sets above would agree for the wrong reason.
     assert!(
-        spurious.is_empty() || spurious == BTreeSet::from([1]),
-        "packets were rebuilt that had not been lost: {spurious:?}\n\
-         only sequence number 1 is a known artifact of the late remote-stream bind"
+        arrived.is_disjoint(&recovered),
+        "a packet was both received and recovered: {:?}",
+        arrived.intersection(&recovered).collect::<Vec<_>>()
     );
 
     Ok(())
