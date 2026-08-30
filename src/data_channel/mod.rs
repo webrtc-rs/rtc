@@ -45,11 +45,27 @@ pub(crate) mod init;
 pub(crate) mod internal;
 pub(crate) mod message;
 pub(crate) mod parameters;
+pub(crate) mod registry;
 pub(crate) mod state;
 
-/// Identifier for a data channel within a particular peer connection.
+/// Handle identifying a data channel within a particular peer connection.
 ///
-/// Each data channel has a unique 16-bit identifier within its peer connection.
+/// This is a connection-local handle, not the SCTP stream identifier the channel occupies on
+/// the wire — for that, see [`RTCDataChannel::stream_id`]. It is assigned when the channel is
+/// created, is stable for the channel's lifetime, and is never reused by a later channel.
+///
+/// The two are separate because they become known at different times. RFC 8832 §6 makes the
+/// parity of a stream identifier depend on the DTLS role — even for the client, odd for the
+/// server — and that role is not resolved until a remote description has been applied. A
+/// channel created before then has no stream id yet, but the application still needs a way to
+/// name it: to hold on to it, to match it against events, and to pass to
+/// [`RTCPeerConnection::data_channel`]. That is this handle.
+///
+/// It remains a `u16` so the public API is unchanged. That is the same type an SCTP stream
+/// identifier has, but the two are different things: only [`RTCDataChannel::stream_id`] is the
+/// wire value.
+///
+/// [`RTCPeerConnection::data_channel`]: crate::peer_connection::RTCPeerConnection::data_channel
 pub type RTCDataChannelId = u16;
 
 pub use init::RTCDataChannelInit;
@@ -156,14 +172,43 @@ where
             .negotiated
     }
 
-    /// ID represents the ID for this DataChannel. The value is initially
-    /// null, which is what will be returned if the ID was not provided at
-    /// channel creation time, and the DTLS role of the SCTP transport has not
-    /// yet been negotiated. Otherwise, it will return the ID that was either
-    /// selected by the script or generated. After the ID is set to a non-null
-    /// value, it will not change.
+    /// The handle identifying this DataChannel within its peer connection.
+    ///
+    /// Available immediately, stable for the channel's lifetime, and never reused by a later
+    /// channel. Use it to address this channel — pass it to
+    /// [`RTCPeerConnection::data_channel`], or match it against the id carried by an
+    /// [`RTCDataChannelEvent`].
+    ///
+    /// This is **not** the SCTP stream identifier: see [`Self::stream_id`], which is what
+    /// W3C's `RTCDataChannel.id` and RFC 8832 §6 refer to.
+    ///
+    /// [`RTCPeerConnection::data_channel`]: crate::peer_connection::RTCPeerConnection::data_channel
+    /// [`RTCDataChannelEvent`]: crate::peer_connection::event::RTCDataChannelEvent
     pub fn id(&self) -> RTCDataChannelId {
         self.id
+    }
+
+    /// The SCTP stream identifier carrying this DataChannel, or `None` if one has not been
+    /// assigned yet.
+    ///
+    /// This is W3C's `RTCDataChannel.id`: "The value is initially null, which is what will be
+    /// returned if the ID was not provided at channel creation time, and the DTLS role of the
+    /// SCTP transport has not yet been negotiated."
+    ///
+    /// It is `Some` from the outset for a channel negotiated out-of-band (created with
+    /// [`RTCDataChannelInit::negotiated`]) and for one opened by the remote peer, since both
+    /// already have a stream id. For a channel this endpoint opens in-band it stays `None`
+    /// until the SCTP connected procedure assigns one, because RFC 8832 §6 requires an even
+    /// identifier from the DTLS client and an odd one from the DTLS server, and which of those
+    /// this endpoint is may still be unknown. Once set it does not change.
+    pub fn stream_id(&self) -> Option<u16> {
+        // peer_connection is mutable borrow, its data_channels won't be resized,
+        // so, unwrap() here is safe.
+        self.peer_connection
+            .data_channels
+            .get(&self.id)
+            .unwrap()
+            .stream_id
     }
 
     /// ready_state represents the state of the DataChannel object.

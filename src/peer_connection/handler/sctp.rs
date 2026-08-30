@@ -1,6 +1,4 @@
 use crate::peer_connection::event::RTCEventInternal;
-use crate::peer_connection::event::RTCPeerConnectionEvent;
-use crate::peer_connection::event::data_channel_event::RTCDataChannelEvent;
 use crate::peer_connection::handler::DEFAULT_TIMEOUT_DURATION;
 use crate::peer_connection::message::internal::{
     DTLSMessage, RTCMessageInternal, TaggedRTCMessageInternal,
@@ -207,26 +205,18 @@ impl<'a> sansio::Protocol<TaggedRTCMessageInternal, TaggedRTCMessageInternal, RT
                                     "association_handle {} stream id {} is buffered amount low",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
-                                        RTCPeerConnectionEvent::OnDataChannel(
-                                            RTCDataChannelEvent::OnBufferedAmountLow(id),
-                                        ),
-                                    ),
-                                );
+                                self.ctx
+                                    .event_outs
+                                    .push_back(RTCEventInternal::SCTPBufferedAmountLow(ch.0, id));
                             }
                             Event::Stream(StreamEvent::BufferedAmountHigh { id }) => {
                                 debug!(
                                     "association_handle {} stream id {} is buffered amount high",
                                     ch.0, id
                                 );
-                                self.ctx.event_outs.push_back(
-                                    RTCEventInternal::RTCPeerConnectionEvent(
-                                        RTCPeerConnectionEvent::OnDataChannel(
-                                            RTCDataChannelEvent::OnBufferedAmountHigh(id),
-                                        ),
-                                    ),
-                                );
+                                self.ctx
+                                    .event_outs
+                                    .push_back(RTCEventInternal::SCTPBufferedAmountHigh(ch.0, id));
                             }
                             Event::Stream(StreamEvent::BufferedAmountReleased { id, n_bytes }) => {
                                 // Forward the exact released byte count so the data

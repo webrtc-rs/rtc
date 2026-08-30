@@ -22,7 +22,8 @@ pub(crate) struct DataChannelParameters {
     /// The maximum number of retransmission attempts in unreliable mode.
     pub(crate) max_retransmits: Option<u16>,
 
-    /// The data channel ID if this channel was negotiated by the application.
-    /// None if the channel was not pre-negotiated.
+    /// The SCTP stream identifier this channel was negotiated on out-of-band by the
+    /// application. `None` if the channel was not pre-negotiated, in which case the stream id
+    /// is assigned during the SCTP connected procedure once the DTLS role is known.
     pub(crate) negotiated: Option<u16>,
 }
