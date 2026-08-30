@@ -7,12 +7,13 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::{
     CodecMatch, codec_parameters_fuzzy_search, find_rtx_payload_type,
 };
 use crate::rtp_transceiver::rtp_sender::{RTCRtpCodecParameters, RtpCodecKind};
-use crate::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit, fmtp};
+use crate::rtp_transceiver::{
+    PayloadType, RTCRtpTransceiverDirection, RTCRtpTransceiverInit, fmtp,
+};
 use interceptor::Interceptor;
 use log::trace;
 use sdp::MediaDescription;
 use shared::error::{Error, Result};
-use std::collections::HashMap;
 use std::fmt;
 use unicase::UniCase;
 
@@ -304,9 +305,15 @@ impl RTCRtpTransceiverInternal {
         // find codec matches between what is in remote description and
         // the transceivers codecs and use payload type registered to
         // media engine.
-        let mut payload_mapping = HashMap::new(); // for RTX re-mapping later
+        // For RTX re-mapping later. Ordered, not a map: the RTX pass below walks these in turn
+        // and appends a codec per entry, so a `HashMap` would place the answer's rtx formats in
+        // a different order on every run. Each pass fills its own list and hands it over, so the
+        // whole stays in step with `filtered_codecs`: exact matches first, then partial, each in
+        // the offer's order.
+        let mut payload_mapping: Vec<(PayloadType, PayloadType)> = vec![];
         let mut filter_by_match = |match_filter: CodecMatch| -> Vec<RTCRtpCodecParameters> {
             let mut filtered_codecs = vec![];
+            let mut pass_mapping = vec![];
             for remote_codec_idx in (0..remote_codecs.len()).rev() {
                 let remote_codec = &mut remote_codecs[remote_codec_idx];
                 if UniCase::new(remote_codec.rtp_codec.mime_type.as_str())
@@ -318,7 +325,7 @@ impl RTCRtpTransceiverInternal {
                 let (match_codec, match_type) =
                     codec_parameters_fuzzy_search(&remote_codec.rtp_codec, &left_codecs);
                 if match_type == match_filter {
-                    payload_mapping.insert(remote_codec.payload_type, match_codec.payload_type);
+                    pass_mapping.insert(0, (remote_codec.payload_type, match_codec.payload_type));
 
                     remote_codec.payload_type = match_codec.payload_type;
                     // The scan runs backwards so that matched entries can be removed by index,
@@ -354,6 +361,7 @@ impl RTCRtpTransceiverInternal {
                 }
             }
 
+            payload_mapping.extend(pass_mapping);
             filtered_codecs
         };
 
