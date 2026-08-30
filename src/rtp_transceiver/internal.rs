@@ -321,7 +321,11 @@ impl RTCRtpTransceiverInternal {
                     payload_mapping.insert(remote_codec.payload_type, match_codec.payload_type);
 
                     remote_codec.payload_type = match_codec.payload_type;
-                    filtered_codecs.push(remote_codec.clone());
+                    // The scan runs backwards so that matched entries can be removed by index,
+                    // so prepend to undo it: an answer must keep the offer's codec order (the
+                    // offerer reads it back as our preference). Appending here would make the
+                    // answer lead with the offer's *last* codec.
+                    filtered_codecs.insert(0, remote_codec.clone());
 
                     // removed matched codec for next round
                     remote_codecs.remove(remote_codec_idx);
