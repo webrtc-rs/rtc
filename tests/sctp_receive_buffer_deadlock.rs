@@ -137,8 +137,13 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
         negotiated: Some(NEGOTIATED_ID),
         ..Default::default()
     };
-    offer_pc.create_data_channel("bulk", Some(init.clone()))?;
-    answer_pc.create_data_channel("bulk", Some(init))?;
+    // `NEGOTIATED_ID` is the SCTP stream id both sides agreed on out of band. The handles
+    // below are separate, connection-local identifiers: they are what `data_channel()` takes
+    // and what events carry, and the two peers' handles need not match each other.
+    let offer_dc = offer_pc
+        .create_data_channel("bulk", Some(init.clone()))?
+        .id();
+    let answer_dc = answer_pc.create_data_channel("bulk", Some(init))?.id();
 
     let offer = offer_pc.create_offer(None)?;
     offer_pc.set_local_description(offer.clone())?;
@@ -178,7 +183,7 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
                     RTCPeerConnectionState::Connected,
                 ) => offer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id))
-                    if id == NEGOTIATED_ID =>
+                    if id == offer_dc =>
                 {
                     offer_dc_open = true
                 }
@@ -191,7 +196,7 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
                     RTCPeerConnectionState::Connected,
                 ) => answer_connected = true,
                 RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(id))
-                    if id == NEGOTIATED_ID =>
+                    if id == answer_dc =>
                 {
                     answer_dc_open = true
                 }
@@ -203,7 +208,7 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
         // simply has nothing to take: the only message is incomplete, so `is_readable()` is
         // false and its bytes stay pinned.
         while let Some(RTCMessage::DataChannelMessage(id, msg)) = answer_pc.poll_read() {
-            if id == NEGOTIATED_ID {
+            if id == answer_dc {
                 received = Some(msg.data.to_vec());
             }
         }
@@ -211,7 +216,7 @@ async fn large_message_is_delivered_when_it_exceeds_the_receive_buffer() -> Resu
 
         if offer_connected && offer_dc_open && !sent {
             let mut dc = offer_pc
-                .data_channel(NEGOTIATED_ID)
+                .data_channel(offer_dc)
                 .expect("channel exists once open");
             dc.send(BytesMut::from(&payload[..]))?;
             sent = true;

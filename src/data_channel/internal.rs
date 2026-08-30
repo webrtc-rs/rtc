@@ -1,14 +1,19 @@
-use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::parameters::DataChannelParameters;
 use crate::data_channel::state::RTCDataChannelState;
 use datachannel::data_channel::DataChannelConfig;
 use sansio::Protocol;
 use sctp::PayloadProtocolIdentifier;
-use shared::error::Result;
+use shared::error::{Error, Result};
 
 #[derive(Clone)]
 pub(crate) struct RTCDataChannelInternal {
-    pub(crate) id: RTCDataChannelId,
+    /// The RFC 8832 §6 SCTP stream identifier.
+    ///
+    /// `None` until the SCTP connected procedure assigns it, which cannot happen before the
+    /// DTLS role is resolved because the role decides the parity: even for the client, odd for
+    /// the server. Out-of-band (`negotiated`) channels and channels accepted from the peer
+    /// have it from birth, since their id is already fixed by the application or the wire.
+    pub(crate) stream_id: Option<u16>,
     pub(crate) label: String,
     pub(crate) ordered: bool,
     pub(crate) max_packet_life_time: Option<u16>,
@@ -32,7 +37,7 @@ pub(crate) struct RTCDataChannelInternal {
 impl Default for RTCDataChannelInternal {
     fn default() -> Self {
         Self {
-            id: 0,
+            stream_id: None,
             label: "".to_string(),
             ordered: false,
             max_packet_life_time: None,
@@ -49,10 +54,17 @@ impl Default for RTCDataChannelInternal {
 }
 
 impl RTCDataChannelInternal {
-    /// create the DataChannel object before the networking is set up.
-    pub(crate) fn new(id: RTCDataChannelId, params: DataChannelParameters) -> Self {
+    /// Creates the DataChannel object before the networking is set up.
+    ///
+    /// The handle is left at its placeholder; [`DataChannelRegistry::insert`] assigns the real
+    /// one. The stream id comes from `params.negotiated` — `Some` for an out-of-band channel,
+    /// whose id the application already fixed, and `None` for an in-band one, whose id has to
+    /// wait for the DTLS role.
+    ///
+    /// [`DataChannelRegistry::insert`]: crate::data_channel::registry::DataChannelRegistry::insert
+    pub(crate) fn new(params: DataChannelParameters) -> Self {
         Self {
-            id,
+            stream_id: params.negotiated,
             label: params.label,
             protocol: params.protocol,
             negotiated: params.negotiated.is_some(),
@@ -68,6 +80,13 @@ impl RTCDataChannelInternal {
     }
 
     pub(crate) fn dial(&mut self, association_handle: usize) -> Result<()> {
+        // A channel cannot be dialed before its stream id exists, and the stream id cannot
+        // exist before the DTLS role does. Making that an error rather than a fallback is the
+        // whole point: guessing a parity here is what issue #199 was.
+        let stream_id = self
+            .stream_id
+            .ok_or(Error::ErrDataChannelStreamIdNotAssigned)?;
+
         let (channel_type, reliability_parameter) =
             ::datachannel::data_channel::DataChannel::get_channel_type_and_reliability_parameter(
                 self.ordered,
@@ -85,7 +104,7 @@ impl RTCDataChannelInternal {
         };
 
         let mut data_channel =
-            ::datachannel::data_channel::DataChannel::dial(config, association_handle, self.id)?;
+            ::datachannel::data_channel::DataChannel::dial(config, association_handle, stream_id)?;
         data_channel.set_buffered_amount_low_threshold(self.buffered_amount_low_threshold)?;
         data_channel.set_buffered_amount_high_threshold(self.buffered_amount_high_threshold)?;
 
@@ -116,17 +135,20 @@ impl RTCDataChannelInternal {
                 data_channel_config.channel_type,
             );
 
-        let mut data_channel_internal = RTCDataChannelInternal::new(
-            stream_id,
-            DataChannelParameters {
-                label: data_channel_config.label.clone(),
-                protocol: data_channel_config.protocol.clone(),
-                ordered: !unordered,
-                max_packet_life_time: None,
-                max_retransmits: None,
-                negotiated: None,
-            },
-        );
+        // `negotiated: None` — the peer opened this channel in-band over DCEP, so it is not an
+        // out-of-band channel however well-known its stream id now is. The stream id is set
+        // below instead of through `negotiated`, which would also flip the `negotiated` flag.
+        let mut data_channel_internal = RTCDataChannelInternal::new(DataChannelParameters {
+            label: data_channel_config.label.clone(),
+            protocol: data_channel_config.protocol.clone(),
+            ordered: !unordered,
+            max_packet_life_time: None,
+            max_retransmits: None,
+            negotiated: None,
+        });
+        // Known from the wire: no deferral needed, and it must be registered so locally
+        // generated ids cannot collide with it.
+        data_channel_internal.stream_id = Some(stream_id);
         data_channel_internal.data_channel = Some(data_channel);
         data_channel_internal.ready_state = RTCDataChannelState::Open;
 

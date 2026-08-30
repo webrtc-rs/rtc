@@ -490,11 +490,26 @@ impl RTCStatsAccumulator {
         self.data_channels
             .entry(id)
             .or_insert_with(|| DataChannelStatsAccumulator {
-                data_channel_identifier: id,
+                // The wire value is filled in by `set_data_channel_stream_id` once the SCTP
+                // connected procedure assigns one; the map itself is keyed by handle, so an
+                // accumulator can exist before then.
+                data_channel_identifier: 0,
                 label: label.to_string(),
                 protocol: protocol.to_string(),
                 ..Default::default()
             })
+    }
+
+    /// Records the SCTP stream identifier a data channel was assigned.
+    ///
+    /// The accumulator is keyed by the channel's handle, which exists from creation, but
+    /// `data_channel_identifier` is the W3C-defined *wire* value and is only known once the
+    /// SCTP connected procedure assigns one (RFC 8832 section 6). This fills it in at that
+    /// point; until then it reads 0.
+    pub(crate) fn set_data_channel_stream_id(&mut self, id: RTCDataChannelId, stream_id: u16) {
+        if let Some(dc) = self.data_channels.get_mut(&id) {
+            dc.data_channel_identifier = stream_id;
+        }
     }
 
     /// Gets or creates an ICE candidate pair accumulator.

@@ -1,3 +1,4 @@
+use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::peer_connection::event::RTCEventInternal;
 use crate::peer_connection::event::RTCPeerConnectionEvent;
@@ -260,7 +261,7 @@ where
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
     ) -> Result<()> {
         debug!("data channel is open for {:?}", transport_context);
         self.ctx
@@ -276,7 +277,7 @@ where
         &mut self,
         _now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
     ) -> Result<()> {
         debug!("data channel is close for {:?}", transport_context);
         self.ctx
@@ -294,7 +295,7 @@ where
         &mut self,
         now: Instant,
         transport_context: TransportContext,
-        data_channel_id: u16,
+        data_channel_id: RTCDataChannelId,
         data_channel_message: RTCDataChannelMessage,
     ) -> Result<()> {
         debug!("data channel recv message for {:?}", transport_context);
