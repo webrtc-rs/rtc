@@ -823,3 +823,133 @@ fn test_full_interceptor_chain_with_reports_and_twcc() {
     assert!(rr_found, "Receiver Report should be generated");
     assert!(twcc_found, "TWCC feedback should be generated");
 }
+
+#[test]
+fn test_twcc_receiver_records_unbound_ssrcs() {
+    // Transport-wide CC is per transport: probe/RTX padding and simulcast layers that
+    // are not (yet) bound still carry transport-cc sequence numbers and must appear in
+    // the feedback. Omitting them makes the remote sender read them as loss.
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(100))
+                .build(),
+        )
+        .build();
+
+    let media_ssrc = 0x11111111;
+    let padding_ssrc = 0x22222222; // RTX/probe padding, never bound
+    let ext_id = 5u16;
+
+    chain.bind_remote_stream(&twcc_stream_info(media_ssrc, ext_id));
+
+    let base_time = Instant::now();
+
+    // Interleave media on the bound SSRC with probe padding on the unbound one.
+    for i in 0..8u16 {
+        let ssrc = if i % 2 == 0 { media_ssrc } else { padding_ssrc };
+        let pkt = create_rtp_packet_with_twcc(
+            base_time + Duration::from_millis(i as u64 * 10),
+            ssrc,
+            i,
+            i,
+            ext_id as u8,
+        );
+        chain.handle_read(pkt).unwrap();
+    }
+
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(150))
+        .unwrap();
+
+    let mut received = 0usize;
+    let mut feedback_found = false;
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                if let Some(tlcc) = rtcp_pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::transport_feedbacks::transport_layer_cc::TransportLayerCc>(
+                    )
+                {
+                    feedback_found = true;
+                    assert_eq!(tlcc.base_sequence_number, 0);
+                    for chunk in &tlcc.packet_chunks {
+                        use rtcp::transport_feedbacks::transport_layer_cc::{
+                            PacketStatusChunk, SymbolTypeTcc,
+                        };
+                        match chunk {
+                            PacketStatusChunk::RunLengthChunk(run) => {
+                                if run.packet_status_symbol != SymbolTypeTcc::PacketNotReceived {
+                                    received += run.run_length as usize;
+                                }
+                            }
+                            PacketStatusChunk::StatusVectorChunk(vec) => {
+                                received += vec
+                                    .symbol_list
+                                    .iter()
+                                    .filter(|s| **s != SymbolTypeTcc::PacketNotReceived)
+                                    .count();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(feedback_found, "TWCC feedback should be generated");
+    assert_eq!(
+        received, 8,
+        "feedback must report all 8 packets as received, including those on the unbound SSRC"
+    );
+}
+
+#[test]
+fn test_twcc_receiver_ignores_unbound_ssrcs_without_any_binding() {
+    // With no TWCC binding at all there is no negotiated extension ID to fall back on,
+    // so nothing should be recorded.
+    let mut chain = Registry::new()
+        .with(
+            Slot::TwccReceiver,
+            TwccReceiverBuilder::new()
+                .with_interval(Duration::from_millis(100))
+                .build(),
+        )
+        .build();
+
+    let base_time = Instant::now();
+    for i in 0..5u16 {
+        let pkt = create_rtp_packet_with_twcc(
+            base_time + Duration::from_millis(i as u64 * 10),
+            0x33333333,
+            i,
+            i,
+            5,
+        );
+        chain.handle_read(pkt).unwrap();
+    }
+
+    while chain.poll_read().is_some() {}
+
+    chain
+        .handle_timeout(base_time + Duration::from_millis(150))
+        .unwrap();
+
+    while let Some(pkt) = chain.poll_write() {
+        if let Packet::Rtcp(rtcp_packets) = &pkt.message.packet {
+            for rtcp_pkt in rtcp_packets {
+                assert!(
+                    rtcp_pkt
+                        .as_any()
+                        .downcast_ref::<rtcp::transport_feedbacks::transport_layer_cc::TransportLayerCc>()
+                        .is_none(),
+                    "No feedback without a negotiated transport-cc extension ID"
+                );
+            }
+        }
+    }
+}

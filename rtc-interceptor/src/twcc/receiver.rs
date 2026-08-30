@@ -83,6 +83,16 @@ pub struct TwccReceiverInterceptor {
     /// Remote stream state per SSRC.
     streams: HashMap<u32, RemoteStream>,
 
+    /// Transport-wide CC header extension ID negotiated on this transport.
+    ///
+    /// Transport-wide congestion control is per *transport*, not per SSRC: the feedback
+    /// must account for every packet that carried the transport-cc sequence extension,
+    /// whatever SSRC it rode on. Packets can legitimately arrive on SSRCs that have no
+    /// stream binding - RTX/probe padding and RID simulcast layers before they are bound -
+    /// and omitting them makes the remote congestion controller read them as lost. This ID
+    /// is used as the fallback for those unbound SSRCs.
+    transport_hdr_ext_id: Option<u8>,
+
     /// Queue for feedback packets.
     write_queue: VecDeque<TaggedPacket>,
 
@@ -100,6 +110,7 @@ impl TwccReceiverInterceptor {
             start_time: None,
             recorder: None,
             streams: HashMap::new(),
+            transport_hdr_ext_id: None,
             write_queue: VecDeque::new(),
             next_timeout: None,
         }
@@ -130,24 +141,31 @@ impl Protocol<TaggedPacket, TaggedPacket, ()> for TwccReceiverInterceptor {
 
     fn handle_read(&mut self, msg: TaggedPacket) -> Result<(), Self::Error> {
         // Process incoming RTP packets with TWCC extension
-        if let Packet::Rtp(ref rtp_packet) = msg.message.packet
-            && let Some(stream) = self.streams.get(&rtp_packet.header.ssrc)
-        {
-            // Initialize recorder on first packet
-            if self.recorder.is_none() {
-                // Use a random sender SSRC for feedback
-                self.recorder = Some(Recorder::new(rand::random()));
-                self.start_time = Some(msg.now);
-                self.next_timeout = Some(msg.now + self.interval);
-            }
+        if let Packet::Rtp(ref rtp_packet) = msg.message.packet {
+            // Prefer the ID bound for this SSRC, and fall back to the transport-wide one so
+            // that padding and not-yet-bound streams still make it into the feedback.
+            let hdr_ext_id = self
+                .streams
+                .get(&rtp_packet.header.ssrc)
+                .map(|stream| stream.hdr_ext_id)
+                .or(self.transport_hdr_ext_id);
 
             // Extract transport CC sequence number
-            if let Some(ext_data) = rtp_packet.header.get_extension(stream.hdr_ext_id)
+            if let Some(hdr_ext_id) = hdr_ext_id
+                && let Some(ext_data) = rtp_packet.header.get_extension(hdr_ext_id)
                 && let Ok(tcc) =
                     rtp::extension::transport_cc_extension::TransportCcExtension::unmarshal(
                         &mut ext_data.as_ref(),
                     )
             {
+                // Initialize recorder on the first packet carrying transport-wide CC
+                if self.recorder.is_none() {
+                    // Use a random sender SSRC for feedback
+                    self.recorder = Some(Recorder::new(rand::random()));
+                    self.start_time = Some(msg.now);
+                    self.next_timeout = Some(msg.now + self.interval);
+                }
+
                 // Calculate arrival time in microseconds since start
                 let arrival_time = self
                     .start_time
@@ -204,12 +222,23 @@ impl Interceptor for TwccReceiverInterceptor {
             // Don't track if ID is 0 (invalid)
             if hdr_ext_id != 0 {
                 self.streams.insert(info.ssrc, RemoteStream { hdr_ext_id });
+                // An extension ID maps to exactly one URI within an RTP session, and BUNDLE
+                // makes the bundled m-lines one session, so every binding here carries the
+                // same transport-cc ID: taking the newest is taking the only one. A genuinely
+                // different ID means renegotiation, where the newest is also what we want.
+                self.transport_hdr_ext_id = Some(hdr_ext_id);
             }
         }
     }
 
     fn unbind_remote_stream(&mut self, info: &StreamInfo) {
         self.streams.remove(&info.ssrc);
+        // Any binding that remains carries the same ID (see `bind_remote_stream`), so only the
+        // loss of the last one leaves no negotiated ID to fall back on. Dropping it then keeps
+        // a stale ID from outliving the negotiation and being misread as transport-cc.
+        if self.streams.is_empty() {
+            self.transport_hdr_ext_id = None;
+        }
     }
 
     fn bind_local_stream(&mut self, _info: &StreamInfo) {}
