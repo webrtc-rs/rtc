@@ -1105,18 +1105,21 @@ impl RTCPeerConnection {
 
                 if let Some(m) = m {
                     // Step 5.3.1
-                    if transceiver.direction().has_send() {
-                        if let Some(sender) = transceiver.sender() {
-                            let dmsid = match m.attribute(ATTR_KEY_MSID).and_then(|o| o) {
-                                Some(msid) => msid,
-                                None => return true, // doesn't contain a single a=msid line
-                            };
+                    // A transceiver can carry a send direction without a sender: answering a
+                    // `recvonly` offer creates one implicitly, and `remove_track` leaves one
+                    // behind. There is then no track, so no msid for this step to compare, and
+                    // nothing a renegotiation could settle - claiming otherwise re-offers on
+                    // every return to a stable signaling state, forever.
+                    if transceiver.direction().has_send()
+                        && let Some(sender) = transceiver.sender()
+                    {
+                        let dmsid = match m.attribute(ATTR_KEY_MSID).and_then(|o| o) {
+                            Some(msid) => msid,
+                            None => return true, // doesn't contain a single a=msid line
+                        };
 
-                            let track = sender.track();
-                            if dmsid.split_whitespace().next() != Some(track.stream_id()) {
-                                return true;
-                            }
-                        } else {
+                        let track = sender.track();
+                        if dmsid.split_whitespace().next() != Some(track.stream_id()) {
                             return true;
                         }
                     }
