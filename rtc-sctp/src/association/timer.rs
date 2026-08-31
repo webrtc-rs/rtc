@@ -10,7 +10,7 @@ const TIMER_COUNT: usize = 6;
 /// Retransmission limits for the association's timers.
 ///
 /// Each field caps how many times the corresponding timer may fire before the association is
-/// abandoned. `Default` follows the RFC 4960 recommendations.
+/// abandoned. `Default` follows the RFC 9260 recommendations.
 pub struct TimerConfig {
     /// How many times INIT may be retransmitted (T1-init) before the association fails.
     pub max_t1_init_retrans: usize,
@@ -138,7 +138,9 @@ impl TimerTable {
     }
 }
 
-const RTO_INITIAL: u64 = 3000; // msec
+// RFC 9260 §16 recommends a one-second initial RTO.  This value is used by
+// both T1-init and T1-cookie before an RTT measurement is available.
+const RTO_INITIAL: u64 = 1000; // msec
 const RTO_MIN: u64 = 1000; // msec
 const RTO_MAX: u64 = 60000; // msec
 const RTO_ALPHA: u64 = 1;
@@ -146,7 +148,7 @@ const RTO_BETA: u64 = 2;
 const RTO_BASE: u64 = 8;
 
 /// rtoManager manages Rtx timeout values.
-/// This is an implementation of RFC 4960 sec 6.3.1.
+/// This is an implementation of RFC 9260 sec 6.3.1.
 #[derive(Default, Debug)]
 pub(crate) struct RtoManager {
     pub(crate) srtt: u64,
@@ -220,5 +222,26 @@ fn calculate_next_timeout(rto: u64, n_rtos: usize) -> u64 {
         std::cmp::min(rto << n_rtos, RTO_MAX)
     } else {
         RTO_MAX
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rto_manager_uses_rfc9260_initial_rto() {
+        assert_eq!(RTO_INITIAL, 1000);
+        assert_eq!(RtoManager::new().get_rto(), RTO_INITIAL);
+    }
+
+    #[test]
+    fn t1_init_starts_at_initial_rto_before_an_rtt_is_measured() {
+        let now = Instant::now();
+        let mut timers = TimerTable::new(TimerConfig::default());
+
+        timers.start(Timer::T1Init, now, RtoManager::new().get_rto());
+
+        assert_eq!(timers.next_timeout(), Some(now + Duration::from_secs(1)));
     }
 }
