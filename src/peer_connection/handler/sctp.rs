@@ -150,6 +150,18 @@ impl<'a> SctpHandler<'a> {
         budget: &mut usize,
         messages: &mut Vec<SctpMessage>,
     ) -> Result<()> {
+        // An SCTP DATA chunk may arrive in the same flight as the tail of the
+        // association handshake.  Do not expose that chunk to the DataChannel
+        // handler while the association is still in COOKIE-WAIT/COOKIE-ECHOED:
+        // doing so can announce `OnOpen` before the underlying data transport is
+        // established, and an immediate application send cannot be transmitted
+        // reliably.  Keep the chunk in SCTP's reassembly queue and let the
+        // level-triggered pending path retry it after Event::Connected.
+        if conn.is_handshaking() {
+            ctx_pending.insert((ch, id));
+            return Ok(());
+        }
+
         let mut stream = conn.stream(id)?;
         loop {
             if *budget == 0 {
@@ -809,12 +821,22 @@ mod tests {
     //! packet reaches `write_outs` instead of being lost.
 
     use super::*;
+    use crate::data_channel::registry::DataChannelRegistry;
     use crate::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+    use crate::peer_connection::handler::datachannel::{
+        DataChannelHandler, DataChannelHandlerContext,
+    };
+    use crate::peer_connection::message::internal::DataChannelEvent;
+    use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
     use crate::peer_connection::transport::{RTCTransportId, TransportKind};
+    use crate::statistics::accumulator::RTCStatsAccumulator;
     use bytes::Bytes;
+    use datachannel::message::message_channel_open::{
+        CHANNEL_PRIORITY_NORMAL, ChannelType, DataChannelOpen,
+    };
     use sansio::Protocol;
     use sctp::{Association, Endpoint, EndpointConfig, ServerConfig, TransportConfig};
-    use shared::TransportProtocol;
+    use shared::{TransportProtocol, marshal::Marshal};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
@@ -942,6 +964,101 @@ mod tests {
             server_ch,
             server_conn,
         }
+    }
+
+    /// Build a client association that has sent COOKIE-ECHO but has not yet received COOKIE-ACK,
+    /// then create one DATA datagram from the already-established server.  This is the ordering
+    /// that can occur when a peer opens a DataChannel in the same flight as the final SCTP
+    /// handshake packet.
+    fn client_with_data_before_cookie_ack() -> (SctpHandlerContext, Vec<Bytes>, Vec<Bytes>) {
+        let now = Instant::now();
+
+        let mut client_ep = Endpoint::new(
+            client_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            None,
+        );
+        let mut server_ep = Endpoint::new(
+            server_addr(),
+            TransportProtocol::UDP,
+            EndpointConfig::default().into(),
+            Some(ServerConfig::new(TransportConfig::default()).into()),
+        );
+
+        let (client_ch, mut client_conn) = client_ep
+            .connect(
+                now,
+                ClientConfig::new(TransportConfig::default()),
+                server_addr(),
+            )
+            .expect("client connect");
+
+        // Client INIT -> server association.
+        let init = drain_transmits(&mut client_conn, now);
+        let (server_ch, mut server_conn) = init
+            .into_iter()
+            .find_map(|dgram| {
+                server_ep.handle(now, client_addr(), None, dgram).and_then(
+                    |(ch, event)| match event {
+                        DatagramEvent::NewAssociation(conn) => Some((ch, conn)),
+                        _ => None,
+                    },
+                )
+            })
+            .expect("server association");
+
+        // Server INIT-ACK -> client COOKIE-ECHO.
+        let init_ack = drain_transmits(&mut server_conn, now);
+        for dgram in init_ack {
+            if let Some((ch, DatagramEvent::AssociationEvent(event))) =
+                client_ep.handle(now, server_addr(), None, dgram)
+            {
+                assert_eq!(ch, client_ch);
+                client_conn.handle_event(event);
+            }
+        }
+        let cookie_echo = drain_transmits(&mut client_conn, now);
+
+        // Server processes COOKIE-ECHO and becomes established, producing COOKIE-ACK.
+        for dgram in cookie_echo {
+            if let Some((ch, DatagramEvent::AssociationEvent(event))) =
+                server_ep.handle(now, client_addr(), None, dgram)
+            {
+                assert_eq!(ch, server_ch);
+                server_conn.handle_event(event);
+            }
+        }
+        while server_conn.poll().is_some() {}
+        let cookie_ack = drain_transmits(&mut server_conn, now);
+        assert!(!cookie_ack.is_empty(), "server must produce COOKIE-ACK");
+
+        // Send a DCEP OPEN before the client receives COOKIE-ACK.
+        let dcep_open = Message::DataChannelOpen(DataChannelOpen {
+            channel_type: ChannelType::Reliable,
+            priority: CHANNEL_PRIORITY_NORMAL,
+            reliability_parameter: 0,
+            label: b"early-channel".to_vec(),
+            protocol: Vec::new(),
+        })
+        .marshal()
+        .expect("DCEP OPEN");
+        {
+            let mut stream = server_conn
+                .open_stream(1, PayloadProtocolIdentifier::Dcep)
+                .expect("open server stream");
+            stream
+                .write_sctp(&Bytes::from(dcep_open), PayloadProtocolIdentifier::Dcep)
+                .expect("server data");
+        }
+        let early_data = drain_transmits(&mut server_conn, now);
+        assert!(!early_data.is_empty(), "server must produce DCEP DATA");
+
+        (
+            client_ctx(now, client_ep, client_ch, client_conn),
+            cookie_ack,
+            early_data,
+        )
     }
 
     /// Establish TWO independent associations on a single client endpoint (each to
@@ -1205,6 +1322,83 @@ mod tests {
             },
             message: RTCMessageInternal::Dtls(DTLSMessage::Raw(BytesMut::from(&dgram[..]))),
         }
+    }
+
+    /// An SCTP DATA message received before COOKIE-ACK must stay in the association's receive
+    /// queue.  Once COOKIE-ACK establishes the association, the same message is delivered exactly
+    /// once, allowing the DataChannel handler to announce `OnOpen` only after SCTP is ready.
+    #[test]
+    fn inbound_data_waits_for_sctp_handshake() {
+        let now = Instant::now();
+        let (mut ctx, cookie_ack, early_data) = client_with_data_before_cookie_ack();
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            for dgram in early_data {
+                handler
+                    .handle_read(raw_read(now, dgram))
+                    .expect("early DATA");
+            }
+        }
+
+        assert!(
+            ctx.read_outs.is_empty(),
+            "handshaking SCTP data must not reach the DataChannel handler"
+        );
+        assert_eq!(
+            ctx.pending_readable.len(),
+            1,
+            "the readable stream must be retried after SCTP connects"
+        );
+
+        {
+            let mut handler = SctpHandler::new(&mut ctx, 0);
+            for dgram in cookie_ack {
+                handler
+                    .handle_read(raw_read(now, dgram))
+                    .expect("COOKIE-ACK");
+            }
+        }
+
+        assert!(
+            ctx.pending_readable.is_empty(),
+            "the stream must be drained after SCTP becomes established"
+        );
+        assert_eq!(ctx.read_outs.len(), 1, "early DCEP must be delivered once");
+        let inbound = ctx.read_outs.pop_front().expect("delivered DCEP");
+        assert!(matches!(
+            &inbound.message,
+            RTCMessageInternal::Dtls(DTLSMessage::Sctp(data))
+                if data.ppi == PayloadProtocolIdentifier::Dcep
+        ));
+
+        // The DataChannel handler now sees the DCEP message only after SCTP has become
+        // established. It can therefore accept the channel, emit Open, and queue its ACK
+        // without attempting a write in CookieEchoed.
+        let mut data_channel_ctx = DataChannelHandlerContext::new(now);
+        let mut data_channels = DataChannelRegistry::new();
+        let mut stats = RTCStatsAccumulator::new();
+        {
+            let mut handler = DataChannelHandler::new(
+                &mut data_channel_ctx,
+                &mut data_channels,
+                &mut stats,
+                None,
+                RTCDtlsRole::Client,
+                None,
+            );
+            handler
+                .handle_read(inbound)
+                .expect("accept DCEP after SCTP handshake");
+        }
+        assert!(
+            data_channel_ctx.read_outs.iter().any(|message| matches!(
+                &message.message,
+                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(app))
+                    if matches!(app.data_channel_event, DataChannelEvent::Open)
+            )),
+            "the DataChannel Open event must follow SCTP establishment"
+        );
     }
 
     /// With the pipeline already at its bound, inbound DATA must be left in the reassembly
