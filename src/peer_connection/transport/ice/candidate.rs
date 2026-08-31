@@ -90,7 +90,7 @@ pub enum RTCIceServerTransportProtocol {
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidate
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcicecandidate-interface
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtcicecandidate-interface
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCIceCandidate {
     /// The unique identifier of this candidate.
@@ -209,8 +209,16 @@ impl RTCIceCandidate {
         Ok(c)
     }
 
-    /// to_json returns an ICECandidateInit
-    /// as indicated by the spec <https://w3c.github.io/webrtc-pc/#dom-rtcicecandidate-tojson>
+    /// Converts this candidate into an [`RTCIceCandidateInit`] suitable for signaling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this candidate's type is not one this crate can serialize
+    /// (`ErrICECandidateTypeUnknown`), or if its address cannot be re-encoded.
+    ///
+    /// # Specification
+    ///
+    /// See [RTCIceCandidate.toJSON()](https://www.w3.org/TR/webrtc/#dom-rtcicecandidate-tojson)
     pub fn to_json(&self) -> Result<RTCIceCandidateInit> {
         let candidate = self.to_ice()?;
 
@@ -238,7 +246,7 @@ impl fmt::Display for RTCIceCandidate {
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCIceCandidateInit {
-    /// The candidate-attribute string as defined in RFC 5245.
+    /// The candidate-attribute string as defined in RFC 8839 §5.1.
     pub candidate: String,
     /// The identifier of the "m=" section in the SDP that this candidate is associated with.
     pub sdp_mid: Option<String>,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/readyState
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcdatachannelstate
+/// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtcdatachannelstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RTCDataChannelState {

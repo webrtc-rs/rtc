@@ -115,7 +115,7 @@ impl RTCStatsReportEntry {
 /// This type implements the W3C RTCStatsReport interface, providing
 /// map-like access to statistics objects keyed by their unique IDs.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::peer_connection::RTCPeerConnection;

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides aggregate statistics about the
 /// peer connection.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCPeerConnectionStats](https://www.w3.org/TR/webrtc-stats/#pcstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

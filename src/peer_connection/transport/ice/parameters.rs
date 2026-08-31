@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceParameters
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtciceparameters
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtciceparameters
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCIceParameters {
     /// The ICE username fragment used for authentication.

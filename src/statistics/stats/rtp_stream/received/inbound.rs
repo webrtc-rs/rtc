@@ -14,7 +14,7 @@ use shared::time::SystemInstant;
 /// W3C WebRTC Statistics API. It provides comprehensive statistics about media
 /// received from a remote peer, including decoding, rendering, and quality metrics.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCInboundRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#inboundrtpstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

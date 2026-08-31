@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides information about a local or
 /// remote ICE candidate discovered during ICE gathering.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCIceCandidateStats](https://www.w3.org/TR/webrtc-stats/#icecandidate-dict*)
 #[derive(Debug, Serialize, Deserialize)]

@@ -136,23 +136,21 @@
 //! println!("Answerer: {}", answerer_role);
 //! ```
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [RFC 8445] - ICE: Interactive Connectivity Establishment
 //! - [RFC 6347] - DTLS: Datagram Transport Layer Security
 //! - [RFC 8261] - SCTP over DTLS for WebRTC Data Channels
-//! - [RFC 5245] - ICE (obsoleted by RFC 8445)
-//! - [RFC 5389] - STUN: Session Traversal Utilities for NAT
+//! - [RFC 8489] - STUN: Session Traversal Utilities for NAT
 //! - [RFC 8656] - TURN: Traversal Using Relays around NAT
 //! - [W3C WebRTC Specification]
 //!
 //! [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 //! [RFC 6347]: https://datatracker.ietf.org/doc/html/rfc6347
 //! [RFC 8261]: https://datatracker.ietf.org/doc/html/rfc8261
-//! [RFC 5245]: https://datatracker.ietf.org/doc/html/rfc5245
-//! [RFC 5389]: https://datatracker.ietf.org/doc/html/rfc5389
+//! [RFC 8489]: https://datatracker.ietf.org/doc/html/rfc8489
 //! [RFC 8656]: https://datatracker.ietf.org/doc/html/rfc8656
-//! [W3C WebRTC Specification]: https://w3c.github.io/webrtc-pc/
+//! [W3C WebRTC Specification]: https://www.w3.org/TR/webrtc/
 
 pub(crate) mod dtls;
 pub(crate) mod ice;

@@ -130,7 +130,7 @@
 //! # }
 //! ```
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [W3C Media Capture and Streams](https://www.w3.org/TR/mediacapture-streams/)
 //! - [W3C MediaStream](https://www.w3.org/TR/mediacapture-streams/#mediastream)

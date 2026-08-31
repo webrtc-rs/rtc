@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides information about a data channel,
 /// including message and byte counters.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCDataChannelStats](https://www.w3.org/TR/webrtc-stats/#dcstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

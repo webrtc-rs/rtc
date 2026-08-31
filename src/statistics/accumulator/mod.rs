@@ -131,7 +131,7 @@ impl RTCStatsAccumulator {
     /// This method iterates through all accumulators and produces an
     /// immutable `RTCStatsReport` containing all current statistics.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `now` - The timestamp to use for all stats in the report
     ///
@@ -241,7 +241,7 @@ impl RTCStatsAccumulator {
     /// - If selector is Receiver, returns inbound RTP streams for that receiver
     ///   and all stats referenced by those streams
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `now` - The timestamp to use for all stats in the report
     /// * `selector` - Controls which statistics are included
@@ -409,7 +409,7 @@ impl RTCStatsAccumulator {
 
     /// Gets or creates an inbound stream accumulator for the given SSRC.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `ssrc` - The SSRC identifier for this stream
     /// * `kind` - The media kind (audio/video)
@@ -455,7 +455,7 @@ impl RTCStatsAccumulator {
 
     /// Gets or creates an outbound stream accumulator for the given SSRC.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `ssrc` - The SSRC identifier for this stream
     /// * `kind` - The media kind (audio/video)
@@ -497,7 +497,7 @@ impl RTCStatsAccumulator {
 
     /// Gets or creates a data channel accumulator.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `id` - The data channel identifier
     /// * `label` - The label assigned to the data channel
@@ -736,7 +736,7 @@ impl RTCStatsAccumulator {
     /// This method merges the STUN-level stats (requests, responses, RTT) from the ice agent
     /// with the application-level stats (packets, bytes) tracked at the RTC layer.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `local_id` - The local candidate ID of the pair to sync
     /// * `remote_id` - The remote candidate ID of the pair to sync
@@ -767,7 +767,7 @@ impl RTCStatsAccumulator {
     /// This method registers the codec (if not already registered) and links it
     /// to the inbound RTP stream.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `ssrc` - The SSRC of the inbound RTP stream
     /// * `codec` - The codec information
@@ -802,7 +802,7 @@ impl RTCStatsAccumulator {
     /// This method registers the codec (if not already registered) and links it
     /// to the outbound RTP stream.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `ssrc` - The SSRC of the outbound RTP stream
     /// * `codec` - The codec information

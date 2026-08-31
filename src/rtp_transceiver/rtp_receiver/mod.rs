@@ -149,7 +149,7 @@
 //! # }
 //! ```
 //!
-//! # Specifications
+//! # Specification
 //!
 //! * [W3C RTCRtpReceiver](https://www.w3.org/TR/webrtc/#rtcrtpreceiver-interface)
 //! * [MDN RTCRtpReceiver](https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpReceiver)
@@ -226,7 +226,7 @@ impl RTCRtpReceiver<'_> {
     /// Returns the track associated with this receiver.
     ///
     /// The [`track`](RTCRtpReceiver::track) method returns the [`MediaStreamTrack`] that is
-    /// associated with this receiver as specified in the [W3C WebRTC specification](https://www.w3.org/TR/webrtc/#dom-rtcrtpreceiver-track).
+    /// associated with this receiver as specified in the [W3C WebRTC specification](https://www.w3.org/TR/webrtc/#dom-rtpreceiver-track).
     ///
     /// # Returns
     ///
@@ -350,7 +350,7 @@ impl RTCRtpReceiver<'_> {
     ///
     /// Returns an error if internal handle_write returns error
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// // Send a Picture Loss Indication to request a keyframe

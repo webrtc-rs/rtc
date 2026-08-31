@@ -12,7 +12,7 @@
 //! - Codec information
 //! - ICE candidate information
 //!
-//! # Example
+//! # Examples
 //!
 //! ```
 //! use rtc::peer_connection::RTCPeerConnection;

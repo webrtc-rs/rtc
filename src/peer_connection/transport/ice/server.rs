@@ -9,7 +9,7 @@ use shared::error::{Error, Result};
 ///
 /// * [W3C]
 ///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtciceserver
+/// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtciceserver
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Hash)]
 pub struct RTCIceServer {
     /// The URLs representing the STUN or TURN servers.
@@ -31,6 +31,13 @@ impl RTCIceServer {
     }
 
     /// Parses and returns the parsed ICE URLs, validating TURN credentials if necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Any entry in `urls` is not a well-formed STUN/TURN URL
+    /// - A `turn:` or `turns:` URL is present but `username` or `credential` is empty
+    ///   (`ErrNoTurnCredentials`)
     pub fn urls(&self) -> Result<Vec<ice::url::Url>> {
         let mut urls = vec![];
 

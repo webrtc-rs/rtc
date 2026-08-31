@@ -4,7 +4,7 @@
 //! [`crate::media_stream`]. All user-facing documentation and examples live on
 //! [`MediaStreamTrack`] itself, so that rustdoc renders them and their doctests run.
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [W3C MediaStreamTrack](https://www.w3.org/TR/mediacapture-streams/#mediastreamtrack)
 //! - [MDN MediaStreamTrack](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack)
@@ -274,7 +274,7 @@ impl MediaStreamTrack {
     ///
     /// # Specification
     ///
-    /// See [RFC 8851 - RTP Payload Format Restrictions](https://www.rfc-editor.org/rfc/rfc8851.html).
+    /// See [RFC 8851 - RTP Payload Format Restrictions](https://datatracker.ietf.org/doc/html/rfc8851).
     ///
     /// # Examples
     ///
@@ -402,7 +402,7 @@ impl MediaStreamTrack {
     ///
     /// # Specification
     ///
-    /// See [RFC 3550 - RTP: A Transport Protocol for Real-Time Applications](https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1).
+    /// See [RFC 3550 - RTP: A Transport Protocol for Real-Time Applications](https://datatracker.ietf.org/doc/html/rfc3550#section-5.1).
     ///
     /// # Examples
     ///

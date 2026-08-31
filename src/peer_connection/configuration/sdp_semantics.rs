@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// ## Specifications
 ///
-/// * [Unified Plan](https://tools.ietf.org/html/draft-roach-mmusic-unified-plan-00)
-/// * [Plan B (deprecated)](https://tools.ietf.org/html/draft-uberti-rtcweb-plan-00)
+/// * [Unified Plan](https://datatracker.ietf.org/doc/html/draft-roach-mmusic-unified-plan-00)
+/// * [Plan B (deprecated)](https://datatracker.ietf.org/doc/html/draft-uberti-rtcweb-plan-00)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RTCSdpSemantics {

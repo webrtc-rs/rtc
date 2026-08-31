@@ -7,7 +7,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_header_extension_capability::RTCRtpH
 ///
 /// ## Specifications
 ///
-/// * [W3C](https://w3c.github.io/webrtc-pc/#rtcrtpcapabilities)
+/// * [W3C](https://www.w3.org/TR/webrtc/#rtcrtpcapabilities)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCapabilities {
     /// List of supported codecs

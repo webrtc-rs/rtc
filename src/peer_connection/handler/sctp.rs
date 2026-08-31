@@ -1219,14 +1219,14 @@ mod tests {
         SctpHandlerContext::new(now, transport)
     }
 
-    // First-chunk types we assert on (RFC 4960 §3.2). The `sctp` crate keeps its
+    // First-chunk types we assert on (RFC 9260 §3.2). The `sctp` crate keeps its
     // `CT_*` constants crate-private, so we decode the wire format directly.
     const CT_PAYLOAD_DATA: u8 = 0;
     const CT_SHUTDOWN: u8 = 7;
     const CT_SHUTDOWN_COMPLETE: u8 = 14;
 
     /// First SCTP chunk type of every datagram flushed into `write_outs`. The SCTP
-    /// common header is a fixed 12 bytes (RFC 4960 §3.1), so the first chunk's type
+    /// common header is a fixed 12 bytes (RFC 9260 §3.1), so the first chunk's type
     /// field is byte 12.
     fn flushed_chunk_types(ctx: &SctpHandlerContext) -> Vec<u8> {
         ctx.write_outs
@@ -1244,7 +1244,7 @@ mod tests {
     ///
     /// Asserting on the wire rather than on the association's internal credit: `a_rwnd` is
     /// what the peer actually reads, and `get_my_receiver_window_credit()` is `pub(crate)` to
-    /// the `sctp` crate anyway. Layout is RFC 4960 §3.3.4 — 12-byte common header, then the
+    /// the `sctp` crate anyway. Layout is RFC 9260 §3.3.4 — 12-byte common header, then the
     /// 4-byte chunk header, then a 4-byte Cumulative TSN Ack, then `a_rwnd`.
     fn flushed_sack_a_rwnd(flushed: &[TaggedRTCMessageInternal]) -> Option<u32> {
         flushed.iter().find_map(|m| match &m.message {

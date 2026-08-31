@@ -516,7 +516,7 @@ impl RTCPeerConnection {
                             if next_state.is_ok() {
                                 self.pending_local_description = None;
                                 // Undo the transceiver associations/creations made by the
-                                // now-abandoned offer (RFC 8829, Section 5.7).
+                                // now-abandoned offer (RFC 9429, Section 5.7).
                                 self.rollback_transceivers()?;
                             }
                             next_state
@@ -587,7 +587,7 @@ impl RTCPeerConnection {
                             if next_state.is_ok() {
                                 self.pending_remote_description = None;
                                 // Undo the transceiver associations/creations made by the
-                                // now-abandoned offer (RFC 8829, Section 5.7).
+                                // now-abandoned offer (RFC 9429, Section 5.7).
                                 self.rollback_transceivers()?;
                             }
                             next_state
@@ -684,7 +684,7 @@ impl RTCPeerConnection {
     }
 
     /// Undoes the transceiver changes made by an offer/answer transaction that is being rolled
-    /// back, as required by RFC 8829, Section 5.7.
+    /// back, as required by RFC 9429, Section 5.7.
     ///
     /// - Transceivers that were implicitly created by applying the remote offer now being rolled
     ///   back are stopped and removed, unless a track has since been attached to them via
@@ -1010,7 +1010,7 @@ impl RTCPeerConnection {
     }
 
     fn do_negotiation_needed(&mut self) -> bool {
-        // https://w3c.github.io/webrtc-pc/#updating-the-negotiation-needed-flag
+        // https://www.w3.org/TR/webrtc/#updating-the-negotiation-needed-flag
         // non-canon step 1
         if self.negotiation_needed_state == NegotiationNeededState::Run {
             self.negotiation_needed_state = NegotiationNeededState::Queue;
@@ -1302,7 +1302,7 @@ impl RTCPeerConnection {
 
     /// Converts an RTCIceCandidate to an IceCandidateAccumulator for stats collection.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `candidate` - The ICE candidate to convert.
     /// * `username_fragment` - The ICE username fragment.

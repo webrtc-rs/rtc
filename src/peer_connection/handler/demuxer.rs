@@ -19,7 +19,7 @@ fn match_range(lower: u8, upper: u8, buf: &[u8]) -> bool {
 }
 
 /// MatchFuncs as described in RFC7983
-/// <https://tools.ietf.org/html/rfc7983>
+/// <https://datatracker.ietf.org/doc/html/rfc7983>
 ///              +----------------+
 ///              |        [0..3] -+--> forward to STUN
 ///              |                |

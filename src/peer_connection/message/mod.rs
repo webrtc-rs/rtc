@@ -214,7 +214,7 @@
 //! - **Batching**: Send multiple messages together to reduce overhead
 //! - **Prioritization**: Applications can prioritize data channel messages over media
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [RFC 3550] - RTP: Real-time Transport Protocol
 //! - [RFC 3551] - RTP Profile for Audio and Video
@@ -226,7 +226,7 @@
 //! [RFC 3551]: https://datatracker.ietf.org/doc/html/rfc3551
 //! [RFC 3711]: https://datatracker.ietf.org/doc/html/rfc3711
 //! [RFC 8831]: https://datatracker.ietf.org/doc/html/rfc8831
-//! [W3C WebRTC]: https://w3c.github.io/webrtc-pc/
+//! [W3C WebRTC]: https://www.w3.org/TR/webrtc/
 
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
@@ -404,7 +404,7 @@ pub(crate) mod internal;
 /// Network Layer
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [RFC 3550] - RTP: Real-time Transport Protocol
 /// - [RFC 3551] - RTP Profile for Audio and Video
@@ -436,7 +436,7 @@ pub enum RTCMessage {
     /// - **Receiving**: Decode RTP packets and render media
     /// - **Processing**: Analyze sequence numbers for packet loss detection
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
     /// use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -478,7 +478,7 @@ pub enum RTCMessage {
     /// Multiple RTCP packets can be combined into a single compound RTCP message
     /// for efficiency.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
     /// use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
@@ -520,7 +520,7 @@ pub enum RTCMessage {
     /// - **Reliable & Ordered**: Messages arrive in order, guaranteed
     /// - **Unreliable & Unordered**: Like UDP, may arrive out of order or not at all
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
     /// use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};

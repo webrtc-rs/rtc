@@ -164,9 +164,9 @@
 //! # }
 //! ```
 //!
-//! # Specifications
+//! # Specification
 //!
-//! * [W3C RTCRtpSender](https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface)
+//! * [W3C RTCRtpSender](https://www.w3.org/TR/webrtc/#rtcrtpsender-interface)
 //! * [MDN RTCRtpSender](https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender)
 
 //TODO: #[cfg(test)]
@@ -225,7 +225,7 @@ pub use set_parameter_options::RTCSetParameterOptions;
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtcrtpsender-interface
 pub struct RTCRtpSender<'a> {
     pub(crate) id: RTCRtpSenderId,
     pub(crate) peer_connection: &'a mut RTCPeerConnection,

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Codec stats are only present when the codec is actively used by
 /// at least one RTP stream.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCCodecStats](https://www.w3.org/TR/webrtc-stats/#codec-dict*)
 #[derive(Debug, Serialize, Deserialize)]

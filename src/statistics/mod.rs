@@ -10,7 +10,7 @@
 //! to filter the returned statistics to only those relevant to a specific
 //! sender or receiver.
 //!
-//! # Example
+//! # Examples
 //!
 //! ```
 //! use rtc::peer_connection::RTCPeerConnection;
@@ -42,7 +42,7 @@ pub mod stats;
 /// W3C WebRTC `getStats()` method. When provided, it filters the returned
 /// statistics to only those relevant to the specified sender or receiver.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [The stats selection algorithm](https://www.w3.org/TR/webrtc/#the-stats-selection-algorithm)
 ///

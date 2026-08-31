@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides information about the video
 /// capture source, including resolution and frame rate metrics.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCVideoSourceStats](https://www.w3.org/TR/webrtc-stats/#videosourcestats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

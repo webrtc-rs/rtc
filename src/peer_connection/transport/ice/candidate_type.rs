@@ -95,14 +95,14 @@ use serde::{Deserialize, Serialize};
 /// }
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [RFC 8445 Section 5.1.1.1] - Candidate Types
 /// - [W3C RTCIceCandidateStats.candidateType]
 /// - [MDN RTCIceCandidateStats.candidateType]
 ///
 /// [RFC 8445 Section 5.1.1.1]: https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.1.1
-/// [W3C RTCIceCandidateStats.candidateType]: https://w3c.github.io/webrtc-stats/#dom-rtcicecandidatestats-candidatetype
+/// [W3C RTCIceCandidateStats.candidateType]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatestats-candidatetype
 /// [MDN RTCIceCandidateStats.candidateType]: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidateStats/candidateType
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

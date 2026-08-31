@@ -42,11 +42,11 @@ use crate::rtp_transceiver::{RtpStreamId, SSRC};
 /// };
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// * [ORTC RTCRtpCodingParameters](http://draft.ortc.org/#dom-rtcrtpcodingparameters)
-/// * [RFC 4588 - RTP Retransmission Payload Format](https://www.rfc-editor.org/rfc/rfc4588.html)
-/// * [RFC 8852 - RTP Stream Identifier](https://www.rfc-editor.org/rfc/rfc8852.html)
+/// * [RFC 4588 - RTP Retransmission Payload Format](https://datatracker.ietf.org/doc/html/rfc4588)
+/// * [RFC 8852 - RTP Stream Identifier](https://datatracker.ietf.org/doc/html/rfc8852)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpCodingParameters {
     /// RTP stream identifier for simulcast/layered streams
@@ -76,10 +76,10 @@ pub struct RTCRtpCodingParameters {
 /// };
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// * [ORTC RTCRtpRtxParameters](https://draft.ortc.org/#dom-rtcrtprtxparameters)
-/// * [RFC 4588 - RTP Retransmission Payload Format](https://www.rfc-editor.org/rfc/rfc4588.html)
+/// * [RFC 4588 - RTP Retransmission Payload Format](https://datatracker.ietf.org/doc/html/rfc4588)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpRtxParameters {
     /// SSRC for the RTX stream
@@ -102,10 +102,10 @@ pub struct RTCRtpRtxParameters {
 /// };
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// * [ORTC RTCRtpFecParameters](https://draft.ortc.org/#dom-rtcrtpfecparameters)
-/// * [RFC 5109 - RTP Payload Format for Generic FEC](https://www.rfc-editor.org/rfc/rfc5109.html)
+/// * [RFC 5109 - RTP Payload Format for Generic FEC](https://datatracker.ietf.org/doc/html/rfc5109)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpFecParameters {
     /// SSRC for the FEC stream

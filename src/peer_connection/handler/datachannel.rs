@@ -239,7 +239,7 @@ impl<'a>
                         .get_or_create_data_channel(channel_id, &label, &protocol)
                         .on_message_received(payload_len);
 
-                    // https://tools.ietf.org/html/draft-ietf-rtcweb-data-channel-12#section-6.6
+                    // https://datatracker.ietf.org/doc/html/rfc8831#section-6.6
                     // When receiving an SCTP user message with one of these [Empty]
                     // PPIDs, the receiver MUST ignore the SCTP user message and
                     // process it as an empty message.

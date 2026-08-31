@@ -343,6 +343,10 @@ impl MediaEngine {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if one of the default codecs cannot be registered; with an unmodified
+    /// `MediaEngine` this does not happen.
     pub fn register_default_codecs(&mut self) -> Result<()> {
         // Default Audio Codecs
         for codec in [
@@ -618,6 +622,9 @@ impl MediaEngine {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns [`Error::ErrUnknownType`] if `typ` is not `Audio`, `Video` or `Application`.
     pub fn register_codec(
         &mut self,
         codec: RTCRtpCodecParameters,
@@ -646,6 +653,13 @@ impl MediaEngine {
     /// The `allowed_direction` controls for which transceiver directions the extension matches. If
     /// set to `None` it matches all directions. The `SendRecv` direction would match all transceiver
     /// directions apart from `Inactive`. Inactive only matches inactive.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::ErrRegisterHeaderExtensionInvalidDirection`] if `allowed_direction` is
+    ///   `Unspecified`.
+    /// - [`Error::ErrRegisterHeaderExtensionNoFreeID`] if every valid one-byte extension id
+    ///   (RFC 8285) is already taken.
     pub fn register_header_extension(
         &mut self,
         extension: RTCRtpHeaderExtensionCapability,
@@ -692,7 +706,7 @@ impl MediaEngine {
         Ok(())
     }
 
-    /// register_feedback adds feedback mechanism to already registered codecs.
+    /// Adds a feedback mechanism to all already-registered codecs.
     ///
     /// Registering the same mechanism twice is a no-op the second time.
     pub fn register_feedback(&mut self, feedback: RTCPFeedback, typ: RtpCodecKind) {
@@ -711,7 +725,7 @@ impl MediaEngine {
         }
     }
 
-    /// get_header_extension_id returns the negotiated ID for a header extension.
+    /// Returns the negotiated id for a header extension.
     /// If the Header Extension isn't enabled ok will be false
     pub fn get_header_extension_id(
         &self,

@@ -8,7 +8,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_codec::RTCRtpCodec;
 ///
 /// ## Specifications
 ///
-/// * [W3C](https://w3c.github.io/webrtc-pc/#rtcrtpcodecparameters)
+/// * [W3C](https://www.w3.org/TR/webrtc/#rtcrtpcodecparameters)
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCRtpCodecParameters {
     /// The codec capability information
