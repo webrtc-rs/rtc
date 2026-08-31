@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides information about audio playout
 /// devices, including synthesized samples for concealment and playout delay.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCAudioPlayoutStats](https://www.w3.org/TR/webrtc-stats/#playoutstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,7 +1,7 @@
 //! Peer-to-peer connections
 //!
 //! This module implements the `RTCPeerConnection` interface as defined in the
-//! [W3C WebRTC specification](https://w3c.github.io/webrtc-pc/). It provides
+//! [W3C WebRTC specification](https://www.w3.org/TR/webrtc/). It provides
 //! the core functionality for establishing peer-to-peer connections, negotiating
 //! media capabilities, and managing data channels.
 //!
@@ -227,16 +227,16 @@
 //! `RTCPeerConnection` is **not** thread-safe. The application must ensure
 //! exclusive access or use appropriate synchronization primitives.
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [W3C WebRTC 1.0] - Main specification
-//! - [RFC 8829] - JSEP: JavaScript Session Establishment Protocol
+//! - [RFC 9429] - JSEP: JavaScript Session Establishment Protocol
 //! - [RFC 8866] - SDP: Session Description Protocol
 //! - [RFC 8445] - ICE: Interactive Connectivity Establishment
 //! - [RFC 8831] - WebRTC Data Channels
 //!
-//! [W3C WebRTC 1.0]: https://w3c.github.io/webrtc-pc/
-//! [RFC 8829]: https://datatracker.ietf.org/doc/html/rfc8829
+//! [W3C WebRTC 1.0]: https://www.w3.org/TR/webrtc/
+//! [RFC 9429]: https://datatracker.ietf.org/doc/html/rfc9429
 //! [RFC 8866]: https://datatracker.ietf.org/doc/html/rfc8866
 //! [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 //! [RFC 8831]: https://datatracker.ietf.org/doc/html/rfc8831
@@ -652,6 +652,50 @@ impl RTCPeerConnectionBuilder {
 ///
 /// This is a sans-I/O implementation following the [W3C WebRTC specification](https://www.w3.org/TR/webrtc/).
 ///
+/// # Driving the connection
+///
+/// This type performs **no I/O and reads no clock**. It never opens a socket, never sleeps, and
+/// never calls `Instant::now()` on your behalf: every method that needs the time takes it as an
+/// argument. Progress happens only when you feed it something. That is what makes a whole
+/// session reproducible in a test with no socket and no sleep.
+///
+/// The driving methods come from the [`sansio::Protocol`] trait, so **the trait must be in scope**
+/// (`use rtc::sansio::Protocol;`) or none of them will resolve:
+///
+/// | Method | Direction | What it does |
+/// | --- | --- | --- |
+/// | [`handle_read`] | in | Feed one received datagram, tagged with its 5-tuple and arrival instant |
+/// | [`poll_write`] | out | Take the next packet to put on the wire; drain until `None` |
+/// | [`poll_read`] | out | Take the next inbound RTP/RTCP/data-channel message for the application |
+/// | [`poll_event`] | out | Take the next state change or notification |
+/// | [`poll_timeout`] | out | Next deadline for retransmissions, keepalives and ICE checks |
+/// | [`handle_timeout`] | in | Report that a deadline has passed |
+/// | [`handle_write`] | in | Queue an outbound RTP/RTCP/data-channel message |
+/// | [`close`] | in | Shut the connection down |
+///
+/// Nothing is sent eagerly: `handle_read`, `handle_timeout`, `handle_write` and the negotiation
+/// methods all *queue* packets, so drain `poll_write` after any of them.
+///
+/// [`handle_event`] also exists on the trait, but [`RTCEvent`] is uninhabited — no value of it can
+/// be constructed, so there is nothing to call it with. It reserves the signature for the first
+/// inbound event variant.
+///
+/// # Back-pressure
+///
+/// [`poll_read`] is the throttle. Undrained data-channel messages leave bytes in SCTP's reassembly
+/// queue, which lowers the receiver-window credit advertised in every SACK, which tells the peer to
+/// slow down. **Declining to call `poll_read` is how back-pressure is applied**; resume when the
+/// application catches up. Media is never throttled this way: RTP arrives over SRTP and is subject
+/// to none of SCTP's flow control, and `poll_read` interleaves the two by the instant each packet
+/// was observed, so a stalled data channel cannot starve video.
+///
+/// # ICE candidates
+///
+/// Because there is no I/O here, there is no candidate gathering either: the application owns the
+/// sockets, so it owns gathering. Hand every local candidate to [`Self::add_local_candidate`], and
+/// finish with an empty candidate string to signal end-of-gathering — see that method for the
+/// details.
+///
 /// # Examples
 ///
 /// ```
@@ -663,6 +707,20 @@ impl RTCPeerConnectionBuilder {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// A complete event loop is shown in the [crate-level documentation](crate).
+///
+/// [`sansio::Protocol`]: sansio::Protocol
+/// [`handle_read`]: sansio::Protocol::handle_read
+/// [`poll_write`]: sansio::Protocol::poll_write
+/// [`poll_read`]: sansio::Protocol::poll_read
+/// [`poll_event`]: sansio::Protocol::poll_event
+/// [`poll_timeout`]: sansio::Protocol::poll_timeout
+/// [`handle_timeout`]: sansio::Protocol::handle_timeout
+/// [`handle_write`]: sansio::Protocol::handle_write
+/// [`handle_event`]: sansio::Protocol::handle_event
+/// [`close`]: sansio::Protocol::close
+/// [`RTCEvent`]: crate::peer_connection::event::RTCEvent
 pub struct RTCPeerConnection {
     //////////////////////////////////////////////////
     // PeerConnection WebRTC Spec Interface Definition
@@ -707,7 +765,7 @@ impl RTCPeerConnection {
     /// by the browser, and ICE candidates gathered by the ICE agent. This offer can be sent to a
     /// remote peer over a signaling channel to establish a connection.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `options` - Optional configuration for the offer, such as whether to restart ICE.
     ///
@@ -805,29 +863,6 @@ impl RTCPeerConnection {
         Ok(offer)
     }
 
-    /// Creates an SDP answer in response to an offer received from a remote peer.
-    ///
-    /// The answer includes information about any media already attached to the session,
-    /// codecs and options supported by the browser, and ICE candidates gathered by the ICE agent.
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - Optional configuration for the answer (currently unused).
-    ///
-    /// # Returns
-    ///
-    /// Returns an `RTCSessionDescription` containing the SDP answer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - No remote description has been set
-    /// - The peer connection is closed
-    /// - The signaling state is not `have-remote-offer` or `have-local-pranswer`
-    ///
-    /// # Specification
-    ///
-    /// See [createAnswer](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-createanswer)
     /// Creates an SDP answer in response to an offer from a remote peer.
     ///
     /// This method must be called after `set_remote_description()` has been called
@@ -921,13 +956,13 @@ impl RTCPeerConnection {
     /// - Defaults to `Client` (active) for lower latency
     /// - Uses `Server` (passive) if remote is ICE-Lite
     ///
-    /// # Specifications
+    /// # Specification
     ///
     /// - [W3C RTCPeerConnection.createAnswer]
-    /// - [RFC 8829 Section 5.3] - Generating an Answer
+    /// - [RFC 9429 Section 5.3] - Generating an Answer
     ///
-    /// [W3C RTCPeerConnection.createAnswer]: https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-createanswer
-    /// [RFC 8829 Section 5.3]: https://datatracker.ietf.org/doc/html/rfc8829#section-5.3
+    /// [W3C RTCPeerConnection.createAnswer]: https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-createanswer
+    /// [RFC 9429 Section 5.3]: https://datatracker.ietf.org/doc/html/rfc9429#section-5.3
     pub fn create_answer(
         &mut self,
         _options: Option<RTCAnswerOptions>,
@@ -993,25 +1028,6 @@ impl RTCPeerConnection {
         Ok(answer)
     }
 
-    /// Sets the local description as part of the offer/answer negotiation.
-    ///
-    /// This changes the local description associated with the connection. If the `sdp` field
-    /// is empty, an implicit description will be created based on the type.
-    ///
-    /// # Arguments
-    ///
-    /// * `local_description` - The local session description to set.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The peer connection is closed
-    /// - The SDP type is invalid
-    /// - The SDP cannot be parsed
-    ///
-    /// # Specification
-    ///
-    /// See [setLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setlocaldescription)
     /// Sets the local description for this peer connection.
     ///
     /// This method applies a local SDP description (offer or answer) to the peer
@@ -1105,13 +1121,13 @@ impl RTCPeerConnection {
     /// - SCTP transport is started for data channels
     /// - Media can begin flowing
     ///
-    /// # Specifications
+    /// # Specification
     ///
     /// - [W3C RTCPeerConnection.setLocalDescription]
-    /// - [RFC 8829 Section 5.4] - Setting the Session Description
+    /// - [RFC 9429 Section 5.9] - Applying a Local Description
     ///
-    /// [W3C RTCPeerConnection.setLocalDescription]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-setlocaldescription
-    /// [RFC 8829 Section 5.4]: https://datatracker.ietf.org/doc/html/rfc8829#section-5.4
+    /// [W3C RTCPeerConnection.setLocalDescription]: https://www.w3.org/TR/webrtc/#dom-peerconnection-setlocaldescription
+    /// [RFC 9429 Section 5.9]: https://datatracker.ietf.org/doc/html/rfc9429#section-5.9
     pub fn set_local_description(
         &mut self,
         now: Instant,
@@ -1238,7 +1254,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [localDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-localdescription)
+    /// See [localDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-localdescription)
     pub fn local_description(&self) -> Option<RTCSessionDescription> {
         if let Some(pending_local_description) = self.pending_local_description() {
             return Some(pending_local_description);
@@ -1256,7 +1272,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [currentLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-currentlocaldescription)
+    /// See [currentLocalDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-currentlocaldesc)
     pub fn current_local_description(&self) -> Option<RTCSessionDescription> {
         self.populate_local_candidates(self.current_local_description.as_ref())
     }
@@ -1271,7 +1287,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [pendingLocalDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-pendinglocaldescription)
+    /// See [pendingLocalDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-pendinglocaldesc)
     pub fn pending_local_description(&self) -> Option<RTCSessionDescription> {
         self.populate_local_candidates(self.pending_local_description.as_ref())
     }
@@ -1299,7 +1315,7 @@ impl RTCPeerConnection {
     /// This changes the remote description associated with the connection. This description
     /// specifies the properties of the remote end of the connection, including the media format.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `remote_description` - The remote session description to set.
     ///
@@ -1312,7 +1328,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [setRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setremotedescription)
+    /// See [setRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setremotedescription!overload-1)
     pub fn set_remote_description(
         &mut self,
         now: Instant,
@@ -1466,7 +1482,7 @@ impl RTCPeerConnection {
 
                             // Mark as implicitly created by a remote offer so that, if this offer
                             // is later rolled back, the transceiver is stopped and removed
-                            // (RFC 8829, Section 5.7) — unless a track is attached via add_track.
+                            // (RFC 9429, Section 5.7) — unless a track is attached via add_track.
                             transceiver.set_created_by_remote_description(true);
 
                             self.add_rtp_transceiver(transceiver);
@@ -1637,7 +1653,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [remoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-remotedescription)
+    /// See [remoteDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-remotedescription)
     pub fn remote_description(&self) -> Option<&RTCSessionDescription> {
         if self.pending_remote_description.is_some() {
             self.pending_remote_description.as_ref()
@@ -1656,7 +1672,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [currentRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-currentremotedescription)
+    /// See [currentRemoteDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-currentremotedesc)
     pub fn current_remote_description(&self) -> Option<&RTCSessionDescription> {
         self.current_remote_description.as_ref()
     }
@@ -1671,7 +1687,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [pendingRemoteDescription](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-pendingremotedescription)
+    /// See [pendingRemoteDescription](https://www.w3.org/TR/webrtc/#dom-peerconnection-pendingremotedesc)
     pub fn pending_remote_description(&self) -> Option<&RTCSessionDescription> {
         self.pending_remote_description.as_ref()
     }
@@ -1682,7 +1698,7 @@ impl RTCPeerConnection {
     /// gathers ICE candidates and sends them over the signaling channel, this method
     /// should be called to add each candidate.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `remote_candidate` - The ICE candidate initialization data.
     ///
@@ -1694,7 +1710,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [addIceCandidate](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addicecandidate)
+    /// See [addIceCandidate](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addicecandidate!overload-1)
     pub fn add_remote_candidate(&mut self, remote_candidate: RTCIceCandidateInit) -> Result<()> {
         if self.remote_description().is_none() {
             return Err(Error::ErrNoRemoteDescription);
@@ -1714,18 +1730,44 @@ impl RTCPeerConnection {
 
     /// Adds a local ICE candidate to the peer connection.
     ///
-    /// This method adds a locally gathered ICE candidate. In a typical implementation,
-    /// local candidates are generated by the ICE agent and passed to this method.
+    /// This has no W3C counterpart: a browser's ICE agent gathers its own candidates, but this
+    /// crate performs no I/O, so the application owns the sockets and therefore owns gathering.
+    /// Every local candidate the connection is to advertise must be handed to this method.
     ///
-    /// # Arguments
+    /// # Signalling the end of gathering
     ///
-    /// * `local_candidate` - The ICE candidate initialization data. For candidates of
-    ///   type "srflx" (server reflexive) or "relay", the `url` field should contain
-    ///   the STUN/TURN server URL used to gather the candidate.
+    /// An **empty candidate string** is the end-of-gathering sentinel. It advertises no
+    /// candidate; it moves the ICE gathering state to [`RTCIceGatheringState::Complete`] and
+    /// emits [`RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent`] with that state. No
+    /// other call reaches `Complete`, so a caller that never sends it leaves the connection
+    /// reporting `Gathering` forever. Send it once, after the last real candidate:
+    ///
+    /// ```no_run
+    /// # use std::time::Instant;
+    /// # use rtc::peer_connection::RTCPeerConnectionBuilder;
+    /// use rtc::peer_connection::transport::RTCIceCandidateInit;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut pc = RTCPeerConnectionBuilder::new().build(Instant::now())?;
+    /// // ... add every gathered candidate first ...
+    /// pc.add_local_candidate(RTCIceCandidateInit::default())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// - `local_candidate`: The ICE candidate initialization data, or a value whose `candidate`
+    ///   field is empty to signal end-of-gathering. For candidates of type `srflx` (server
+    ///   reflexive) or `relay`, set `url` to the STUN/TURN server the candidate was gathered
+    ///   from, so that `getStats` attributes it correctly.
     ///
     /// # Errors
     ///
-    /// Returns an error if the candidate string is invalid.
+    /// Returns an error if a non-empty candidate string cannot be parsed.
+    ///
+    /// [`RTCIceGatheringState::Complete`]: crate::peer_connection::state::RTCIceGatheringState::Complete
+    /// [`RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent`]: crate::peer_connection::event::RTCPeerConnectionEvent::OnIceGatheringStateChangeEvent
     pub fn add_local_candidate(&mut self, local_candidate: RTCIceCandidateInit) -> Result<()> {
         let candidate_value = match local_candidate.candidate.strip_prefix("candidate:") {
             Some(s) => s,
@@ -1772,7 +1814,25 @@ impl RTCPeerConnection {
         &self.configuration
     }
 
-    /// set_configuration updates the configuration of this PeerConnection object.
+    /// Updates the configuration of this peer connection.
+    ///
+    /// Only the fields the W3C algorithm permits changing after construction are applied;
+    /// attempting to change the peer identity or the certificate set is an error.
+    ///
+    /// # Parameters
+    ///
+    /// - `configuration`: The configuration to apply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The peer connection is closed (`ErrConnectionClosed`)
+    /// - The peer identity differs from the one already set (`ErrModifyingPeerIdentity`)
+    /// - The number of certificates differs from the one already set (`ErrModifyingCertificates`)
+    ///
+    /// # Specification
+    ///
+    /// See [setConfiguration](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration)
     pub fn set_configuration(&mut self, configuration: RTCConfiguration) -> Result<()> {
         // https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-setconfiguration (step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
@@ -1835,15 +1895,41 @@ impl RTCPeerConnection {
         Ok(())
     }
 
-    /// create_data_channel creates a new DataChannel object with the given label
-    /// and optional DataChannelInit used to configure properties of the
-    /// underlying channel such as data reliability.
+    /// Creates a new data channel with the given label.
+    ///
+    /// The returned handle borrows the peer connection. To reach the channel again later,
+    /// keep its [`RTCDataChannelId`] (from [`RTCDataChannel::id`]) and pass it to
+    /// [`Self::data_channel`].
+    ///
+    /// A channel created here is not immediately usable: unless it was negotiated
+    /// out-of-band, its SCTP stream is established by the in-band DCEP handshake, and sending
+    /// before then fails. Wait for [`RTCDataChannelEvent::OnOpen`].
+    ///
+    /// # Parameters
+    ///
+    /// - `label`: The channel label. Labels need not be unique.
+    /// - `options`: Optional configuration such as ordering, reliability and out-of-band
+    ///   negotiation. Defaults are used when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The peer connection is closed (`ErrConnectionClosed`)
+    /// - The label or sub-protocol exceeds the length the DCEP OPEN message can carry
+    ///
+    /// # Specification
+    ///
+    /// See [createDataChannel](https://www.w3.org/TR/webrtc/#dom-peerconnection-createdatachannel)
+    ///
+    /// [`RTCDataChannelId`]: crate::data_channel::RTCDataChannelId
+    /// [`RTCDataChannel::id`]: crate::data_channel::RTCDataChannel::id
+    /// [`RTCDataChannelEvent::OnOpen`]: crate::peer_connection::event::RTCDataChannelEvent::OnOpen
     pub fn create_data_channel(
         &mut self,
         label: &str,
         options: Option<RTCDataChannelInit>,
     ) -> Result<RTCDataChannel<'_>> {
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #2)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #2)
         if self.peer_connection_state == RTCPeerConnectionState::Closed {
             return Err(Error::ErrConnectionClosed);
         }
@@ -1858,31 +1944,31 @@ impl RTCPeerConnection {
         // keeps a single definition of those defaults — notably `ordered`, which is `true`.
         let options = options.unwrap_or_default();
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #16)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #16)
         if options.max_packet_life_time.is_some() && options.max_retransmits.is_some() {
             return Err(Error::ErrRetransmitsOrPacketLifeTime);
         }
 
         // Ordered indicates if data is allowed to be delivered out of order. The
         // default value of true, guarantees that data will be delivered in order.
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #9)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #9)
         params.ordered = options.ordered;
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #7)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #7)
         params.max_packet_life_time = options.max_packet_life_time;
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #8)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #8)
         params.max_retransmits = options.max_retransmits;
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #10)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #10)
         params.protocol = options.protocol;
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #11)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #11)
         if params.protocol.len() > 65535 {
             return Err(Error::ErrProtocolTooLarge);
         }
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #12)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #12)
         //
         // `negotiated` doubles as the out-of-band stream id. When it is set the id is fixed by
         // the application and known now; when it is not, the channel is announced in-band and
@@ -1896,7 +1982,7 @@ impl RTCPeerConnection {
             .data_channels
             .insert(RTCDataChannelInternal::new(params));
 
-        // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api (Step #23)
+        // https://www.w3.org/TR/webrtc/#peer-to-peer-data-api (Step #23)
         // Open the channel's data transport immediately when an SCTP association already
         // exists. The DTLS role is necessarily resolved by then, so a stream id can be
         // assigned right here rather than waiting for a connected procedure that has passed.
@@ -1945,7 +2031,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [getSenders](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getsenders)
+    /// See [getSenders](https://www.w3.org/TR/webrtc/#dom-peerconnection-getsenders)
     pub fn get_senders(&self) -> impl Iterator<Item = RTCRtpSenderId> + use<'_> {
         self.rtp_transceivers
             .iter()
@@ -1961,7 +2047,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [getReceivers](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getreceivers)
+    /// See [getReceivers](https://www.w3.org/TR/webrtc/#dom-peerconnection-getreceivers)
     pub fn get_receivers(&self) -> impl Iterator<Item = RTCRtpReceiverId> + use<'_> {
         self.rtp_transceivers
             .iter()
@@ -1977,7 +2063,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [getTransceivers](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-gettransceivers)
+    /// See [getTransceivers](https://www.w3.org/TR/webrtc/#dom-peerconnection-gettranseceivers)
     pub fn get_transceivers(&self) -> impl Iterator<Item = RTCRtpTransceiverId> {
         0..self.rtp_transceivers.len()
     }
@@ -1988,7 +2074,7 @@ impl RTCPeerConnection {
     /// that can be reused, or by creating a new transceiver. The track represents media
     /// (audio or video) that will be sent to the remote peer.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `track` - The media stream track to add.
     ///
@@ -2056,7 +2142,7 @@ impl RTCPeerConnection {
     /// This method stops an `RTCRtpSender` from sending media and marks its transceiver
     /// as no longer sending. This will trigger renegotiation.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `sender_id` - The ID of the `RTCRtpSender` to remove.
     ///
@@ -2103,7 +2189,7 @@ impl RTCPeerConnection {
     /// This method creates a transceiver associated with the given track, which can be
     /// configured to send, receive, or both.
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `track` - The media stream track to associate with the transceiver.
     /// * `init` - Optional initialization parameters for the transceiver.
@@ -2161,7 +2247,24 @@ impl RTCPeerConnection {
         Ok(self.add_rtp_transceiver(transceiver))
     }
 
-    /// add_transceiver_from_kind Create a new RtpTransceiver and adds it to the set of transceivers.
+    /// Creates a new transceiver for the given media kind and adds it to the set of
+    /// transceivers.
+    ///
+    /// # Parameters
+    ///
+    /// - `kind`: Audio or video.
+    /// - `init`: Optional direction and encoding parameters; defaults are used when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The peer connection is closed (`ErrConnectionClosed`)
+    /// - The requested direction is not supported for a transceiver created this way
+    /// - No codec is registered in the media engine for `kind`
+    ///
+    /// # Specification
+    ///
+    /// See [addTransceiver](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addtransceiver)
     pub fn add_transceiver_from_kind(
         &mut self,
         kind: RtpCodecKind,
@@ -2214,7 +2317,10 @@ impl RTCPeerConnection {
         Ok(self.add_rtp_transceiver(transceiver))
     }
 
-    /// data_channel provides the access to RTCDataChannel object with the given id
+    /// Returns a handle to the [`RTCDataChannel`] with the given id, or `None` if no such
+    /// channel exists on this peer connection.
+    ///
+    /// [`RTCDataChannel`]: crate::data_channel::RTCDataChannel
     pub fn data_channel(&mut self, id: RTCDataChannelId) -> Option<RTCDataChannel<'_>> {
         if self.data_channels.contains(&id) {
             Some(RTCDataChannel {
@@ -2253,7 +2359,10 @@ impl RTCPeerConnection {
         }
     }
 
-    /// rtp_sender provides the access to RTCRtpSender object with the given id
+    /// Returns a handle to the [`RTCRtpSender`] with the given id, or `None` if no such
+    /// sender exists on this peer connection.
+    ///
+    /// [`RTCRtpSender`]: crate::rtp_transceiver::rtp_sender::RTCRtpSender
     pub fn rtp_sender(&mut self, id: RTCRtpSenderId) -> Option<RTCRtpSender<'_>> {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_send()
@@ -2268,7 +2377,10 @@ impl RTCPeerConnection {
         }
     }
 
-    /// rtp_receiver provides the access to RTCRtpReceiver object with the given id
+    /// Returns a handle to the [`RTCRtpReceiver`] with the given id, or `None` if no such
+    /// receiver exists on this peer connection.
+    ///
+    /// [`RTCRtpReceiver`]: crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver
     pub fn rtp_receiver(&mut self, id: RTCRtpReceiverId) -> Option<RTCRtpReceiver<'_>> {
         if id.0 < self.rtp_transceivers.len()
             && self.rtp_transceivers[id.0].direction().has_recv()
@@ -2283,7 +2395,10 @@ impl RTCPeerConnection {
         }
     }
 
-    /// rtp_transceiver provides the access to RTCRtpTransceiver object with the given id
+    /// Returns a handle to the [`RTCRtpTransceiver`] with the given id, or `None` if no such
+    /// transceiver exists on this peer connection.
+    ///
+    /// [`RTCRtpTransceiver`]: crate::rtp_transceiver::RTCRtpTransceiver
     pub fn rtp_transceiver(&mut self, id: RTCRtpTransceiverId) -> Option<RTCRtpTransceiver<'_>> {
         if id < self.rtp_transceivers.len() {
             Some(RTCRtpTransceiver {
@@ -2311,7 +2426,7 @@ impl RTCPeerConnection {
     /// - `StatsSelector::Receiver(id)` - Inbound RTP streams for the receiver
     ///   and all referenced stats (transport, codec, remote outbound, etc.)
     ///
-    /// # Arguments
+    /// # Parameters
     ///
     /// * `now` - The timestamp to use for all stats in the report. This is
     ///   passed explicitly to support deterministic testing.
@@ -2321,7 +2436,7 @@ impl RTCPeerConnection {
     ///
     /// An `RTCStatsReport` containing snapshots of the selected statistics.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
     /// use std::time::Instant;
@@ -2349,7 +2464,7 @@ impl RTCPeerConnection {
     ///
     /// # Specification
     ///
-    /// See [getStats](https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-getstats) and
+    /// See [getStats](https://www.w3.org/TR/webrtc/#widl-RTCPeerConnection-getStats-Promise-RTCStatsReport--MediaStreamTrack-selector) and
     /// [The stats selection algorithm](https://www.w3.org/TR/webrtc/#the-stats-selection-algorithm)
     pub fn get_stats(&mut self, now: Instant, selector: StatsSelector) -> RTCStatsReport {
         // Update ICE agent stats before taking snapshot
@@ -2384,7 +2499,7 @@ mod tests {
             Some(200_000)
         );
 
-        // Values below the RFC 4960 §6 floor (1500 bytes), including 0, are clamped up so
+        // Values below the RFC 9260 §3.3.2 floor (1500 bytes), including 0, are clamped up so
         // they cannot break the SCTP handshake.
         for input in [0u32, 500, 1499] {
             let setting_engine = SettingEngineBuilder::new()
@@ -2696,7 +2811,7 @@ mod tests {
         );
     }
 
-    // ---- Rollback (RFC 8829, Section 5.7) ----
+    // ---- Rollback (RFC 9429, Section 5.7) ----
 
     use crate::peer_connection::configuration::media_engine::MediaEngine;
     use crate::rtp_transceiver::RTCRtpTransceiverInit;
@@ -2773,7 +2888,7 @@ mod tests {
         // A locally-initiated offer: the transceivers are created by the application, so
         // rolling back the local offer via set_local_description must disassociate them
         // (clear their mids) but must NOT remove them. This exercises the same rollback
-        // cleanup path as set_remote_description, per RFC 8829 Section 5.7.
+        // cleanup path as set_remote_description, per RFC 9429 Section 5.7.
         let mut pc = media_pc();
         pc.add_transceiver_from_kind(
             RtpCodecKind::Audio,
@@ -2892,7 +3007,7 @@ mod tests {
 
     #[test]
     fn add_track_then_rollback_remote_offer_then_create_offer_includes_track() {
-        // RFC 8829, Section 5.7: "an application may call addTrack, then call
+        // RFC 9429, Section 5.7: "an application may call addTrack, then call
         // setRemoteDescription with an offer, then roll back that offer, then call createOffer
         // and have an "m=" section for the added track appear in the generated offer."
         let mut pc = media_pc();
@@ -2962,7 +3077,7 @@ mod tests {
 
     #[test]
     fn add_track_then_rollback_local_offer_then_answer_remote_still_renegotiates_track() {
-        // Polite-peer glare scenario (RFC 8829, Section 5.7): the application calls addTrack and
+        // Polite-peer glare scenario (RFC 9429, Section 5.7): the application calls addTrack and
         // sends its own offer, then a remote offer arrives (collision). The polite peer rolls
         // back its local offer, applies the remote offer, and answers it. The locally-added
         // track was never negotiated, so it must still be pending and appear in a subsequent

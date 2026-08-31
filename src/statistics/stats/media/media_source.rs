@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// [`RTCAudioSourceStats`](super::audio_source::RTCAudioSourceStats) or
 /// [`RTCVideoSourceStats`](super::video_source::RTCVideoSourceStats).
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCMediaSourceStats](https://www.w3.org/TR/webrtc-stats/#mediasourcestats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

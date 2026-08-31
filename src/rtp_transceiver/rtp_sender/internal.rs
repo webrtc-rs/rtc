@@ -28,7 +28,7 @@ use shared::util::math_rand_alpha;
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpSender
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpsender-interface
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtcrtpsender-interface
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpSenderInternal {
     /// The codec kind (audio or video) for this sender

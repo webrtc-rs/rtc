@@ -75,13 +75,13 @@ use std::fmt;
 /// assert_eq!(parsed, RTCDtlsTransportState::Connecting);
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [W3C DtlsTransport.state]
 /// - [MDN DtlsTransport.state]
 /// - [RFC 6347] - DTLS 1.2
 ///
-/// [W3C DtlsTransport.state]: https://w3c.github.io/webrtc-pc/#dom-rtcdtlstransportstate
+/// [W3C DtlsTransport.state]: https://www.w3.org/TR/webrtc/#dom-rtcdtlstransportstate
 /// [MDN DtlsTransport.state]: https://developer.mozilla.org/en-US/docs/Web/API/DtlsTransport/state
 /// [RFC 6347]: https://datatracker.ietf.org/doc/html/rfc6347
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -22,7 +22,7 @@ pub mod remote_inbound;
 /// [`RTCInboundRtpStreamStats`](inbound::RTCInboundRtpStreamStats) or
 /// [`RTCRemoteInboundRtpStreamStats`](remote_inbound::RTCRemoteInboundRtpStreamStats).
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCReceivedRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#receivedrtpstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

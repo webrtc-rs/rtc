@@ -200,12 +200,12 @@
 //! - Mismatched fingerprints indicate MITM attack - abort connection
 //! - Use out-of-band verification for high-security scenarios
 //!
-//! # Specifications
+//! # Specification
 //!
-//! * [W3C RTCCertificate](https://w3c.github.io/webrtc-pc/#dom-rtccertificate)
+//! * [W3C RTCCertificate](https://www.w3.org/TR/webrtc/#dom-rtccertificate)
 //! * [MDN RTCCertificate](https://developer.mozilla.org/en-US/docs/Web/API/RTCCertificate)
-//! * [RFC 5763 - DTLS-SRTP](https://tools.ietf.org/html/rfc5763)
-//! * [RFC 8122 - WebRTC Security Architecture](https://tools.ietf.org/html/rfc8122)
+//! * [RFC 5763 - DTLS-SRTP](https://datatracker.ietf.org/doc/html/rfc5763)
+//! * [RFC 8122 - WebRTC Security Architecture](https://datatracker.ietf.org/doc/html/rfc8122)
 
 use std::ops::Add;
 use std::sync::Arc;
@@ -349,7 +349,7 @@ use shared::error::{Error, Result};
 /// ## Specifications
 ///
 /// * [MDN RTCCertificate](https://developer.mozilla.org/en-US/docs/Web/API/RTCCertificate)
-/// * [W3C RTCCertificate](https://w3c.github.io/webrtc-pc/#dom-rtccertificate)
+/// * [W3C RTCCertificate](https://www.w3.org/TR/webrtc/#dom-rtccertificate)
 #[derive(Clone, Debug)]
 pub struct RTCCertificate {
     /// DTLS certificate containing X.509 certificate chain and private key
@@ -370,6 +370,11 @@ impl RTCCertificate {
     ///
     /// `params` controls X.509 formatting and validity while `provider` owns key generation and
     /// signing. This keeps certificate formatting independent from the primitive backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `scheme` is not supported by `crypto`, if key generation fails, or if
+    /// `params` cannot be encoded into a self-signed certificate.
     pub fn generate(
         crypto: &dyn RTCCrypto,
         scheme: SignatureScheme,
@@ -380,6 +385,11 @@ impl RTCCertificate {
     }
 
     /// Imports a PKCS#8 private key through `provider` and associates it with an existing chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `private_key_der` is not a valid PKCS#8 key for `scheme`, or if
+    /// `crypto` does not support `scheme`.
     pub fn from_pkcs8(
         crypto: &dyn RTCCrypto,
         scheme: SignatureScheme,
@@ -419,6 +429,11 @@ impl RTCCertificate {
     /// [`RTCCrypto::import_signing_key`], or held by an
     /// HSM/KMS — and a fresh self-signed X.509 wrapper is needed. Use
     /// [`generate`](Self::generate) instead when the provider should create the key too.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key does not match `scheme`, or if `params` cannot be encoded
+    /// into a self-signed certificate.
     ///
     /// This is the provider-neutral replacement for the removed `from_key_pair`.
     pub fn generate_from_signing_key(
@@ -605,6 +620,10 @@ impl RTCCertificate {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if the certificate's private key is not exportable — a key held in an
+    /// HSM or KMS has no PKCS#8 bytes to serialize.
     pub fn serialize_pem(&self) -> Result<String> {
         // Encode `expires` as a PEM block.
         //
@@ -668,6 +687,9 @@ impl RTCCertificate {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if `crypto` cannot compute the digest used for the DTLS fingerprint.
     pub fn get_fingerprints(&self, crypto: &dyn RTCCrypto) -> Result<Vec<RTCDtlsFingerprint>> {
         let mut fingerprints = Vec::new();
 

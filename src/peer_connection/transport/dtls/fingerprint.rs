@@ -80,7 +80,7 @@ use shared::error::{Error, Result};
 /// assert!(is_secure_algorithm(&fp));
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [RFC 4572] - Connection-Oriented Media Transport over TLS
 /// - [RFC 8122] - Updates to RFC 4572
@@ -88,7 +88,7 @@ use shared::error::{Error, Result};
 ///
 /// [RFC 4572]: https://datatracker.ietf.org/doc/html/rfc4572
 /// [RFC 8122]: https://datatracker.ietf.org/doc/html/rfc8122
-/// [W3C RTCDtlsFingerprint]: https://w3c.github.io/webrtc-pc/#rtcdtlsfingerprint
+/// [W3C RTCDtlsFingerprint]: https://www.w3.org/TR/webrtc/#rtcdtlsfingerprint
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RTCDtlsFingerprint {
     /// Hash function algorithm name.

@@ -13,7 +13,7 @@
 //!
 //! A chain is a flat list of interceptors ordered by **distance from the wire**: the first is
 //! closest to the network, the last closest to the application. Each interceptor declares that
-//! distance as a [`Slot`](crate::interceptor::Slot), so the position is a property of the
+//! distance as a [`Slot`], so the position is a property of the
 //! interceptor rather than of the order the helpers below happened to be called in — which is what
 //! lets them be called in any order. Direction is a property of the walk rather than of the list:
 //!
@@ -46,8 +46,8 @@
 //! one (FEC repair, a recovered packet), its position stops being a preference and becomes a
 //! correctness property. The named slots carry those rules; one of your own goes at
 //! `Slot::from(n)`, and they are spaced a thousand apart so there is room between any two. The
-//! rules are documented on [`Slot`](crate::interceptor::Slot),
-//! [`Registry`](crate::interceptor::Registry) and on the interceptor trait itself.
+//! rules are documented on [`Slot`],
+//! [`Registry`] and on the interceptor trait itself.
 //!
 //! # Quick Start
 //!
@@ -160,7 +160,7 @@ use shared::error::Result;
 /// - **Simulcast Headers**: Enables RTP extensions for multi-resolution streaming
 /// - **TWCC Receiver**: Generates transport-wide congestion control feedback
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 /// * `media_engine` - The media engine to register RTCP feedback and header extensions
@@ -169,7 +169,7 @@ use shared::error::Result;
 ///
 /// A new registry with the configured interceptor chain.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -188,6 +188,11 @@ use shared::error::Result;
 ///
 /// If you need to customize which interceptors are loaded, copy the code from
 /// this function and remove or modify the unwanted interceptors.
+///
+/// # Errors
+///
+/// Returns an error if a header extension an interceptor requires cannot be registered on the
+/// media engine — see [`MediaEngine::register_header_extension`].
 pub fn register_default_interceptors(
     registry: Registry,
     media_engine: &mut MediaEngine,
@@ -218,12 +223,12 @@ pub fn register_default_interceptors(
 /// 2. Receiver sends RTCP NACK listing missing sequence numbers
 /// 3. Sender retransmits the requested packets from its buffer
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 /// * `media_engine` - The media engine to register NACK feedback capability
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -281,11 +286,11 @@ pub fn configure_nack(registry: Registry, media_engine: &mut MediaEngine) -> Reg
 /// - Interarrival jitter estimate
 /// - Last SR timestamp and delay since last SR
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -313,7 +318,7 @@ pub fn configure_rtcp_reports(registry: Registry) -> Registry {
 /// - **SDES RtpStreamId** (`urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id`): Stream identification
 /// - **SDES RepairedRtpStreamId** (`urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id`): Repair stream identification
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `media_engine` - The media engine to register header extensions
 ///
@@ -321,7 +326,7 @@ pub fn configure_rtcp_reports(registry: Registry) -> Registry {
 ///
 /// Returns an error if header extension registration fails.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::peer_connection::configuration::interceptor_registry::configure_simulcast_extension_headers;
@@ -383,7 +388,7 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 /// Use full TWCC when you need bandwidth estimation in both directions,
 /// such as in a two-way video call where both peers send media.
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 /// * `media_engine` - The media engine to register feedback and header extensions
@@ -392,7 +397,7 @@ pub fn configure_simulcast_extension_headers(media_engine: &mut MediaEngine) -> 
 ///
 /// Returns an error if header extension registration fails.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -459,7 +464,7 @@ pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Res
 /// - The remote peer handles feedback generation
 /// - You want to minimize local processing overhead
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 /// * `media_engine` - The media engine to register feedback and header extensions
@@ -468,7 +473,7 @@ pub fn configure_twcc(registry: Registry, media_engine: &mut MediaEngine) -> Res
 ///
 /// Returns an error if header extension registration fails.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -537,7 +542,7 @@ pub fn configure_twcc_sender_only(
 /// - The remote peer adds TWCC sequence numbers and needs feedback
 /// - You want to help the sender estimate available bandwidth
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `registry` - The interceptor registry to configure
 /// * `media_engine` - The media engine to register feedback and header extensions
@@ -546,7 +551,7 @@ pub fn configure_twcc_sender_only(
 ///
 /// Returns an error if header extension registration fails.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Registry;
@@ -636,7 +641,7 @@ pub enum CongestionFeedback {
 /// Congestion control implies pacing, pacing implies queueing delay, and that is not something an
 /// application should acquire without asking. [`register_default_interceptors`] does not call this.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// use rtc::interceptor::Gcc;
@@ -657,6 +662,9 @@ pub enum CongestionFeedback {
 /// # Ok(())
 /// # }
 /// ```
+/// # Errors
+///
+/// Returns an error if the TWCC header extension cannot be registered on the media engine.
 pub fn configure_congestion_control<E: BandwidthEstimator + 'static>(
     registry: Registry,
     estimator: E,

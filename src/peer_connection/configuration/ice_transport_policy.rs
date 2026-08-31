@@ -54,8 +54,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// ## Specifications
 ///
-/// * [W3C RTCIceTransportPolicy](https://w3c.github.io/webrtc-pc/#rtcicetransportpolicy-enum)
-/// * [RFC 8445 - ICE](https://tools.ietf.org/html/rfc8445)
+/// * [W3C RTCIceTransportPolicy](https://www.w3.org/TR/webrtc/#rtcicetransportpolicy-enum)
+/// * [RFC 8445 - ICE](https://datatracker.ietf.org/doc/html/rfc8445)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RTCIceTransportPolicy {

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// This provides insight into how well the remote peer is receiving the local
 /// peer's transmitted media.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCRemoteInboundRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#remoteinboundrtpstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

@@ -37,7 +37,7 @@ pub(crate) struct RTCRtpTransceiverInternal {
     stopped: bool,
     /// Whether this transceiver was implicitly created while applying a remote offer
     /// (as opposed to being created by the application via `add_track`/`add_transceiver_*`).
-    /// Used by rollback (RFC 8829, Section 5.7): transceivers created by a remote offer that
+    /// Used by rollback (RFC 9429, Section 5.7): transceivers created by a remote offer that
     /// is subsequently rolled back must be stopped and removed, unless a track was later
     /// attached to them via `add_track`.
     created_by_remote_description: bool,
@@ -97,7 +97,7 @@ impl RTCRtpTransceiverInternal {
     ///
     /// # Specification
     ///
-    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtptransceiver-mid).
     pub(crate) fn mid(&self) -> &Option<String> {
         &self.mid
     }
@@ -106,7 +106,7 @@ impl RTCRtpTransceiverInternal {
     ///
     /// # Specification
     ///
-    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtptransceiver-mid).
     pub(crate) fn kind(&self) -> RtpCodecKind {
         self.kind
     }
@@ -274,7 +274,7 @@ impl RTCRtpTransceiverInternal {
     }
 
     /// Disassociates this transceiver from its "m=" section, as required by rollback
-    /// (RFC 8829, Section 5.7). The mid is cleared and the negotiated (current) direction is
+    /// (RFC 9429, Section 5.7). The mid is cleared and the negotiated (current) direction is
     /// reset so the transceiver can be re-associated by a subsequent offer/answer exchange.
     pub(crate) fn disassociate(&mut self) {
         self.mid = None;

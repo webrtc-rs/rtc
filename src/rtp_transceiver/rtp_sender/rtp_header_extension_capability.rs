@@ -4,7 +4,7 @@
 ///
 /// ## Specifications
 ///
-/// * [W3C](https://w3c.github.io/webrtc-pc/#dom-rtcrtpcapabilities-headerextensions)
+/// * [W3C](https://www.w3.org/TR/webrtc/#dom-rtcrtpcapabilities-headerextensions)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpHeaderExtensionCapability {
     /// URI identifying the header extension

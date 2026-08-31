@@ -680,7 +680,7 @@
 //! This implementation follows these specifications:
 //!
 //! - [W3C WebRTC 1.0] - Main WebRTC API specification
-//! - [RFC 8829] - JSEP: JavaScript Session Establishment Protocol  
+//! - [RFC 9429] - JSEP: JavaScript Session Establishment Protocol  
 //! - [RFC 8866] - SDP: Session Description Protocol
 //! - [RFC 8445] - ICE: Interactive Connectivity Establishment
 //! - [RFC 6347] - DTLS: Datagram Transport Layer Security
@@ -688,7 +688,7 @@
 //! - [RFC 3550] - RTP: Real-time Transport Protocol
 //!
 //! [W3C WebRTC 1.0]: https://www.w3.org/TR/webrtc/
-//! [RFC 8829]: https://datatracker.ietf.org/doc/html/rfc8829
+//! [RFC 9429]: https://datatracker.ietf.org/doc/html/rfc9429
 //! [RFC 8866]: https://datatracker.ietf.org/doc/html/rfc8866
 //! [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 //! [RFC 6347]: https://datatracker.ietf.org/doc/html/rfc6347

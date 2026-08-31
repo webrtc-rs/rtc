@@ -16,7 +16,7 @@ use shared::time::SystemInstant;
 ///
 /// This provides insight into the remote peer's transmission characteristics.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCRemoteOutboundRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#remoteoutboundrtpstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

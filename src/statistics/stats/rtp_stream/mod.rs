@@ -27,9 +27,9 @@ pub mod sent;
 /// This type is typically not used directly; instead, use the derived types
 /// for specific stream directions.
 ///
-/// # W3C Reference
+/// # Specification
 ///
-/// See [RTCRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#rtpstreamstats-dict*)
+/// See [RTCRtpStreamStats](https://www.w3.org/TR/webrtc-stats/#streamstats-dict*)
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RTCRtpStreamStats {

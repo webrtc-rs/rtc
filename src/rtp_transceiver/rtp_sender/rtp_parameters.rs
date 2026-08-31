@@ -6,7 +6,7 @@ use crate::rtp_transceiver::rtp_sender::rtp_header_extension_parameters::RTCRtpH
 ///
 /// ## Specifications
 ///
-/// * [W3C](https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpparameters-members)
+/// * [W3C](https://www.w3.org/TR/webrtc/#dictionary-rtcrtpparameters-members)
 #[derive(Default, Debug, Clone)]
 pub struct RTCRtpParameters {
     /// Negotiated RTP header extensions

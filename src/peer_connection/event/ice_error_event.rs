@@ -70,7 +70,7 @@ pub struct RTCPeerConnectionIceErrorEvent {
 
     /// Numeric STUN error code.
     ///
-    /// A numeric error code in the range 300-699 per RFC 5389.
+    /// A numeric error code in the range 300-699 per RFC 8489 §14.8.
     pub error_code: u16,
 
     /// Human-readable error description.

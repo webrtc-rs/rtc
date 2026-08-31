@@ -132,17 +132,17 @@
 //! - **Codec information**: Supported formats and parameters
 //! - **DTLS fingerprints**: For secure communication
 //!
-//! # Specifications
+//! # Specification
 //!
 //! - [RFC 8866] - SDP: Session Description Protocol
 //! - [RFC 3264] - An Offer/Answer Model with SDP
-//! - [RFC 8829] - JavaScript Session Establishment Protocol (JSEP)
+//! - [RFC 9429] - JavaScript Session Establishment Protocol (JSEP)
 //! - [W3C WebRTC Specification]
 //!
 //! [RFC 8866]: https://datatracker.ietf.org/doc/html/rfc8866
 //! [RFC 3264]: https://datatracker.ietf.org/doc/html/rfc3264
-//! [RFC 8829]: https://datatracker.ietf.org/doc/html/rfc8829
-//! [W3C WebRTC Specification]: https://w3c.github.io/webrtc-pc/#session-description-model
+//! [RFC 9429]: https://datatracker.ietf.org/doc/html/rfc9429
+//! [W3C WebRTC Specification]: https://www.w3.org/TR/webrtc/#session-description-model
 
 //TODO: #[cfg(test)]
 //TODO: mod sdp_test;
@@ -711,7 +711,7 @@ impl RTCPeerConnection {
             }
 
             // Explicitly reject track if we don't have the codec
-            // RFC 8829 Section 5.3.1: Set port=0 to reject, further processing can be skipped
+            // RFC 9429 Section 5.3.1: Set port=0 to reject, further processing can be skipped
             // However, mid attribute is still needed for offer/answer correlation with BUNDLE
             d = d.with_media(
                 MediaDescription {
@@ -1167,7 +1167,7 @@ impl RTCPeerConnection {
         }
 
         if params.is_ice_lite {
-            // RFC 5245 S15.3
+            // RFC 8839 §5.3
             d = d.with_property_attribute(ATTR_KEY_ICELITE.to_owned());
         }
 
@@ -1476,7 +1476,7 @@ pub(crate) fn rtp_extensions_from_media_description(
 /// update_sdp_origin saves sdp.Origin in PeerConnection when creating 1st local SDP;
 /// for subsequent calling, it updates Origin for SessionDescription from saved one
 /// and increments session version by one.
-/// <https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-25#section-5.2.2>
+/// <https://datatracker.ietf.org/doc/html/rfc9429#section-5.2.2>
 pub(crate) fn update_sdp_origin(origin: &mut Origin, d: &mut SessionDescription) {
     if origin.session_version == 0 {
         // store
@@ -1515,7 +1515,7 @@ pub(crate) fn is_ext_map_allow_mixed_set(
 /// the presence of "trickle" in space-separated "ice-options" attribute values
 /// at either session level or media level.
 ///
-/// # Arguments
+/// # Parameters
 ///
 /// * `desc` - The parsed SDP session description
 ///

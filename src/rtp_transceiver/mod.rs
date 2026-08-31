@@ -121,7 +121,7 @@ pub mod rtp_sender;
 ///
 /// # Specification
 ///
-/// See [RFC 3550 Section 3](https://tools.ietf.org/html/rfc3550#section-3).
+/// See [RFC 3550 Section 3](https://datatracker.ietf.org/doc/html/rfc3550#section-3).
 #[allow(clippy::upper_case_acronyms)]
 pub type SSRC = u32;
 
@@ -132,7 +132,7 @@ pub type SSRC = u32;
 ///
 /// # Specification
 ///
-/// See [RFC 3550 Section 3](https://tools.ietf.org/html/rfc3550#section-3).
+/// See [RFC 3550 Section 3](https://datatracker.ietf.org/doc/html/rfc3550#section-3).
 pub type PayloadType = u8;
 
 /// RTP stream identifier.
@@ -141,7 +141,7 @@ pub type PayloadType = u8;
 ///
 /// # Specification
 ///
-/// See [RFC 8852 Section 3.1](https://tools.ietf.org/html/rfc8852#section-3.1).
+/// See [RFC 8852 Section 3.1](https://datatracker.ietf.org/doc/html/rfc8852#section-3.1).
 pub type RtpStreamId = String;
 
 /// Repaired RTP stream identifier.
@@ -150,7 +150,7 @@ pub type RtpStreamId = String;
 ///
 /// # Specification
 ///
-/// See [RFC 8852 Section 3.2](https://tools.ietf.org/html/rfc8852#section-3.2).
+/// See [RFC 8852 Section 3.2](https://datatracker.ietf.org/doc/html/rfc8852#section-3.2).
 pub type RepairedStreamId = String;
 
 /// Internal identifier for an RTP transceiver.
@@ -229,14 +229,16 @@ impl RTCRtpTransceiver<'_> {
     ///
     /// # Specification
     ///
-    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiver-mid).
+    /// See [RTCRtpTransceiver.mid](https://www.w3.org/TR/webrtc/#dom-rtptransceiver-mid).
     pub fn mid(&self) -> &Option<String> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
         self.peer_connection.rtp_transceivers[self.id].mid()
     }
 
-    /// sender returns the RTPTransceiver's RTPSender if it has one
+    /// Returns the id of this transceiver's [`RTCRtpSender`], if it has one.
+    ///
+    /// [`RTCRtpSender`]: crate::rtp_transceiver::rtp_sender::RTCRtpSender
     pub fn sender(&self) -> Option<RTCRtpSenderId> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
@@ -250,7 +252,9 @@ impl RTCRtpTransceiver<'_> {
         }
     }
 
-    /// receiver returns the RTPTransceiver's RTPReceiver if it has one
+    /// Returns the id of this transceiver's [`RTCRtpReceiver`], if it has one.
+    ///
+    /// [`RTCRtpReceiver`]: crate::rtp_transceiver::rtp_receiver::RTCRtpReceiver
     pub fn receiver(&self) -> Option<RTCRtpReceiverId> {
         // peer_connection is mutable borrow, its rtp_transceivers won't be resized,
         // so, [self.id] here is safe.
@@ -324,6 +328,10 @@ impl RTCRtpTransceiver<'_> {
     ///
     /// After calling this method, the transceiver will no longer send or receive media.
     /// This operation cannot be undone.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sender's interceptor bindings cannot be torn down.
     ///
     /// # Specification
     ///

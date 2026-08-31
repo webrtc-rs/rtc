@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// W3C WebRTC Statistics API. It provides information about certificates
 /// used during the DTLS handshake.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCCertificateStats](https://www.w3.org/TR/webrtc-stats/#certificatestats-dict*)
 #[derive(Debug, Serialize, Deserialize)]

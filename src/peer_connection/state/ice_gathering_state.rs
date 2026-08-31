@@ -103,14 +103,14 @@ use std::fmt;
 /// # }
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [W3C RTCPeerConnection.iceGatheringState]
 /// - [MDN RTCPeerConnection.iceGatheringState]
 /// - [RFC 8445] - ICE Protocol
 /// - [RFC 8838] - Trickle ICE
 ///
-/// [W3C RTCPeerConnection.iceGatheringState]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-ice-gathering-state
+/// [W3C RTCPeerConnection.iceGatheringState]: https://www.w3.org/TR/webrtc/#dom-peerconnection-ice-gathering-state
 /// [MDN RTCPeerConnection.iceGatheringState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/iceGatheringState
 /// [RFC 8445]: https://datatracker.ietf.org/doc/html/rfc8445
 /// [RFC 8838]: https://datatracker.ietf.org/doc/html/rfc8838

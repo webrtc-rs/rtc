@@ -208,11 +208,11 @@
 //! - **Negotiate** - Try to multiplex, fall back to separate ports
 //! - **Require** - Require multiplexing (standard for WebRTC, recommended)
 //!
-//! # Specifications
+//! # Specification
 //!
-//! * [W3C RTCConfiguration](https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary)
-//! * [RFC 8834 - WebRTC Transports](https://tools.ietf.org/html/rfc8834)
-//! * [RFC 8445 - ICE](https://tools.ietf.org/html/rfc8445)
+//! * [W3C RTCConfiguration](https://www.w3.org/TR/webrtc/#rtcconfiguration-dictionary)
+//! * [RFC 8834 - WebRTC Transports](https://datatracker.ietf.org/doc/html/rfc8834)
+//! * [RFC 8445 - ICE](https://datatracker.ietf.org/doc/html/rfc8445)
 
 use crate::peer_connection::certificate::RTCCertificate;
 pub use crate::peer_connection::transport::ice::server::RTCIceServer;
@@ -246,7 +246,7 @@ pub(crate) const UNSPECIFIED_STR: &str = "Unspecified";
 ///
 /// * [W3C]
 ///
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcconfiguration-dictionary
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtcconfiguration-dictionary
 #[derive(Default, Clone, Debug)]
 pub struct RTCConfiguration {
     /// ice_servers defines a slice describing servers available to be used by
@@ -341,7 +341,7 @@ impl RTCConfiguration {
     }
 
     /// get_ice_servers side-steps the strict parsing mode of the ice package
-    /// (as defined in https://tools.ietf.org/html/rfc7064) by copying and then
+    /// (as defined in https://datatracker.ietf.org/doc/html/rfc7064) by copying and then
     /// stripping any erroneous queries from "stun(s):" URLs before parsing.
     #[allow(clippy::assigning_clones)]
     fn get_ice_servers(&self) -> Vec<RTCIceServer> {

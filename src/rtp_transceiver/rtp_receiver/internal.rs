@@ -28,7 +28,7 @@ use std::time::Duration;
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/RTCRtpReceiver
-/// [W3C]: https://w3c.github.io/webrtc-pc/#rtcrtpreceiver-interface
+/// [W3C]: https://www.w3.org/TR/webrtc/#rtcrtpreceiver-interface
 #[derive(Default, Debug, Clone)]
 pub(crate) struct RTCRtpReceiverInternal {
     kind: RtpCodecKind,
@@ -228,8 +228,8 @@ impl RTCRtpReceiverInternal {
     /// `StreamInfo`, telling an interceptor which SSRC carries repair for it. This mirrors what
     /// the sender side already does in `interceptor_local_streams_op`.
     ///
-    /// [RFC 4588]: https://www.rfc-editor.org/rfc/rfc4588
-    /// [RFC 8888]: https://www.rfc-editor.org/rfc/rfc8888
+    /// [RFC 4588]: https://datatracker.ietf.org/doc/html/rfc4588
+    /// [RFC 8888]: https://datatracker.ietf.org/doc/html/rfc8888
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn interceptor_remote_stream_op(
         interceptor: &mut dyn Interceptor,
@@ -349,7 +349,7 @@ mod repair_association_test {
     //! the interceptor silently never binds, which is invisible until recovery quietly does not
     //! happen.
     //!
-    //! [RFC 4588]: https://www.rfc-editor.org/rfc/rfc4588
+    //! [RFC 4588]: https://datatracker.ietf.org/doc/html/rfc4588
 
     // Imported explicitly rather than with `use super::*`: the parent module has
     // `shared::error::Result` in scope, and the interceptor macros generate `Result<_, _>`.

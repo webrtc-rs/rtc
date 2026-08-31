@@ -174,13 +174,13 @@ impl fmt::Display for StateChangeOp {
 /// # }
 /// ```
 ///
-/// # Specifications
+/// # Specification
 ///
 /// - [W3C RTCPeerConnection.signalingState]
 /// - [MDN RTCPeerConnection.signalingState]
 /// - [RFC 3264] - Offer/Answer Model
 ///
-/// [W3C RTCPeerConnection.signalingState]: https://w3c.github.io/webrtc-pc/#dom-peerconnection-signaling-state
+/// [W3C RTCPeerConnection.signalingState]: https://www.w3.org/TR/webrtc/#dom-peerconnection-signaling-state
 /// [MDN RTCPeerConnection.signalingState]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/signalingState
 /// [RFC 3264]: https://datatracker.ietf.org/doc/html/rfc3264
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]

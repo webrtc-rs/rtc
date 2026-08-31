@@ -10,7 +10,7 @@ use std::fmt;
 /// * [W3C]
 ///
 /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/API/IceTransport/state
-/// [W3C]: https://w3c.github.io/webrtc-pc/#dom-rtcicetransportstate
+/// [W3C]: https://www.w3.org/TR/webrtc/#dom-rtcicetransportstate
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RTCIceTransportState {

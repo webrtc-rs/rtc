@@ -42,7 +42,7 @@ pub struct RTCAnswerOptions {
 ///
 /// ## Specifications
 ///
-/// * [W3C RTCOfferOptions](https://w3c.github.io/webrtc-pc/#dictionary-rtcofferoptions-members)
+/// * [W3C RTCOfferOptions](https://www.w3.org/TR/webrtc/#dictionary-rtcofferoptions-members)
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone)]
 pub struct RTCOfferOptions {
     /// Force ICE restart with new credentials.

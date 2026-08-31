@@ -60,7 +60,7 @@ impl From<CandidatePairState> for RTCStatsIceCandidatePairState {
 /// W3C WebRTC Statistics API. It provides detailed information about
 /// connectivity checks and data transfer for a specific candidate pair.
 ///
-/// # W3C Reference
+/// # Specification
 ///
 /// See [RTCIceCandidatePairStats](https://www.w3.org/TR/webrtc-stats/#candidatepair-dict*)
 #[derive(Debug, Serialize, Deserialize)]

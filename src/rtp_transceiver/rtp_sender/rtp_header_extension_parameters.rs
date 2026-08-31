@@ -5,7 +5,7 @@
 ///
 /// ## Specifications
 ///
-/// * [W3C](https://w3c.github.io/webrtc-pc/#dictionary-rtcrtpheaderextensionparameters-members)
+/// * [W3C](https://www.w3.org/TR/webrtc/#dictionary-rtcrtpheaderextensionparameters-members)
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RTCRtpHeaderExtensionParameters {
     /// URI identifying the header extension

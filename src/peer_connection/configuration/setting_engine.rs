@@ -783,7 +783,7 @@ impl SettingEngineBuilder {
     /// # }
     /// ```
     ///
-    /// # Notes
+    /// # Note
     ///
     /// - With `Host` type, the private IP is not advertised to the peer
     /// - With `Srflx` type, both private and public IPs are available
@@ -1067,7 +1067,7 @@ impl SettingEngineBuilder {
     ///
     /// # Note
     ///
-    /// This is non-standard behavior per [RFC 8445 §5.1.1.1](https://www.rfc-editor.org/rfc/rfc8445#section-5.1.1.1).
+    /// This is non-standard behavior per [RFC 8445 §5.1.1.1](https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.1.1).
     /// Use with caution.
     pub fn with_include_loopback_candidate(mut self, allow_loopback: bool) -> Self {
         self.0.candidates.include_loopback_candidate = allow_loopback;
@@ -1108,9 +1108,9 @@ impl SettingEngineBuilder {
     ///
     /// # See Also
     ///
-    /// - [RFC 8445 §9 - ICE Restarts](https://www.rfc-editor.org/rfc/rfc8445#section-9)
+    /// - [RFC 8445 §9 - ICE Restarts](https://datatracker.ietf.org/doc/html/rfc8445#section-9)
     ///
-    /// [RFC 8445 §9]: https://www.rfc-editor.org/rfc/rfc8445#section-9
+    /// [RFC 8445 §9]: https://datatracker.ietf.org/doc/html/rfc8445#section-9
     pub fn with_discard_local_candidates_during_ice_restart(mut self, discard: bool) -> Self {
         self.0
             .candidates
@@ -1281,7 +1281,7 @@ impl SettingEngineBuilder {
     /// # }
     /// ```
     ///
-    /// # Notes
+    /// # Note
     ///
     /// - MIDs should be generated without leaking user information (e.g., randomly)
     /// - MIDs should be 3 bytes or less for efficient RTP header extension encoding
@@ -1351,7 +1351,7 @@ impl SettingEngineBuilder {
     /// connections; but a smaller window can throttle throughput on high-latency,
     /// high-bandwidth paths, where more data must be in flight to keep the pipe full.
     ///
-    /// **Bounds.** RFC 4960 §6 requires an advertised initial a_rwnd of at least **1500
+    /// **Bounds.** RFC 9260 §3.3.2 requires an advertised initial a_rwnd of at least **1500
     /// bytes**; smaller values (including `0`) are raised to that floor here, because a
     /// sub-1500 window makes the peer reject this endpoint's INIT/INIT-ACK and the SCTP
     /// association never establishes. The window should also be **≥ the largest SCTP
@@ -1361,16 +1361,16 @@ impl SettingEngineBuilder {
     /// "unbounded" (unlike some other knobs) — to keep the default window, leave this
     /// unset (the default is `INITIAL_RECV_BUF_SIZE`, 1 MiB).
     pub fn with_sctp_max_receive_buffer_size(mut self, size: u32) -> Self {
-        // RFC 4960 §6 (User Data Transfer) forbids advertising an initial a_rwnd below
-        // 1500 bytes ("An SCTP receiver MUST be able to receive a minimum of 1500 bytes in
-        // one SCTP packet. This means that an SCTP endpoint MUST NOT indicate less than
-        // 1500 bytes in its initial a_rwnd sent in the INIT or INIT ACK."). This crate
+        // RFC 9260 §3.3.2 (INIT) and §3.3.3 (INIT ACK) forbid advertising an initial a_rwnd
+        // below 1500 bytes ("The Advertised Receiver Window Credit MUST NOT be smaller than
+        // 1500. A receiver of an INIT chunk with the a_rwnd value set to a value smaller than
+        // 1500 MUST discard the packet [and] SHOULD send [...] an ABORT chunk."). This crate
         // enforces it in `ChunkInit::check()` (ErrInitAdvertisedReceiver1500), so a
         // sub-1500 (or 0) value would silently break the handshake. Clamp up to that floor.
         const MIN_SCTP_RECEIVE_BUFFER_SIZE: u32 = 1500;
         if size < MIN_SCTP_RECEIVE_BUFFER_SIZE {
             log::warn!(
-                "sctp receive buffer size {size} is below the RFC 4960 minimum; raising to \
+                "sctp receive buffer size {size} is below the RFC 9260 minimum; raising to \
                  {MIN_SCTP_RECEIVE_BUFFER_SIZE} bytes"
             );
         }
