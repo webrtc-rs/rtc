@@ -392,6 +392,28 @@ impl Client {
         }
     }
 
+    /// Whether this client is waiting on a response for transaction `id`.
+    ///
+    /// A STUN response belongs to whoever sent the matching request — [RFC 5389 §7.3.3] matches
+    /// them by transaction ID, and nothing else identifies the owner. That is only a question
+    /// worth asking when several STUN users share one socket, which is exactly the situation a
+    /// host is in when it points a STUN gatherer and this client at the same server address: both
+    /// see every response, and the four-tuple is identical for both, so addresses cannot say whose
+    /// a response is.
+    ///
+    /// Such a host calls this to route a response, rather than guessing from the peer address and
+    /// handing it to a client that will silently discard it — [`handle_read`](Self::handle_read)
+    /// drops a response with no matching transaction, as it must.
+    ///
+    /// Applies to responses only. TURN ChannelData carries no transaction ID at all, and
+    /// indications are not transaction-matched; both are routed by address.
+    ///
+    /// [RFC 5389 §7.3.3]: https://www.rfc-editor.org/rfc/rfc5389#section-7.3.3
+    #[must_use]
+    pub fn has_transaction(&self, id: &TransactionId) -> bool {
+        self.tr_map.find(id).is_some()
+    }
+
     /// send_binding_request_to sends a new STUN request to the given transport address
     /// return key to find out corresponding Event either BindingResponse or BindingRequestTimeout
     pub fn send_binding_request_to(&mut self, to: SocketAddr) -> Result<TransactionId> {

@@ -39,6 +39,33 @@ fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> 
     Ok((udp_socket, client))
 }
 
+/// A host demultiplexing STUN on a socket it shares — a STUN gatherer and this client pointed at
+/// one server address — routes a response by transaction id, because nothing else identifies its
+/// owner. See webrtc-rs/webrtc#890.
+#[test]
+fn test_has_transaction_reports_outstanding_requests() -> Result<()> {
+    let (_conn, mut client) = create_listening_test_client(0)?;
+    let server = "127.0.0.1:3478".parse::<std::net::SocketAddr>().unwrap();
+
+    let unknown = TransactionId::new();
+    assert!(
+        !client.has_transaction(&unknown),
+        "a fresh client is waiting on nothing"
+    );
+
+    let tid = client.send_binding_request_to(server)?;
+    assert!(
+        client.has_transaction(&tid),
+        "the transaction just started is outstanding"
+    );
+    assert!(
+        !client.has_transaction(&unknown),
+        "an id this client never sent is not its own"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn test_client_with_stun_send_binding_request() -> Result<()> {
     //env_logger::init();
