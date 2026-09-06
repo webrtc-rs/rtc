@@ -411,9 +411,12 @@ fn establish_session_pair(
     let _ = pair
         .client_conn_mut(client_ch)
         .open_stream(si, PayloadProtocolIdentifier::Binary)?;
-    let _ = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&hello_msg, PayloadProtocolIdentifier::Dcep)?;
+    let now = pair.time;
+    let _ = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &hello_msg,
+        PayloadProtocolIdentifier::Dcep,
+    )?;
     pair.drive();
 
     {
@@ -487,9 +490,12 @@ fn test_assoc_reliable_simple() -> Result<()> {
         assert_eq!(0, a.buffered_amount(), "incorrect bufferedAmount");
     }
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n, "unexpected length of received data");
     {
         let a = pair.client_conn_mut(client_ch);
@@ -535,9 +541,10 @@ fn test_assoc_reliable_write_chunk() -> Result<()> {
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
     {
+        let now = pair.time;
         let mut s = pair.client_stream(client_ch, si)?;
         s.set_default_payload_type(PayloadProtocolIdentifier::Binary)?;
-        let n = s.write_chunk(&msg)?;
+        let n = s.write_chunk(now, &msg)?;
         assert_eq!(msg.len(), n, "unexpected length of written data");
     }
 
@@ -583,7 +590,9 @@ fn test_assoc_reliable_ordered_reordered() -> Result<()> {
     }
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -592,7 +601,9 @@ fn test_assoc_reliable_ordered_reordered() -> Result<()> {
     pair.client.delay_outbound(); // Delay it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -672,7 +683,9 @@ fn test_assoc_reliable_ordered_fragmented_then_defragmented() -> Result<()> {
         0,
     )?;
 
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbufl.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -734,7 +747,9 @@ fn test_assoc_reliable_unordered_fragmented_then_defragmented() -> Result<()> {
         0,
     )?;
 
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbufl.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -793,7 +808,9 @@ fn test_assoc_reliable_unordered_ordered() -> Result<()> {
     )?;
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -802,7 +819,9 @@ fn test_assoc_reliable_unordered_ordered() -> Result<()> {
     pair.client.delay_outbound(); // Delay it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -870,17 +889,23 @@ fn test_assoc_reliable_retransmission() -> Result<()> {
 
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg1, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg1,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg1.len(), n, "unexpected length of received data");
     pair.drive_client(); // send data to server
     pair.server.inbound.clear(); // Lose it
     debug!("dropping packet");
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg2, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg2,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg2.len(), n, "unexpected length of received data");
 
     pair.drive();
@@ -934,9 +959,12 @@ fn test_assoc_reliable_short_buffer() -> Result<()> {
         assert_eq!(0, a.buffered_amount(), "incorrect bufferedAmount");
     }
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n, "unexpected length of received data");
     {
         let a = pair.client_conn_mut(client_ch);
@@ -1001,7 +1029,9 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
     //br.drop_next_nwrites(0, 1).await; // drop the first packet (second one should be sacked)
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1011,7 +1041,9 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
     debug!("dropping packet");
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1079,8 +1111,12 @@ fn test_forward_tsn_stream_map_populated_then_cleared() -> Result<()> {
     // Send ordered ssn=0 and lose it in flight -> it becomes abandoned.
     let mut m0 = sbuf.clone();
     m0[0..4].copy_from_slice(&0u32.to_be_bytes());
-    pair.client_stream(client_ch, si)?
-        .write_sctp(&Bytes::from(m0), PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &Bytes::from(m0),
+        PayloadProtocolIdentifier::Binary,
+    )?;
     pair.drive_client();
     pair.server.inbound.clear(); // drop ssn=0
 
@@ -1088,8 +1124,12 @@ fn test_forward_tsn_stream_map_populated_then_cleared() -> Result<()> {
     // must report the stream sequence so the receiver releases ssn=1.
     let mut m1 = sbuf.clone();
     m1[0..4].copy_from_slice(&1u32.to_be_bytes());
-    pair.client_stream(client_ch, si)?
-        .write_sctp(&Bytes::from(m1), PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &Bytes::from(m1),
+        PayloadProtocolIdentifier::Binary,
+    )?;
     pair.drive();
 
     // (1) Population check: the receiver skipped ssn=0 and delivered ssn=1.
@@ -1150,7 +1190,9 @@ fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
     //br.drop_next_nwrites(0, 1).await; // drop the first packet (second one should be sacked)
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1159,7 +1201,9 @@ fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
     pair.server.inbound.clear(); // Lose it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1224,7 +1268,9 @@ fn test_assoc_unreliable_rexmit_unordered_no_fragment() -> Result<()> {
     //br.drop_next_nwrites(0, 1).await; // drop the first packet (second one should be sacked)
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1233,7 +1279,9 @@ fn test_assoc_unreliable_rexmit_unordered_no_fragment() -> Result<()> {
     pair.server.inbound.clear(); // Lose it
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1296,7 +1344,9 @@ fn test_assoc_unreliable_rexmit_unordered_fragment() -> Result<()> {
         .set_reliability_params(true, ReliabilityType::Rexmit, 0)?; // doesn't matter
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1306,7 +1356,9 @@ fn test_assoc_unreliable_rexmit_unordered_fragment() -> Result<()> {
     //debug!("outbound len={}", pair.client.outbound.len());
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1380,7 +1432,9 @@ fn test_assoc_unreliable_rexmit_timed_ordered() -> Result<()> {
     //br.drop_next_nwrites(0, 1).await; // drop the first packet (second one should be sacked)
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1389,7 +1443,9 @@ fn test_assoc_unreliable_rexmit_timed_ordered() -> Result<()> {
     pair.client.outbound.clear();
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1454,7 +1510,9 @@ fn test_assoc_unreliable_rexmit_timed_unordered() -> Result<()> {
     //br.drop_next_nwrites(0, 1).await; // drop the first packet (second one should be sacked)
 
     sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1463,7 +1521,9 @@ fn test_assoc_unreliable_rexmit_timed_unordered() -> Result<()> {
     pair.client.outbound.clear();
 
     sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1541,7 +1601,9 @@ fn test_assoc_congestion_control_fast_retransmission() -> Result<()> {
 
     for i in 0..4u32 {
         sbuf[0..4].copy_from_slice(&i.to_be_bytes());
+        let now = pair.time;
         let n = pair.client_stream(client_ch, si)?.write_sctp(
+            now,
             &Bytes::from(sbuf.clone()),
             PayloadProtocolIdentifier::Binary,
         )?;
@@ -1636,7 +1698,9 @@ fn test_assoc_congestion_control_congestion_avoidance() -> Result<()> {
 
     for i in 0..n_packets_to_send {
         sbuf[0..4].copy_from_slice(&i.to_be_bytes());
+        let now = pair.time;
         let n = pair.client_stream(client_ch, si)?.write_sctp(
+            now,
             &Bytes::from(sbuf.clone()),
             PayloadProtocolIdentifier::Binary,
         )?;
@@ -1759,7 +1823,9 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
 
     for i in 0..n_packets_to_send {
         sbuf[0..4].copy_from_slice(&i.to_be_bytes());
+        let now = pair.time;
         let n = pair.client_stream(client_ch, si)?.write_sctp(
+            now,
             &Bytes::from(sbuf.clone()),
             PayloadProtocolIdentifier::Binary,
         )?;
@@ -1868,7 +1934,9 @@ fn test_assoc_delayed_ack() -> Result<()> {
         pair.server_conn_mut(server_ch).stats.reset();
     }
 
+    let now = pair.time;
     let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
         &Bytes::from(sbuf.clone()),
         PayloadProtocolIdentifier::Binary,
     )?;
@@ -1954,9 +2022,12 @@ fn test_assoc_reset_close_one_way() -> Result<()> {
         assert_eq!(0, a.buffered_amount(), "incorrect bufferedAmount");
     }
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n, "unexpected length of received data");
     {
         let a = pair.client_conn_mut(client_ch);
@@ -1979,7 +2050,8 @@ fn test_assoc_reset_close_one_way() -> Result<()> {
                 }
 
                 debug!("s0.close");
-                pair.client_stream(client_ch, si)?.stop()?; // send reset
+                let now = pair.time;
+                pair.client_stream(client_ch, si)?.stop(now)?; // send reset
 
                 pair.step();
             }
@@ -2013,9 +2085,12 @@ fn test_assoc_reset_close_both_ways() -> Result<()> {
         assert_eq!(0, a.buffered_amount(), "incorrect bufferedAmount");
     }
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n, "unexpected length of received data");
     {
         let a = pair.client_conn_mut(client_ch);
@@ -2065,10 +2140,12 @@ fn test_assoc_reset_close_both_ways() -> Result<()> {
         }
 
         if pair.client_stream(client_ch, si).is_ok() {
-            pair.client_stream(client_ch, si)?.stop()?; // send reset
+            let now = pair.time;
+            pair.client_stream(client_ch, si)?.stop(now)?; // send reset
         }
         if pair.server_stream(server_ch, si).is_ok() {
-            pair.server_stream(server_ch, si)?.stop()?; // send reset
+            let now = pair.time;
+            pair.server_stream(server_ch, si)?.stop(now)?; // send reset
         }
 
         pair.step();
@@ -2363,7 +2440,9 @@ fn test_old_rtx_on_regular_acks() -> Result<()> {
     for i in 0..20u32 {
         //println!("sending packet {}", i);
         sbuf[0..4].copy_from_slice(&i.to_be_bytes());
+        let now = pair.time;
         let n = pair.client_stream(client_ch, si)?.write_sctp(
+            now,
             &Bytes::from(sbuf.clone()),
             PayloadProtocolIdentifier::Binary,
         )?;
@@ -2826,12 +2905,16 @@ fn kps_816_write_then_reset_delivered_in_order_survives() -> Result<()> {
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
+    let now = pair.time;
     // Write and reset with no server read in between.
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg.clone().into(), PayloadProtocolIdentifier::Binary)?;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg.clone().into(),
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n);
-    pair.client_stream(client_ch, si)?.stop()?; // RFC 6525 outgoing reset
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.stop(now)?; // RFC 6525 outgoing reset
 
     // Flush the client's packets into the server's inbound queue, then feed
     // them to the server the way a real rtc application would consume them.
@@ -2979,11 +3062,15 @@ fn kps_repro_816_reordered_reset_before_data_must_not_lose_data() -> Result<()> 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
-    let n = pair
-        .client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    let n = pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &msg,
+        PayloadProtocolIdentifier::Binary,
+    )?;
     assert_eq!(msg.len(), n);
-    pair.client_stream(client_ch, si)?.stop()?;
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.stop(now)?;
 
     pair.drive_client();
     let n_packets = pair.server.inbound.len();
@@ -3039,8 +3126,9 @@ fn kps_816_close_unregisters_streams_holding_unread_data() -> Result<()> {
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
+    let now = pair.time;
     pair.client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
+        .write_sctp(now, &msg, PayloadProtocolIdentifier::Binary)?;
     pair.drive_client();
     let _ = deliver_to_server_rtc_style_no_read(&mut pair, server_ch);
 
@@ -3099,9 +3187,11 @@ fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> 
     let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
     establish_session_pair(&mut pair, client_ch, server_ch, si)?;
 
+    let now = pair.time;
     pair.client_stream(client_ch, si)?
-        .write_sctp(&msg, PayloadProtocolIdentifier::Binary)?;
-    pair.client_stream(client_ch, si)?.stop()?;
+        .write_sctp(now, &msg, PayloadProtocolIdentifier::Binary)?;
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.stop(now)?;
     pair.drive_client();
 
     // Reset ahead of the data, and the application does not read: the reset must

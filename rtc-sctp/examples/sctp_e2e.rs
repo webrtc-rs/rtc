@@ -198,7 +198,7 @@ fn main() {
             let mut stream = assoc.stream(0).unwrap();
             while sent < num_msgs && stream.buffered_amount().unwrap() < SEND_BUF_CAP {
                 stream
-                    .write_sctp(&msg, PayloadProtocolIdentifier::Binary)
+                    .write_sctp(now, &msg, PayloadProtocolIdentifier::Binary)
                     .unwrap();
                 sent += 1;
                 wrote = true;

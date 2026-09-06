@@ -9,6 +9,7 @@ use crate::util::{ByteSlice, BytesArray, BytesChunk, BytesSource};
 use bytes::Bytes;
 use log::{debug, error, trace};
 use std::fmt;
+use std::time::Instant;
 
 /// Identifier for a stream within a particular association
 pub type StreamId = u16;
@@ -139,8 +140,16 @@ impl Stream<'_> {
     }
 
     /// write_sctp writes len(p) bytes from p to the DTLS connection
-    pub fn write_sctp(&mut self, p: &Bytes, ppi: PayloadProtocolIdentifier) -> Result<usize> {
-        self.write_source(&mut BytesChunk::new(p), ppi)
+    ///
+    /// `now` is the instant the message is handed to the stack. See the note on
+    /// [`Stream`] for why it is a parameter.
+    pub fn write_sctp(
+        &mut self,
+        now: Instant,
+        p: &Bytes,
+        ppi: PayloadProtocolIdentifier,
+    ) -> Result<usize> {
+        self.write_source(now, &mut BytesChunk::new(p), ppi)
     }
 
     /// Send data on the given stream.
@@ -148,20 +157,29 @@ impl Stream<'_> {
     /// Uses the deafult payload protocol (PPI).
     ///
     /// Returns the number of bytes successfully written.
-    pub fn write(&mut self, data: &[u8]) -> Result<usize> {
-        self.write_with_ppi(data, self.get_default_payload_type()?)
+    pub fn write(&mut self, now: Instant, data: &[u8]) -> Result<usize> {
+        self.write_with_ppi(now, data, self.get_default_payload_type()?)
     }
 
     /// Send data on the given stream, with a specific payload protocol.
     ///
     /// Returns the number of bytes successfully written.
-    pub fn write_with_ppi(&mut self, data: &[u8], ppi: PayloadProtocolIdentifier) -> Result<usize> {
-        self.write_source(&mut ByteSlice::from_slice(data), ppi)
+    pub fn write_with_ppi(
+        &mut self,
+        now: Instant,
+        data: &[u8],
+        ppi: PayloadProtocolIdentifier,
+    ) -> Result<usize> {
+        self.write_source(now, &mut ByteSlice::from_slice(data), ppi)
     }
 
     /// write writes len(p) bytes from p with the default Payload Protocol Identifier
-    pub fn write_chunk(&mut self, p: &Bytes) -> Result<usize> {
-        self.write_source(&mut BytesChunk::new(p), self.get_default_payload_type()?)
+    pub fn write_chunk(&mut self, now: Instant, p: &Bytes) -> Result<usize> {
+        self.write_source(
+            now,
+            &mut BytesChunk::new(p),
+            self.get_default_payload_type()?,
+        )
     }
 
     /// Send an owned [`Bytes`] on the stream with a specific payload protocol.
@@ -174,10 +192,11 @@ impl Stream<'_> {
     /// Returns the number of bytes successfully written.
     pub fn write_chunk_with_ppi(
         &mut self,
+        now: Instant,
         data: &Bytes,
         ppi: PayloadProtocolIdentifier,
     ) -> Result<usize> {
-        self.write_source(&mut BytesChunk::new(data), ppi)
+        self.write_source(now, &mut BytesChunk::new(data), ppi)
     }
 
     /// Send data on the given stream
@@ -186,8 +205,9 @@ impl Stream<'_> {
     /// Note that this method might also write a partial chunk. In this case
     /// it will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
-    pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<usize> {
+    pub fn write_chunks(&mut self, now: Instant, data: &mut [Bytes]) -> Result<usize> {
         self.write_source(
+            now,
             &mut BytesArray::from_chunks(data),
             self.get_default_payload_type()?,
         )
@@ -196,6 +216,7 @@ impl Stream<'_> {
     /// write_source writes BytesSource to the DTLS connection
     fn write_source<B: BytesSource>(
         &mut self,
+        now: Instant,
         source: &mut B,
         ppi: PayloadProtocolIdentifier,
     ) -> Result<usize> {
@@ -230,7 +251,7 @@ impl Stream<'_> {
                     }))
             }
 
-            self.association.send_payload_data(chunks)?;
+            self.association.send_payload_data(now, chunks)?;
 
             Ok(p.len())
         } else {
@@ -258,7 +279,10 @@ impl Stream<'_> {
 
     /// stop closes the read-direction of the stream.
     /// Future calls to read are not permitted after calling stop.
-    pub fn stop(&mut self) -> Result<()> {
+    ///
+    /// `now` is the instant the caller is acting at: resetting the stream queues an outgoing
+    /// chunk, so it is on the same write path as [`write_sctp`](Self::write_sctp).
+    pub fn stop(&mut self, now: Instant) -> Result<()> {
         let mut reset = false;
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
             if s.state == RecvSendState::Readable || s.state == RecvSendState::ReadWritable {
@@ -271,7 +295,7 @@ impl Stream<'_> {
             // Reset the outgoing stream
             // https://tools.ietf.org/html/rfc6525
             self.association
-                .send_reset_request(self.stream_identifier)?;
+                .send_reset_request(now, self.stream_identifier)?;
         }
 
         Ok(())
@@ -292,9 +316,9 @@ impl Stream<'_> {
     /// immediately with an appropriate value (see the documentation of `Shutdown`).
     ///
     /// Resets the stream when both halves of this stream are shutdown.
-    pub fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self, now: Instant) -> Result<()> {
         self.finish()?;
-        self.stop()
+        self.stop(now)
     }
 
     /// stream_identifier returns the Stream identifier associated to the stream.

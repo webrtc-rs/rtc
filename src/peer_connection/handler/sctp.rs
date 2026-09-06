@@ -593,7 +593,7 @@ impl<'a>
                                 message.stream_id
                             );
                             let mut stream = conn.stream(message.stream_id)?;
-                            stream.close()?;
+                            stream.close(now)?;
 
                             self.ctx.event_outs.push_back(TaggedRTCEventInternal {
                                 now,
@@ -631,7 +631,7 @@ impl<'a>
                     // `freeze()` is O(1) and the enqueued chunks are refcounted
                     // slices, eliminating a per-message alloc + full-payload memcpy.
                     let payload = std::mem::take(&mut message.payload).freeze();
-                    stream.write_chunk_with_ppi(&payload, message.ppi)?;
+                    stream.write_chunk_with_ppi(now, &payload, message.ppi)?;
                 }
 
                 // Transmit flush is deferred to poll_write (batch-drain).
@@ -1048,7 +1048,11 @@ mod tests {
                 .open_stream(1, PayloadProtocolIdentifier::Dcep)
                 .expect("open server stream");
             stream
-                .write_sctp(&Bytes::from(dcep_open), PayloadProtocolIdentifier::Dcep)
+                .write_sctp(
+                    now,
+                    &Bytes::from(dcep_open),
+                    PayloadProtocolIdentifier::Dcep,
+                )
                 .expect("server data");
         }
         let early_data = drain_transmits(&mut server_conn, now);
@@ -1301,6 +1305,7 @@ mod tests {
             for i in 0..count {
                 stream
                     .write_sctp(
+                        now,
                         &Bytes::from(vec![i as u8; 64]),
                         PayloadProtocolIdentifier::Binary,
                     )
@@ -1710,6 +1715,7 @@ mod tests {
             .open_stream(1, PayloadProtocolIdentifier::Binary)
             .and_then(|mut s| {
                 s.write_chunk_with_ppi(
+                    now,
                     &Bytes::from_static(b"pending payload on B"),
                     PayloadProtocolIdentifier::Binary,
                 )
@@ -1862,6 +1868,7 @@ mod tests {
         for i in 0..4u8 {
             stream
                 .write_chunk_with_ppi(
+                    base,
                     &Bytes::from(vec![i; 1024]),
                     PayloadProtocolIdentifier::Binary,
                 )
