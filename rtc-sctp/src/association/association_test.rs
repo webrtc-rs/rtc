@@ -491,7 +491,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
     if let Some(mut s) = stream {
         let p = Bytes::from(vec![0u8; 65537]);
 
-        if let Err(err) = s.write_sctp(&p.slice(..65536), ppi) {
+        if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..65536), ppi) {
             assert_ne!(
                 Error::ErrOutboundPacketTooLarge,
                 err,
@@ -501,7 +501,7 @@ fn test_assoc_max_message_size_default() -> Result<()> {
             assert!(false, "should be error");
         }
 
-        if let Err(err) = s.write_sctp(&p.slice(..65537), ppi) {
+        if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..65537), ppi) {
             assert_eq!(
                 Error::ErrOutboundPacketTooLarge,
                 err,
@@ -528,7 +528,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
     if let Some(mut s) = stream {
         let p = Bytes::from(vec![0u8; 30001]);
 
-        if let Err(err) = s.write_sctp(&p.slice(..30000), ppi) {
+        if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..30000), ppi) {
             assert_ne!(
                 Error::ErrOutboundPacketTooLarge,
                 err,
@@ -538,7 +538,7 @@ fn test_assoc_max_message_size_explicit() -> Result<()> {
             assert!(false, "should be error");
         }
 
-        if let Err(err) = s.write_sctp(&p.slice(..30001), ppi) {
+        if let Err(err) = s.write_sctp(Instant::now(), &p.slice(..30001), ppi) {
             assert_eq!(
                 Error::ErrOutboundPacketTooLarge,
                 err,

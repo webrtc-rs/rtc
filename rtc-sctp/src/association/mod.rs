@@ -2943,7 +2943,15 @@ impl Association {
         }
     }
 
-    pub(crate) fn send_reset_request(&mut self, stream_identifier: StreamId) -> Result<()> {
+    /// Queues the outgoing stream-reset chunk (RFC 6525).
+    ///
+    /// `now` is when the caller asked for the reset; threaded from `Stream::stop` for the same
+    /// reason `send_payload_data` takes one. Not yet consumed.
+    pub(crate) fn send_reset_request(
+        &mut self,
+        _now: Instant,
+        stream_identifier: StreamId,
+    ) -> Result<()> {
         let state = self.state();
         if state != AssociationState::Established {
             return Err(Error::ErrResetPacketInStateNotExist);
@@ -2966,7 +2974,15 @@ impl Association {
     }
 
     /// send_payload_data sends the data chunks.
-    pub(crate) fn send_payload_data(&mut self, chunks: Vec<ChunkPayloadData>) -> Result<()> {
+    ///
+    /// `now` is when the application handed the message to the stack. It is threaded from
+    /// `Stream::write*` rather than read here, so the queueing instant is the caller's own and
+    /// not "whenever the association was last driven". Not yet consumed.
+    pub(crate) fn send_payload_data(
+        &mut self,
+        _now: Instant,
+        chunks: Vec<ChunkPayloadData>,
+    ) -> Result<()> {
         let state = self.state();
         if state != AssociationState::Established {
             return Err(Error::ErrPayloadDataStateNotExist);
