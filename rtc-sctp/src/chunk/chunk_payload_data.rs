@@ -112,8 +112,18 @@ pub struct ChunkPayloadData {
     pub(crate) acked: bool,
     pub(crate) miss_indicator: u32,
 
-    /// Partial-reliability parameters used only by sender
+    /// Partial-reliability parameters used only by sender.
+    ///
+    /// Reassigned on every (re)transmission, so it is the RTT baseline. It is
+    /// deliberately *not* the timed-reliability baseline: a message may wait in
+    /// the pending queue for a long time before it is first transmitted, and
+    /// `maxPacketLifeTime` has to cover that wait. See `created_at`.
     pub(crate) since: Option<Instant>,
+    /// When the message this chunk belongs to was handed to the association.
+    ///
+    /// Set once, from the instant the caller passed to `Stream::write*`, and
+    /// never reassigned. This is the baseline for `ReliabilityType::Timed`.
+    pub(crate) created_at: Option<Instant>,
     /// number of transmission made for this chunk
     pub(crate) nsent: u32,
 
@@ -142,6 +152,7 @@ impl Default for ChunkPayloadData {
             acked: false,
             miss_indicator: 0,
             since: None,
+            created_at: None,
             nsent: 0,
             abandoned: false,
             all_inflight: false,
@@ -224,6 +235,7 @@ impl Chunk for ChunkPayloadData {
             acked: false,
             miss_indicator: 0,
             since: None,
+            created_at: None,
             nsent: 0,
             abandoned: false,
             all_inflight: false,
