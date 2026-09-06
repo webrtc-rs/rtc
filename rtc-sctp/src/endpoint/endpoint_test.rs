@@ -1408,6 +1408,188 @@ fn test_assoc_unreliable_rexmit_unordered_fragment() -> Result<()> {
     Ok(())
 }
 
+/// `ReliabilityType::Timed` is the policy `maxPacketLifeTime` maps onto, and it is
+/// supposed to bound how old a message can be when it reaches the peer.
+///
+/// It did not: the lifetime was measured from `c.since`, which is reassigned when
+/// the chunk leaves the pending queue and is given a TSN. Time the message spent
+/// waiting for a congestion window was therefore invisible to the policy, so the
+/// message went out however stale it was, with a freshly reset lifetime.
+#[test]
+fn test_assoc_timed_reliability_bounds_time_spent_in_pending_queue() -> Result<()> {
+    let si: u16 = 7;
+    // maxPacketLifeTime = 100 ms.
+    let lifetime_ms: u32 = 100;
+    let stall = Duration::from_secs(1);
+
+    let mut sbuf = vec![0u8; 1000];
+    for i in 0..sbuf.len() {
+        sbuf[i] = (i & 0xff) as u8;
+    }
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    pair.client_stream(client_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+    pair.server_stream(server_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+
+    // Shrink the congestion window so exactly one message fits in flight. The
+    // second write then has to wait in the pending queue behind the first.
+    pair.client_conn_mut(client_ch).cwnd = 1200;
+
+    // Message 0 leaves immediately and occupies the whole window.
+    sbuf[0..4].copy_from_slice(&0u32.to_be_bytes());
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &Bytes::from(sbuf.clone()),
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    // Message 1 is blocked behind it.
+    sbuf[0..4].copy_from_slice(&1u32.to_be_bytes());
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &Bytes::from(sbuf.clone()),
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    // Drive only the sender: message 0 goes on the wire, message 1 stays pending.
+    // The peer is deliberately not driven, so nothing is acknowledged and the
+    // window stays shut for as long as we like.
+    pair.drive_client();
+    assert!(
+        pair.client_conn_mut(client_ch).buffered_amount() >= sbuf.len(),
+        "message 1 should still be waiting in the pending queue"
+    );
+
+    // The stall lasts ten times the configured lifetime.
+    pair.time += stall;
+
+    // The stall clears and both sides run to completion.
+    pair.drive();
+
+    let mut buf = vec![0u8; 2000];
+    let mut received = vec![];
+    while let Some(chunks) = pair.server_stream(server_ch, si)?.read_sctp()? {
+        chunks.read(&mut buf)?;
+        received.push(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
+    }
+
+    // Message 1 outlived its lifetime while queued and must be abandoned;
+    // message 0 was already in flight when the stall began and must survive.
+    // Asserting the whole vector also catches a fix that drops everything.
+    assert_eq!(
+        received,
+        vec![0],
+        "message 1 waited {stall:?} in the pending queue with maxPacketLifeTime={lifetime_ms}ms \
+         and must have been abandoned, while message 0 must still arrive"
+    );
+    assert_eq!(
+        0,
+        pair.client_conn_mut(client_ch).buffered_amount(),
+        "abandoning the expired message must release its buffered bytes"
+    );
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
+/// The expired-message path pops a whole fragment run, which is the part that
+/// interacts with `PendingQueue`'s selected-queue state. A single-chunk message
+/// never exercises it, so this drives a message large enough to fragment and
+/// then checks that the queue is still usable afterwards.
+#[test]
+fn test_assoc_timed_reliability_abandons_a_whole_fragmented_message() -> Result<()> {
+    let si: u16 = 8;
+    let lifetime_ms: u32 = 100;
+    let stall = Duration::from_secs(1);
+
+    let small = Bytes::from(vec![0xAAu8; 1000]);
+    // Comfortably over max_payload_size_for_mtu(INITIAL_MTU), so this fragments.
+    let large = Bytes::from(vec![0xBBu8; 4000]);
+    let tail = Bytes::from(vec![0xCCu8; 700]);
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    pair.client_stream(client_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+    pair.server_stream(server_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+
+    pair.client_conn_mut(client_ch).cwnd = 1200;
+
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &small,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &large,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    pair.drive_client();
+    assert!(
+        pair.client_conn_mut(client_ch).buffered_amount() >= large.len(),
+        "the fragmented message should still be waiting in the pending queue"
+    );
+
+    pair.time += stall;
+    pair.drive();
+
+    // A message that is still usable after the stall must get through, which is
+    // only possible if abandoning the fragment run left the queue consistent.
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?
+        .write_sctp(now, &tail, PayloadProtocolIdentifier::Binary)?;
+    pair.drive();
+
+    let mut buf = vec![0u8; 8000];
+    let mut lengths = vec![];
+    while let Some(chunks) = pair.server_stream(server_ch, si)?.read_sctp()? {
+        let n = chunks.len();
+        chunks.read(&mut buf)?;
+        lengths.push(n);
+    }
+
+    assert_eq!(
+        lengths,
+        vec![small.len(), tail.len()],
+        "the fragmented message must be abandoned whole, and the queue must keep working"
+    );
+    assert_eq!(
+        0,
+        pair.client_conn_mut(client_ch).buffered_amount(),
+        "abandoning a fragmented message must release every fragment's bytes"
+    );
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
 #[test]
 fn test_assoc_unreliable_rexmit_timed_ordered() -> Result<()> {
     //let _guard = subscribe();
