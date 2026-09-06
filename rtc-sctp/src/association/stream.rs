@@ -251,7 +251,7 @@ impl Stream<'_> {
                     }))
             }
 
-            self.association.send_payload_data(now, chunks)?;
+            self.association.send_payload_data(chunks)?;
 
             Ok(p.len())
         } else {

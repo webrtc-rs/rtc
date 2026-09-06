@@ -2600,12 +2600,28 @@ impl Association {
     /// Whether the message at the head of the pending queue has outlived the
     /// timed-reliability lifetime configured on its stream.
     ///
+    /// Gated on `use_forward_tsn` for the same reason as
+    /// `check_partial_reliability_status`: when the peer did not negotiate
+    /// Forward-TSN the association falls back to reliable delivery, and partial
+    /// reliability must be off everywhere rather than in half the code.
+    ///
     /// Restricted to unordered messages: an ordered one has already consumed a
     /// stream sequence number in `packetize`, so abandoning it before it is ever
     /// transmitted would leave a gap that only a ForwardTSN carrying that SSN can
     /// close. Restricted to a beginning fragment so a partially drained message is
     /// never truncated mid-run.
+    ///
+    /// Only the head of the queue is inspected, so an expired message sitting
+    /// behind a fresh one keeps its buffered bytes until it reaches the head. It
+    /// is still never transmitted: it is re-checked once it gets there.
     fn pending_message_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
+        if !self.use_forward_tsn {
+            return false;
+        }
+
+        // `packetize` forces `unordered = false` for DCEP, so the ordering test
+        // already excludes it; the explicit check keeps that non-obvious coupling
+        // from becoming load-bearing.
         if !c.unordered
             || !c.beginning_fragment
             || c.payload_type == PayloadProtocolIdentifier::Dcep
@@ -2632,21 +2648,38 @@ impl Association {
 
     /// Drop every fragment of the message at the head of the pending queue and
     /// release the bytes it was holding in the stream's send buffer.
-    fn abandon_pending_message(&mut self, unordered: bool) {
+    ///
+    /// Only called for an unordered message whose first fragment is at the head,
+    /// so the whole fragment run is contiguous: `send_payload_data` appends a
+    /// message's chunks without anything else interleaving. Running out before
+    /// the ending fragment would leave `PendingQueue` selected on an empty queue
+    /// and stall every later send, so that case asserts in debug builds and is
+    /// reported rather than silently tolerated.
+    fn abandon_pending_message(&mut self) {
         let mut beginning_fragment = true;
         let mut released = 0usize;
         let mut stream_identifier = None;
+        let mut completed = false;
 
-        loop {
-            let Some(c) = self.pending_queue.pop(beginning_fragment, unordered) else {
-                break;
-            };
+        while let Some(c) = self.pending_queue.pop(beginning_fragment, true) {
             beginning_fragment = false;
             released += c.user_data.len();
             stream_identifier = Some(c.stream_identifier);
             if c.ending_fragment {
+                completed = true;
                 break;
             }
+        }
+
+        if !completed {
+            debug_assert!(
+                false,
+                "pending queue ran out mid-message while abandoning an expired message"
+            );
+            error!(
+                "[{}] abandoned an incomplete fragment run; pending queue selection is now stale",
+                self.side
+            );
         }
 
         let (Some(si), true) = (stream_identifier, released > 0) else {
@@ -2715,7 +2748,7 @@ impl Association {
                 // allocated, means there is no gap for the peer to reconcile and
                 // no ForwardTSN to send.
                 if self.pending_message_expired(c, now) {
-                    self.abandon_pending_message(unordered);
+                    self.abandon_pending_message();
                     continue;
                 }
 
@@ -2889,8 +2922,8 @@ impl Association {
                 // Age is measured from when the message was queued, not from its
                 // most recent transmission: `since` is the RTT baseline and is
                 // reassigned on every (re)transmission.
-                if let Some(since) = c.created_at.as_ref().or(c.since.as_ref()) {
-                    let elapsed = now.saturating_duration_since(*since);
+                if let Some(queued_at) = c.created_at.as_ref().or(c.since.as_ref()) {
+                    let elapsed = now.saturating_duration_since(*queued_at);
                     if elapsed.as_millis() as u32 >= reliability_value {
                         c.set_abandoned(true);
                         trace!(
@@ -2899,7 +2932,7 @@ impl Association {
                         );
                     }
                 } else {
-                    error!("[{}] invalid c.since", side);
+                    error!("[{}] chunk has neither created_at nor since", side);
                 }
             }
         } else {
@@ -2999,7 +3032,8 @@ impl Association {
             // Assign TSN
             c.tsn = self.generate_next_tsn();
 
-            c.since = Some(now); // use to calculate RTT and also for maxPacketLifeTime
+            // RTT baseline only; maxPacketLifeTime measures from `created_at`.
+            c.since = Some(now);
             c.nsent = 1; // being sent for the first time
 
             Association::check_partial_reliability_status(
@@ -3033,11 +3067,11 @@ impl Association {
 
     /// Queues the outgoing stream-reset chunk (RFC 6525).
     ///
-    /// `now` is when the caller asked for the reset; threaded from `Stream::stop` for the same
-    /// reason `send_payload_data` takes one. Not yet consumed.
+    /// `now` is when the caller asked for the reset; threaded from `Stream::stop` and recorded
+    /// on the EOS chunk so every locally created chunk carries its queueing instant.
     pub(crate) fn send_reset_request(
         &mut self,
-        _now: Instant,
+        now: Instant,
         stream_identifier: StreamId,
     ) -> Result<()> {
         let state = self.state();
@@ -3048,6 +3082,7 @@ impl Association {
         // Create DATA chunk which only contains valid stream identifier with
         // nil userData and use it as a EOS from the stream.
         let c = ChunkPayloadData {
+            created_at: Some(now),
             stream_identifier,
             beginning_fragment: true,
             ending_fragment: true,
@@ -3063,14 +3098,9 @@ impl Association {
 
     /// send_payload_data sends the data chunks.
     ///
-    /// `now` is when the application handed the message to the stack. It is threaded from
-    /// `Stream::write*` rather than read here, so the queueing instant is the caller's own and
-    /// not "whenever the association was last driven". Not yet consumed.
-    pub(crate) fn send_payload_data(
-        &mut self,
-        _now: Instant,
-        chunks: Vec<ChunkPayloadData>,
-    ) -> Result<()> {
+    /// The queueing instant is already recorded on each chunk by `Stream::packetize`, so this
+    /// does not need one of its own.
+    pub(crate) fn send_payload_data(&mut self, chunks: Vec<ChunkPayloadData>) -> Result<()> {
         let state = self.state();
         if state != AssociationState::Established {
             return Err(Error::ErrPayloadDataStateNotExist);

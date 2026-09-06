@@ -1485,10 +1485,104 @@ fn test_assoc_timed_reliability_bounds_time_spent_in_pending_queue() -> Result<(
         received.push(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
     }
 
-    assert!(
-        !received.contains(&1),
+    // Message 1 outlived its lifetime while queued and must be abandoned;
+    // message 0 was already in flight when the stall began and must survive.
+    // Asserting the whole vector also catches a fix that drops everything.
+    assert_eq!(
+        received,
+        vec![0],
         "message 1 waited {stall:?} in the pending queue with maxPacketLifeTime={lifetime_ms}ms \
-         and must have been abandoned, but it was transmitted anyway (received={received:?})"
+         and must have been abandoned, while message 0 must still arrive"
+    );
+    assert_eq!(
+        0,
+        pair.client_conn_mut(client_ch).buffered_amount(),
+        "abandoning the expired message must release its buffered bytes"
+    );
+
+    close_association_pair(&mut pair, client_ch, server_ch, si);
+
+    Ok(())
+}
+
+/// The expired-message path pops a whole fragment run, which is the part that
+/// interacts with `PendingQueue`'s selected-queue state. A single-chunk message
+/// never exercises it, so this drives a message large enough to fragment and
+/// then checks that the queue is still usable afterwards.
+#[test]
+fn test_assoc_timed_reliability_abandons_a_whole_fragmented_message() -> Result<()> {
+    let si: u16 = 8;
+    let lifetime_ms: u32 = 100;
+    let stall = Duration::from_secs(1);
+
+    let small = Bytes::from(vec![0xAAu8; 1000]);
+    // Comfortably over max_payload_size_for_mtu(INITIAL_MTU), so this fragments.
+    let large = Bytes::from(vec![0xBBu8; 4000]);
+    let tail = Bytes::from(vec![0xCCu8; 700]);
+
+    let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+    establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+
+    pair.client_stream(client_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+    pair.server_stream(server_ch, si)?.set_reliability_params(
+        true,
+        ReliabilityType::Timed,
+        lifetime_ms,
+    )?;
+
+    pair.client_conn_mut(client_ch).cwnd = 1200;
+
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &small,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?.write_sctp(
+        now,
+        &large,
+        PayloadProtocolIdentifier::Binary,
+    )?;
+
+    pair.drive_client();
+    assert!(
+        pair.client_conn_mut(client_ch).buffered_amount() >= large.len(),
+        "the fragmented message should still be waiting in the pending queue"
+    );
+
+    pair.time += stall;
+    pair.drive();
+
+    // A message that is still usable after the stall must get through, which is
+    // only possible if abandoning the fragment run left the queue consistent.
+    let now = pair.time;
+    pair.client_stream(client_ch, si)?
+        .write_sctp(now, &tail, PayloadProtocolIdentifier::Binary)?;
+    pair.drive();
+
+    let mut buf = vec![0u8; 8000];
+    let mut lengths = vec![];
+    while let Some(chunks) = pair.server_stream(server_ch, si)?.read_sctp()? {
+        let n = chunks.len();
+        chunks.read(&mut buf)?;
+        lengths.push(n);
+    }
+
+    assert_eq!(
+        lengths,
+        vec![small.len(), tail.len()],
+        "the fragmented message must be abandoned whole, and the queue must keep working"
+    );
+    assert_eq!(
+        0,
+        pair.client_conn_mut(client_ch).buffered_amount(),
+        "abandoning a fragmented message must release every fragment's bytes"
     );
 
     close_association_pair(&mut pair, client_ch, server_ch, si);
