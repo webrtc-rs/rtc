@@ -240,7 +240,7 @@ impl Stream<'_> {
         let (p, _) = source.pop_chunk(self.association.max_message_size() as usize);
 
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
-            let (is_buffered_amount_high, chunks) = s.packetize(&p, ppi);
+            let (is_buffered_amount_high, chunks) = s.packetize(now, &p, ppi);
 
             if is_buffered_amount_high {
                 trace!("StreamEvent::BufferedAmountHigh");
@@ -510,6 +510,7 @@ impl StreamState {
 
     fn packetize(
         &mut self,
+        now: Instant,
         raw: &Bytes,
         ppi: PayloadProtocolIdentifier,
     ) -> (bool, Vec<ChunkPayloadData>) {
@@ -533,6 +534,9 @@ impl StreamState {
             let user_data = raw.slice(i..i + fragment_size);
 
             let chunk = ChunkPayloadData {
+                // Timed reliability measures a message's age from here, so that
+                // a long wait for cwnd or rwnd counts against maxPacketLifeTime.
+                created_at: Some(now),
                 stream_identifier: self.stream_identifier,
                 user_data,
                 unordered,

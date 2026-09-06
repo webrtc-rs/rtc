@@ -2597,6 +2597,81 @@ impl Association {
         self.bundle_data_chunks_into_packets(chunks, raw_packets);
     }
 
+    /// Whether the message at the head of the pending queue has outlived the
+    /// timed-reliability lifetime configured on its stream.
+    ///
+    /// Restricted to unordered messages: an ordered one has already consumed a
+    /// stream sequence number in `packetize`, so abandoning it before it is ever
+    /// transmitted would leave a gap that only a ForwardTSN carrying that SSN can
+    /// close. Restricted to a beginning fragment so a partially drained message is
+    /// never truncated mid-run.
+    fn pending_message_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
+        if !c.unordered
+            || !c.beginning_fragment
+            || c.payload_type == PayloadProtocolIdentifier::Dcep
+        {
+            return false;
+        }
+
+        let Some(s) = self.streams.get(&c.stream_identifier) else {
+            return false;
+        };
+
+        // A zero lifetime keeps its established meaning â transmit once, never
+        // retransmit â rather than silently becoming "never transmit at all".
+        if s.reliability_type != ReliabilityType::Timed || s.reliability_value == 0 {
+            return false;
+        }
+
+        let Some(created_at) = c.created_at else {
+            return false;
+        };
+
+        now.saturating_duration_since(created_at).as_millis() as u32 >= s.reliability_value
+    }
+
+    /// Drop every fragment of the message at the head of the pending queue and
+    /// release the bytes it was holding in the stream's send buffer.
+    fn abandon_pending_message(&mut self, unordered: bool) {
+        let mut beginning_fragment = true;
+        let mut released = 0usize;
+        let mut stream_identifier = None;
+
+        loop {
+            let Some(c) = self.pending_queue.pop(beginning_fragment, unordered) else {
+                break;
+            };
+            beginning_fragment = false;
+            released += c.user_data.len();
+            stream_identifier = Some(c.stream_identifier);
+            if c.ending_fragment {
+                break;
+            }
+        }
+
+        let (Some(si), true) = (stream_identifier, released > 0) else {
+            return;
+        };
+
+        trace!(
+            "[{}] abandoned {} pending bytes on stream {} (maxPacketLifeTime)",
+            self.side, released, si
+        );
+
+        self.events
+            .push_back(Event::Stream(StreamEvent::BufferedAmountReleased {
+                id: si,
+                n_bytes: released,
+            }));
+
+        if let Some(s) = self.streams.get_mut(&si)
+            && s.on_buffer_released(released as i64)
+        {
+            self.events
+                .push_back(Event::Stream(StreamEvent::BufferedAmountLow { id: si }))
+        }
+    }
+
     /// pop_pending_data_chunks_to_send pops chunks from the pending queues as many as
     /// the cwnd and rwnd allows to send.
     fn pop_pending_data_chunks_to_send(
@@ -2631,6 +2706,16 @@ impl Association {
                     {
                         error!("[{}] failed to pop from pending queue", self.side);
                     }
+                    continue;
+                }
+
+                // RFC 3758 timed reliability: a message whose lifetime has run
+                // out must be abandoned even if it was never transmitted. Doing
+                // this here, ahead of the window checks and before a TSN is
+                // allocated, means there is no gap for the peer to reconcile and
+                // no ForwardTSN to send.
+                if self.pending_message_expired(c, now) {
+                    self.abandon_pending_message(unordered);
                     continue;
                 }
 
@@ -2801,8 +2886,11 @@ impl Association {
                     );
                 }
             } else if reliability_type == ReliabilityType::Timed {
-                if let Some(since) = &c.since {
-                    let elapsed = now.duration_since(*since);
+                // Age is measured from when the message was queued, not from its
+                // most recent transmission: `since` is the RTT baseline and is
+                // reassigned on every (re)transmission.
+                if let Some(since) = c.created_at.as_ref().or(c.since.as_ref()) {
+                    let elapsed = now.saturating_duration_since(*since);
                     if elapsed.as_millis() as u32 >= reliability_value {
                         c.set_abandoned(true);
                         trace!(
