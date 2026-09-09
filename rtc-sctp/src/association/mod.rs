@@ -4,33 +4,49 @@ use crate::association::{
 };
 use crate::chunk::chunk_header::CHUNK_HEADER_SIZE;
 use crate::chunk::{
-    Chunk, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT, chunk_abort::ChunkAbort,
-    chunk_cookie_ack::ChunkCookieAck, chunk_cookie_echo::ChunkCookieEcho, chunk_error::ChunkError,
-    chunk_forward_tsn::ChunkForwardTsn, chunk_forward_tsn::ChunkForwardTsnStream,
-    chunk_heartbeat::ChunkHeartbeat, chunk_heartbeat_ack::ChunkHeartbeatAck, chunk_init::ChunkInit,
-    chunk_init::ChunkInitAck, chunk_payload_data::ChunkPayloadData,
-    chunk_payload_data::PayloadProtocolIdentifier, chunk_reconfig::ChunkReconfig,
-    chunk_selective_ack::ChunkSelectiveAck, chunk_shutdown::ChunkShutdown,
-    chunk_shutdown_ack::ChunkShutdownAck, chunk_shutdown_complete::ChunkShutdownComplete,
-    chunk_type::CT_FORWARD_TSN,
+    Chunk, ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
+    chunk_abort::ChunkAbort,
+    chunk_cookie_ack::ChunkCookieAck,
+    chunk_cookie_echo::ChunkCookieEcho,
+    chunk_error::ChunkError,
+    chunk_forward_tsn::ChunkForwardTsn,
+    chunk_forward_tsn::ChunkForwardTsnStream,
+    chunk_heartbeat::ChunkHeartbeat,
+    chunk_heartbeat_ack::ChunkHeartbeatAck,
+    chunk_init::ChunkInit,
+    chunk_init::ChunkInitAck,
+    chunk_payload_data::ChunkPayloadData,
+    chunk_payload_data::PayloadProtocolIdentifier,
+    chunk_payload_data::{MessageId, MessageReliability},
+    chunk_reconfig::ChunkReconfig,
+    chunk_selective_ack::ChunkSelectiveAck,
+    chunk_shutdown::ChunkShutdown,
+    chunk_shutdown_ack::ChunkShutdownAck,
+    chunk_shutdown_complete::ChunkShutdownComplete,
+    chunk_type::{CT_FORWARD_TSN, CT_RECONFIG},
 };
 use crate::config::{COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE, ServerConfig, TransportConfig};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
     Param,
+    param_forward_tsn_supported::ParamForwardTsnSupported,
     param_heartbeat_info::ParamHeartbeatInfo,
     param_outgoing_reset_request::ParamOutgoingResetRequest,
     param_reconfig_response::{ParamReconfigResponse, ReconfigResult},
     param_state_cookie::ParamStateCookie,
     param_supported_extensions::ParamSupportedExtensions,
 };
-use crate::queue::{payload_queue::PayloadQueue, pending_queue::PendingQueue};
+use crate::queue::{
+    payload_queue::PayloadQueue,
+    pending_queue::{PendingQueue, ResetMarker},
+    receive_queue::{DeferredReceive, ReceiveQueue},
+};
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side};
 use shared::error::{Error, Result};
 use shared::{TransportContext, TransportMessage, TransportProtocol};
-use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState};
+use stream::{Stream, StreamEvent, StreamId, StreamState};
 use timer::{ACK_INTERVAL, RtoManager, Timer, TimerTable};
 
 use crate::association::stream::RecvSendState;
@@ -38,20 +54,27 @@ use bytes::{Bytes, BytesMut};
 use log::{debug, error, trace, warn};
 use rand::random;
 use rustc_hash::FxHashMap;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+mod reset;
+mod reset_receive;
+use reset_receive::{IncomingResetQueue, ReceiveResetAction};
 pub(crate) mod state;
 pub(crate) mod stats;
 pub(crate) mod stream;
 pub(crate) mod timer;
+mod transmit;
+use reset::OutgoingReset;
 
 #[cfg(test)]
 mod association_test;
+#[cfg(test)]
+mod model_test;
 
 /// Reasons why an association might be lost
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -110,6 +133,25 @@ pub enum Event {
     DatagramReceived,
 }
 
+/// Effects of one validated SACK, keeping buffer release, delivery credit and
+/// advisory acknowledgments distinct.
+struct SackProgress {
+    bytes_acked_per_stream: FxHashMap<u16, i64>,
+    total_bytes_acked: i64,
+    htna: u32,
+    // Serial TSN order, so recovery can merge these with its normal prefix.
+    revoked: Vec<u32>,
+}
+
+/// Selection is stable even after fragments leave either queue.
+#[derive(Debug, Copy, Clone)]
+struct MessageToAbandon {
+    id: MessageId,
+    // A whole message is already identified by its candidate TSN. Fragmented
+    // messages still use the group index, including when selected in pending.
+    sent_tsn: Option<u32>,
+}
+
 ///Association represents an SCTP association
 //13.2.  Parameters Necessary per Association (i.e., the TCB)
 //Peer : Tag value to be sent in every packet and is received
@@ -158,9 +200,15 @@ pub struct Association {
 
     // Reconfig
     my_next_rsn: u32,
-    reconfigs: HashMap<u32, ChunkReconfig>,
-    reconfig_requests: HashMap<u32, ParamOutgoingResetRequest>,
-
+    next_stream_generation: u64,
+    next_message_id: u64,
+    transmit_streams: FxHashMap<StreamId, transmit::TransmitStream>,
+    pub(crate) receive_streams: FxHashMap<StreamId, ReceiveQueue>,
+    receive_buffered_bytes: usize,
+    pending_receivers: BTreeSet<StreamId>,
+    peer_supports_reconfig: bool,
+    outgoing_reset: Option<OutgoingReset>,
+    incoming_resets: IncomingResetQueue,
     // Non-RFC internal data
     remote_addr: SocketAddr,
     local_addr: SocketAddr,
@@ -174,6 +222,9 @@ pub struct Association {
 
     pub(crate) payload_queue: PayloadQueue,
     inflight_queue: PayloadQueue,
+    /// Absolute, inclusive ranges from the last validated SACK. Comparing
+    /// ranges detects reneging without visiting every outstanding DATA chunk.
+    peer_gap_ack_ranges: Vec<(u32, u32)>,
     pending_queue: PendingQueue,
     control_queue: VecDeque<Packet>,
     stream_queue: VecDeque<u16>,
@@ -187,13 +238,18 @@ pub struct Association {
     /// Max stream-sequence-number per *ordered* stream among abandoned chunks
     /// currently in the forward-TSN window `(cumulative_tsn_ack_point,
     /// advanced_peer_tsn_ack_point]`. Maintained incrementally as chunks are
-    /// abandoned (the two RFC 3758 C2 loops) so that `create_forward_tsn` is
+    /// abandoned (the RFC 3758 C2 walk) so that `create_forward_tsn` is
     /// O(streams) instead of rescanning the whole in-flight window — which, for
     /// PR-SCTP data channels, ran ~1000 hashmap probes per FORWARD-TSN and was
     /// ~9% of send CPU in profiles. Unordered chunks are omitted: the receiver
     /// ignores the per-stream list for them (it advances by `new_cumulative_tsn`
     /// alone), so reporting them was pure waste.
     fwd_tsn_stream_map: FxHashMap<u16, u16>,
+    /// Successful outgoing resets retire SSNs through their last assigned TSN.
+    /// Keep these bounds only while old DATA can remain locally in flight.
+    confirmed_reset_tsns: FxHashMap<u16, u32>,
+    /// Successful reset bounds in TSN order, even if results arrived out of order.
+    reset_tsn_ack_queue: VecDeque<(u32, Vec<u16>)>,
 
     pub(crate) rto_mgr: RtoManager,
     timers: TimerTable,
@@ -204,6 +260,7 @@ pub struct Association {
     pub(crate) cwnd: u32,
     // calculated peer's receiver windows size
     rwnd: u32,
+    zero_window_probe: Option<u32>,
     // slow start threshold
     pub(crate) ssthresh: u32,
     partial_bytes_acked: u32,
@@ -260,8 +317,15 @@ impl Default for Association {
 
             // Reconfig
             my_next_rsn: 0,
-            reconfigs: HashMap::default(),
-            reconfig_requests: HashMap::default(),
+            next_stream_generation: 0,
+            next_message_id: 0,
+            transmit_streams: FxHashMap::default(),
+            receive_streams: FxHashMap::default(),
+            receive_buffered_bytes: 0,
+            pending_receivers: BTreeSet::new(),
+            peer_supports_reconfig: false,
+            outgoing_reset: None,
+            incoming_resets: IncomingResetQueue::new(0),
 
             // Non-RFC internal data
             remote_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
@@ -276,6 +340,7 @@ impl Default for Association {
 
             payload_queue: PayloadQueue::default(),
             inflight_queue: PayloadQueue::default(),
+            peer_gap_ack_ranges: Vec::new(),
             pending_queue: PendingQueue::default(),
             control_queue: VecDeque::default(),
             stream_queue: VecDeque::default(),
@@ -287,6 +352,8 @@ impl Default for Association {
             advanced_peer_tsn_ack_point: 0,
             use_forward_tsn: false,
             fwd_tsn_stream_map: FxHashMap::default(),
+            confirmed_reset_tsns: FxHashMap::default(),
+            reset_tsn_ack_queue: VecDeque::default(),
 
             rto_mgr: RtoManager::default(),
             timers: TimerTable::default(),
@@ -297,6 +364,7 @@ impl Default for Association {
             cwnd: 0,
             // calculated peer's receiver windows size
             rwnd: 0,
+            zero_window_probe: None,
             // slow start threshold
             ssthresh: 0,
             partial_bytes_acked: 0,
@@ -417,8 +485,10 @@ impl Association {
     /// Associations should be polled for events after:
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    /// - a call was made to `poll_transmit`, which can abandon expired messages
     #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
+        self.publish_ready_streams();
         if let Some(x) = self.events.pop_front() {
             return Some(x);
         }
@@ -449,7 +519,11 @@ impl Association {
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_timeout(&self) -> Option<Instant> {
-        self.timers.next_timeout()
+        self.timers
+            .next_timeout()
+            .into_iter()
+            .chain(self.next_reconfig_result_retry().map(|(_, at)| at))
+            .min()
     }
 
     /// Returns packets to transmit
@@ -506,7 +580,7 @@ impl Association {
             } else if failure {
                 self.on_retransmission_failure(timer);
             } else {
-                self.on_retransmission_timeout(timer, n_rtos);
+                self.on_retransmission_timeout(timer, n_rtos, now);
                 self.timers.start(timer, now, self.rto_mgr.get_rto());
             }
         }
@@ -676,11 +750,24 @@ impl Association {
             debug!("[{}] closing association..", self.side);
 
             self.close_all_timers();
+            self.outgoing_reset = None;
 
             for si in self.streams.keys().cloned().collect::<Vec<u16>>() {
                 self.unregister_stream(si, reason.clone());
             }
 
+            self.receive_streams.clear();
+            self.receive_buffered_bytes = 0;
+            self.pending_receivers.clear();
+            self.transmit_streams.clear();
+            self.pending_queue = PendingQueue::new();
+            self.inflight_queue = PayloadQueue::default();
+            self.payload_queue = PayloadQueue::default();
+            self.incoming_resets = IncomingResetQueue::new(0);
+            self.fwd_tsn_stream_map.clear();
+            self.confirmed_reset_tsns.clear();
+            self.reset_tsn_ack_queue.clear();
+            self.control_queue.clear();
             debug!("[{}] association closed", self.side);
             debug!(
                 "[{}] stats nDATAs (in) : {}",
@@ -718,6 +805,7 @@ impl Association {
         stream_identifier: StreamId,
         default_payload_type: PayloadProtocolIdentifier,
     ) -> Result<Stream<'_>> {
+        self.publish_ready_streams();
         if self.streams.contains_key(&stream_identifier) {
             return Err(Error::ErrStreamAlreadyExist);
         }
@@ -731,6 +819,7 @@ impl Association {
 
     /// accept_stream accepts a stream
     pub fn accept_stream(&mut self) -> Option<Stream<'_>> {
+        self.publish_ready_streams();
         self.stream_queue
             .pop_front()
             .map(move |stream_identifier| Stream {
@@ -741,6 +830,7 @@ impl Association {
 
     /// stream returns a stream
     pub fn stream(&mut self, stream_identifier: StreamId) -> Result<Stream<'_>> {
+        self.publish_ready_streams();
         if !self.streams.contains_key(&stream_identifier) {
             Err(Error::ErrStreamNotExisted)
         } else {
@@ -779,44 +869,65 @@ impl Association {
     /// unregister_stream un-registers a stream from the association
     /// The caller should hold the association write lock.
     fn unregister_stream(&mut self, stream_identifier: StreamId, reason: AssociationError) {
-        if let Some(mut s) = self.streams.remove(&stream_identifier) {
+        if self.streams.remove(&stream_identifier).is_some() {
             debug!("[{}] unregister_stream {}", self.side, stream_identifier);
             self.events.push_back(Event::AssociationLost {
                 reason,
                 id: stream_identifier,
             });
-            s.state = RecvSendState::Closed;
+            self.stream_queue.retain(|id| *id != stream_identifier);
         }
     }
 
-    /// Re-run any reset request that was answered In Progress because
-    /// `stream_identifier` still had data the application had not collected
-    /// Called when that stream drains.
-    ///
-    /// The reply is queued like any other control packet; a request naming
-    /// several streams is retried as a whole and simply defers again if another
-    /// of its streams is still readable.
-    pub(crate) fn retry_deferred_resets(&mut self, stream_identifier: StreamId) {
-        let pending: Vec<ParamOutgoingResetRequest> = self
-            .reconfig_requests
-            .values()
-            .filter(|p| p.stream_identifiers.contains(&stream_identifier))
-            .cloned()
-            .collect();
-        if pending.is_empty() {
+    /// Retire the API receiver only after its saved messages have been read.
+    pub(crate) fn finish_stream_delivery(&mut self, id: StreamId) {
+        let Some(received) = self.receive_streams.get_mut(&id) else {
+            return;
+        };
+        if !received.finish_delivery() {
             return;
         }
+        if received.is_readable() {
+            self.pending_receivers.insert(id);
+        }
+        self.unregister_stream(id, AssociationError::Reset);
+    }
 
-        let mut reply = vec![];
-        for p in pending {
-            if let Err(err) = self.reset_streams_if_any(&p, true, &mut reply) {
-                debug!("[{}] retry of deferred reset failed: {:?}", self.side, err);
+    /// Account every payload mutation at the RX ownership boundary. Complete
+    /// delivery, incomplete reassembly and deferred future DATA share rwnd.
+    /// Lifecycle-only changes do not change this charge.
+    pub(crate) fn with_receive_queue<R>(
+        &mut self,
+        id: StreamId,
+        update: impl FnOnce(&mut ReceiveQueue) -> R,
+    ) -> R {
+        let received = self
+            .receive_streams
+            .entry(id)
+            .or_insert_with(|| ReceiveQueue::new(id));
+        let before = received.get_num_bytes();
+        let result = update(received);
+        self.receive_buffered_bytes =
+            self.receive_buffered_bytes - before + received.get_num_bytes();
+        result
+    }
+
+    fn publish_ready_streams(&mut self) {
+        // Only retiring a saved delivery can expose another receiver without
+        // incoming DATA creating it. Avoid scanning every retained SID for
+        // every event; old close events remain ahead of the new publication.
+        while let Some(id) = self.pending_receivers.pop_first() {
+            if !self.streams.contains_key(&id)
+                && self
+                    .receive_streams
+                    .get(&id)
+                    .is_some_and(ReceiveQueue::is_readable)
+            {
+                self.create_stream(id, true, PayloadProtocolIdentifier::default());
+                self.events
+                    .push_back(Event::Stream(StreamEvent::Readable { id }));
             }
         }
-        for packet in reply {
-            self.control_queue.push_back(packet);
-        }
-        self.awake_write_loop();
     }
 
     /// set_state atomically sets the state of the Association.
@@ -957,7 +1068,7 @@ impl Association {
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkSelectiveAck>() {
             self.handle_sack(c, now)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkReconfig>() {
-            self.handle_reconfig(c)?
+            self.handle_reconfig(now, c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkForwardTsn>() {
             self.handle_forward_tsn(c)?
         } else if let Some(c) = chunk_any.downcast_ref::<ChunkShutdown>() {
@@ -1001,9 +1112,9 @@ impl Association {
 
         // Should we be setting any of these permanently until we've ACKed further?
         self.my_max_num_inbound_streams =
-            std::cmp::min(i.num_inbound_streams, self.my_max_num_inbound_streams);
+            std::cmp::min(i.num_outbound_streams, self.my_max_num_inbound_streams);
         self.my_max_num_outbound_streams =
-            std::cmp::min(i.num_outbound_streams, self.my_max_num_outbound_streams);
+            std::cmp::min(i.num_inbound_streams, self.my_max_num_outbound_streams);
         self.peer_verification_tag = i.initiate_tag;
         self.source_port = p.common_header.destination_port;
         self.destination_port = p.common_header.source_port;
@@ -1012,6 +1123,7 @@ impl Association {
         // is set initially by taking the peer's initial TSN,
         // received in the INIT or INIT ACK chunk, and
         // subtracting one from it.
+        self.incoming_resets = IncomingResetQueue::new(i.initial_tsn);
         self.peer_last_tsn = if i.initial_tsn == 0 {
             u32::MAX
         } else {
@@ -1028,19 +1140,7 @@ impl Association {
         debug!("[{}] initial rwnd={}", self.side, self.rwnd);
         self.ssthresh = self.rwnd;
 
-        for param in &i.params {
-            if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
-                for t in &v.chunk_types {
-                    if *t == CT_FORWARD_TSN {
-                        debug!("[{}] use ForwardTSN (on init)", self.side);
-                        self.use_forward_tsn = true;
-                    }
-                }
-            }
-        }
-        if !self.use_forward_tsn {
-            warn!("[{}] not using ForwardTSN (on init)", self.side);
-        }
+        self.negotiate_extensions(&i.params);
 
         let mut outbound = Packet {
             common_header: CommonHeader {
@@ -1095,10 +1195,11 @@ impl Association {
         }
 
         self.my_max_num_inbound_streams =
-            std::cmp::min(i.num_inbound_streams, self.my_max_num_inbound_streams);
+            std::cmp::min(i.num_outbound_streams, self.my_max_num_inbound_streams);
         self.my_max_num_outbound_streams =
-            std::cmp::min(i.num_outbound_streams, self.my_max_num_outbound_streams);
+            std::cmp::min(i.num_inbound_streams, self.my_max_num_outbound_streams);
         self.peer_verification_tag = i.initiate_tag;
+        self.incoming_resets = IncomingResetQueue::new(i.initial_tsn);
         self.peer_last_tsn = if i.initial_tsn == 0 {
             u32::MAX
         } else {
@@ -1124,28 +1225,17 @@ impl Association {
             self.side,
             self.cwnd,
             self.ssthresh,
-            self.inflight_queue.get_num_bytes()
+            self.inflight_queue.outstanding_bytes()
         );
 
         self.timers.stop(Timer::T1Init);
         self.stored_init = None;
 
-        let mut cookie_param = None;
-        for param in &i.params {
-            if let Some(v) = param.as_any().downcast_ref::<ParamStateCookie>() {
-                cookie_param = Some(v);
-            } else if let Some(v) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
-                for t in &v.chunk_types {
-                    if *t == CT_FORWARD_TSN {
-                        debug!("[{}] use ForwardTSN (on initAck)", self.side);
-                        self.use_forward_tsn = true;
-                    }
-                }
-            }
-        }
-        if !self.use_forward_tsn {
-            warn!("[{}] not using ForwardTSN (on initAck)", self.side);
-        }
+        self.negotiate_extensions(&i.params);
+        let cookie_param = i
+            .params
+            .iter()
+            .find_map(|param| param.as_any().downcast_ref::<ParamStateCookie>());
 
         if let Some(v) = cookie_param {
             self.stored_cookie_echo = Some(ChunkCookieEcho {
@@ -1162,6 +1252,21 @@ impl Association {
             Ok(vec![])
         } else {
             Err(Error::ErrInitAckNoCookie)
+        }
+    }
+
+    fn negotiate_extensions(&mut self, params: &[Box<dyn Param>]) {
+        self.use_forward_tsn = false;
+        self.peer_supports_reconfig = false;
+        for param in params {
+            if param.as_any().is::<ParamForwardTsnSupported>() {
+                // RFC 3758 3.3: the original PR-SCTP advertisement remains
+                // valid independently of the newer supported-chunk list.
+                self.use_forward_tsn = true;
+            } else if let Some(ext) = param.as_any().downcast_ref::<ParamSupportedExtensions>() {
+                self.use_forward_tsn |= ext.chunk_types.contains(&CT_FORWARD_TSN);
+                self.peer_supports_reconfig |= ext.chunk_types.contains(&CT_RECONFIG);
+            }
         }
     }
 
@@ -1273,7 +1378,7 @@ impl Association {
         let can_push = self.payload_queue.can_push(d, self.peer_last_tsn);
         let mut stream_handle_data = false;
         if can_push {
-            if self.get_or_create_stream(d.stream_identifier).is_some() {
+            if d.stream_identifier < self.my_max_num_inbound_streams {
                 if self.get_my_receiver_window_credit() > 0 {
                     // Pass the new chunk to stream level as soon as it arrives
                     self.payload_queue.push(d.clone(), self.peer_last_tsn);
@@ -1337,13 +1442,9 @@ impl Association {
 
         let immediate_sack = d.immediate_sack;
 
-        if stream_handle_data && let Some(s) = self.streams.get_mut(&d.stream_identifier) {
+        if stream_handle_data {
             self.events.push_back(Event::DatagramReceived);
-            if s.handle_data(d) && s.reassembly_queue.is_readable() {
-                self.events.push_back(Event::Stream(StreamEvent::Readable {
-                    id: s.stream_identifier,
-                }));
-            }
+            self.deliver_received_data(d.clone());
         }
 
         self.handle_peer_last_tsn_and_acknowledgement(immediate_sack)
@@ -1385,12 +1486,12 @@ impl Association {
         }
 
         // Process selective ack
-        let (bytes_acked_per_stream, htna) = self.process_selective_ack(d, now)?;
-
-        let mut total_bytes_acked = 0;
-        for n_bytes_acked in bytes_acked_per_stream.values() {
-            total_bytes_acked += *n_bytes_acked;
-        }
+        let SackProgress {
+            bytes_acked_per_stream,
+            total_bytes_acked,
+            htna,
+            revoked,
+        } = self.process_selective_ack(d, now)?;
 
         let mut cum_tsn_ack_point_advanced = false;
         if sna32lt(self.cumulative_tsn_ack_point, d.cumulative_tsn_ack) {
@@ -1400,31 +1501,23 @@ impl Association {
             );
 
             self.cumulative_tsn_ack_point = d.cumulative_tsn_ack;
+            while self
+                .reset_tsn_ack_queue
+                .front()
+                .is_some_and(|(tsn, _)| sna32lte(*tsn, d.cumulative_tsn_ack))
+            {
+                let (tsn, streams) = self.reset_tsn_ack_queue.pop_front().unwrap();
+                for si in streams {
+                    if self.confirmed_reset_tsns.get(&si) == Some(&tsn) {
+                        self.confirmed_reset_tsns.remove(&si);
+                    }
+                }
+            }
             cum_tsn_ack_point_advanced = true;
             self.on_cumulative_tsn_ack_point_advanced(total_bytes_acked, now);
         }
 
-        for (si, n_bytes_acked) in &bytes_acked_per_stream {
-            if *n_bytes_acked > 0 {
-                // Report the exact bytes released for this stream (acknowledged OR
-                // abandoned — both funnel through bytes_acked_per_stream) so upper
-                // layers can decrement their own send-buffer accounting. Unlike the
-                // edge-triggered BufferedAmountLow advisory below, this fires on
-                // every release with the byte delta.
-                self.events
-                    .push_back(Event::Stream(StreamEvent::BufferedAmountReleased {
-                        id: *si,
-                        n_bytes: *n_bytes_acked as usize,
-                    }));
-            }
-            if let Some(s) = self.streams.get_mut(si)
-                && s.on_buffer_released(*n_bytes_acked)
-            {
-                trace!("StreamEvent::BufferedAmountLow");
-                self.events
-                    .push_back(Event::Stream(StreamEvent::BufferedAmountLow { id: *si }))
-            }
-        }
+        self.release_stream_buffers(&bytes_acked_per_stream);
 
         // New rwnd value
         // RFC 4960 sec 6.2.1.  Processing a Received SACK
@@ -1433,15 +1526,35 @@ impl Association {
         //       of bytes still outstanding after processing the Cumulative
         //       TSN Ack and the Gap Ack Blocks.
 
-        // bytes acked were already subtracted by markAsAcked() method
-        let bytes_outstanding = self.inflight_queue.get_num_bytes() as u32;
+        // acknowledged payload bytes were already released from the in-flight queue
+        let bytes_outstanding = self.inflight_queue.outstanding_bytes() as u32;
         if bytes_outstanding >= d.advertised_receiver_window_credit {
             self.rwnd = 0;
         } else {
             self.rwnd = d.advertised_receiver_window_credit - bytes_outstanding;
         }
 
-        self.process_fast_retransmission(d.cumulative_tsn_ack, htna, cum_tsn_ack_point_advanced)?;
+        if let Some(probe) = self.zero_window_probe {
+            let window_still_closed = self.inflight_queue.get(probe).is_some_and(|chunk| {
+                chunk.is_outstanding()
+                    && (d.advertised_receiver_window_credit as usize) < chunk.user_data.len()
+            });
+            if !window_still_closed {
+                self.zero_window_probe = None;
+            } else {
+                // RFC 9260 6.1 A: a reader may keep its window shut indefinitely
+                // while its SACKs demonstrate that the path is still alive.
+                // Positive credit smaller than the probe is also insufficient.
+                self.timers.reset_retrans(Timer::T3RTX);
+            }
+        }
+
+        self.process_fast_retransmission(
+            d.cumulative_tsn_ack,
+            htna,
+            cum_tsn_ack_point_advanced,
+            &revoked,
+        )?;
 
         if self.use_forward_tsn {
             // RFC 3758 Sec 3.5 C1
@@ -1455,44 +1568,7 @@ impl Association {
                 self.fwd_tsn_stream_map.clear();
             }
 
-            // RFC 3758 Sec 3.5 C2 — advance over newly-abandoned chunks,
-            // folding each ordered one into the forward-TSN stream map so
-            // create_forward_tsn needn't rescan the window.
-            let mut i = self.advanced_peer_tsn_ack_point + 1;
-            while let Some((abandoned, unordered, si, ssn)) = self.inflight_queue.get(i).map(|c| {
-                (
-                    c.abandoned(),
-                    c.unordered,
-                    c.stream_identifier,
-                    c.stream_sequence_number,
-                )
-            }) {
-                if !abandoned {
-                    break;
-                }
-                self.advanced_peer_tsn_ack_point = i;
-                self.note_abandoned_for_forward_tsn(unordered, si, ssn);
-                i += 1;
-            }
-
-            // RFC 3758 Sec 3.5 C3
-            if sna32gt(
-                self.advanced_peer_tsn_ack_point,
-                self.cumulative_tsn_ack_point,
-            ) {
-                self.will_send_forward_tsn = true;
-                debug!(
-                    "[{}] handleSack {}: sna32GT({}, {})",
-                    self.side,
-                    self.will_send_forward_tsn,
-                    self.advanced_peer_tsn_ack_point,
-                    self.cumulative_tsn_ack_point
-                );
-            } else {
-                // No forward-TSN window open (receiver has caught up): drop any
-                // stale per-stream SSNs so they aren't reported later.
-                self.fwd_tsn_stream_map.clear();
-            }
+            self.advance_peer_ack_point();
             self.awake_write_loop();
         }
 
@@ -1501,17 +1577,36 @@ impl Association {
         Ok(vec![])
     }
 
-    fn handle_reconfig(&mut self, c: &ChunkReconfig) -> Result<Vec<Packet>> {
+    fn handle_reconfig(&mut self, now: Instant, c: &ChunkReconfig) -> Result<Vec<Packet>> {
         trace!("[{}] handle_reconfig", self.side);
 
+        // RFC 6525 3.1: validate the whole supported parameter combination
+        // before applying either half. In particular, two outgoing requests
+        // cannot smuggle a second state transition into one RE-CONFIG.
+        let kind = |p: &dyn Param| {
+            if p.as_any().is::<ParamReconfigResponse>() {
+                0
+            } else if p.as_any().is::<ParamOutgoingResetRequest>() {
+                1
+            } else {
+                2
+            }
+        };
+        let combination = (
+            c.param_a.as_deref().map(kind),
+            c.param_b.as_deref().map(kind),
+        );
+        if !matches!(combination, (Some(0 | 1), None) | (Some(0), Some(0 | 1))) {
+            return Ok(vec![]);
+        }
         let mut pp = vec![];
 
         if let Some(param_a) = &c.param_a {
-            self.handle_reconfig_param(param_a, &mut pp)?;
+            self.handle_reconfig_param(now, param_a, &mut pp)?;
         }
 
         if let Some(param_b) = &c.param_b {
-            self.handle_reconfig_param(param_b, &mut pp)?;
+            self.handle_reconfig_param(now, param_b, &mut pp)?;
         }
 
         Ok(pp)
@@ -1569,36 +1664,27 @@ impl Association {
         //   chunk,
 
         // Advance peer_last_tsn
-        while sna32lt(self.peer_last_tsn, c.new_cumulative_tsn) {
-            self.payload_queue.pop(self.peer_last_tsn + 1); // may not exist
-            self.peer_last_tsn += 1;
+        while let Some(&tsn) = self.payload_queue.sorted.front()
+            && sna32lte(tsn, c.new_cumulative_tsn)
+        {
+            self.payload_queue.pop(tsn);
         }
+        self.peer_last_tsn = c.new_cumulative_tsn;
 
-        // Report new peer_last_tsn value and abandoned largest SSN value to
-        // corresponding streams so that the abandoned chunks can be removed
-        // from the reassemblyQueue.
+        // RX sequence state exists independently of API stream registration.
+        // An abandoned first message may precede the first DATA we ever receive.
         for forwarded in &c.streams {
-            if let Some(s) = self.streams.get_mut(&forwarded.identifier) {
-                s.handle_forward_tsn_for_ordered(forwarded.sequence);
-                if s.reassembly_queue.is_readable() {
-                    self.events.push_back(Event::Stream(StreamEvent::Readable {
-                        id: s.stream_identifier,
-                    }));
-                }
+            if forwarded.identifier >= self.my_max_num_inbound_streams {
+                continue;
             }
+            self.incoming_resets.observe_stream(forwarded.identifier);
+            self.with_receive_queue(forwarded.identifier, |received| {
+                received.forward_tsn_for_ordered(forwarded.sequence)
+            });
         }
-
-        // TSN may be forwarded for unordered chunks. ForwardTSN chunk does not
-        // report which stream identifier it skipped for unordered chunks.
-        // Therefore, we need to broadcast this event to all existing streams for
-        // unordered chunks.
-        for s in self.streams.values_mut() {
-            s.handle_forward_tsn_for_unordered(c.new_cumulative_tsn);
-            if s.reassembly_queue.is_readable() {
-                self.events.push_back(Event::Stream(StreamEvent::Readable {
-                    id: s.stream_identifier,
-                }));
-            }
+        let receive_ids: Vec<_> = self.receive_streams.keys().copied().collect();
+        for id in receive_ids {
+            self.forward_unordered_receive(id, c.new_cumulative_tsn);
         }
 
         self.handle_peer_last_tsn_and_acknowledgement(false)
@@ -1666,15 +1752,19 @@ impl Association {
         // Meaning, if peer_last_tsn+1 points to a chunk that is received,
         // advance peer_last_tsn until peer_last_tsn+1 points to unreceived chunk.
         //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
-        while self.payload_queue.pop(self.peer_last_tsn + 1).is_some() {
-            self.peer_last_tsn += 1;
+        while self
+            .payload_queue
+            .pop(self.peer_last_tsn.wrapping_add(1))
+            .is_some()
+        {
+            self.peer_last_tsn = self.peer_last_tsn.wrapping_add(1);
             //debug!("[{}] peer_last_tsn = {}", self.side, self.peer_last_tsn);
+        }
 
-            let rst_reqs: Vec<ParamOutgoingResetRequest> =
-                self.reconfig_requests.values().cloned().collect();
-            for rst_req in rst_reqs {
-                self.reset_streams_if_any(&rst_req, false, &mut reply)?;
-            }
+        // RFC 6525 5.2.2 E2-E5 also applies when FORWARD TSN filled the gap.
+        let sequences = self.incoming_resets.ready(self.peer_last_tsn);
+        for sequence in sequences {
+            self.retry_incoming_reset(sequence, &mut reply)?;
         }
 
         let has_packet_loss = !self.payload_queue.is_empty();
@@ -1708,19 +1798,42 @@ impl Association {
     #[allow(clippy::borrowed_box)]
     fn handle_reconfig_param(
         &mut self,
+        now: Instant,
         raw: &Box<dyn Param>,
         reply: &mut Vec<Packet>,
     ) -> Result<()> {
         if let Some(p) = raw.as_any().downcast_ref::<ParamOutgoingResetRequest>() {
-            self.reconfig_requests
-                .insert(p.reconfig_request_sequence_number, p.clone());
-            self.reset_streams_if_any(p, true, reply)?;
+            let action = self.incoming_resets.accept(
+                p,
+                self.receive_streams
+                    .keys()
+                    .chain(self.streams.keys())
+                    .copied(),
+                self.my_max_num_inbound_streams,
+            );
+            // E1 is part of accepting the request, not an unchecked way to stop
+            // another procedure's timer using an invalid/reused sequence number.
+            if !matches!(
+                action,
+                ReceiveResetAction::Reply(
+                    ReconfigResult::ErrorBadSequenceNumber | ReconfigResult::Denied
+                )
+            ) {
+                self.acknowledge_reconfig(p.reconfig_response_sequence_number, now);
+            }
+            let sequence = p.reconfig_request_sequence_number;
+            match action {
+                ReceiveResetAction::Reply(result) => {
+                    reply.push(self.reconfig_response_packet(sequence, result))
+                }
+                ReceiveResetAction::New | ReceiveResetAction::Pending => {
+                    self.retry_incoming_reset(sequence, reply)?
+                }
+            }
+            self.immediate_ack_triggered = true;
             Ok(())
         } else if let Some(p) = raw.as_any().downcast_ref::<ParamReconfigResponse>() {
-            self.reconfigs.remove(&p.reconfig_response_sequence_number);
-            if self.reconfigs.is_empty() {
-                self.timers.stop(Timer::Reconfig);
-            }
+            self.handle_reset_response(now, p);
             Ok(())
         } else {
             Err(Error::ErrParameterType)
@@ -1731,34 +1844,54 @@ impl Association {
         &mut self,
         d: &ChunkSelectiveAck,
         now: Instant,
-    ) -> Result<(FxHashMap<u16, i64>, u32)> {
+    ) -> Result<SackProgress> {
+        // Reject acknowledgments for unassigned TSNs before modifying queues.
+        if sna32gte(d.cumulative_tsn_ack, self.my_next_tsn) {
+            return Err(Error::ErrTsnRequestNotExist);
+        }
+        let mut last_end = 0;
+        for gap in &d.gap_ack_blocks {
+            if gap.start == 0
+                || gap.start <= last_end
+                || gap.end < gap.start
+                || sna32gte(
+                    d.cumulative_tsn_ack.wrapping_add(gap.end as u32),
+                    self.my_next_tsn,
+                )
+            {
+                return Err(Error::ErrTsnRequestNotExist);
+            }
+            last_end = gap.end;
+        }
         let mut bytes_acked_per_stream = FxHashMap::default();
+        let mut total_bytes_acked = 0;
+        let mut newly_acked_data = false;
+        // Abandoned DATA can precede the earliest outstanding TSN. RFC 9260
+        // 6.3.2 R3 applies to that outstanding DATA, including gap acknowledgments.
+        let earliest_outstanding = self.inflight_queue.sorted.iter().copied().find(|tsn| {
+            self.inflight_queue
+                .get(*tsn)
+                .is_some_and(ChunkPayloadData::is_outstanding)
+        });
 
         // New ack point, so pop all ACKed packets from inflight_queue
         // We add 1 because the "currentAckPoint" has already been popped from the inflight queue
         // For the first SACK we take care of this by setting the ackpoint to cumAck - 1
-        let mut i = self.cumulative_tsn_ack_point + 1;
+        let mut i = self.cumulative_tsn_ack_point.wrapping_add(1);
         //log::debug!("[{}] i={} d={}", self.name, i, d.cumulative_tsn_ack);
         while sna32lte(i, d.cumulative_tsn_ack) {
-            if let Some(c) = self.inflight_queue.pop(i) {
-                if !c.acked {
-                    // RFC 4096 sec 6.3.2.  Retransmission Timer Rules
-                    //   R3)  Whenever a SACK is received that acknowledges the DATA chunk
-                    //        with the earliest outstanding TSN for that address, restart the
-                    //        T3-rtx timer for that address with its current RTO (if there is
-                    //        still outstanding data on that address).
-                    if i == self.cumulative_tsn_ack_point + 1 {
-                        // T3 timer needs to be reset. Stop it for now.
-                        self.timers.stop(Timer::T3RTX);
-                    }
+            if let Some(mut c) = self.inflight_queue.pop(i) {
+                if c.acknowledge() {
+                    newly_acked_data |= c.nsent > 0;
 
-                    let n_bytes_acked = c.user_data.len() as i64;
-
-                    // Sum the number of bytes acknowledged per stream
-                    if let Some(amount) = bytes_acked_per_stream.get_mut(&c.stream_identifier) {
-                        *amount += n_bytes_acked;
-                    } else {
-                        bytes_acked_per_stream.insert(c.stream_identifier, n_bytes_acked);
+                    let n_bytes_acked = c.release_buffer() as i64;
+                    total_bytes_acked += c.take_delivery_credit() as i64;
+                    // A late SACK for a retired stream must not release bytes
+                    // belonging to a new channel that reused its SID.
+                    if self.is_current_stream_data(&c) {
+                        *bytes_acked_per_stream
+                            .entry(c.stream_identifier)
+                            .or_default() += n_bytes_acked;
                     }
 
                     // RFC 4960 sec 6.3.1.  RTO Calculation
@@ -1770,7 +1903,7 @@ impl Association {
                     //        packets that were retransmitted (and thus for which it is
                     //        ambiguous whether the reply was for the first instance of the
                     //        chunk or for a later instance)
-                    if c.nsent == 1 && sna32gte(c.tsn, self.min_tsn2measure_rtt) {
+                    if !c.abandoned() && c.nsent == 1 && sna32gte(c.tsn, self.min_tsn2measure_rtt) {
                         self.min_tsn2measure_rtt = self.my_next_tsn;
                         if let Some(since) = &c.since {
                             let rtt = now.duration_since(*since);
@@ -1796,39 +1929,43 @@ impl Association {
                 return Err(Error::ErrInflightQueueTsnPop);
             }
 
-            i += 1;
+            i = i.wrapping_add(1);
         }
+
+        let revoked = self.revoke_missing_gap_acks(d);
 
         let mut htna = d.cumulative_tsn_ack;
 
-        // Mark selectively acknowledged chunks as "acked"
+        // Record peer acknowledgments independently of local payload release.
         for g in &d.gap_ack_blocks {
             for i in g.start..=g.end {
-                let tsn = d.cumulative_tsn_ack + i as u32;
+                let tsn = d.cumulative_tsn_ack.wrapping_add(i as u32);
 
-                let (is_existed, is_acked) = if let Some(c) = self.inflight_queue.get(tsn) {
-                    (true, c.acked)
-                } else {
-                    (false, false)
-                };
-                let n_bytes_acked = if is_existed && !is_acked {
-                    self.inflight_queue.mark_as_acked(tsn) as i64
+                let newly_acknowledged = self.inflight_queue.acknowledge(tsn);
+                let n_bytes_acked = if newly_acknowledged {
+                    self.inflight_queue.release_buffer(tsn) as i64
                 } else {
                     0
                 };
 
+                let delivery_credit = self
+                    .inflight_queue
+                    .get_mut(tsn)
+                    .map_or(0, ChunkPayloadData::take_delivery_credit)
+                    as i64;
                 if let Some(c) = self.inflight_queue.get(tsn) {
-                    if !is_acked {
-                        // Sum the number of bytes acknowledged per stream
-                        if let Some(amount) = bytes_acked_per_stream.get_mut(&c.stream_identifier) {
-                            *amount += n_bytes_acked;
-                        } else {
-                            bytes_acked_per_stream.insert(c.stream_identifier, n_bytes_acked);
+                    if newly_acknowledged {
+                        newly_acked_data |= c.nsent > 0;
+                        total_bytes_acked += delivery_credit;
+                        if self.is_current_stream_data(c) {
+                            *bytes_acked_per_stream
+                                .entry(c.stream_identifier)
+                                .or_default() += n_bytes_acked;
                         }
 
                         trace!("[{}] tsn={} has been sacked", self.side, c.tsn);
 
-                        if c.nsent == 1 {
+                        if !c.abandoned() && c.nsent == 1 {
                             self.min_tsn2measure_rtt = self.my_next_tsn;
                             if let Some(since) = &c.since {
                                 let rtt = now.duration_since(*since);
@@ -1855,7 +1992,78 @@ impl Association {
             }
         }
 
-        Ok((bytes_acked_per_stream, htna))
+        // RFC 9260 8.1-8.2: an acknowledgment of new DATA clears the error
+        // counter, including a late SACK after local abandonment. Payload
+        // release does not acknowledge DATA; duplicates and never-sent TSNs
+        // assigned only for FORWARD TSN do not count as newly acknowledged DATA.
+        if newly_acked_data {
+            self.timers.reset_retrans(Timer::T3RTX);
+        }
+        if earliest_outstanding.is_some_and(|tsn| {
+            sna32lte(tsn, d.cumulative_tsn_ack)
+                || self.inflight_queue.get(tsn).is_some_and(|c| c.acknowledged)
+        }) {
+            // Postprocessing restarts T3 with the current RTO if DATA/FORWARD
+            // TSN remains outstanding.
+            self.timers.set(Timer::T3RTX, None);
+        }
+        Ok(SackProgress {
+            bytes_acked_per_stream,
+            total_bytes_acked,
+            htna,
+            revoked,
+        })
+    }
+
+    /// RFC 9260 6.2.1 D(iii): a disappearing gap returns its DATA to recovery.
+    /// Diff the two ordered sets of ranges, visiting chunks only in the removed
+    /// portions. Ordinary cumulative SACKs need no inflight scan or allocation.
+    fn revoke_missing_gap_acks(&mut self, d: &ChunkSelectiveAck) -> Vec<u32> {
+        let mut revoked = Vec::new();
+        let mut gap_index = 0;
+        for &(start_tsn, end_tsn) in &self.peer_gap_ack_ranges {
+            if sna32lte(end_tsn, d.cumulative_tsn_ack) {
+                continue; // The cumulative ACK already removed this whole range.
+            }
+            let mut offset = if sna32lte(start_tsn, d.cumulative_tsn_ack) {
+                1
+            } else {
+                start_tsn.wrapping_sub(d.cumulative_tsn_ack)
+            };
+            let end = end_tsn.wrapping_sub(d.cumulative_tsn_ack);
+            while offset <= end {
+                while gap_index < d.gap_ack_blocks.len()
+                    && (d.gap_ack_blocks[gap_index].end as u32) < offset
+                {
+                    gap_index += 1;
+                }
+                let next_gap = d.gap_ack_blocks.get(gap_index);
+                if let Some(gap) = next_gap
+                    && gap.start as u32 <= offset
+                {
+                    offset = gap.end as u32 + 1;
+                    continue;
+                }
+                let missing_end = next_gap.map_or(end, |gap| end.min(gap.start as u32 - 1));
+                for missing in offset..=missing_end {
+                    let tsn = d.cumulative_tsn_ack.wrapping_add(missing);
+                    // Local abandonment may already have retired this payload.
+                    if self.inflight_queue.revoke_gap_ack(tsn) {
+                        revoked.push(tsn);
+                    }
+                }
+                offset = missing_end + 1;
+            }
+        }
+        self.peer_gap_ack_ranges.clear();
+        self.peer_gap_ack_ranges
+            .extend(d.gap_ack_blocks.iter().map(|gap| {
+                (
+                    d.cumulative_tsn_ack.wrapping_add(gap.start as u32),
+                    d.cumulative_tsn_ack.wrapping_add(gap.end as u32),
+                )
+            }));
+        revoked
     }
 
     fn on_cumulative_tsn_ack_point_advanced(&mut self, total_bytes_acked: i64, now: Instant) {
@@ -1936,6 +2144,7 @@ impl Association {
         cum_tsn_ack_point: u32,
         htna: u32,
         cum_tsn_ack_point_advanced: bool,
+        revoked: &[u32],
     ) -> Result<()> {
         // HTNA algorithm - RFC 4960 Sec 7.2.4
         // Increment missIndicator of each chunks that the SACK reported missing
@@ -1946,19 +2155,36 @@ impl Association {
         // b)  In fast-recovery AND the Cumulative TSN Ack Point advanced
         //     the miss indications are incremented for all TSNs reported missing
         //     in the SACK.
-        if !self.in_fast_recovery || cum_tsn_ack_point_advanced {
+        if !self.in_fast_recovery || cum_tsn_ack_point_advanced || !revoked.is_empty() {
+            let normal_reports = !self.in_fast_recovery || cum_tsn_ack_point_advanced;
             let max_tsn = if !self.in_fast_recovery {
                 // a) increment only for missing TSNs prior to the HTNA
                 htna
             } else {
                 // b) increment for all TSNs reported missing
-                cum_tsn_ack_point + (self.inflight_queue.len() as u32) + 1
+                cum_tsn_ack_point
+                    .wrapping_add(self.inflight_queue.len() as u32)
+                    .wrapping_add(1)
             };
 
-            let mut tsn = cum_tsn_ack_point + 1;
-            while sna32lt(tsn, max_tsn) {
+            // Capture the normal range before a missing chunk can enter fast
+            // recovery. Revoked TSNs are already in serial order; append only
+            // those beyond that range, reporting an overlapping TSN once.
+            let normal_end = if normal_reports {
+                max_tsn
+                    .wrapping_sub(cum_tsn_ack_point)
+                    .min(self.inflight_queue.len() as u32 + 1)
+            } else {
+                0
+            };
+            let normal = (1..normal_end).map(|offset| cum_tsn_ack_point.wrapping_add(offset));
+            let additional = revoked
+                .iter()
+                .copied()
+                .filter(|tsn| tsn.wrapping_sub(cum_tsn_ack_point) >= normal_end);
+            for tsn in normal.chain(additional) {
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
-                    if !c.acked && !c.abandoned() && c.miss_indicator < 3 {
+                    if c.is_outstanding() && c.miss_indicator < 3 {
                         c.miss_indicator += 1;
                         if c.miss_indicator == 3 && !self.in_fast_recovery {
                             // 2)  If not in Fast Recovery, adjust the ssthresh and cwnd of the
@@ -1976,15 +2202,13 @@ impl Association {
                                 self.side,
                                 self.cwnd,
                                 self.ssthresh,
-                                self.inflight_queue.get_num_bytes()
+                                self.inflight_queue.outstanding_bytes()
                             );
                         }
                     }
                 } else {
                     return Err(Error::ErrTsnRequestNotExist);
                 }
-
-                tsn += 1;
             }
         }
 
@@ -2025,106 +2249,105 @@ impl Association {
         }
     }
 
-    /// Streams named by `p` that still hold a complete message the application
-    /// has not collected, so a reset naming them cannot be performed yet.
-    ///
-    /// Only *readable* data counts: an incomplete fragment set can never be
-    /// completed once the peer has reset, so it is discardable and must not
-    /// hold the reset open forever.
-    fn streams_awaiting_drain(&self, p: &ParamOutgoingResetRequest) -> Vec<StreamId> {
-        p.stream_identifiers
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.streams
-                    .get(id)
-                    .is_some_and(|s| s.reassembly_queue.is_readable())
-            })
-            .collect()
+    fn retry_incoming_reset(&mut self, sequence: u32, reply: &mut Vec<Packet>) -> Result<()> {
+        if self.incoming_resets.get(sequence).is_none() {
+            return Ok(());
+        }
+        if !self.incoming_resets.is_ready(sequence, self.peer_last_tsn) {
+            reply.push(self.reconfig_response_packet(sequence, ReconfigResult::InProgress));
+            return Ok(());
+        }
+        let streams = self
+            .incoming_resets
+            .complete(sequence, ReconfigResult::SuccessPerformed)
+            .unwrap();
+        for &id in streams.iter() {
+            // RFC 8831 6.7 closes each reused wire channel in both directions.
+            // An unread API receiver may still describe an earlier RX epoch.
+            let reciprocal = self
+                .receive_streams
+                .get(&id)
+                .is_some_and(ReceiveQueue::needs_reciprocal_reset);
+            if let Some(s) = self.streams.get_mut(&id) {
+                s.incoming_reset = true;
+                s.state = ((s.state as u8) & 1).into();
+            }
+            if reciprocal {
+                self.queue_reset_request(id);
+            }
+            let awaiting_outgoing = self.pending_queue.is_resetting(id);
+            self.with_receive_queue(id, |received| {
+                if awaiting_outgoing {
+                    received.require_outgoing_reset();
+                }
+                received.reset();
+            });
+            self.finish_stream_delivery(id);
+        }
+        // E4 replays received DATA after this boundary's RX mutation. A second
+        // accepted reset can retain part of the same stream's future queue.
+        for &id in streams.iter() {
+            let actions = self.with_receive_queue(id, ReceiveQueue::take_deferred);
+            for action in actions {
+                match action {
+                    DeferredReceive::Data(data) => self.deliver_received_data(data),
+                    DeferredReceive::ForwardUnordered(tsn) => {
+                        self.forward_unordered_receive(id, tsn)
+                    }
+                }
+            }
+        }
+        reply.push(self.reconfig_response_packet(sequence, ReconfigResult::SuccessPerformed));
+        Ok(())
     }
 
-    fn reset_streams_if_any(
-        &mut self,
-        p: &ParamOutgoingResetRequest,
-        respond: bool,
-        reply: &mut Vec<Packet>,
-    ) -> Result<()> {
-        let mut result = ReconfigResult::SuccessPerformed;
-        let mut sis_to_reset = vec![];
-
-        if sna32lte(p.sender_last_tsn, self.peer_last_tsn) {
-            debug!(
-                "[{}] resetStream(): senderLastTSN={} <= peer_last_tsn={}",
-                self.side, p.sender_last_tsn, self.peer_last_tsn
-            );
-
-            let draining = self.streams_awaiting_drain(p);
-
-            for id in &p.stream_identifiers {
-                if draining.contains(id) {
-                    continue;
-                }
-                if self.streams.contains_key(id) {
-                    if respond {
-                        sis_to_reset.push(*id);
-                    }
-                    self.unregister_stream(*id, AssociationError::Reset);
-                }
-            }
-
-            if draining.is_empty() {
-                self.reconfig_requests
-                    .remove(&p.reconfig_request_sequence_number);
-            } else {
-                debug!(
-                    "[{}] resetStream(): deferring reset of {:?}, application has not drained",
-                    self.side, draining
-                );
-                result = ReconfigResult::InProgress;
-            }
+    fn deliver_received_data(&mut self, data: ChunkPayloadData) {
+        let id = data.stream_identifier;
+        self.incoming_resets.observe_stream(id);
+        let deferred = self
+            .incoming_resets
+            .boundary(id)
+            .is_some_and(|boundary| sna32gt(data.tsn, boundary));
+        if deferred {
+            self.with_receive_queue(id, |received| received.defer(DeferredReceive::Data(data)));
         } else {
-            debug!(
-                "[{}] resetStream(): senderLastTSN={} > peer_last_tsn={}",
-                self.side, p.sender_last_tsn, self.peer_last_tsn
-            );
-            result = ReconfigResult::InProgress;
+            self.get_or_create_stream(id);
+            if self.with_receive_queue(id, |received| received.push(data)) {
+                self.events
+                    .push_back(Event::Stream(StreamEvent::Readable { id }));
+            }
         }
+    }
 
-        // Answer incoming reset requests with the same reset request, but with
-        // reconfig_response_sequence_number.
-        if !sis_to_reset.is_empty() {
-            let rsn = self.generate_next_rsn();
-            let tsn = self.my_next_tsn - 1;
-
-            let c = ChunkReconfig {
-                param_a: Some(Box::new(ParamOutgoingResetRequest {
-                    reconfig_request_sequence_number: rsn,
-                    reconfig_response_sequence_number: p.reconfig_request_sequence_number,
-                    sender_last_tsn: tsn,
-                    stream_identifiers: sis_to_reset,
-                })),
-                ..Default::default()
-            };
-
-            self.reconfigs.insert(rsn, c.clone()); // store in the map for retransmission
-
-            let p = self.create_packet(vec![Box::new(c)]);
-            reply.push(p);
+    fn forward_unordered_receive(&mut self, id: StreamId, tsn: u32) {
+        let boundary = self.incoming_resets.boundary(id);
+        if self.receive_streams.contains_key(&id) {
+            let readable = self.with_receive_queue(id, |received| {
+                if let Some(boundary) = boundary
+                    && sna32gt(tsn, boundary)
+                {
+                    received.forward_tsn_for_unordered(boundary);
+                    received.defer(DeferredReceive::ForwardUnordered(tsn));
+                } else {
+                    received.forward_tsn_for_unordered(tsn);
+                }
+                received.is_readable()
+            });
+            if readable && self.streams.contains_key(&id) {
+                self.events
+                    .push_back(Event::Stream(StreamEvent::Readable { id }));
+            }
         }
+    }
 
-        let packet = self.create_packet(vec![Box::new(ChunkReconfig {
+    fn reconfig_response_packet(&self, sequence: u32, result: ReconfigResult) -> Packet {
+        self.create_packet(vec![Box::new(ChunkReconfig {
             param_a: Some(Box::new(ParamReconfigResponse {
-                reconfig_response_sequence_number: p.reconfig_request_sequence_number,
+                reconfig_response_sequence_number: sequence,
                 result,
             })),
             param_b: None,
-        })]);
-
-        debug!("[{}] RESET RESPONSE: {}", self.side, packet);
-
-        reply.push(packet);
-
-        Ok(())
+        })])
     }
 
     /// create_packet wraps chunks in a packet.
@@ -2167,12 +2390,22 @@ impl Association {
         accept: bool,
         default_payload_type: PayloadProtocolIdentifier,
     ) -> Option<Stream<'_>> {
-        let s = StreamState::new(
+        let limit = if accept {
+            self.my_max_num_inbound_streams
+        } else {
+            self.my_max_num_outbound_streams
+        };
+        if stream_identifier >= limit {
+            return None;
+        }
+        let mut s = StreamState::new(
             self.side,
             stream_identifier,
             self.max_payload_size,
             default_payload_type,
         );
+        s.generation = self.next_stream_generation;
+        self.next_stream_generation = self.next_stream_generation.wrapping_add(1);
 
         if accept {
             self.stream_queue.push_back(stream_identifier);
@@ -2181,6 +2414,18 @@ impl Association {
             }));
         }
 
+        let received = self
+            .receive_streams
+            .entry(stream_identifier)
+            .or_insert_with(|| ReceiveQueue::new(stream_identifier));
+        if !accept {
+            received.open();
+        } else if received.delivery_closed() {
+            // Saved messages can be published after their wire reset already
+            // finished. Stopping this receiver must not reset a newer channel.
+            s.incoming_reset = true;
+            s.state = RecvSendState::Readable;
+        }
         self.streams.insert(stream_identifier, s);
 
         Some(Stream {
@@ -2212,37 +2457,85 @@ impl Association {
     /// drain anything however attentive it is. Only the second justifies accepting a chunk
     /// into a full receive buffer.
     fn has_readable_data(&self) -> bool {
-        self.streams
-            .values()
-            .any(|s| s.reassembly_queue.is_readable())
+        self.receive_streams.values().any(ReceiveQueue::is_readable)
     }
 
     pub(crate) fn get_my_receiver_window_credit(&self) -> u32 {
-        let mut bytes_queued = 0;
-        for s in self.streams.values() {
-            bytes_queued += s.get_num_bytes_in_reassembly_queue() as u32;
-        }
+        self.max_receive_buffer_size
+            .saturating_sub(self.receive_buffered_bytes.min(u32::MAX as usize) as u32)
+    }
 
-        self.max_receive_buffer_size.saturating_sub(bytes_queued)
+    #[cfg(any(test, fuzzing, feature = "bench"))]
+    pub(crate) fn assert_receive_accounting(&self) {
+        assert_eq!(
+            self.receive_buffered_bytes,
+            self.receive_streams
+                .values()
+                .map(ReceiveQueue::get_num_bytes)
+                .sum::<usize>(),
+            "receive credit differs from retained payload ownership"
+        );
     }
 
     /// gather_outbound gathers outgoing packets. The returned bool value set to
     /// false means the association should be closed down after the final send.
     fn gather_outbound(&mut self, now: Instant) -> (Vec<Bytes>, bool) {
         let mut raw_packets = vec![];
-
-        if !self.control_queue.is_empty() {
-            for p in self.control_queue.drain(..) {
-                if let Ok(raw) = p.marshal() {
-                    raw_packets.push(raw);
-                } else {
-                    warn!("[{}] failed to serialize a control packet", self.side);
-                    continue;
+        let state = self.state();
+        let sack_allowed = matches!(
+            state,
+            AssociationState::Established
+                | AssociationState::ShutdownPending
+                | AssociationState::ShutdownSent
+                | AssociationState::ShutdownReceived
+        );
+        let mut pending_sack = None;
+        while let Some(packet) = self.control_queue.pop_front() {
+            // RFC 6525 §5.2 recommends bundling the SACK with a reset response.
+            // Keep other control chunks' framing rules unchanged and never grow
+            // this packet beyond the same MTU limit used for DATA bundling.
+            if sack_allowed
+                && self.ack_state == AckState::Immediate
+                && packet.chunks.len() == 1
+                && packet.chunks[0].as_any().is::<ChunkReconfig>()
+            {
+                let sack = pending_sack.get_or_insert_with(|| self.create_selective_ack_chunk());
+                let wire_size = COMMON_HEADER_SIZE as usize
+                    + (CHUNK_HEADER_SIZE + packet.chunks[0].value_length()).next_multiple_of(4)
+                    + (CHUNK_HEADER_SIZE + sack.value_length()).next_multiple_of(4);
+                if wire_size <= self.mtu as usize {
+                    let mut buf = BytesMut::with_capacity(wire_size);
+                    if Packet::write_framed(
+                        &packet.common_header,
+                        [packet.chunks[0].as_ref(), sack as &dyn Chunk].into_iter(),
+                        &mut buf,
+                    )
+                    .is_ok()
+                    {
+                        raw_packets.push(buf.freeze());
+                        self.ack_state = AckState::Idle;
+                        pending_sack = None;
+                        continue;
+                    }
                 }
             }
+            if let Ok(raw) = packet.marshal() {
+                raw_packets.push(raw);
+            } else {
+                warn!("[{}] failed to serialize a control packet", self.side);
+            }
         }
-
-        let state = self.state();
+        if let Some(sack) = pending_sack {
+            // The complete gap/duplicate report did not fit beside RE-CONFIG.
+            // Send that already prepared SACK separately, without losing it or
+            // consuming duplicate TSNs a second time.
+            if let Ok(raw) = self.marshal_control_chunk(&sack) {
+                raw_packets.push(raw);
+                self.ack_state = AckState::Idle;
+            } else {
+                warn!("[{}] failed to serialize a SACK packet", self.side);
+            }
+        }
         match state {
             AssociationState::Established => {
                 raw_packets = self.gather_data_packets_to_retransmit(raw_packets, now);
@@ -2258,6 +2551,7 @@ impl Association {
                 raw_packets = self.gather_data_packets_to_retransmit(raw_packets, now);
                 raw_packets = self.gather_outbound_fast_retransmission_packets(raw_packets, now);
                 raw_packets = self.gather_outbound_sack_packets(raw_packets);
+                raw_packets = self.gather_outbound_forward_tsn_packets(raw_packets);
                 self.gather_outbound_shutdown_packets(raw_packets, now)
             }
             AssociationState::ShutdownAckSent => {
@@ -2285,6 +2579,7 @@ impl Association {
         mut raw_packets: Vec<Bytes>,
         now: Instant,
     ) -> Vec<Bytes> {
+        self.resume_reset_query(now);
         // Pop unsent data chunks from the pending queue to send as much as
         // cwnd and rwnd allow.
         let (chunks, sis_to_reset) = self.pop_pending_data_chunks_to_send(now);
@@ -2297,64 +2592,9 @@ impl Association {
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
 
-        if !sis_to_reset.is_empty() || self.will_retransmit_reconfig {
-            if self.will_retransmit_reconfig {
-                self.will_retransmit_reconfig = false;
-                debug!(
-                    "[{}] retransmit {} RECONFIG chunk(s)",
-                    self.side,
-                    self.reconfigs.len()
-                );
-                for c in self.reconfigs.values() {
-                    let p = self.create_packet(vec![Box::new(c.clone())]);
-                    if let Ok(raw) = p.marshal() {
-                        raw_packets.push(raw);
-                    } else {
-                        warn!(
-                            "[{}] failed to serialize a RECONFIG packet to be retransmitted",
-                            self.side,
-                        );
-                    }
-                }
-            }
-
-            if !sis_to_reset.is_empty() {
-                let rsn = self.generate_next_rsn();
-                let tsn = self.my_next_tsn - 1;
-                debug!(
-                    "[{}] sending RECONFIG: rsn={} tsn={} streams={:?}",
-                    self.side,
-                    rsn,
-                    self.my_next_tsn - 1,
-                    sis_to_reset
-                );
-
-                let c = ChunkReconfig {
-                    param_a: Some(Box::new(ParamOutgoingResetRequest {
-                        reconfig_request_sequence_number: rsn,
-                        sender_last_tsn: tsn,
-                        stream_identifiers: sis_to_reset,
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                };
-                self.reconfigs.insert(rsn, c.clone()); // store in the map for retransmission
-
-                let p = self.create_packet(vec![Box::new(c)]);
-                if let Ok(raw) = p.marshal() {
-                    raw_packets.push(raw);
-                } else {
-                    warn!(
-                        "[{}] failed to serialize a RECONFIG packet to be transmitted",
-                        self.side
-                    );
-                }
-            }
-
-            if !self.reconfigs.is_empty() {
-                self.timers
-                    .start(Timer::Reconfig, now, self.rto_mgr.get_rto());
-            }
+        self.emit_reconfig(now, &mut raw_packets);
+        if !sis_to_reset.is_empty() {
+            self.start_reconfig(now, sis_to_reset, &mut raw_packets);
         }
 
         raw_packets
@@ -2367,15 +2607,22 @@ impl Association {
     ) -> Vec<Bytes> {
         if self.will_retransmit_fast {
             self.will_retransmit_fast = false;
+            self.abandon_unretransmittable_messages(
+                now,
+                ChunkPayloadData::is_fast_retransmit_candidate,
+            );
 
             let mut to_fast_retrans: Vec<Box<dyn Chunk>> = vec![];
             let mut fast_retrans_size = COMMON_HEADER_SIZE;
 
             let mut i = 0;
             loop {
-                let tsn = self.cumulative_tsn_ack_point + i + 1;
+                let tsn = self
+                    .cumulative_tsn_ack_point
+                    .wrapping_add(i)
+                    .wrapping_add(1);
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
-                    if c.acked || c.abandoned() || c.nsent > 1 || c.miss_indicator < 3 {
+                    if !c.is_fast_retransmit_candidate() {
                         i += 1;
                         continue;
                     }
@@ -2407,13 +2654,6 @@ impl Association {
                 }
 
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
-                    Association::check_partial_reliability_status(
-                        c,
-                        now,
-                        self.use_forward_tsn,
-                        self.side,
-                        &self.streams,
-                    );
                     to_fast_retrans.push(Box::new(c.clone()));
                     trace!(
                         "[{}] fast-retransmit: tsn={} sent={} htna={}",
@@ -2535,6 +2775,9 @@ impl Association {
     /// get_data_packets_to_retransmit is called when T3-rtx is timed out and retransmit outstanding data chunks
     /// that are not acked or abandoned yet.
     fn get_data_packets_to_retransmit(&mut self, now: Instant, raw_packets: &mut Vec<Bytes>) {
+        // T3 may have marked this DATA before its lifetime elapsed, while the
+        // send window deferred the actual retransmission (RFC 3758 TR4).
+        self.abandon_unretransmittable_messages(now, |c| c.retransmit);
         let awnd = std::cmp::min(self.cwnd, self.rwnd);
         let mut chunks = vec![];
         let mut bytes_to_send = 0;
@@ -2545,7 +2788,10 @@ impl Association {
         // so the next gather_outbound still scans.
         let mut chunks_remaining = false;
         while !done {
-            let tsn = self.cumulative_tsn_ack_point + i + 1;
+            let tsn = self
+                .cumulative_tsn_ack_point
+                .wrapping_add(i)
+                .wrapping_add(1);
             if let Some(c) = self.inflight_queue.get_mut(tsn) {
                 if !c.retransmit {
                     i += 1;
@@ -2572,14 +2818,6 @@ impl Association {
             }
 
             if let Some(c) = self.inflight_queue.get_mut(tsn) {
-                Association::check_partial_reliability_status(
-                    c,
-                    now,
-                    self.use_forward_tsn,
-                    self.side,
-                    &self.streams,
-                );
-
                 trace!(
                     "[{}] retransmitting tsn={} ssn={} sent={}",
                     self.side, c.tsn, c.stream_sequence_number, c.nsent
@@ -2597,111 +2835,233 @@ impl Association {
         self.bundle_data_chunks_into_packets(chunks, raw_packets);
     }
 
-    /// Whether the message at the head of the pending queue has outlived the
-    /// timed-reliability lifetime configured on its stream.
-    ///
-    /// Gated on `use_forward_tsn` for the same reason as
-    /// `check_partial_reliability_status`: when the peer did not negotiate
-    /// Forward-TSN the association falls back to reliable delivery, and partial
-    /// reliability must be off everywhere rather than in half the code.
-    ///
-    /// Restricted to unordered messages: an ordered one has already consumed a
-    /// stream sequence number in `packetize`, so abandoning it before it is ever
-    /// transmitted would leave a gap that only a ForwardTSN carrying that SSN can
-    /// close. Restricted to a beginning fragment so a partially drained message is
-    /// never truncated mid-run.
-    ///
-    /// Only the head of the queue is inspected, so an expired message sitting
-    /// behind a fresh one keeps its buffered bytes until it reaches the head. It
-    /// is still never transmitted: it is re-checked once it gets there.
-    fn pending_message_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
+    fn release_stream_buffers(&mut self, bytes_acked_per_stream: &FxHashMap<u16, i64>) {
+        for (si, n_bytes_acked) in bytes_acked_per_stream {
+            if *n_bytes_acked > 0 {
+                // Report the exact bytes released for this stream (acknowledged OR
+                // abandoned — both funnel through bytes_acked_per_stream) so upper
+                // layers can decrement their own send-buffer accounting. Unlike the
+                // edge-triggered BufferedAmountLow advisory below, this fires on
+                // every release with the byte delta.
+                self.events
+                    .push_back(Event::Stream(StreamEvent::BufferedAmountReleased {
+                        id: *si,
+                        n_bytes: *n_bytes_acked as usize,
+                    }));
+            }
+            if let Some(s) = self.streams.get_mut(si)
+                && s.on_buffer_released(*n_bytes_acked)
+            {
+                trace!("StreamEvent::BufferedAmountLow");
+                self.events
+                    .push_back(Event::Stream(StreamEvent::BufferedAmountLow { id: *si }))
+            }
+        }
+    }
+
+    /// RFC 3758 section 3.5 C2-C4. Retain the stream map until the peer catches up.
+    fn advance_peer_ack_point(&mut self) {
+        let mut tsn = self.advanced_peer_tsn_ack_point.wrapping_add(1);
+        while let Some(c) = self.inflight_queue.get(tsn) {
+            // A late FORWARD-TSN carrying old SSNs must be stale after RX reset.
+            // Bound its global TSN until the reset result retires those SSNs;
+            // unrelated DATA still flows. Otherwise another stream's TSN can
+            // make the old control chunk look new in a reused SID's SSN space.
+            if self
+                .outgoing_reset
+                .as_ref()
+                .is_some_and(|reset| sna32gt(tsn, reset.request.sender_last_tsn))
+            {
+                break;
+            }
+            if !c.abandoned() {
+                break;
+            }
+            let (unordered, si, ssn) = (c.unordered, c.stream_identifier, c.stream_sequence_number);
+            // Local SID reuse says nothing about the peer's SSN space. Old
+            // SSNs remain necessary until its outgoing reset is confirmed.
+            let current_ssn_space = self
+                .confirmed_reset_tsns
+                .get(&si)
+                .is_none_or(|last_reset_tsn| sna32gt(tsn, *last_reset_tsn));
+            self.advanced_peer_tsn_ack_point = tsn;
+            if current_ssn_space {
+                self.note_abandoned_for_forward_tsn(unordered, si, ssn);
+            }
+            tsn = tsn.wrapping_add(1);
+        }
+        if sna32gt(
+            self.advanced_peer_tsn_ack_point,
+            self.cumulative_tsn_ack_point,
+        ) {
+            self.will_send_forward_tsn = true;
+        } else {
+            self.fwd_tsn_stream_map.clear();
+        }
+    }
+
+    fn timed_data_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
+        self.use_forward_tsn
+            && c.reliability
+                .deadline()
+                .is_some_and(|deadline| now >= deadline)
+    }
+
+    fn is_current_stream_data(&self, c: &ChunkPayloadData) -> bool {
+        self.streams
+            .get(&c.stream_identifier)
+            .is_some_and(|s| s.generation == c.stream_generation)
+    }
+
+    /// A positive deadline can expire at any time. Timed(0) and Rexmit limits
+    /// instead apply when this particular DATA is considered for retransmission.
+    fn retransmission_policy_exhausted(
+        &self,
+        c: &ChunkPayloadData,
+        now: Instant,
+        is_candidate: bool,
+    ) -> bool {
         if !self.use_forward_tsn {
             return false;
         }
-
-        // `packetize` forces `unordered = false` for DCEP, so the ordering test
-        // already excludes it; the explicit check keeps that non-obvious coupling
-        // from becoming load-bearing.
-        if !c.unordered
-            || !c.beginning_fragment
-            || c.payload_type == PayloadProtocolIdentifier::Dcep
-        {
-            return false;
-        }
-
-        let Some(s) = self.streams.get(&c.stream_identifier) else {
-            return false;
-        };
-
-        // A zero lifetime keeps its established meaning â transmit once, never
-        // retransmit â rather than silently becoming "never transmit at all".
-        if s.reliability_type != ReliabilityType::Timed || s.reliability_value == 0 {
-            return false;
-        }
-
-        let Some(created_at) = c.created_at else {
-            return false;
-        };
-
-        now.saturating_duration_since(created_at).as_millis() as u32 >= s.reliability_value
-    }
-
-    /// Drop every fragment of the message at the head of the pending queue and
-    /// release the bytes it was holding in the stream's send buffer.
-    ///
-    /// Only called for an unordered message whose first fragment is at the head,
-    /// so the whole fragment run is contiguous: `send_payload_data` appends a
-    /// message's chunks without anything else interleaving. Running out before
-    /// the ending fragment would leave `PendingQueue` selected on an empty queue
-    /// and stall every later send, so that case asserts in debug builds and is
-    /// reported rather than silently tolerated.
-    fn abandon_pending_message(&mut self) {
-        let mut beginning_fragment = true;
-        let mut released = 0usize;
-        let mut stream_identifier = None;
-        let mut completed = false;
-
-        while let Some(c) = self.pending_queue.pop(beginning_fragment, true) {
-            beginning_fragment = false;
-            released += c.user_data.len();
-            stream_identifier = Some(c.stream_identifier);
-            if c.ending_fragment {
-                completed = true;
-                break;
+        match c.reliability {
+            MessageReliability::Reliable => false,
+            MessageReliability::Timed { deadline } => now >= deadline,
+            // RFC 7496 3.1: the limit excludes the first transmission and counts
+            // both fast and timer-based retries. nsent includes that first send.
+            MessageReliability::Rexmit { max_retransmits } => {
+                is_candidate && c.nsent > max_retransmits
             }
         }
+    }
 
-        if !completed {
-            debug_assert!(
-                false,
-                "pending queue ran out mid-message while abandoning an expired message"
-            );
-            error!(
-                "[{}] abandoned an incomplete fragment run; pending queue selection is now stale",
-                self.side
-            );
+    /// Select identities without changing ACK, retry or buffer state. Only a
+    /// fragment selected for recovery can exhaust that message's retry budget.
+    fn unretransmittable_messages(
+        &self,
+        now: Instant,
+        is_candidate: impl Fn(&ChunkPayloadData) -> bool,
+    ) -> Vec<MessageToAbandon> {
+        let mut messages = vec![];
+        let mut selected = rustc_hash::FxHashSet::default();
+        for &tsn in &self.inflight_queue.sorted {
+            let c = self.inflight_queue.get(tsn).unwrap();
+            if c.is_outstanding()
+                && self.retransmission_policy_exhausted(c, now, is_candidate(c))
+                && let Some(id) = c.message_id
+                && selected.insert(id)
+            {
+                messages.push(MessageToAbandon {
+                    id,
+                    sent_tsn: Some(tsn),
+                });
+            }
         }
+        messages
+    }
 
-        let (Some(si), true) = (stream_identifier, released > 0) else {
-            return;
-        };
-
-        trace!(
-            "[{}] abandoned {} pending bytes on stream {} (maxPacketLifeTime)",
-            self.side, released, si
+    /// RFC 3758 A2/A3: abandon all fragments by identity, including Gap-ACKed
+    /// siblings and an unsent tail. Each payload is released at most once.
+    /// FORWARD TSN and timers are updated after the complete operation.
+    fn abandon_message(&mut self, message: MessageToAbandon) -> bool {
+        let whole_tsn = message.sent_tsn.filter(|&tsn| {
+            self.inflight_queue.get(tsn).is_some_and(|c| {
+                c.message_id == Some(message.id) && c.beginning_fragment && c.ending_fragment
+            })
+        });
+        let mut inflight = whole_tsn.map_or_else(
+            || self.inflight_queue.message_tsns(message.id),
+            |tsn| vec![tsn],
         );
+        let mut released_per_stream = FxHashMap::default();
+        let mut changed = false;
+        let tail = self.pending_queue.drain_message(message.id);
+        // If a sent prefix was cumulatively acknowledged, merely forwarding its
+        // old TSN is ineffective (RFC 3758 3.6). Reserve one terminal TSN for the
+        // entire unsent tail so FORWARD TSN discards any incomplete peer state.
+        // This is bookkeeping only: abandoned DATA is never marshalled.
+        if let Some(first) = tail.first().filter(|c| !c.beginning_fragment) {
+            let mut terminal = first.clone();
+            terminal.stream_sequence_number = self
+                .transmit_streams
+                .get_mut(&first.stream_identifier)
+                .unwrap()
+                .abandon_tail(message.id);
+            terminal.tsn = self.generate_next_tsn();
+            terminal.ending_fragment = true;
+            terminal.user_data = Bytes::new();
+            terminal.buffer_released = true;
+            terminal.mark_abandoned();
+            inflight.push(terminal.tsn);
+            self.inflight_queue.push_no_check(terminal);
+        }
+        for c in tail {
+            if self.is_current_stream_data(&c) {
+                *released_per_stream.entry(c.stream_identifier).or_default() +=
+                    c.user_data.len() as i64;
+            }
+            changed = true;
+        }
+        for tsn in inflight {
+            if let Some(c) = self.inflight_queue.get_mut(tsn) {
+                let (si, generation) = (c.stream_identifier, c.stream_generation);
+                let (abandoned, released) = self.inflight_queue.abandon(tsn);
+                changed |= abandoned;
+                let released = released as i64;
+                if released > 0
+                    && self
+                        .streams
+                        .get(&si)
+                        .is_some_and(|s| s.generation == generation)
+                {
+                    *released_per_stream.entry(si).or_default() += released;
+                }
+            }
+        }
+        self.release_stream_buffers(&released_per_stream);
+        changed
+    }
 
-        self.events
-            .push_back(Event::Stream(StreamEvent::BufferedAmountReleased {
-                id: si,
-                n_bytes: released,
-            }));
+    fn on_messages_abandoned(&mut self, now: Instant) {
+        self.advance_peer_ack_point();
+        // RFC 3758 C5: recovery must continue even with no DATA left to retry.
+        if sna32gt(
+            self.advanced_peer_tsn_ack_point,
+            self.cumulative_tsn_ack_point,
+        ) {
+            self.timers
+                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
+        }
+    }
 
-        if let Some(s) = self.streams.get_mut(&si)
-            && s.on_buffer_released(released as i64)
-        {
-            self.events
-                .push_back(Event::Stream(StreamEvent::BufferedAmountLow { id: si }))
+    fn abandon_unretransmittable_messages(
+        &mut self,
+        now: Instant,
+        is_candidate: impl Fn(&ChunkPayloadData) -> bool,
+    ) {
+        let mut changed = false;
+        for message in self.unretransmittable_messages(now, is_candidate) {
+            changed |= self.abandon_message(message);
+        }
+        if changed {
+            self.on_messages_abandoned(now);
+        }
+    }
+
+    /// An unstarted message has consumed neither SSN nor TSN. Timed(0) is
+    /// captured as Rexmit(0), preserving its first-transmission API contract.
+    fn pending_message_expired(&self, c: &ChunkPayloadData, now: Instant) -> bool {
+        self.timed_data_expired(c, now)
+    }
+
+    fn pending_message_to_abandon(&self) -> MessageToAbandon {
+        MessageToAbandon {
+            id: self
+                .pending_queue
+                .peek()
+                .and_then(|c| c.message_id)
+                .expect("outbound DATA has a message identity"),
+            sent_tsn: None,
         }
     }
 
@@ -2710,10 +3070,22 @@ impl Association {
     fn pop_pending_data_chunks_to_send(
         &mut self,
         now: Instant,
-    ) -> (Vec<ChunkPayloadData>, Vec<u16>) {
+    ) -> (Vec<ChunkPayloadData>, Vec<ResetMarker>) {
         let mut chunks = vec![];
         let mut sis_to_reset = vec![]; // stream identifiers to reset
         if !self.pending_queue.is_empty() {
+            // No reconfiguration result can arrive during this queue drain.
+            // Evaluate recovery gates once, not once per DATA fragment.
+            // Common header + RE-CONFIG header + fixed outgoing-reset parameter.
+            // Round the variable SID list down to a multiple of four wire bytes.
+            let max_reset_streams = (self
+                .mtu
+                .min(COMMON_HEADER_SIZE + u16::MAX as u32)
+                .saturating_sub(COMMON_HEADER_SIZE + 20)
+                / 4
+                * 2)
+            .max(1) as usize;
+            let can_start_reconfig = self.can_start_reconfig();
             // RFC 4960 sec 6.1.  Transmission of DATA Chunks
             //   A) At any given time, the data sender MUST NOT transmit new data to
             //      any destination transport address if its peer's rwnd indicates
@@ -2722,25 +3094,27 @@ impl Association {
             //      is 0), the data sender can always have one DATA chunk in flight to
             //      the receiver if allowed by cwnd (see rule B, below).
 
-            while let Some(c) = self.pending_queue.peek() {
-                let (beginning_fragment, unordered, data_len, stream_identifier) = (
-                    c.beginning_fragment,
-                    c.unordered,
-                    c.user_data.len(),
-                    c.stream_identifier,
-                );
-
-                if data_len == 0 {
-                    sis_to_reset.push(stream_identifier);
-                    if self
-                        .pending_queue
-                        .pop(beginning_fragment, unordered)
-                        .is_none()
-                    {
-                        error!("[{}] failed to pop from pending queue", self.side);
+            loop {
+                // RFC 6525 5.1.1: only one request may be in flight. Reset
+                // markers live outside DATA queues, so other streams can send.
+                if can_start_reconfig {
+                    while sis_to_reset.len() < max_reset_streams {
+                        let Some(reset) = self.pending_queue.pop_ready_reset() else {
+                            break;
+                        };
+                        sis_to_reset.push(reset);
                     }
-                    continue;
                 }
+                // Freeze Sender's Last Assigned TSN before any later DATA,
+                // including a zero-window probe (RFC 6525 5.1.2 A3).
+                if !sis_to_reset.is_empty() {
+                    break;
+                }
+                let Some(c) = self.pending_queue.peek() else {
+                    break;
+                };
+                let (beginning_fragment, unordered, data_len) =
+                    (c.beginning_fragment, c.unordered, c.user_data.len());
 
                 // RFC 3758 timed reliability: a message whose lifetime has run
                 // out must be abandoned even if it was never transmitted. Doing
@@ -2748,11 +3122,14 @@ impl Association {
                 // allocated, means there is no gap for the peer to reconcile and
                 // no ForwardTSN to send.
                 if self.pending_message_expired(c, now) {
-                    self.abandon_pending_message();
+                    let message = self.pending_message_to_abandon();
+                    if self.abandon_message(message) {
+                        self.on_messages_abandoned(now);
+                    }
                     continue;
                 }
 
-                if self.inflight_queue.get_num_bytes() + data_len > self.cwnd as usize {
+                if self.inflight_queue.outstanding_bytes() + data_len > self.cwnd as usize {
                     break; // would exceeds cwnd
                 }
 
@@ -2772,7 +3149,7 @@ impl Association {
             }
 
             // the data sender can always have one DATA chunk in flight to the receiver
-            if chunks.is_empty() && self.inflight_queue.is_empty() {
+            if chunks.is_empty() && sis_to_reset.is_empty() && self.inflight_queue.is_empty() {
                 // Send zero window probe
                 if let Some(c) = self.pending_queue.peek() {
                     let (beginning_fragment, unordered) = (c.beginning_fragment, c.unordered);
@@ -2782,6 +3159,7 @@ impl Association {
                         unordered,
                         now,
                     ) {
+                        self.zero_window_probe = Some(chunk.tsn);
                         chunks.push(chunk);
                     }
                 }
@@ -2874,70 +3252,15 @@ impl Association {
     /// generate_next_tsn returns the my_next_tsn and increases it. The caller should hold the lock.
     fn generate_next_tsn(&mut self) -> u32 {
         let tsn = self.my_next_tsn;
-        self.my_next_tsn += 1;
+        self.my_next_tsn = self.my_next_tsn.wrapping_add(1);
         tsn
     }
 
     /// generate_next_rsn returns the my_next_rsn and increases it. The caller should hold the lock.
     fn generate_next_rsn(&mut self) -> u32 {
         let rsn = self.my_next_rsn;
-        self.my_next_rsn += 1;
+        self.my_next_rsn = self.my_next_rsn.wrapping_add(1);
         rsn
-    }
-
-    fn check_partial_reliability_status(
-        c: &mut ChunkPayloadData,
-        now: Instant,
-        use_forward_tsn: bool,
-        side: Side,
-        streams: &FxHashMap<u16, StreamState>,
-    ) {
-        if !use_forward_tsn {
-            return;
-        }
-
-        // draft-ietf-rtcweb-data-protocol-09.txt section 6
-        //	6.  Procedures
-        //		All Data Channel Establishment TransportProtocol messages MUST be sent using
-        //		ordered delivery and reliable transmission.
-        //
-        if c.payload_type == PayloadProtocolIdentifier::Dcep {
-            return;
-        }
-
-        // PR-SCTP
-        if let Some(s) = streams.get(&c.stream_identifier) {
-            let reliability_type: ReliabilityType = s.reliability_type;
-            let reliability_value = s.reliability_value;
-
-            if reliability_type == ReliabilityType::Rexmit {
-                if c.nsent >= reliability_value {
-                    c.set_abandoned(true);
-                    trace!(
-                        "[{}] marked as abandoned: tsn={} ppi={} (remix: {})",
-                        side, c.tsn, c.payload_type, c.nsent
-                    );
-                }
-            } else if reliability_type == ReliabilityType::Timed {
-                // Age is measured from when the message was queued, not from its
-                // most recent transmission: `since` is the RTT baseline and is
-                // reassigned on every (re)transmission.
-                if let Some(queued_at) = c.created_at.as_ref().or(c.since.as_ref()) {
-                    let elapsed = now.saturating_duration_since(*queued_at);
-                    if elapsed.as_millis() as u32 >= reliability_value {
-                        c.set_abandoned(true);
-                        trace!(
-                            "[{}] marked as abandoned: tsn={} ppi={} (timed: {:?})",
-                            side, c.tsn, c.payload_type, elapsed
-                        );
-                    }
-                } else {
-                    error!("[{}] chunk has neither created_at nor since", side);
-                }
-            }
-        } else {
-            error!("[{}] stream {} not found)", side, c.stream_identifier);
-        }
     }
 
     fn create_selective_ack_chunk(&mut self) -> ChunkSelectiveAck {
@@ -2950,7 +3273,7 @@ impl Association {
     }
 
     /// Record an abandoned chunk into the forward-TSN stream map (RFC 3758 C4),
-    /// called from the two C2 loops as `advanced_peer_tsn_ack_point` advances
+    /// called from the C2 walk as `advanced_peer_tsn_ack_point` advances
     /// over each newly-abandoned in-flight chunk. Only *ordered* streams are
     /// tracked: the receiver ignores the per-stream SSN list for unordered
     /// chunks (it advances purely by `new_cumulative_tsn`). Keeps the greatest
@@ -2990,7 +3313,7 @@ impl Association {
         // RFC 3758 Sec 3.5 C4: report, once per ordered stream, the greatest
         // stream-sequence-number among abandoned chunks in the forward-TSN
         // window. This is maintained incrementally in `fwd_tsn_stream_map` (see
-        // its declaration and the two C2 loops that feed it), so we no longer
+        // its declaration and the C2 walk that feeds it), so we no longer
         // rescan `(cumulative_tsn_ack_point, advanced_peer_tsn_ack_point]` with
         // a per-TSN hashmap probe on every FORWARD-TSN — that scan was O(rwnd)
         // (~1000 probes/call for a 1 MB window) and dominated the send profile.
@@ -3024,25 +3347,15 @@ impl Association {
         now: Instant,
     ) -> Option<ChunkPayloadData> {
         if let Some(mut c) = self.pending_queue.pop(beginning_fragment, unordered) {
-            // Mark all fragements are in-flight now
-            if c.ending_fragment {
-                c.set_all_inflight();
-            }
-
-            // Assign TSN
+            self.transmit_streams
+                .entry(c.stream_identifier)
+                .or_default()
+                .assign_ssn(&mut c);
             c.tsn = self.generate_next_tsn();
 
-            // RTT baseline only; maxPacketLifeTime measures from `created_at`.
+            // RTT baseline only; the message's reliability deadline is immutable.
             c.since = Some(now);
             c.nsent = 1; // being sent for the first time
-
-            Association::check_partial_reliability_status(
-                &mut c,
-                now,
-                self.use_forward_tsn,
-                self.side,
-                &self.streams,
-            );
 
             trace!(
                 "[{}] sending ppi={} tsn={} ssn={} sent={} len={} ({},{})",
@@ -3067,33 +3380,41 @@ impl Association {
 
     /// Queues the outgoing stream-reset chunk (RFC 6525).
     ///
-    /// `now` is when the caller asked for the reset; threaded from `Stream::stop` and recorded
-    /// on the EOS chunk so every locally created chunk carries its queueing instant.
+    /// Reset markers carry a stream boundary and RX epoch; their timer starts when the
+    /// immutable request is actually emitted by poll_transmit.
     pub(crate) fn send_reset_request(
         &mut self,
-        now: Instant,
+        _now: Instant,
         stream_identifier: StreamId,
     ) -> Result<()> {
         let state = self.state();
         if state != AssociationState::Established {
             return Err(Error::ErrResetPacketInStateNotExist);
         }
+        if !self.peer_supports_reconfig {
+            return Err(Error::Other(
+                "peer does not support SCTP stream reconfiguration".into(),
+            ));
+        }
 
-        // Create DATA chunk which only contains valid stream identifier with
-        // nil userData and use it as a EOS from the stream.
-        let c = ChunkPayloadData {
-            created_at: Some(now),
-            stream_identifier,
-            beginning_fragment: true,
-            ending_fragment: true,
-            user_data: Bytes::new(),
-            ..Default::default()
-        };
-
-        self.pending_queue.push(c);
-        self.awake_write_loop();
-
+        self.queue_reset_request(stream_identifier);
         Ok(())
+    }
+
+    fn queue_reset_request(&mut self, stream_identifier: StreamId) {
+        if !self.peer_supports_reconfig {
+            return;
+        }
+        let receive_epoch = self
+            .receive_streams
+            .entry(stream_identifier)
+            .or_insert_with(|| ReceiveQueue::new(stream_identifier))
+            .note_outgoing_reset();
+        self.pending_queue.push_reset(ResetMarker {
+            stream_identifier,
+            receive_epoch,
+        });
+        self.awake_write_loop();
     }
 
     /// send_payload_data sends the data chunks.
@@ -3106,8 +3427,13 @@ impl Association {
             return Err(Error::ErrPayloadDataStateNotExist);
         }
 
-        // Push the chunks into the pending queue first.
-        for c in chunks {
+        let id = MessageId::new(self.next_message_id);
+        self.next_message_id = self
+            .next_message_id
+            .checked_add(1)
+            .expect("association message identity exhausted");
+        for mut c in chunks {
+            c.message_id = Some(id);
             self.pending_queue.push(c);
         }
 
@@ -3118,7 +3444,7 @@ impl Association {
     /// buffered_amount returns total amount (in bytes) of currently buffered user data.
     /// This is used only by testing.
     pub(crate) fn buffered_amount(&self) -> usize {
-        self.pending_queue.get_num_bytes() + self.inflight_queue.get_num_bytes()
+        self.pending_queue.get_num_bytes() + self.inflight_queue.buffered_bytes()
     }
 
     fn awake_write_loop(&self) {
@@ -3142,7 +3468,7 @@ impl Association {
         self.awake_write_loop();
     }
 
-    fn on_retransmission_timeout(&mut self, timer_id: Timer, n_rtos: usize) {
+    fn on_retransmission_timeout(&mut self, timer_id: Timer, n_rtos: usize, now: Instant) {
         match timer_id {
             Timer::T1Init => {
                 if let Err(err) = self.send_init() {
@@ -3183,6 +3509,9 @@ impl Association {
 
             Timer::T3RTX => {
                 self.stats.inc_t3timeouts();
+                self.rto_mgr.backoff();
+                // Refresh before C2 or mark_all_to_retrasmit reads abandoned().
+                self.abandon_unretransmittable_messages(now, ChunkPayloadData::is_outstanding);
 
                 // RFC 4960 sec 6.3.3
                 //  E1)  For the destination address for which the timer expires, adjust
@@ -3194,14 +3523,16 @@ impl Association {
                 //      ssthresh = max(cwnd/2, 4*MTU)
                 //      cwnd = 1*MTU
 
-                self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
-                self.cwnd = self.mtu;
+                if self.zero_window_probe.is_none() {
+                    self.ssthresh = std::cmp::max(self.cwnd / 2, 4 * self.mtu);
+                    self.cwnd = self.mtu;
+                }
                 trace!(
                     "[{}] updated cwnd={} ssthresh={} inflight={} (RTO)",
                     self.side,
                     self.cwnd,
                     self.ssthresh,
-                    self.inflight_queue.get_num_bytes()
+                    self.inflight_queue.outstanding_bytes()
                 );
 
                 // RFC 3758 sec 3.5
@@ -3209,40 +3540,7 @@ impl Association {
                 //  SHOULD try to advance the "Advanced.Peer.Ack.Point" by following
                 //  the procedures outlined in C2 - C5.
                 if self.use_forward_tsn {
-                    // RFC 3758 Sec 3.5 C2
-                    let mut i = self.advanced_peer_tsn_ack_point + 1;
-                    while let Some((abandoned, unordered, si, ssn)) =
-                        self.inflight_queue.get(i).map(|c| {
-                            (
-                                c.abandoned(),
-                                c.unordered,
-                                c.stream_identifier,
-                                c.stream_sequence_number,
-                            )
-                        })
-                    {
-                        if !abandoned {
-                            break;
-                        }
-                        self.advanced_peer_tsn_ack_point = i;
-                        self.note_abandoned_for_forward_tsn(unordered, si, ssn);
-                        i += 1;
-                    }
-
-                    // RFC 3758 Sec 3.5 C3
-                    if sna32gt(
-                        self.advanced_peer_tsn_ack_point,
-                        self.cumulative_tsn_ack_point,
-                    ) {
-                        self.will_send_forward_tsn = true;
-                        debug!(
-                            "[{}] on_retransmission_timeout {}: sna32GT({}, {})",
-                            self.side,
-                            self.will_send_forward_tsn,
-                            self.advanced_peer_tsn_ack_point,
-                            self.cumulative_tsn_ack_point
-                        );
-                    }
+                    self.advance_peer_ack_point();
                 }
 
                 debug!(
@@ -3285,26 +3583,32 @@ impl Association {
             }
 
             Timer::T3RTX => {
-                // T3-rtx timer will not fail by design
-                // Justifications:
-                //  * ICE would fail if the connectivity is lost
-                //  * WebRTC spec is not clear how this incident should be reported to ULP
+                // A configured finite recovery budget must end the association,
+                // not leave reliable DATA stranded with no timer (RFC 9260 8.1).
                 error!("[{}] retransmission failure: T3-rtx (DATA)", self.side);
+                let _ = self.close(AssociationError::TimedOut);
+            }
+
+            Timer::Reconfig => {
+                error!("[{}] retransmission failure: RE-CONFIG", self.side);
+                // A request without a timer would block all subsequent resets.
+                self.outgoing_reset = None;
+                self.will_retransmit_reconfig = false;
+                let _ = self.close(AssociationError::TimedOut);
             }
 
             _ => {}
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn expected_reset_sequence(&self) -> u32 {
+        self.incoming_resets.next_expected_rsn()
+    }
+
     /// Whether no timers are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
-        Timer::VALUES
-            .iter()
-            //.filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid)
-            .filter_map(|&t| Some((t, self.timers.get(t)?)))
-            .min_by_key(|&(_, time)| time)
-            //.map_or(true, |(timer, _)| timer == Timer::Idle)
-            .is_none()
+        self.poll_timeout().is_none()
     }
 }

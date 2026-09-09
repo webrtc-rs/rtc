@@ -24,6 +24,13 @@ default-features = false
 members = ["."]
 
 [[bin]]
+name = "association_state"
+path = "fuzz_targets/association_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "packet_unmarshal"
 path = "fuzz_targets/packet_unmarshal.rs"
 test = false

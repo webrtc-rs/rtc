@@ -293,6 +293,13 @@ fn test_chunk_reconfig_success() -> Result<()> {
         let actual = ChunkReconfig::unmarshal(binary)?;
         let b = actual.marshal()?;
         assert_eq!(*binary, b, "test {} not equal: {:?} vs {:?}", i, *binary, b);
+        // The codec must append identically inside an existing packet buffer.
+        // Fixtures include odd/even parameter lengths and inter-parameter pad.
+        let prefix = b"prefix";
+        let mut appended = BytesMut::from(&prefix[..]);
+        actual.marshal_to(&mut appended)?;
+        assert_eq!(&appended[..prefix.len()], prefix);
+        assert_eq!(&appended[prefix.len()..], &binary[..]);
     }
 
     Ok(())

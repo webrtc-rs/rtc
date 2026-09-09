@@ -89,7 +89,7 @@ impl Chunk for ChunkReconfig {
         self.header().marshal_to(writer)?;
 
         let param_a_value_length = if let Some(param_a) = &self.param_a {
-            writer.extend_from_slice(&param_a.marshal()?);
+            param_a.marshal_to(writer)?;
             param_a.value_length()
         } else {
             return Err(Error::ErrChunkReconfigInvalidParamA);
@@ -99,7 +99,7 @@ impl Chunk for ChunkReconfig {
             // Pad param A
             let padding = get_padding_size(PARAM_HEADER_LENGTH + param_a_value_length);
             writer.put_bytes(0, padding);
-            writer.extend_from_slice(&param_b.marshal()?);
+            param_b.marshal_to(writer)?;
         }
         Ok(writer.len())
     }

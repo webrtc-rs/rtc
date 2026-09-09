@@ -8,7 +8,8 @@ use crate::peer_connection::event::{
     RTCEventInternal, RTCPeerConnectionEvent, TaggedRTCEventInternal,
 };
 use crate::peer_connection::message::internal::{
-    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, TaggedRTCMessageInternal,
+    ApplicationMessage, DTLSMessage, DataChannelEvent, RTCMessageInternal, SctpEvent,
+    TaggedRTCMessageInternal,
 };
 use crate::peer_connection::transport::dtls::role::RTCDtlsRole;
 use crate::statistics::accumulator::RTCStatsAccumulator;
@@ -21,7 +22,9 @@ use std::time::{Duration, Instant};
 
 pub(crate) struct DataChannelHandlerContext {
     pub(crate) read_outs: VecDeque<TaggedRTCMessageInternal>,
-    pub(crate) write_outs: VecDeque<TaggedRTCMessageInternal>,
+    // A delayed ACK or local command must not attach to a later channel that
+    // reuses its SID. None is a transport message bypassing this handler.
+    pub(crate) write_outs: VecDeque<(Option<RTCDataChannelId>, TaggedRTCMessageInternal)>,
     pub(crate) event_outs: VecDeque<TaggedRTCEventInternal>,
 
     /// The newest instant a caller has supplied, seeded at construction.
@@ -47,6 +50,22 @@ impl DataChannelHandlerContext {
     /// no monotonicity assert alongside the `max`.
     fn observe(&mut self, now: Instant) {
         self.now = now.max(self.now);
+    }
+
+    fn queue_channel_write(
+        &mut self,
+        owner: RTCDataChannelId,
+        now: Instant,
+        message: datachannel::data_channel::DataChannelMessage,
+    ) {
+        self.write_outs.push_back((
+            Some(owner),
+            TaggedRTCMessageInternal {
+                now,
+                transport: TransportContext::default(),
+                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)),
+            },
+        ));
     }
 }
 
@@ -87,6 +106,20 @@ impl<'a> DataChannelHandler<'a> {
 
     pub(crate) fn name(&self) -> &'static str {
         "DataChannelHandler"
+    }
+
+    /// Remove the old owner before processing the next use of its wire SID.
+    /// A handshake timeout may already have published and counted its close.
+    fn close_channel(&mut self, stream_id: u16) -> Option<RTCDataChannelId> {
+        let dc = self.data_channels.remove_by_stream(&stream_id)?;
+        if dc.close_emitted {
+            return None;
+        }
+        self.stats.peer_connection.on_data_channel_closed();
+        if let Some(dc_stats) = self.stats.data_channels.get_mut(&dc.id) {
+            dc_stats.on_state_changed(RTCDataChannelState::Closed);
+        }
+        Some(dc.id)
     }
 
     /// Emit the `DataChannelEvent::Open` application message and record the
@@ -143,6 +176,34 @@ impl<'a>
     fn handle_read(&mut self, msg: TaggedRTCMessageInternal) -> Result<()> {
         let now = msg.now;
         self.ctx.observe(now);
+
+        if let RTCMessageInternal::Dtls(DTLSMessage::SctpEvent(event)) = &msg.message {
+            // Apply the old channel's lifecycle before accepting the next DATA
+            // message. Deferring this to poll_event would let a reused SID's
+            // DCEP OPEN reach the old channel and then remove the new owner.
+            if let SctpEvent::Closed(_, stream_id) = event {
+                if let Some(channel_id) = self.close_channel(*stream_id) {
+                    // Keep the application-facing fence in the same read
+                    // pipeline too. EndpointHandler must observe OnClose
+                    // before it publishes OnOpen for the next DCEP message.
+                    self.ctx.read_outs.push_back(TaggedRTCMessageInternal {
+                        now,
+                        transport: msg.transport,
+                        message: RTCMessageInternal::Dtls(DTLSMessage::DataChannel(
+                            ApplicationMessage {
+                                data_channel_id: channel_id,
+                                data_channel_event: DataChannelEvent::Close,
+                            },
+                        )),
+                    });
+                }
+                return Ok(());
+            }
+            return self.handle_event(TaggedRTCEventInternal {
+                now,
+                event: event.into_internal(),
+            });
+        }
 
         if let RTCMessageInternal::Dtls(DTLSMessage::Sctp(message)) = msg.message {
             debug!(
@@ -277,11 +338,8 @@ impl<'a>
 
             while let Some(data_channel_message) = data_channel.poll_write() {
                 debug!("send data channel message from handle_read");
-                self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                    now,
-                    transport: TransportContext::default(),
-                    message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
-                });
+                self.ctx
+                    .queue_channel_write(channel_id, now, data_channel_message);
             }
         } else {
             // Bypass
@@ -337,11 +395,8 @@ impl<'a>
 
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from handle_write");
-                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now,
-                        transport: TransportContext::default(),
-                        message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
-                    });
+                    self.ctx
+                        .queue_channel_write(channel_id, now, data_channel_message);
                 }
             } else {
                 warn!(
@@ -352,7 +407,7 @@ impl<'a>
         } else {
             // Bypass
             debug!("bypass DataChannel write {:?}", msg.transport.peer_addr);
-            self.ctx.write_outs.push_back(msg);
+            self.ctx.write_outs.push_back((None, msg));
         }
         Ok(())
     }
@@ -362,16 +417,21 @@ impl<'a>
             if let Some(data_channel) = data_channel_internal.data_channel.as_mut() {
                 while let Some(data_channel_message) = data_channel.poll_write() {
                     debug!("send data channel message from poll_write");
-                    self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
-                        now: self.ctx.now,
-                        transport: TransportContext::default(),
-                        message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(data_channel_message)),
-                    });
+                    self.ctx.queue_channel_write(
+                        data_channel_internal.id,
+                        self.ctx.now,
+                        data_channel_message,
+                    );
                 }
             }
         }
 
-        self.ctx.write_outs.pop_front()
+        while let Some((owner, message)) = self.ctx.write_outs.pop_front() {
+            if owner.is_none_or(|id| self.data_channels.contains(&id)) {
+                return Some(message);
+            }
+        }
+        None
     }
 
     fn handle_event(&mut self, evt: TaggedRTCEventInternal) -> Result<()> {
@@ -414,13 +474,11 @@ impl<'a>
 
                         while let Some(data_channel_message) = data_channel.poll_write() {
                             debug!("send data channel message from handle_event");
-                            self.ctx.write_outs.push_back(TaggedRTCMessageInternal {
+                            self.ctx.queue_channel_write(
+                                data_channel_internal.id,
                                 now,
-                                transport: TransportContext::default(),
-                                message: RTCMessageInternal::Dtls(DTLSMessage::Sctp(
-                                    data_channel_message,
-                                )),
-                            });
+                                data_channel_message,
+                            );
                         }
                     }
                 }
@@ -431,28 +489,15 @@ impl<'a>
             }
 
             RTCEventInternal::SCTPStreamClosed(_association_handle, stream_id) => {
-                if let Some(dc) = self.data_channels.remove_by_stream(&stream_id) {
-                    // The event names the channel by handle, as every application-facing
-                    // event does; the stream id was only how SCTP referred to it.
-                    let channel_id = dc.id;
-                    // A channel already closed by handshake timeout has already fired OnClose
-                    // and been counted; do not emit or count it twice.
-                    if !dc.close_emitted {
-                        // Track data channel closed
-                        self.stats.peer_connection.on_data_channel_closed();
-                        if let Some(dc_stats) = self.stats.data_channels.get_mut(&channel_id) {
-                            dc_stats.on_state_changed(RTCDataChannelState::Closed);
-                        }
-
-                        self.ctx.event_outs.push_back(TaggedRTCEventInternal {
-                            now,
-                            event: RTCEventInternal::RTCPeerConnectionEvent(
-                                RTCPeerConnectionEvent::OnDataChannel(
-                                    RTCDataChannelEvent::OnClose(channel_id),
-                                ),
-                            ),
-                        });
-                    }
+                if let Some(channel_id) = self.close_channel(stream_id) {
+                    self.ctx.event_outs.push_back(TaggedRTCEventInternal {
+                        now,
+                        event: RTCEventInternal::RTCPeerConnectionEvent(
+                            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(
+                                channel_id,
+                            )),
+                        ),
+                    });
                 }
             }
 

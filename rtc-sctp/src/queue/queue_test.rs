@@ -144,7 +144,7 @@ fn test_payload_queue_mark_all_to_retrasmit() -> Result<()> {
     for i in 0..3 {
         pq.push(make_payload(i + 1, 10), 0);
     }
-    pq.mark_as_acked(2);
+    pq.acknowledge(2);
     pq.mark_all_to_retrasmit();
 
     let c = pq.get(1);
@@ -169,8 +169,8 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
     }
 
     pq.mark_all_to_retrasmit();
-    pq.mark_as_acked(2); // should cancel retransmission for TSN 2
-    pq.mark_as_acked(4); // should cancel retransmission for TSN 4
+    pq.acknowledge(2); // should cancel retransmission for TSN 2
+    pq.acknowledge(4); // should cancel retransmission for TSN 4
 
     let c = pq.get(1);
     assert!(c.is_some(), "should be true");
@@ -423,6 +423,81 @@ fn test_pending_queue_selection_persistence() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn test_pending_reset_preserves_ordered_and_unordered_boundaries() {
+    for earlier_unordered in [false, true] {
+        for later_unordered in [false, true] {
+            let mut queue = PendingQueue::new();
+            queue.push(make_data_chunk(0, earlier_unordered, FRAG_BEGIN));
+            queue.push(make_data_chunk(1, earlier_unordered, FRAG_END));
+            assert_eq!(0, queue.pop(true, earlier_unordered).unwrap().tsn);
+            queue.push_reset(ResetMarker {
+                stream_identifier: 0,
+                ..Default::default()
+            });
+            queue.push(make_data_chunk(2, later_unordered, NO_FRAGMENT));
+            assert!(
+                queue.pop_ready_reset().is_none(),
+                "must wait for the earlier fragment tail"
+            );
+            assert_eq!(1, queue.peek().unwrap().tsn);
+            assert_eq!(1, queue.pop(false, earlier_unordered).unwrap().tsn);
+            let reset = queue
+                .pop_ready_reset()
+                .expect("later DATA must not hold the reset");
+            assert_eq!(0, reset.stream_identifier);
+            assert_eq!(1, queue.len());
+            assert_eq!(10, queue.get_num_bytes());
+            assert!(
+                queue.peek().is_none(),
+                "later writes wait for the reset ACK"
+            );
+            queue.complete_reset(reset.stream_identifier);
+            assert_eq!(2, queue.peek().unwrap().tsn);
+            assert_eq!(2, queue.pop(true, later_unordered).unwrap().tsn);
+            assert!(queue.is_empty());
+            assert_eq!(0, queue.get_num_bytes());
+            // A subsequent reset on the same SID must not depend on retired DATA.
+            queue.push_reset(ResetMarker {
+                stream_identifier: 0,
+                ..Default::default()
+            });
+            assert_eq!(1, queue.len());
+            assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+            assert!(queue.is_empty());
+        }
+    }
+}
+
+#[test]
+fn test_pending_reset_releases_only_writes_before_the_next_reset() {
+    let mut queue = PendingQueue::new();
+    let reset = || ResetMarker {
+        stream_identifier: 0,
+        ..Default::default()
+    };
+    queue.push_reset(reset());
+    queue.push(make_data_chunk(1, false, FRAG_BEGIN));
+    queue.push(make_data_chunk(2, false, FRAG_END));
+    queue.push_reset(reset());
+    queue.push(make_data_chunk(3, true, NO_FRAGMENT));
+    assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+    assert!(queue.pop_ready_reset().is_none());
+    assert!(queue.peek().is_none());
+    assert_eq!(30, queue.get_num_bytes());
+    queue.complete_reset(0);
+    assert_eq!(1, queue.pop(true, false).unwrap().tsn);
+    assert!(queue.pop_ready_reset().is_none());
+    assert_eq!(2, queue.pop(false, false).unwrap().tsn);
+    assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+    assert!(queue.peek().is_none());
+    assert_eq!(10, queue.get_num_bytes());
+    queue.complete_reset(0);
+    assert_eq!(3, queue.pop(true, true).unwrap().tsn);
+    assert!(queue.is_empty());
+    assert_eq!(0, queue.get_num_bytes());
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -1137,4 +1212,29 @@ fn test_reassembly_queue_ssn_overflow_in_forward_tsn_for_ordered() -> Result<()>
     rq.forward_tsn_for_ordered(u16::MAX);
 
     Ok(())
+}
+
+#[test]
+fn test_message_index_survives_cumulative_prefix_and_tsn_wrap() {
+    use crate::chunk::chunk_payload_data::{MessageId, MessageReliability};
+    let mut queue = PayloadQueue::new();
+    for (tsn, id, beginning, ending) in [
+        (0, 11, false, true),
+        (u32::MAX, 11, true, false),
+        // A lone remaining tail still belongs to a fragmented message.
+        (1, 12, false, true),
+    ] {
+        let mut chunk = make_payload(tsn, 10);
+        chunk.message_id = Some(MessageId::new(id));
+        chunk.reliability = MessageReliability::Rexmit { max_retransmits: 1 };
+        chunk.beginning_fragment = beginning;
+        chunk.ending_fragment = ending;
+        queue.push_no_check(chunk);
+    }
+    assert_eq!(vec![u32::MAX, 0], queue.message_tsns(MessageId::new(11)));
+    queue.pop(u32::MAX).unwrap();
+    assert_eq!(vec![0], queue.message_tsns(MessageId::new(11)));
+    queue.pop(0).unwrap();
+    assert!(queue.message_tsns(MessageId::new(11)).is_empty());
+    assert_eq!(vec![1], queue.message_tsns(MessageId::new(12)));
 }

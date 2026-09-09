@@ -180,7 +180,7 @@ impl Chunks {
                 //   used by the receiver to reassemble the message.  This means that the
                 //   TSNs for each fragment of a fragmented user message MUST be strictly
                 //   sequential.
-                if c.tsn != last_tsn + 1 {
+                if c.tsn != last_tsn.wrapping_add(1) {
                     // mid or end fragment is missing
                     return false;
                 }
@@ -271,7 +271,15 @@ impl ReassemblyQueue {
 
             // If not found, create a new chunkSet and insert it in SSN order
             // (this branch is only reached for ordered chunks).
-            let mut cset = Chunks::new(self.next_arrival, ssn, chunk.payload_type, vec![]);
+            // A complete single-chunk message needs one metadata record, while
+            // fragmented messages retain normal geometric capacity growth.
+            let capacity = usize::from(chunk.beginning_fragment && chunk.ending_fragment);
+            let mut cset = Chunks::new(
+                self.next_arrival,
+                ssn,
+                chunk.payload_type,
+                Vec::with_capacity(capacity),
+            );
             self.next_arrival += 1;
             let ok = cset.push(chunk);
             self.ordered.insert(idx, cset);
@@ -305,7 +313,7 @@ impl ReassemblyQueue {
             }
 
             // Check if contiguous in TSN
-            if c.tsn != last_tsn + 1 {
+            if c.tsn != last_tsn.wrapping_add(1) {
                 start_idx = -1;
                 continue;
             }

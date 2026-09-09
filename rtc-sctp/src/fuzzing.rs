@@ -42,6 +42,16 @@ fn to_bytes(data: &[u8]) -> Bytes {
     Bytes::copy_from_slice(data)
 }
 
+/// Run a bounded, stateful scenario through a real pair of SCTP endpoints.
+///
+/// Input bytes choose valid application actions and packet loss, duplication,
+/// ordering, and virtual-time advancement. The supplied instant is only an
+/// origin; the driver reads no ambient clock. At the end, losses stop and all
+/// messages are read, checking delivery, retry budgets, deadlines, and buffers.
+pub fn association_state(data: &[u8], origin: std::time::Instant) {
+    crate::fuzzing_state::run(data, origin);
+}
+
 pub fn packet_unmarshal(data: &[u8]) -> Result<()> {
     let raw = to_bytes(data);
     let _ = Packet::unmarshal(&raw)?;

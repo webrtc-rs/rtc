@@ -52,6 +52,9 @@
 #![allow(dead_code)]
 #![allow(clippy::bool_to_int_with_if)]
 
+#[cfg(any(test, fuzzing, feature = "bench"))]
+mod fuzzing_state;
+
 use bytes::Bytes;
 use std::{fmt, ops};
 
