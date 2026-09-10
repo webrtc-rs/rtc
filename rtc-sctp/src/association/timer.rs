@@ -116,15 +116,14 @@ impl TimerTable {
         self.data[timer as usize] = Some(time);
     }
 
-    /// Restarts the timer if the current instant is none or elapsed.
-    pub fn restart_if_stale(&mut self, timer: Timer, now: Instant, interval: u64) {
-        if let Some(current) = self.data[timer as usize]
-            && current >= now
-        {
-            return;
+    /// Start an idle timer without hiding an unhandled expiration. A due
+    /// deadline stays armed until timeout processing consumes it, unless an
+    /// explicit protocol restart first clears it (for T3, acknowledgment of
+    /// the earliest outstanding TSN under RFC 9260 section 6.3.2 R3).
+    pub fn start_if_idle(&mut self, timer: Timer, now: Instant, interval: u64) {
+        if self.data[timer as usize].is_none() {
+            self.start(timer, now, interval);
         }
-
-        self.start(timer, now, interval);
     }
 
     pub fn stop(&mut self, timer: Timer) {

@@ -1502,6 +1502,9 @@ impl Association {
                 self.side, self.cumulative_tsn_ack_point, d.cumulative_tsn_ack
             );
 
+            // The complete cumulative-pop batch and all borrowed gap-ACK views
+            // are finished before queue storage can move.
+            self.inflight_queue.shrink_after_cumulative_ack();
             self.cumulative_tsn_ack_point = d.cumulative_tsn_ack;
             while self
                 .reset_tsn_ack_queue
@@ -2109,7 +2112,7 @@ impl Association {
         } else {
             trace!("[{}] T3-rtx timer start (pt2)", self.side);
             self.timers
-                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
+                .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
         }
 
         // Update congestion control parameters
@@ -2260,7 +2263,7 @@ impl Association {
             // Start timer. (noop if already started)
             trace!("[{}] T3-rtx timer start (pt3)", self.side);
             self.timers
-                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
+                .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
         } else if state == AssociationState::ShutdownPending {
             // No more outstanding, send shutdown.
             should_awake_write_loop = true;
@@ -2616,7 +2619,7 @@ impl Association {
             // Start timer. (noop if already started)
             trace!("[{}] T3-rtx timer start (pt1)", self.side);
             self.timers
-                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
+                .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
 
             self.bundle_data_chunks_into_packets(chunks, &mut raw_packets);
         }
@@ -3059,7 +3062,7 @@ impl Association {
             self.cumulative_tsn_ack_point,
         ) {
             self.timers
-                .restart_if_stale(Timer::T3RTX, now, self.rto_mgr.get_rto());
+                .start_if_idle(Timer::T3RTX, now, self.rto_mgr.get_rto());
         }
     }
 

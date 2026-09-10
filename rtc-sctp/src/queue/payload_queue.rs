@@ -9,6 +9,10 @@ use std::collections::VecDeque;
 #[path = "payload_queue_model_test.rs"]
 mod model_test;
 
+#[cfg(test)]
+#[path = "payload_queue_shrink_test.rs"]
+mod shrink_test;
+
 pub(crate) enum GapAck<'a> {
     Duplicate,
     New {
@@ -201,6 +205,16 @@ impl PayloadQueue {
             self.buffered_bytes -= payload_len;
         }
         Some(c)
+    }
+
+    /// Release oversized storage after a successful cumulative-ACK batch.
+    /// Keep headroom and a small floor so ordinary flights do not resize.
+    pub(crate) fn shrink_after_cumulative_ack(&mut self) {
+        let capacity = self.inflight.capacity();
+        let len = self.inflight.len();
+        if capacity > 4096 && len <= capacity / 4 {
+            self.inflight.shrink_to((2 * len).max(1024));
+        }
     }
 
     pub(crate) fn message_tsns(&self, id: MessageId) -> Vec<u32> {

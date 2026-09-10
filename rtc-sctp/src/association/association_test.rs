@@ -10,6 +10,9 @@ mod sack_recovery;
 #[path = "ack_optimization_test.rs"]
 mod ack_optimization;
 
+#[path = "timer_deadline_test.rs"]
+mod timer_deadline;
+
 #[path = "ack_range_boundary_test.rs"]
 mod ack_range_boundary;
 
