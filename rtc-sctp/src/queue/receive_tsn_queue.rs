@@ -2,6 +2,18 @@ use crate::chunk::chunk_selective_ack::GapAckBlock;
 use crate::util::{sna32lt, sna32lte};
 use std::collections::VecDeque;
 
+#[derive(Debug)]
+struct ReceivedRange {
+    start: u32,
+    end: u32,
+}
+
+impl ReceivedRange {
+    fn contains(&self, tsn: u32) -> bool {
+        tsn.wrapping_sub(self.start) <= self.end.wrapping_sub(self.start)
+    }
+}
+
 /// Received TSNs above the cumulative ACK, independent of message delivery.
 ///
 /// Unordered messages can be read while an earlier TSN is missing. Receipt
@@ -9,23 +21,26 @@ use std::collections::VecDeque;
 /// must not keep the delivered payload backing alive.
 #[derive(Debug, Default)]
 pub(crate) struct ReceiveTsnQueue {
-    // Serial-number order within the receive window. Sequential arrivals and
-    // cumulative advancement append/pop in amortized O(1), without a second index.
-    tsns: VecDeque<u32>,
+    // Canonical, nonadjacent ranges in serial-number order within the receive
+    // window. A range may cross u32::MAX. Increasing contiguous DATA extends
+    // the tail in O(1); sparse tail appends remain amortized O(1).
+    ranges: VecDeque<ReceivedRange>,
+    n_tsns: usize,
     duplicates: Vec<u32>,
 }
 
 impl ReceiveTsnQueue {
-    /// The common increasing-TSN path needs no binary search. Reordered DATA
-    /// uses the same serial ordering for membership and insertion.
+    /// Locate the containing range, or the gap where a receipt belongs.
     fn position(&self, tsn: u32) -> std::result::Result<usize, usize> {
-        if self.tsns.back().is_none_or(|&last| sna32lt(last, tsn)) {
-            return Err(self.tsns.len());
+        if self.ranges.back().is_none_or(|last| sna32lt(last.end, tsn)) {
+            return Err(self.ranges.len());
         }
-        let index = self
-            .tsns
-            .partition_point(|&received| sna32lt(received, tsn));
-        if self.tsns.get(index) == Some(&tsn) {
+        let index = self.ranges.partition_point(|range| sna32lt(range.end, tsn));
+        if self
+            .ranges
+            .get(index)
+            .is_some_and(|range| range.contains(tsn))
+        {
             Ok(index)
         } else {
             Err(index)
@@ -43,11 +58,27 @@ impl ReceiveTsnQueue {
         if !sna32lte(tsn, cumulative_tsn)
             && let Err(index) = self.position(tsn)
         {
-            if index == self.tsns.len() {
-                self.tsns.push_back(tsn);
-            } else {
-                self.tsns.insert(index, tsn);
+            let joins_previous = index != 0 && self.ranges[index - 1].end.wrapping_add(1) == tsn;
+            let joins_next = self
+                .ranges
+                .get(index)
+                .is_some_and(|next| tsn.wrapping_add(1) == next.start);
+            match (joins_previous, joins_next) {
+                (true, true) => {
+                    let next = self.ranges.remove(index).unwrap();
+                    self.ranges[index - 1].end = next.end;
+                }
+                (true, false) => self.ranges[index - 1].end = tsn,
+                (false, true) => self.ranges[index].start = tsn,
+                (false, false) => self.ranges.insert(
+                    index,
+                    ReceivedRange {
+                        start: tsn,
+                        end: tsn,
+                    },
+                ),
             }
+            self.n_tsns += 1;
             true
         } else {
             self.duplicates.push(tsn);
@@ -57,26 +88,40 @@ impl ReceiveTsnQueue {
 
     /// Remove only the oldest receipt when it matches the next cumulative TSN.
     pub(crate) fn pop(&mut self, tsn: u32) -> Option<u32> {
-        if self.tsns.front() == Some(&tsn) {
-            self.tsns.pop_front()
-        } else {
-            None
+        let first = self.ranges.front_mut()?;
+        if first.start != tsn {
+            return None;
         }
+        if first.start == first.end {
+            self.ranges.pop_front();
+        } else {
+            first.start = first.start.wrapping_add(1);
+        }
+        self.n_tsns -= 1;
+        Some(tsn)
     }
 
     /// FORWARD-TSN retires every receipt covered by its new cumulative point.
     pub(crate) fn discard_through(&mut self, cumulative_tsn: u32) {
-        while self
-            .tsns
-            .front()
-            .is_some_and(|&tsn| sna32lte(tsn, cumulative_tsn))
-        {
-            self.tsns.pop_front();
+        while let Some(first) = self.ranges.front_mut() {
+            if !sna32lte(first.start, cumulative_tsn) {
+                break;
+            }
+            // Widen before adding one: inclusive endpoints can cross u32::MAX.
+            let length = u64::from(first.end.wrapping_sub(first.start)) + 1;
+            let removed = length.min(u64::from(cumulative_tsn.wrapping_sub(first.start)) + 1);
+            self.n_tsns -= removed as usize;
+            if removed == length {
+                self.ranges.pop_front();
+            } else {
+                first.start = cumulative_tsn.wrapping_add(1);
+                break;
+            }
         }
     }
 
     pub(crate) fn get_last_tsn_received(&self) -> Option<&u32> {
-        self.tsns.back()
+        self.ranges.back().map(|range| &range.end)
     }
 
     pub(crate) fn pop_duplicates(&mut self) -> Vec<u32> {
@@ -84,22 +129,32 @@ impl ReceiveTsnQueue {
     }
 
     pub(crate) fn get_gap_ack_blocks(&self, cumulative_tsn: u32) -> Vec<GapAckBlock> {
-        let mut blocks: Vec<GapAckBlock> = vec![];
-        for &tsn in &self.tsns {
-            let offset = tsn.wrapping_sub(cumulative_tsn);
-            if offset == 0 || offset > u16::MAX as u32 {
-                continue; // Retain receipts that this SACK cannot represent yet.
+        fn append_clipped(blocks: &mut Vec<GapAckBlock>, start: u32, end: u32) {
+            let start = start.max(1);
+            let end = end.min(u16::MAX as u32);
+            if start > end {
+                return;
             }
-            let offset = offset as u16;
-            if let Some(last) = blocks.last_mut()
-                && last.end.checked_add(1) == Some(offset)
-            {
-                last.end = offset;
+            // Receipt ranges are already maximal. Clipping to the SACK
+            // window cannot close a hole between two surviving ranges.
+            blocks.push(GapAckBlock {
+                start: start as u16,
+                end: end as u16,
+            });
+        }
+
+        let mut blocks = vec![];
+        for range in &self.ranges {
+            let start = range.start.wrapping_sub(cumulative_tsn);
+            let end = range.end.wrapping_sub(cumulative_tsn);
+            if start <= end {
+                append_clipped(&mut blocks, start, end);
             } else {
-                blocks.push(GapAckBlock {
-                    start: offset,
-                    end: offset,
-                });
+                // The queried cumulative point may lie inside this range.
+                // Match per-TSN filtering on both sides of offset zero without
+                // forgetting receipts outside this SACK's 16-bit window.
+                append_clipped(&mut blocks, start, u32::MAX);
+                append_clipped(&mut blocks, 0, end);
             }
         }
         blocks
@@ -114,7 +169,7 @@ impl ReceiveTsnQueue {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.tsns.len()
+        self.n_tsns
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -224,5 +279,396 @@ mod tests {
         queue.discard_through(cumulative.wrapping_add(7));
         assert!(queue.is_empty());
         assert!(gaps(&queue, cumulative.wrapping_add(7)).is_empty());
+    }
+
+    #[derive(Default)]
+    struct ReceiptModel {
+        origin: u32,
+        cumulative: i64,
+        received: std::collections::BTreeSet<i64>,
+        duplicates: Vec<u32>,
+    }
+
+    impl ReceiptModel {
+        fn wire(&self, logical: i64) -> u32 {
+            self.origin.wrapping_add(logical as u32)
+        }
+
+        fn push(&mut self, queue: &mut ReceiveTsnQueue, logical: i64) {
+            let tsn = self.wire(logical);
+            let cumulative = self.wire(self.cumulative);
+            let accepted = logical > self.cumulative && !self.received.contains(&logical);
+            assert_eq!(queue.can_push(tsn, cumulative), accepted);
+            assert_eq!(
+                queue.can_push(tsn, cumulative),
+                accepted,
+                "eligibility is read-only"
+            );
+            assert_eq!(queue.push(tsn, cumulative), accepted);
+            if accepted {
+                assert!(self.received.insert(logical));
+            } else {
+                self.duplicates.push(tsn);
+            }
+        }
+
+        fn pop_next(&mut self, queue: &mut ReceiveTsnQueue) {
+            let next = self.cumulative + 1;
+            let expected = self.received.first().copied() == Some(next);
+            assert_eq!(
+                queue.pop(self.wire(next)),
+                expected.then_some(self.wire(next))
+            );
+            if expected {
+                assert!(self.received.remove(&next));
+                self.cumulative = next;
+            }
+        }
+
+        fn discard(&mut self, queue: &mut ReceiveTsnQueue, through: i64) {
+            queue.discard_through(self.wire(through));
+            self.received.retain(|&logical| logical > through);
+            self.cumulative = self.cumulative.max(through);
+        }
+
+        fn drain_duplicates(&mut self, queue: &mut ReceiveTsnQueue) {
+            assert_eq!(queue.pop_duplicates(), std::mem::take(&mut self.duplicates));
+            assert!(queue.pop_duplicates().is_empty());
+        }
+
+        fn assert_matches(&self, queue: &ReceiveTsnQueue) {
+            assert_eq!(queue.len(), self.received.len());
+            assert_eq!(queue.is_empty(), self.received.is_empty());
+            assert_eq!(
+                queue.get_last_tsn_received().copied(),
+                self.received.last().map(|&n| self.wire(n))
+            );
+            let mut previous = None;
+            let mut runs = 0;
+            for &logical in &self.received {
+                runs += usize::from(previous != Some(logical - 1));
+                previous = Some(logical);
+                assert!(
+                    !queue.can_push(self.wire(logical), self.wire(self.cumulative)),
+                    "receipt outside the SACK window must still suppress duplicates"
+                );
+            }
+            assert_eq!(
+                queue.ranges.len(),
+                runs,
+                "each maximal receipt run has one range"
+            );
+            for offset in [-1, 0, 1, 2, 3, 17, 65534, 65535, 65536, 65537] {
+                let logical = self.cumulative + offset;
+                assert_eq!(
+                    queue.can_push(self.wire(logical), self.wire(self.cumulative)),
+                    logical > self.cumulative && !self.received.contains(&logical)
+                );
+            }
+            // Independent oracle: enumerate individual logical receipts and apply
+            // modulo arithmetic. It never uses the range search/merge/clip logic.
+            // Some queries intentionally use a stale cumulative point or one that
+            // lies inside a retained run, without first trimming the queue.
+            for cumulative in [
+                self.cumulative,
+                self.cumulative - 1,
+                self.cumulative + 1,
+                self.cumulative + 32768,
+                self.cumulative - 65535,
+            ] {
+                let expected: Vec<u16> = self
+                    .received
+                    .iter()
+                    .filter_map(|&logical| {
+                        let offset = (logical - cumulative).rem_euclid(1_i64 << 32);
+                        (1..=65535).contains(&offset).then_some(offset as u16)
+                    })
+                    .collect();
+                let blocks = queue.get_gap_ack_blocks(self.wire(cumulative));
+                for block in &blocks {
+                    assert!(block.start != 0 && block.start <= block.end);
+                }
+                for pair in blocks.windows(2) {
+                    assert!(
+                        u32::from(pair[0].end) + 1 < u32::from(pair[1].start),
+                        "SACK blocks must be ordered, disjoint and maximal"
+                    );
+                }
+                let actual: Vec<u16> = blocks
+                    .iter()
+                    .flat_map(|block| block.start..=block.end)
+                    .collect();
+                assert_eq!(
+                    actual, expected,
+                    "origin {}, queried cumulative {cumulative}",
+                    self.origin
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn range_receipts_match_individual_set_across_interleaved_operations() {
+        fn next(seed: &mut u64) -> u64 {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            *seed
+        }
+
+        for origin in [0, u32::MAX - 8, u32::MAX - 65535] {
+            for mut seed in [1, 237, 9260] {
+                let mut queue = ReceiveTsnQueue::default();
+                let mut model = ReceiptModel {
+                    origin,
+                    ..Default::default()
+                };
+                for logical in [2, 4, 3, 65535, 65536, 65537] {
+                    model.push(&mut queue, logical);
+                }
+                for _ in 0..768 {
+                    let choice = next(&mut seed);
+                    match choice % 8 {
+                        0..=2 => {
+                            let offsets = [-2, 0, 1, 2, 3, 17, 65534, 65535, 65536, 65537];
+                            let offset = if choice & 8 == 0 {
+                                offsets[(next(&mut seed) as usize) % offsets.len()]
+                            } else {
+                                (next(&mut seed) % 128) as i64 + 1
+                            };
+                            model.push(&mut queue, model.cumulative + offset);
+                        }
+                        3 => {
+                            let duplicate = if model.received.is_empty() {
+                                model.cumulative - 1
+                            } else {
+                                *model
+                                    .received
+                                    .iter()
+                                    .nth(next(&mut seed) as usize % model.received.len())
+                                    .unwrap()
+                            };
+                            model.push(&mut queue, duplicate);
+                        }
+                        4 => model.pop_next(&mut queue),
+                        5 => {
+                            let advance = match next(&mut seed) % 4 {
+                                0 => -1,
+                                1 => 1,
+                                2 => 65535,
+                                _ => 65536,
+                            };
+                            model.discard(&mut queue, model.cumulative + advance);
+                        }
+                        6 => {
+                            let wrong_front =
+                                model.received.first().copied().unwrap_or(model.cumulative) + 1;
+                            assert_eq!(
+                                queue.pop(model.wire(wrong_front)),
+                                None,
+                                "pop cannot skip the oldest receipt"
+                            );
+                        }
+                        _ => model.drain_duplicates(&mut queue),
+                    }
+                    model.assert_matches(&queue);
+                }
+                model.drain_duplicates(&mut queue);
+                model.discard(&mut queue, model.cumulative + 65537);
+                model.assert_matches(&queue);
+            }
+        }
+    }
+
+    #[test]
+    fn dense_receipt_runs_merge_and_clip_without_losing_unrepresentable_tsns() {
+        for origin in [123, u32::MAX - 32767] {
+            let mut queue = ReceiveTsnQueue::default();
+            let mut model = ReceiptModel {
+                origin,
+                ..Default::default()
+            };
+            // Two dense runs with one missing bridge. In the second case, that
+            // bridge is wire TSN 0, between u32::MAX and 1.
+            for logical in (2..=65540).filter(|&logical| logical != 32768) {
+                model.push(&mut queue, logical);
+            }
+            assert_eq!(queue.ranges.len(), 2);
+            model.assert_matches(&queue);
+            model.push(&mut queue, 32768);
+            assert_eq!(queue.ranges.len(), 1);
+            model.assert_matches(&queue);
+            assert_eq!(gaps(&queue, origin), [(2, 65535)]);
+            model.pop_next(&mut queue); // TSN 1 remains missing.
+            for duplicate in [65536, 65536, 0, 65540] {
+                model.push(&mut queue, duplicate);
+            }
+            model.drain_duplicates(&mut queue);
+
+            model.push(&mut queue, 1); // Extend the run backwards.
+            model.pop_next(&mut queue);
+            model.assert_matches(&queue);
+            model.discard(&mut queue, 65534); // Trim through the middle of the run.
+            model.assert_matches(&queue);
+            assert_eq!(gaps(&queue, model.wire(model.cumulative)), [(1, 6)]);
+            assert_eq!(queue.len(), 6);
+            for _ in 0..6 {
+                model.pop_next(&mut queue);
+            }
+            model.assert_matches(&queue);
+            assert!(queue.is_empty());
+        }
+    }
+
+    #[test]
+    fn long_sparse_receipts_survive_interior_bridges_and_front_tail_churn() {
+        const SPARSE: usize = 8192;
+        for origin in [12345, u32::MAX - 7] {
+            let mut queue = ReceiveTsnQueue::default();
+            let mut model = ReceiptModel {
+                origin,
+                ..Default::default()
+            };
+            for index in 1..=SPARSE {
+                model.push(&mut queue, (2 * index) as i64);
+            }
+            model.assert_matches(&queue);
+            assert_eq!(queue.ranges.len(), SPARSE);
+            let capacity = queue.ranges.capacity();
+            assert!(capacity >= SPARSE);
+
+            // Retire a singleton range from the front and append one at the tail,
+            // keeping a missing TSN between every retained receipt. Two complete
+            // turns through the sparse set exercise the deque's wrapped storage.
+            let mut last = (2 * SPARSE) as i64;
+            for step in 0..2 * SPARSE {
+                model.push(&mut queue, model.cumulative + 1);
+                model.pop_next(&mut queue);
+                model.pop_next(&mut queue);
+                last += 2;
+                model.push(&mut queue, last);
+                assert_eq!(queue.len(), SPARSE);
+                assert_eq!(queue.ranges.len(), SPARSE);
+                assert_eq!(
+                    queue.ranges.capacity(),
+                    capacity,
+                    "bounded churn must reuse storage"
+                );
+                if step % 512 == 0 {
+                    // Keep repeated duplicates queued across later front removals.
+                    model.push(&mut queue, last);
+                    model.push(&mut queue, model.cumulative);
+                    model.assert_matches(&queue);
+                }
+            }
+            model.drain_duplicates(&mut queue);
+            model.assert_matches(&queue);
+
+            // Fill holes around the median in alternating directions. These
+            // bridge insertions remove interior range records, with long tails on
+            // either side; they must preserve all the untouched sparse receipts.
+            let middle = model.cumulative + SPARSE as i64;
+            for distance in 1..=256 {
+                for bridge in [middle - (2 * distance - 1), middle + (2 * distance - 1)] {
+                    model.push(&mut queue, bridge);
+                }
+                assert_eq!(queue.ranges.len(), SPARSE - 2 * distance as usize);
+                if distance % 64 == 0 {
+                    model.assert_matches(&queue);
+                }
+            }
+            model.push(&mut queue, middle - 1);
+            model.push(&mut queue, middle - 1);
+
+            // Collapse all remaining interior holes. The logical set becomes one
+            // range, while its historical sparse allocation remains available for
+            // reuse. This checks count preservation independently of range count.
+            for bridge in (model.cumulative + 3..last).step_by(2) {
+                if !model.received.contains(&bridge) {
+                    model.push(&mut queue, bridge);
+                }
+            }
+            model.assert_matches(&queue);
+            assert_eq!(queue.ranges.len(), 1);
+            assert_eq!(queue.len(), 2 * SPARSE - 1);
+            assert_eq!(queue.ranges.capacity(), capacity);
+            assert_eq!(
+                gaps(&queue, model.wire(model.cumulative)),
+                [(2, (2 * SPARSE) as u16)]
+            );
+            model.drain_duplicates(&mut queue);
+
+            model.discard(&mut queue, last);
+            model.assert_matches(&queue);
+            assert!(queue.is_empty());
+            assert_eq!(queue.ranges.capacity(), capacity);
+            for offset in [2, 4, 6, 3, 5] {
+                model.push(&mut queue, model.cumulative + offset);
+            }
+            model.assert_matches(&queue);
+            assert_eq!(queue.ranges.capacity(), capacity);
+        }
+    }
+
+    #[test]
+    fn long_dense_run_pops_through_tsn_wrap_then_accepts_a_new_run() {
+        const COUNT: i64 = 65540;
+        for origin in [12345, u32::MAX - 32767] {
+            let mut queue = ReceiveTsnQueue::default();
+            let mut model = ReceiptModel {
+                origin,
+                ..Default::default()
+            };
+            for logical in 1..=COUNT {
+                model.push(&mut queue, logical);
+            }
+            assert_eq!(queue.ranges.len(), 1);
+            model.assert_matches(&queue);
+            for duplicate in [1, 65536, 65536] {
+                model.push(&mut queue, duplicate);
+            }
+            let mut popped_max = false;
+            let mut popped_zero = false;
+            for logical in 1..=COUNT {
+                assert_eq!(
+                    queue.pop(model.wire(logical + 1)),
+                    None,
+                    "pop must not jump ahead inside a dense range"
+                );
+                model.pop_next(&mut queue);
+                assert_eq!(queue.len(), (COUNT - logical) as usize);
+                assert_eq!(queue.ranges.len(), usize::from(logical != COUNT));
+                let wire = model.wire(logical);
+                popped_max |= wire == u32::MAX;
+                popped_zero |= wire == 0;
+                if logical % 4096 == 0 || wire == u32::MAX || wire == 0 {
+                    model.assert_matches(&queue);
+                }
+            }
+            assert_eq!(
+                popped_max && popped_zero,
+                u64::from(origin) + COUNT as u64 > u64::from(u32::MAX)
+            );
+            model.assert_matches(&queue);
+            model.drain_duplicates(&mut queue);
+            assert!(queue.is_empty());
+            assert!(queue.get_last_tsn_received().is_none());
+
+            // Reuse the emptied tracker with a fresh hole and a dense tail; old
+            // receipt endpoints/counts must not survive the completed front drain.
+            let prefix = model.cumulative;
+            for logical in prefix + 2..=prefix + 1025 {
+                model.push(&mut queue, logical);
+            }
+            model.pop_next(&mut queue);
+            model.assert_matches(&queue);
+            assert_eq!(gaps(&queue, model.wire(prefix)), [(2, 1025)]);
+            model.push(&mut queue, prefix + 1);
+            for _ in 0..1025 {
+                model.pop_next(&mut queue);
+            }
+            model.assert_matches(&queue);
+            assert!(queue.is_empty());
+        }
     }
 }

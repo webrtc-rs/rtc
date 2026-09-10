@@ -37,7 +37,7 @@ fn test_payload_queue_push_no_check() -> Result<()> {
     assert_eq!(3, pq.len(), "item count mismatch");
 
     for i in 0..3 {
-        assert!(!pq.sorted.is_empty(), "should not be empty");
+        assert!(!pq.is_empty(), "should not be empty");
         let c = pq.pop(i);
         assert!(c.is_some(), "pop should succeed");
         if let Some(c) = c {
@@ -48,14 +48,14 @@ fn test_payload_queue_push_no_check() -> Result<()> {
     assert_eq!(0, pq.get_num_bytes(), "total bytes mismatch");
     assert_eq!(0, pq.len(), "item count mismatch");
 
-    assert!(pq.sorted.is_empty(), "should be empty");
+    assert!(pq.is_empty(), "should be empty");
     pq.push_no_check(make_payload(3, 13));
     assert_eq!(13, pq.get_num_bytes(), "total bytes mismatch");
     pq.push_no_check(make_payload(4, 14));
     assert_eq!(27, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 3..5 {
-        assert!(!pq.sorted.is_empty(), "should not be empty");
+        assert!(!pq.is_empty(), "should not be empty");
         let c = pq.pop(i);
         assert!(c.is_some(), "pop should succeed");
         if let Some(c) = c {

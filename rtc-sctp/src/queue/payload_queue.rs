@@ -5,6 +5,10 @@ use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 
+#[cfg(test)]
+#[path = "payload_queue_model_test.rs"]
+mod model_test;
+
 pub(crate) enum GapAck<'a> {
     Duplicate,
     New {
@@ -78,14 +82,10 @@ struct InflightData {
 
 #[derive(Default, Debug)]
 pub(crate) struct PayloadQueue {
-    // length: usize,
-    /// Keyed by TSN for sender in-flight lookups.
-    chunk_map: FxHashMap<u32, InflightData>,
-    /// TSNs in serial-number order. A `VecDeque` so that `pop` — which almost
-    /// always removes the front, once per acked chunk — is O(1)
-    /// instead of shifting the whole in-flight window left (`Vec::remove(0)`
-    /// showed up as ~9% of the end-to-end transfer profile as memmove).
-    pub(crate) sorted: VecDeque<u32>,
+    /// Assigned DATA in serial TSN order, including acknowledged and abandoned
+    /// records retained until cumulative ACK. Sender assignment is contiguous;
+    /// ordered insertion also supports unique sparse/reordered queue users.
+    inflight: VecDeque<InflightData>,
     n_bytes: usize,
     outstanding_bytes: usize,
     buffered_bytes: usize,
@@ -99,17 +99,44 @@ impl PayloadQueue {
         PayloadQueue::default()
     }
 
-    /// Insert `tsn` into `sorted`, keeping SCTP serial-number order. Binary-search
-    /// the insertion point instead of re-sorting the whole vector on every push:
-    /// re-sorting made a burst of N chunks O(N^2 log N). In-order arrivals — the
-    /// common case, since TSNs are assigned sequentially — land at the
-    /// end in O(1) amortized.
-    fn insert_sorted(&mut self, tsn: u32) {
-        if self.sorted.back().is_none_or(|last| sna32lt(*last, tsn)) {
-            self.sorted.push_back(tsn);
+    /// Contiguous sender TSNs have a direct deque index. Check the stored TSN
+    /// before accepting it so sparse/reordered insertions need no empty slots.
+    fn position(&self, tsn: u32) -> Option<usize> {
+        let first = self.inflight.front()?;
+        let index = tsn.wrapping_sub(first.chunk.tsn) as usize;
+        if self
+            .inflight
+            .get(index)
+            .is_some_and(|data| data.chunk.tsn == tsn)
+        {
+            return Some(index);
+        }
+        let index = self
+            .inflight
+            .partition_point(|data| sna32lt(data.chunk.tsn, tsn));
+        self.inflight
+            .get(index)
+            .filter(|data| data.chunk.tsn == tsn)
+            .map(|_| index)
+    }
+
+    pub(crate) fn tsns(&self) -> impl Iterator<Item = u32> + '_ {
+        self.inflight.iter().map(|data| data.chunk.tsn)
+    }
+
+    fn insert_sorted(&mut self, data: InflightData) {
+        let tsn = data.chunk.tsn;
+        if self
+            .inflight
+            .back()
+            .is_none_or(|last| sna32lt(last.chunk.tsn, tsn))
+        {
+            self.inflight.push_back(data);
         } else {
-            let idx = self.sorted.partition_point(|&x| sna32lt(x, tsn));
-            self.sorted.insert(idx, tsn);
+            let index = self
+                .inflight
+                .partition_point(|item| sna32lt(item.chunk.tsn, tsn));
+            self.inflight.insert(index, data);
         }
     }
 
@@ -123,7 +150,12 @@ impl PayloadQueue {
         }
     }
 
+    /// The caller must not insert a TSN already retained in the queue.
     pub(crate) fn push_no_check(&mut self, p: ChunkPayloadData) {
+        debug_assert!(
+            self.position(p.tsn).is_none(),
+            "inflight TSNs must be unique"
+        );
         if let Some(id) = Self::abandonment_id(&p) {
             self.message_tsns
                 .entry(id)
@@ -137,15 +169,10 @@ impl PayloadQueue {
         if !p.buffer_released {
             self.buffered_bytes += p.user_data.len();
         }
-        self.insert_sorted(p.tsn);
-        self.chunk_map.insert(
-            p.tsn,
-            InflightData {
-                payload_len: p.user_data.len(),
-                chunk: p,
-            },
-        );
-        //self.length += 1;
+        self.insert_sorted(InflightData {
+            payload_len: p.user_data.len(),
+            chunk: p,
+        });
     }
 
     /// pop pops only if the oldest chunk's TSN matches the given TSN.
@@ -153,31 +180,27 @@ impl PayloadQueue {
     // entire DATA metadata through a separate struct-return calling convention.
     #[inline(always)]
     pub(crate) fn pop(&mut self, tsn: u32) -> Option<ChunkPayloadData> {
-        if self.sorted.front() == Some(&tsn) {
-            self.sorted.pop_front();
-            if let Some(InflightData {
-                chunk: c,
-                payload_len,
-            }) = self.chunk_map.remove(&tsn)
-            {
-                if let Some(id) = Self::abandonment_id(&c) {
-                    let tsns = self.message_tsns.get_mut(&id).unwrap();
-                    if tsns.pop(tsn) {
-                        self.message_tsns.remove(&id);
-                    }
-                }
-                self.n_bytes -= c.user_data.len();
-                if c.is_outstanding() {
-                    self.outstanding_bytes -= payload_len;
-                }
-                if !c.buffer_released {
-                    self.buffered_bytes -= payload_len;
-                }
-                return Some(c);
+        if self.inflight.front().map(|data| data.chunk.tsn) != Some(tsn) {
+            return None;
+        }
+        let InflightData {
+            chunk: c,
+            payload_len,
+        } = self.inflight.pop_front()?;
+        if let Some(id) = Self::abandonment_id(&c) {
+            let tsns = self.message_tsns.get_mut(&id).unwrap();
+            if tsns.pop(tsn) {
+                self.message_tsns.remove(&id);
             }
         }
-
-        None
+        self.n_bytes -= c.user_data.len();
+        if c.is_outstanding() {
+            self.outstanding_bytes -= payload_len;
+        }
+        if !c.buffer_released {
+            self.buffered_bytes -= payload_len;
+        }
+        Some(c)
     }
 
     pub(crate) fn message_tsns(&self, id: MessageId) -> Vec<u32> {
@@ -188,14 +211,17 @@ impl PayloadQueue {
 
     /// get returns reference to chunkPayloadData with the given TSN value.
     pub(crate) fn get(&self, tsn: u32) -> Option<&ChunkPayloadData> {
-        self.chunk_map.get(&tsn).map(|data| &data.chunk)
+        let index = self.position(tsn)?;
+        Some(&self.inflight[index].chunk)
     }
     pub(crate) fn get_mut(&mut self, tsn: u32) -> Option<&mut ChunkPayloadData> {
-        self.chunk_map.get_mut(&tsn).map(|data| &mut data.chunk)
+        let index = self.position(tsn)?;
+        Some(&mut self.inflight[index].chunk)
     }
 
     pub(crate) fn payload_len(&self, tsn: u32) -> Option<usize> {
-        self.chunk_map.get(&tsn).map(|data| data.payload_len)
+        let index = self.position(tsn)?;
+        Some(self.inflight[index].payload_len)
     }
 
     /// Apply a gap ACK and return its accounting and metadata in one lookup.
@@ -206,7 +232,8 @@ impl PayloadQueue {
     /// Repeated ACKs do not change recovery state or return credit again.
     #[inline]
     pub(crate) fn acknowledge(&mut self, tsn: u32, use_forward_tsn: bool) -> Option<GapAck<'_>> {
-        let data = self.chunk_map.get_mut(&tsn)?;
+        let index = self.position(tsn)?;
+        let data = &mut self.inflight[index];
         let c = &mut data.chunk;
         if c.acknowledged {
             return Some(GapAck::Duplicate);
@@ -232,9 +259,10 @@ impl PayloadQueue {
     }
 
     pub(crate) fn revoke_gap_ack(&mut self, tsn: u32) -> bool {
-        let Some(data) = self.chunk_map.get_mut(&tsn) else {
+        let Some(index) = self.position(tsn) else {
             return false;
         };
+        let data = &mut self.inflight[index];
         let c = &mut data.chunk;
         if c.acknowledged && !c.abandoned {
             c.acknowledged = false;
@@ -246,9 +274,10 @@ impl PayloadQueue {
     }
 
     pub(crate) fn abandon(&mut self, tsn: u32) -> (bool, usize) {
-        let Some(data) = self.chunk_map.get_mut(&tsn) else {
+        let Some(index) = self.position(tsn) else {
             return (false, 0);
         };
+        let data = &mut self.inflight[index];
         let c = &mut data.chunk;
         let changed = !c.abandoned;
         if c.is_outstanding() {
@@ -265,7 +294,7 @@ impl PayloadQueue {
     }
 
     pub(crate) fn mark_all_to_retrasmit(&mut self) {
-        for data in self.chunk_map.values_mut() {
+        for data in &mut self.inflight {
             let c = &mut data.chunk;
             if !c.is_outstanding() {
                 continue;
@@ -287,8 +316,7 @@ impl PayloadQueue {
     }
 
     pub(crate) fn len(&self) -> usize {
-        //assert_eq!(self.chunk_map.len(), self.length);
-        self.chunk_map.len()
+        self.inflight.len()
     }
 
     pub(crate) fn is_empty(&self) -> bool {

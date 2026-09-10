@@ -10,6 +10,9 @@ mod sack_recovery;
 #[path = "ack_optimization_test.rs"]
 mod ack_optimization;
 
+#[path = "ack_range_boundary_test.rs"]
+mod ack_range_boundary;
+
 #[path = "send_retention_test.rs"]
 mod send_retention;
 

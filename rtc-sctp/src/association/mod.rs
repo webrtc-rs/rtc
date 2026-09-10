@@ -1869,7 +1869,7 @@ impl Association {
         let mut newly_acked_data = false;
         // Abandoned DATA can precede the earliest outstanding TSN. RFC 9260
         // 6.3.2 R3 applies to that outstanding DATA, including gap acknowledgments.
-        let earliest_outstanding = self.inflight_queue.sorted.iter().copied().find(|tsn| {
+        let earliest_outstanding = self.inflight_queue.tsns().find(|tsn| {
             self.inflight_queue
                 .get(*tsn)
                 .is_some_and(ChunkPayloadData::is_outstanding)
@@ -1937,58 +1937,97 @@ impl Association {
 
         let mut htna = d.cumulative_tsn_ack;
 
-        // Record peer acknowledgments independently of local payload release.
+        // Compare ranges before visiting DATA. A long-lived hole can make each
+        // SACK repeat tens of thousands of already acknowledged TSNs. Only the
+        // newly covered portions need queue lookups; revocation above preserves
+        // recovery when an old gap disappears (RFC 9260 6.2.1 D(iii)).
+        let mut previous_gap = 0;
         for g in &d.gap_ack_blocks {
-            for i in g.start..=g.end {
-                let tsn = d.cumulative_tsn_ack.wrapping_add(i as u32);
-
-                let GapAck::New {
-                    chunk: c,
-                    released_buffer,
-                    delivery_credit,
-                } = self
-                    .inflight_queue
-                    .acknowledge(tsn, self.use_forward_tsn)
-                    .ok_or(Error::ErrTsnRequestNotExist)?
-                else {
-                    continue;
-                };
-                newly_acked_data |= c.nsent > 0;
-                total_bytes_acked += delivery_credit as i64;
-                if self
-                    .streams
-                    .get(&c.stream_identifier)
-                    .is_some_and(|s| s.generation == c.stream_generation)
+            let mut offset = u32::from(g.start);
+            let end = u32::from(g.end);
+            while offset <= end {
+                let tsn = d.cumulative_tsn_ack.wrapping_add(offset);
+                while self
+                    .peer_gap_ack_ranges
+                    .get(previous_gap)
+                    .is_some_and(|&(_, old_end)| sna32lt(old_end, tsn))
                 {
-                    *bytes_acked_per_stream
-                        .entry(c.stream_identifier)
-                        .or_default() += released_buffer as i64;
+                    previous_gap += 1;
                 }
+                let previous = self.peer_gap_ack_ranges.get(previous_gap);
+                if let Some(&(old_start, old_end)) = previous
+                    && sna32lte(old_start, tsn)
+                {
+                    offset = old_end.wrapping_sub(d.cumulative_tsn_ack) + 1;
+                    continue;
+                }
+                let new_end = previous.map_or(end, |&(old_start, _)| {
+                    end.min(old_start.wrapping_sub(d.cumulative_tsn_ack) - 1)
+                });
+                // Keep range comparisons outside the per-TSN loop, including
+                // the common case where this entire gap is newly acknowledged.
+                for i in offset..=new_end {
+                    let tsn = d.cumulative_tsn_ack.wrapping_add(i);
 
-                trace!("[{}] tsn={} has been sacked", self.side, c.tsn);
+                    let GapAck::New {
+                        chunk: c,
+                        released_buffer,
+                        delivery_credit,
+                    } = self
+                        .inflight_queue
+                        .acknowledge(tsn, self.use_forward_tsn)
+                        .ok_or(Error::ErrTsnRequestNotExist)?
+                    else {
+                        continue;
+                    };
+                    newly_acked_data |= c.nsent > 0;
+                    total_bytes_acked += delivery_credit as i64;
+                    if self
+                        .streams
+                        .get(&c.stream_identifier)
+                        .is_some_and(|s| s.generation == c.stream_generation)
+                    {
+                        *bytes_acked_per_stream
+                            .entry(c.stream_identifier)
+                            .or_default() += released_buffer as i64;
+                    }
 
-                if !c.abandoned() && c.nsent == 1 {
-                    self.min_tsn2measure_rtt = self.my_next_tsn;
-                    if let Some(since) = &c.since {
-                        let rtt = now.duration_since(*since);
-                        let srtt = self.rto_mgr.set_new_rtt(rtt.as_millis() as u64);
-                        trace!(
-                            "[{}] SACK: measured-rtt={} srtt={} new-rto={}",
-                            self.side,
-                            rtt.as_millis(),
-                            srtt,
-                            self.rto_mgr.get_rto()
-                        );
-                    } else {
-                        error!("[{}] invalid c.since", self.side);
+                    trace!("[{}] tsn={} has been sacked", self.side, c.tsn);
+
+                    if !c.abandoned() && c.nsent == 1 {
+                        self.min_tsn2measure_rtt = self.my_next_tsn;
+                        if let Some(since) = &c.since {
+                            let rtt = now.duration_since(*since);
+                            let srtt = self.rto_mgr.set_new_rtt(rtt.as_millis() as u64);
+                            trace!(
+                                "[{}] SACK: measured-rtt={} srtt={} new-rto={}",
+                                self.side,
+                                rtt.as_millis(),
+                                srtt,
+                                self.rto_mgr.get_rto()
+                            );
+                        } else {
+                            error!("[{}] invalid c.since", self.side);
+                        }
+                    }
+
+                    if sna32lt(htna, tsn) {
+                        htna = tsn;
                     }
                 }
-
-                if sna32lt(htna, tsn) {
-                    htna = tsn;
-                }
+                offset = new_end + 1;
             }
         }
+        // The cache describes successfully processed peer evidence. Keep the
+        // previous SACK until both revocation and new-ACK processing finish.
+        self.peer_gap_ack_ranges.clear();
+        self.peer_gap_ack_ranges
+            .extend(d.gap_ack_blocks.iter().map(|gap| {
+                (
+                    d.cumulative_tsn_ack.wrapping_add(gap.start as u32),
+                    d.cumulative_tsn_ack.wrapping_add(gap.end as u32),
+                )
+            }));
 
         // RFC 9260 8.1-8.2: an acknowledgment of new DATA clears the error
         // counter, including a late SACK after local abandonment. Payload
@@ -2053,14 +2092,6 @@ impl Association {
                 offset = missing_end + 1;
             }
         }
-        self.peer_gap_ack_ranges.clear();
-        self.peer_gap_ack_ranges
-            .extend(d.gap_ack_blocks.iter().map(|gap| {
-                (
-                    d.cumulative_tsn_ack.wrapping_add(gap.start as u32),
-                    d.cumulative_tsn_ack.wrapping_add(gap.end as u32),
-                )
-            }));
         revoked
     }
 
@@ -2942,7 +2973,7 @@ impl Association {
     ) -> Vec<MessageToAbandon> {
         let mut messages = vec![];
         let mut selected = rustc_hash::FxHashSet::default();
-        for &tsn in &self.inflight_queue.sorted {
+        for tsn in self.inflight_queue.tsns() {
             let c = self.inflight_queue.get(tsn).unwrap();
             if c.is_outstanding()
                 && self.retransmission_policy_exhausted(c, now, is_candidate(c))
