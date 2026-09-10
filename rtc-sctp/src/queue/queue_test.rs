@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 //payload_queue_test
 ///////////////////////////////////////////////////////////////////
 use super::payload_queue::*;
+use super::receive_tsn_queue::ReceiveTsnQueue;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::chunk::chunk_selective_ack::GapAckBlock;
 
@@ -69,15 +70,15 @@ fn test_payload_queue_push_no_check() -> Result<()> {
 }
 
 #[test]
-fn test_payload_queue_get_gap_ack_block() -> Result<()> {
-    let mut pq = PayloadQueue::new();
+fn test_receive_tsn_queue_get_gap_ack_block() -> Result<()> {
+    let mut pq = ReceiveTsnQueue::default();
 
-    pq.push(make_payload(1, 0), 0);
-    pq.push(make_payload(2, 0), 0);
-    pq.push(make_payload(3, 0), 0);
-    pq.push(make_payload(4, 0), 0);
-    pq.push(make_payload(5, 0), 0);
-    pq.push(make_payload(6, 0), 0);
+    pq.push(1, 0);
+    pq.push(2, 0);
+    pq.push(3, 0);
+    pq.push(4, 0);
+    pq.push(5, 0);
+    pq.push(6, 0);
 
     let gab1 = vec![GapAckBlock { start: 1, end: 6 }];
     let gab2 = pq.get_gap_ack_blocks(0);
@@ -87,8 +88,8 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
     assert_eq!(gab1[0].start, gab2[0].start);
     assert_eq!(gab1[0].end, gab2[0].end);
 
-    pq.push(make_payload(8, 0), 0);
-    pq.push(make_payload(9, 0), 0);
+    pq.push(8, 0);
+    pq.push(9, 0);
 
     let gab1 = vec![
         GapAckBlock { start: 1, end: 6 },
@@ -107,28 +108,28 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
 }
 
 #[test]
-fn test_payload_queue_get_last_tsn_received() -> Result<()> {
-    let mut pq = PayloadQueue::new();
+fn test_receive_tsn_queue_get_last_tsn_received() -> Result<()> {
+    let mut pq = ReceiveTsnQueue::default();
 
     // empty queie should return false
     let ok = pq.get_last_tsn_received();
     assert!(ok.is_none(), "should be none");
 
-    let ok = pq.push(make_payload(20, 0), 0);
+    let ok = pq.push(20, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
     assert_eq!(Some(&20), tsn, "should match");
 
     // append should work
-    let ok = pq.push(make_payload(21, 0), 0);
+    let ok = pq.push(21, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
     assert_eq!(Some(&21), tsn, "should match");
 
     // check if sorting applied
-    let ok = pq.push(make_payload(19, 0), 0);
+    let ok = pq.push(19, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
@@ -142,9 +143,9 @@ fn test_payload_queue_mark_all_to_retrasmit() -> Result<()> {
     let mut pq = PayloadQueue::new();
 
     for i in 0..3 {
-        pq.push(make_payload(i + 1, 10), 0);
+        pq.push_no_check(make_payload(i + 1, 10));
     }
-    pq.acknowledge(2).unwrap();
+    pq.acknowledge(2, false).unwrap();
     pq.mark_all_to_retrasmit();
 
     let c = pq.get(1);
@@ -165,12 +166,12 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
     let mut pq = PayloadQueue::new();
 
     for i in 0..4 {
-        pq.push(make_payload(i + 1, 10), 0);
+        pq.push_no_check(make_payload(i + 1, 10));
     }
 
     pq.mark_all_to_retrasmit();
-    pq.acknowledge(2).unwrap(); // should cancel retransmission for TSN 2
-    pq.acknowledge(4).unwrap(); // should cancel retransmission for TSN 4
+    pq.acknowledge(2, false).unwrap(); // should cancel retransmission for TSN 2
+    pq.acknowledge(4, false).unwrap(); // should cancel retransmission for TSN 4
 
     let c = pq.get(1);
     assert!(c.is_some(), "should be true");

@@ -10,6 +10,12 @@ mod sack_recovery;
 #[path = "ack_optimization_test.rs"]
 mod ack_optimization;
 
+#[path = "send_retention_test.rs"]
+mod send_retention;
+
+#[path = "receive_tracking_test.rs"]
+mod receive_tracking;
+
 #[path = "message_selection_test.rs"]
 mod message_selection;
 
@@ -670,18 +676,7 @@ fn test_handle_forward_tsn_forward_1for1_missing() -> Result<()> {
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
-    a.payload_queue.push(
-        ChunkPayloadData {
-            beginning_fragment: true,
-            ending_fragment: true,
-            tsn: a.peer_last_tsn + 2,
-            stream_identifier: 0,
-            stream_sequence_number: 1,
-            user_data: Bytes::from_static(b"ABC"),
-            ..Default::default()
-        },
-        a.peer_last_tsn,
-    );
+    a.payload_queue.push(a.peer_last_tsn + 2, a.peer_last_tsn);
 
     let fwdtsn = ChunkForwardTsn {
         new_cumulative_tsn: a.peer_last_tsn + 1,
@@ -718,18 +713,7 @@ fn test_handle_forward_tsn_forward_1for2_missing() -> Result<()> {
     let prev_tsn = a.peer_last_tsn;
 
     // this chunk is blocked by the missing chunk at tsn=1
-    a.payload_queue.push(
-        ChunkPayloadData {
-            beginning_fragment: true,
-            ending_fragment: true,
-            tsn: a.peer_last_tsn + 3,
-            stream_identifier: 0,
-            stream_sequence_number: 1,
-            user_data: Bytes::from_static(b"ABC"),
-            ..Default::default()
-        },
-        a.peer_last_tsn,
-    );
+    a.payload_queue.push(a.peer_last_tsn + 3, a.peer_last_tsn);
 
     let fwdtsn = ChunkForwardTsn {
         new_cumulative_tsn: a.peer_last_tsn + 1,

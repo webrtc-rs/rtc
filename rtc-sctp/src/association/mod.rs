@@ -40,6 +40,7 @@ use crate::queue::{
     payload_queue::{GapAck, PayloadQueue},
     pending_queue::{PendingQueue, ResetMarker},
     receive_queue::{DeferredReceive, ReceiveQueue},
+    receive_tsn_queue::ReceiveTsnQueue,
 };
 use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner};
 use crate::util::{constant_time_eq, sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
@@ -220,7 +221,7 @@ pub struct Association {
     my_max_num_outbound_streams: u16,
     my_cookie: Option<ParamStateCookie>,
 
-    pub(crate) payload_queue: PayloadQueue,
+    pub(crate) payload_queue: ReceiveTsnQueue,
     inflight_queue: PayloadQueue,
     /// Absolute, inclusive ranges from the last validated SACK. Comparing
     /// ranges detects reneging without visiting every outstanding DATA chunk.
@@ -338,7 +339,7 @@ impl Default for Association {
             my_max_num_outbound_streams: 0,
             my_cookie: None,
 
-            payload_queue: PayloadQueue::default(),
+            payload_queue: ReceiveTsnQueue::default(),
             inflight_queue: PayloadQueue::default(),
             peer_gap_ack_ranges: Vec::new(),
             pending_queue: PendingQueue::default(),
@@ -763,7 +764,7 @@ impl Association {
             self.pending_queue = PendingQueue::new();
             self.inflight_queue = PayloadQueue::default();
             self.peer_gap_ack_ranges.clear();
-            self.payload_queue = PayloadQueue::default();
+            self.payload_queue = ReceiveTsnQueue::default();
             self.incoming_resets = IncomingResetQueue::new(0);
             self.fwd_tsn_stream_map.clear();
             self.confirmed_reset_tsns.clear();
@@ -1376,13 +1377,13 @@ impl Association {
         );
         self.stats.inc_datas();
 
-        let can_push = self.payload_queue.can_push(d, self.peer_last_tsn);
+        let can_push = self.payload_queue.can_push(d.tsn, self.peer_last_tsn);
         let mut stream_handle_data = false;
         if can_push {
             if d.stream_identifier < self.my_max_num_inbound_streams {
                 if self.get_my_receiver_window_credit() > 0 {
                     // Pass the new chunk to stream level as soon as it arrives
-                    self.payload_queue.push(d.clone(), self.peer_last_tsn);
+                    self.payload_queue.push(d.tsn, self.peer_last_tsn);
                     stream_handle_data = true;
                 } else {
                     // Receive buffer is full. Two kinds of chunk are still worth taking,
@@ -1425,7 +1426,7 @@ impl Association {
                             d.tsn,
                             d.stream_sequence_number
                         );
-                        self.payload_queue.push(d.clone(), self.peer_last_tsn);
+                        self.payload_queue.push(d.tsn, self.peer_last_tsn);
                         stream_handle_data = true;
                     } else {
                         debug!(
@@ -1538,7 +1539,10 @@ impl Association {
         if let Some(probe) = self.zero_window_probe {
             let window_still_closed = self.inflight_queue.get(probe).is_some_and(|chunk| {
                 chunk.is_outstanding()
-                    && (d.advertised_receiver_window_credit as usize) < chunk.user_data.len()
+                    && self
+                        .inflight_queue
+                        .payload_len(probe)
+                        .is_some_and(|len| (d.advertised_receiver_window_credit as usize) < len)
             });
             if !window_still_closed {
                 self.zero_window_probe = None;
@@ -1665,11 +1669,7 @@ impl Association {
         //   chunk,
 
         // Advance peer_last_tsn
-        while let Some(&tsn) = self.payload_queue.sorted.front()
-            && sna32lte(tsn, c.new_cumulative_tsn)
-        {
-            self.payload_queue.pop(tsn);
-        }
+        self.payload_queue.discard_through(c.new_cumulative_tsn);
         self.peer_last_tsn = c.new_cumulative_tsn;
 
         // RX sequence state exists independently of API stream registration.
@@ -1948,7 +1948,7 @@ impl Association {
                     delivery_credit,
                 } = self
                     .inflight_queue
-                    .acknowledge(tsn)
+                    .acknowledge(tsn, self.use_forward_tsn)
                     .ok_or(Error::ErrTsnRequestNotExist)?
                 else {
                     continue;

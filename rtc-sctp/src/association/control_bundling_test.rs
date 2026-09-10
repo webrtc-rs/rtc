@@ -8,12 +8,8 @@ fn reconfig_response_bundles_the_complete_immediate_sack_within_mtu() -> Result<
         association.mtu = mtu;
         let cumulative = association.peer_last_tsn;
         let gap_tsn = cumulative.wrapping_add(2);
-        let data = ChunkPayloadData {
-            tsn: gap_tsn,
-            ..Default::default()
-        };
-        assert!(association.payload_queue.push(data.clone(), cumulative));
-        assert!(!association.payload_queue.push(data, cumulative));
+        assert!(association.payload_queue.push(gap_tsn, cumulative));
+        assert!(!association.payload_queue.push(gap_tsn, cumulative));
         association.ack_state = AckState::Immediate;
         association
             .control_queue
