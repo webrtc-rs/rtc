@@ -2,8 +2,18 @@ use crate::chunk::chunk_payload_data::{ChunkPayloadData, MessageId, MessageRelia
 use crate::chunk::chunk_selective_ack::GapAckBlock;
 use crate::util::*;
 
+use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+
+pub(crate) enum GapAck<'a> {
+    Duplicate,
+    New {
+        chunk: &'a ChunkPayloadData,
+        released_buffer: usize,
+        delivery_credit: usize,
+    },
+}
 
 /// Most messages fit in a single DATA chunk. Keep that TSN in the index itself
 /// rather than allocating a separate collection on every send and SACK.
@@ -229,25 +239,27 @@ impl PayloadQueue {
         s
     }
 
-    pub(crate) fn acknowledge(&mut self, tsn: u32) -> bool {
-        let Some(c) = self.chunk_map.get_mut(&tsn) else {
-            return false;
-        };
+    /// Apply a gap ACK and return its accounting and metadata in one lookup.
+    /// Retain the payload because a gap ACK can still be revoked. Repeated ACKs
+    /// do not change recovery state or return either kind of credit again.
+    #[inline]
+    pub(crate) fn acknowledge(&mut self, tsn: u32) -> Option<GapAck<'_>> {
+        let c = self.chunk_map.get_mut(&tsn)?;
+        if c.acknowledged {
+            return Some(GapAck::Duplicate);
+        }
         if c.is_outstanding() {
             self.outstanding_bytes -= c.user_data.len();
         }
-        c.acknowledge()
-    }
-
-    /// A gap ACK can be revoked. Retain its Bytes until cumulative ACK or
-    /// abandonment while returning the existing API's buffer credit once.
-    pub(crate) fn release_buffer(&mut self, tsn: u32) -> usize {
-        let Some(c) = self.chunk_map.get_mut(&tsn) else {
-            return 0;
-        };
-        let released = c.release_buffer();
-        self.buffered_bytes -= released;
-        released
+        c.acknowledge();
+        let released_buffer = c.release_buffer();
+        self.buffered_bytes -= released_buffer;
+        let delivery_credit = c.take_delivery_credit();
+        Some(GapAck::New {
+            chunk: c,
+            released_buffer,
+            delivery_credit,
+        })
     }
 
     pub(crate) fn revoke_gap_ack(&mut self, tsn: u32) -> bool {
@@ -275,7 +287,9 @@ impl PayloadQueue {
         let released = c.release_buffer();
         self.buffered_bytes -= released;
         self.n_bytes -= c.user_data.len();
-        c.user_data.clear();
+        // Bytes::clear() retains the backing allocation. Abandonment is final,
+        // so keep only the TSN/message metadata needed for FORWARD TSN and ACKs.
+        c.user_data = Bytes::new();
         (changed, released)
     }
 

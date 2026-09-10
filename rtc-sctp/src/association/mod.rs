@@ -37,7 +37,7 @@ use crate::param::{
     param_supported_extensions::ParamSupportedExtensions,
 };
 use crate::queue::{
-    payload_queue::PayloadQueue,
+    payload_queue::{GapAck, PayloadQueue},
     pending_queue::{PendingQueue, ResetMarker},
     receive_queue::{DeferredReceive, ReceiveQueue},
 };
@@ -762,6 +762,7 @@ impl Association {
             self.transmit_streams.clear();
             self.pending_queue = PendingQueue::new();
             self.inflight_queue = PayloadQueue::default();
+            self.peer_gap_ack_ranges.clear();
             self.payload_queue = PayloadQueue::default();
             self.incoming_resets = IncomingResetQueue::new(0);
             self.fwd_tsn_stream_map.clear();
@@ -1941,53 +1942,50 @@ impl Association {
             for i in g.start..=g.end {
                 let tsn = d.cumulative_tsn_ack.wrapping_add(i as u32);
 
-                let newly_acknowledged = self.inflight_queue.acknowledge(tsn);
-                let n_bytes_acked = if newly_acknowledged {
-                    self.inflight_queue.release_buffer(tsn) as i64
-                } else {
-                    0
-                };
-
-                let delivery_credit = self
+                let GapAck::New {
+                    chunk: c,
+                    released_buffer,
+                    delivery_credit,
+                } = self
                     .inflight_queue
-                    .get_mut(tsn)
-                    .map_or(0, ChunkPayloadData::take_delivery_credit)
-                    as i64;
-                if let Some(c) = self.inflight_queue.get(tsn) {
-                    if newly_acknowledged {
-                        newly_acked_data |= c.nsent > 0;
-                        total_bytes_acked += delivery_credit;
-                        if self.is_current_stream_data(c) {
-                            *bytes_acked_per_stream
-                                .entry(c.stream_identifier)
-                                .or_default() += n_bytes_acked;
-                        }
+                    .acknowledge(tsn)
+                    .ok_or(Error::ErrTsnRequestNotExist)?
+                else {
+                    continue;
+                };
+                newly_acked_data |= c.nsent > 0;
+                total_bytes_acked += delivery_credit as i64;
+                if self
+                    .streams
+                    .get(&c.stream_identifier)
+                    .is_some_and(|s| s.generation == c.stream_generation)
+                {
+                    *bytes_acked_per_stream
+                        .entry(c.stream_identifier)
+                        .or_default() += released_buffer as i64;
+                }
 
-                        trace!("[{}] tsn={} has been sacked", self.side, c.tsn);
+                trace!("[{}] tsn={} has been sacked", self.side, c.tsn);
 
-                        if !c.abandoned() && c.nsent == 1 {
-                            self.min_tsn2measure_rtt = self.my_next_tsn;
-                            if let Some(since) = &c.since {
-                                let rtt = now.duration_since(*since);
-                                let srtt = self.rto_mgr.set_new_rtt(rtt.as_millis() as u64);
-                                trace!(
-                                    "[{}] SACK: measured-rtt={} srtt={} new-rto={}",
-                                    self.side,
-                                    rtt.as_millis(),
-                                    srtt,
-                                    self.rto_mgr.get_rto()
-                                );
-                            } else {
-                                error!("[{}] invalid c.since", self.side);
-                            }
-                        }
-
-                        if sna32lt(htna, tsn) {
-                            htna = tsn;
-                        }
+                if !c.abandoned() && c.nsent == 1 {
+                    self.min_tsn2measure_rtt = self.my_next_tsn;
+                    if let Some(since) = &c.since {
+                        let rtt = now.duration_since(*since);
+                        let srtt = self.rto_mgr.set_new_rtt(rtt.as_millis() as u64);
+                        trace!(
+                            "[{}] SACK: measured-rtt={} srtt={} new-rto={}",
+                            self.side,
+                            rtt.as_millis(),
+                            srtt,
+                            self.rto_mgr.get_rto()
+                        );
+                    } else {
+                        error!("[{}] invalid c.since", self.side);
                     }
-                } else {
-                    return Err(Error::ErrTsnRequestNotExist);
+                }
+
+                if sna32lt(htna, tsn) {
+                    htna = tsn;
                 }
             }
         }

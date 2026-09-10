@@ -144,7 +144,7 @@ fn test_payload_queue_mark_all_to_retrasmit() -> Result<()> {
     for i in 0..3 {
         pq.push(make_payload(i + 1, 10), 0);
     }
-    pq.acknowledge(2);
+    pq.acknowledge(2).unwrap();
     pq.mark_all_to_retrasmit();
 
     let c = pq.get(1);
@@ -169,8 +169,8 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
     }
 
     pq.mark_all_to_retrasmit();
-    pq.acknowledge(2); // should cancel retransmission for TSN 2
-    pq.acknowledge(4); // should cancel retransmission for TSN 4
+    pq.acknowledge(2).unwrap(); // should cancel retransmission for TSN 2
+    pq.acknowledge(4).unwrap(); // should cancel retransmission for TSN 4
 
     let c = pq.get(1);
     assert!(c.is_some(), "should be true");

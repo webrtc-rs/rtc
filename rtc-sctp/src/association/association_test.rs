@@ -7,6 +7,9 @@ mod reliability_reset;
 #[path = "sack_recovery_test.rs"]
 mod sack_recovery;
 
+#[path = "ack_optimization_test.rs"]
+mod ack_optimization;
+
 #[path = "message_selection_test.rs"]
 mod message_selection;
 
