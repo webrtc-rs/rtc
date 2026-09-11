@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 //payload_queue_test
 ///////////////////////////////////////////////////////////////////
 use super::payload_queue::*;
+use super::receive_tsn_queue::ReceiveTsnQueue;
 use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
 use crate::chunk::chunk_selective_ack::GapAckBlock;
 
@@ -36,7 +37,7 @@ fn test_payload_queue_push_no_check() -> Result<()> {
     assert_eq!(3, pq.len(), "item count mismatch");
 
     for i in 0..3 {
-        assert!(!pq.sorted.is_empty(), "should not be empty");
+        assert!(!pq.is_empty(), "should not be empty");
         let c = pq.pop(i);
         assert!(c.is_some(), "pop should succeed");
         if let Some(c) = c {
@@ -47,14 +48,14 @@ fn test_payload_queue_push_no_check() -> Result<()> {
     assert_eq!(0, pq.get_num_bytes(), "total bytes mismatch");
     assert_eq!(0, pq.len(), "item count mismatch");
 
-    assert!(pq.sorted.is_empty(), "should be empty");
+    assert!(pq.is_empty(), "should be empty");
     pq.push_no_check(make_payload(3, 13));
     assert_eq!(13, pq.get_num_bytes(), "total bytes mismatch");
     pq.push_no_check(make_payload(4, 14));
     assert_eq!(27, pq.get_num_bytes(), "total bytes mismatch");
 
     for i in 3..5 {
-        assert!(!pq.sorted.is_empty(), "should not be empty");
+        assert!(!pq.is_empty(), "should not be empty");
         let c = pq.pop(i);
         assert!(c.is_some(), "pop should succeed");
         if let Some(c) = c {
@@ -69,15 +70,15 @@ fn test_payload_queue_push_no_check() -> Result<()> {
 }
 
 #[test]
-fn test_payload_queue_get_gap_ack_block() -> Result<()> {
-    let mut pq = PayloadQueue::new();
+fn test_receive_tsn_queue_get_gap_ack_block() -> Result<()> {
+    let mut pq = ReceiveTsnQueue::default();
 
-    pq.push(make_payload(1, 0), 0);
-    pq.push(make_payload(2, 0), 0);
-    pq.push(make_payload(3, 0), 0);
-    pq.push(make_payload(4, 0), 0);
-    pq.push(make_payload(5, 0), 0);
-    pq.push(make_payload(6, 0), 0);
+    pq.push(1, 0);
+    pq.push(2, 0);
+    pq.push(3, 0);
+    pq.push(4, 0);
+    pq.push(5, 0);
+    pq.push(6, 0);
 
     let gab1 = vec![GapAckBlock { start: 1, end: 6 }];
     let gab2 = pq.get_gap_ack_blocks(0);
@@ -87,8 +88,8 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
     assert_eq!(gab1[0].start, gab2[0].start);
     assert_eq!(gab1[0].end, gab2[0].end);
 
-    pq.push(make_payload(8, 0), 0);
-    pq.push(make_payload(9, 0), 0);
+    pq.push(8, 0);
+    pq.push(9, 0);
 
     let gab1 = vec![
         GapAckBlock { start: 1, end: 6 },
@@ -107,28 +108,28 @@ fn test_payload_queue_get_gap_ack_block() -> Result<()> {
 }
 
 #[test]
-fn test_payload_queue_get_last_tsn_received() -> Result<()> {
-    let mut pq = PayloadQueue::new();
+fn test_receive_tsn_queue_get_last_tsn_received() -> Result<()> {
+    let mut pq = ReceiveTsnQueue::default();
 
     // empty queie should return false
     let ok = pq.get_last_tsn_received();
     assert!(ok.is_none(), "should be none");
 
-    let ok = pq.push(make_payload(20, 0), 0);
+    let ok = pq.push(20, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
     assert_eq!(Some(&20), tsn, "should match");
 
     // append should work
-    let ok = pq.push(make_payload(21, 0), 0);
+    let ok = pq.push(21, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
     assert_eq!(Some(&21), tsn, "should match");
 
     // check if sorting applied
-    let ok = pq.push(make_payload(19, 0), 0);
+    let ok = pq.push(19, 0);
     assert!(ok, "should be true");
     let tsn = pq.get_last_tsn_received();
     assert!(tsn.is_some(), "should be false");
@@ -142,9 +143,9 @@ fn test_payload_queue_mark_all_to_retrasmit() -> Result<()> {
     let mut pq = PayloadQueue::new();
 
     for i in 0..3 {
-        pq.push(make_payload(i + 1, 10), 0);
+        pq.push_no_check(make_payload(i + 1, 10));
     }
-    pq.mark_as_acked(2);
+    pq.acknowledge(2, false).unwrap();
     pq.mark_all_to_retrasmit();
 
     let c = pq.get(1);
@@ -165,12 +166,12 @@ fn test_payload_queue_reset_retransmit_flag_on_ack() -> Result<()> {
     let mut pq = PayloadQueue::new();
 
     for i in 0..4 {
-        pq.push(make_payload(i + 1, 10), 0);
+        pq.push_no_check(make_payload(i + 1, 10));
     }
 
     pq.mark_all_to_retrasmit();
-    pq.mark_as_acked(2); // should cancel retransmission for TSN 2
-    pq.mark_as_acked(4); // should cancel retransmission for TSN 4
+    pq.acknowledge(2, false).unwrap(); // should cancel retransmission for TSN 2
+    pq.acknowledge(4, false).unwrap(); // should cancel retransmission for TSN 4
 
     let c = pq.get(1);
     assert!(c.is_some(), "should be true");
@@ -423,6 +424,81 @@ fn test_pending_queue_selection_persistence() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn test_pending_reset_preserves_ordered_and_unordered_boundaries() {
+    for earlier_unordered in [false, true] {
+        for later_unordered in [false, true] {
+            let mut queue = PendingQueue::new();
+            queue.push(make_data_chunk(0, earlier_unordered, FRAG_BEGIN));
+            queue.push(make_data_chunk(1, earlier_unordered, FRAG_END));
+            assert_eq!(0, queue.pop(true, earlier_unordered).unwrap().tsn);
+            queue.push_reset(ResetMarker {
+                stream_identifier: 0,
+                ..Default::default()
+            });
+            queue.push(make_data_chunk(2, later_unordered, NO_FRAGMENT));
+            assert!(
+                queue.pop_ready_reset().is_none(),
+                "must wait for the earlier fragment tail"
+            );
+            assert_eq!(1, queue.peek().unwrap().tsn);
+            assert_eq!(1, queue.pop(false, earlier_unordered).unwrap().tsn);
+            let reset = queue
+                .pop_ready_reset()
+                .expect("later DATA must not hold the reset");
+            assert_eq!(0, reset.stream_identifier);
+            assert_eq!(1, queue.len());
+            assert_eq!(10, queue.get_num_bytes());
+            assert!(
+                queue.peek().is_none(),
+                "later writes wait for the reset ACK"
+            );
+            queue.complete_reset(reset.stream_identifier);
+            assert_eq!(2, queue.peek().unwrap().tsn);
+            assert_eq!(2, queue.pop(true, later_unordered).unwrap().tsn);
+            assert!(queue.is_empty());
+            assert_eq!(0, queue.get_num_bytes());
+            // A subsequent reset on the same SID must not depend on retired DATA.
+            queue.push_reset(ResetMarker {
+                stream_identifier: 0,
+                ..Default::default()
+            });
+            assert_eq!(1, queue.len());
+            assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+            assert!(queue.is_empty());
+        }
+    }
+}
+
+#[test]
+fn test_pending_reset_releases_only_writes_before_the_next_reset() {
+    let mut queue = PendingQueue::new();
+    let reset = || ResetMarker {
+        stream_identifier: 0,
+        ..Default::default()
+    };
+    queue.push_reset(reset());
+    queue.push(make_data_chunk(1, false, FRAG_BEGIN));
+    queue.push(make_data_chunk(2, false, FRAG_END));
+    queue.push_reset(reset());
+    queue.push(make_data_chunk(3, true, NO_FRAGMENT));
+    assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+    assert!(queue.pop_ready_reset().is_none());
+    assert!(queue.peek().is_none());
+    assert_eq!(30, queue.get_num_bytes());
+    queue.complete_reset(0);
+    assert_eq!(1, queue.pop(true, false).unwrap().tsn);
+    assert!(queue.pop_ready_reset().is_none());
+    assert_eq!(2, queue.pop(false, false).unwrap().tsn);
+    assert_eq!(0, queue.pop_ready_reset().unwrap().stream_identifier);
+    assert!(queue.peek().is_none());
+    assert_eq!(10, queue.get_num_bytes());
+    queue.complete_reset(0);
+    assert_eq!(3, queue.pop(true, true).unwrap().tsn);
+    assert!(queue.is_empty());
+    assert_eq!(0, queue.get_num_bytes());
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -1137,4 +1213,29 @@ fn test_reassembly_queue_ssn_overflow_in_forward_tsn_for_ordered() -> Result<()>
     rq.forward_tsn_for_ordered(u16::MAX);
 
     Ok(())
+}
+
+#[test]
+fn test_message_index_survives_cumulative_prefix_and_tsn_wrap() {
+    use crate::chunk::chunk_payload_data::{MessageId, MessageReliability};
+    let mut queue = PayloadQueue::new();
+    for (tsn, id, beginning, ending) in [
+        (0, 11, false, true),
+        (u32::MAX, 11, true, false),
+        // A lone remaining tail still belongs to a fragmented message.
+        (1, 12, false, true),
+    ] {
+        let mut chunk = make_payload(tsn, 10);
+        chunk.message_id = Some(MessageId::new(id));
+        chunk.reliability = MessageReliability::Rexmit { max_retransmits: 1 };
+        chunk.beginning_fragment = beginning;
+        chunk.ending_fragment = ending;
+        queue.push_no_check(chunk);
+    }
+    assert_eq!(vec![u32::MAX, 0], queue.message_tsns(MessageId::new(11)));
+    queue.pop(u32::MAX).unwrap();
+    assert_eq!(vec![0], queue.message_tsns(MessageId::new(11)));
+    queue.pop(0).unwrap();
+    assert!(queue.message_tsns(MessageId::new(11)).is_empty());
+    assert_eq!(vec![1], queue.message_tsns(MessageId::new(12)));
 }

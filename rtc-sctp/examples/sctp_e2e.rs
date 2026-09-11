@@ -85,6 +85,16 @@ impl Node {
             assoc.handle_timeout(now);
         }
 
+        while let Some(transmit) = assoc.poll_transmit(now) {
+            if let Payload::RawEncode(contents) = transmit.message {
+                for content in contents {
+                    outbound.push_back(content);
+                    did_work = true;
+                }
+            }
+        }
+
+        // poll_transmit can release buffered bytes and produce stream events.
         while let Some(event) = assoc.poll() {
             if matches!(event, Event::Connected) {
                 self.connected = true;
@@ -94,15 +104,6 @@ impl Node {
         while let Some(event) = assoc.poll_endpoint_event() {
             if let Some(ch) = self.handle {
                 self.endpoint.handle_event(ch, event);
-            }
-        }
-
-        while let Some(transmit) = assoc.poll_transmit(now) {
-            if let Payload::RawEncode(contents) = transmit.message {
-                for content in contents {
-                    outbound.push_back(content);
-                    did_work = true;
-                }
             }
         }
         self.timeout = assoc.poll_timeout();

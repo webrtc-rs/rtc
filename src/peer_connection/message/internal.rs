@@ -1,6 +1,7 @@
 use crate::data_channel::RTCDataChannelId;
 use crate::data_channel::message::RTCDataChannelMessage;
 use crate::media_stream::track::MediaStreamTrackId;
+use crate::peer_connection::event::RTCEventInternal;
 use bytes::BytesMut;
 use datachannel::data_channel::DataChannelMessage;
 use interceptor::Packet;
@@ -36,7 +37,40 @@ pub(crate) enum STUNMessage {
 pub(crate) enum DTLSMessage {
     Raw(BytesMut),
     Sctp(DataChannelMessage),
+    SctpEvent(SctpEvent),
     DataChannel(ApplicationMessage),
+}
+
+/// SCTP lifecycle notifications share the incoming DATA queue. In particular,
+/// closing an old use of a stream must reach the channel registry before a new
+/// DCEP OPEN for that stream, including when reading releases the old receiver.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SctpEvent {
+    Connected(usize),
+    Closed(usize, u16),
+    BufferReleased(usize, u16, usize),
+    BufferedAmountLow(usize, u16),
+    BufferedAmountHigh(usize, u16),
+}
+
+impl SctpEvent {
+    pub(crate) fn into_internal(self) -> RTCEventInternal {
+        match self {
+            Self::Connected(association) => RTCEventInternal::SCTPHandshakeComplete(association),
+            Self::Closed(association, stream) => {
+                RTCEventInternal::SCTPStreamClosed(association, stream)
+            }
+            Self::BufferReleased(association, stream, bytes) => {
+                RTCEventInternal::SCTPBufferReleased(association, stream, bytes)
+            }
+            Self::BufferedAmountLow(association, stream) => {
+                RTCEventInternal::SCTPBufferedAmountLow(association, stream)
+            }
+            Self::BufferedAmountHigh(association, stream) => {
+                RTCEventInternal::SCTPBufferedAmountHigh(association, stream)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +97,7 @@ impl RTCMessageInternal {
             RTCMessageInternal::Dtls(msg) => match msg {
                 DTLSMessage::Raw(bytes) => bytes.len(),
                 DTLSMessage::Sctp(dcm) => dcm.payload.len(),
+                DTLSMessage::SctpEvent(_) => 0,
                 DTLSMessage::DataChannel(app_msg) => match &app_msg.data_channel_event {
                     DataChannelEvent::Open | DataChannelEvent::Close => 0,
                     DataChannelEvent::Message(rtc_dcm) => rtc_dcm.data.len(),

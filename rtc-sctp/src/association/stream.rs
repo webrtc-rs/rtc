@@ -1,7 +1,9 @@
 use crate::association::Association;
 use crate::association::state::AssociationState;
-use crate::chunk::chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier};
-use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
+use crate::chunk::chunk_payload_data::{
+    ChunkPayloadData, MessageReliability, PayloadProtocolIdentifier,
+};
+use crate::queue::reassembly_queue::Chunks;
 use crate::{ErrorCauseCode, Event, Side};
 use shared::error::{Error, Result};
 
@@ -9,7 +11,7 @@ use crate::util::{ByteSlice, BytesArray, BytesChunk, BytesSource};
 use bytes::Bytes;
 use log::{debug, error, trace};
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Identifier for a stream within a particular association
 pub type StreamId = u16;
@@ -128,10 +130,15 @@ impl Stream<'_> {
         if let Some(s) = self.association.streams.get_mut(&self.stream_identifier)
             && (s.state == RecvSendState::ReadWritable || s.state == RecvSendState::Readable)
         {
-            let chunks = s.reassembly_queue.read();
-            if !s.reassembly_queue.is_readable() {
+            let (chunks, finished) =
                 self.association
-                    .retry_deferred_resets(self.stream_identifier);
+                    .with_receive_queue(self.stream_identifier, |received| {
+                        let chunks = received.read();
+                        (chunks, !received.is_readable())
+                    });
+            if finished {
+                self.association
+                    .finish_stream_delivery(self.stream_identifier);
             }
             Ok(chunks)
         } else {
@@ -283,20 +290,32 @@ impl Stream<'_> {
     /// `now` is the instant the caller is acting at: resetting the stream queues an outgoing
     /// chunk, so it is on the same write path as [`write_sctp`](Self::write_sctp).
     pub fn stop(&mut self, now: Instant) -> Result<()> {
-        let mut reset = false;
-        if let Some(s) = self.association.streams.get_mut(&self.stream_identifier) {
-            if s.state == RecvSendState::Readable || s.state == RecvSendState::ReadWritable {
-                reset = true;
-            }
-            s.state = ((s.state as u8) & 0x2).into();
-        }
-
+        let Some(s) = self.association.streams.get(&self.stream_identifier) else {
+            // Reading the last saved message may already have retired this
+            // receiver. Its handle must not stop the next delivery on this SID.
+            return Ok(());
+        };
+        let reset = matches!(
+            s.state,
+            RecvSendState::Readable | RecvSendState::ReadWritable
+        ) && !s.incoming_reset;
         if reset {
-            // Reset the outgoing stream
-            // https://tools.ietf.org/html/rfc6525
+            // Check negotiated support before changing either API half or
+            // discarding unread messages (RFC 6525 5.1.1).
             self.association
                 .send_reset_request(now, self.stream_identifier)?;
         }
+        let s = self
+            .association
+            .streams
+            .get_mut(&self.stream_identifier)
+            .unwrap();
+        s.state = ((s.state as u8) & 0x2).into();
+
+        self.association
+            .with_receive_queue(self.stream_identifier, |received| received.stop());
+        self.association
+            .finish_stream_delivery(self.stream_identifier);
 
         Ok(())
     }
@@ -317,8 +336,8 @@ impl Stream<'_> {
     ///
     /// Resets the stream when both halves of this stream are shutdown.
     pub fn close(&mut self, now: Instant) -> Result<()> {
-        self.finish()?;
-        self.stop(now)
+        self.stop(now)?;
+        self.finish()
     }
 
     /// stream_identifier returns the Stream identifier associated to the stream.
@@ -448,9 +467,9 @@ pub struct StreamState {
     pub(crate) side: Side,
     pub(crate) max_payload_size: u32,
     pub(crate) stream_identifier: StreamId,
+    pub(crate) generation: u64,
+    pub(crate) incoming_reset: bool,
     pub(crate) default_payload_type: PayloadProtocolIdentifier,
-    pub(crate) reassembly_queue: ReassemblyQueue,
-    pub(crate) sequence_number: u16,
     pub(crate) state: RecvSendState,
     pub(crate) unordered: bool,
     pub(crate) reliability_type: ReliabilityType,
@@ -469,10 +488,10 @@ impl StreamState {
         StreamState {
             side,
             stream_identifier,
+            generation: 0,
+            incoming_reset: false,
             max_payload_size,
             default_payload_type,
-            reassembly_queue: ReassemblyQueue::new(stream_identifier),
-            sequence_number: 0,
             state: RecvSendState::ReadWritable,
             unordered: false,
             reliability_type: ReliabilityType::Reliable,
@@ -481,31 +500,6 @@ impl StreamState {
             buffered_amount_low: 0,
             buffered_amount_high: u32::MAX as usize,
         }
-    }
-
-    pub(crate) fn handle_data(&mut self, pd: &ChunkPayloadData) -> bool {
-        self.reassembly_queue.push(pd.clone())
-    }
-
-    pub(crate) fn handle_forward_tsn_for_ordered(&mut self, ssn: u16) {
-        if self.unordered {
-            return; // unordered chunks are handled by handleForwardUnordered method
-        }
-
-        // Remove all chunks older than or equal to the new TSN from
-        // the reassembly_queue.
-        self.reassembly_queue.forward_tsn_for_ordered(ssn);
-    }
-
-    pub(crate) fn handle_forward_tsn_for_unordered(&mut self, new_cumulative_tsn: u32) {
-        if !self.unordered {
-            return; // ordered chunks are handled by handleForwardTSNOrdered method
-        }
-
-        // Remove all chunks older than or equal to the new TSN from
-        // the reassembly_queue.
-        self.reassembly_queue
-            .forward_tsn_for_unordered(new_cumulative_tsn);
     }
 
     fn packetize(
@@ -521,11 +515,32 @@ impl StreamState {
         //   All Data Channel Establishment Protocol messages MUST be sent using
         //   ordered delivery and reliable transmission.
         let unordered = ppi != PayloadProtocolIdentifier::Dcep && self.unordered;
+        let reliability = if ppi == PayloadProtocolIdentifier::Dcep {
+            MessageReliability::Reliable
+        } else {
+            match self.reliability_type {
+                ReliabilityType::Reliable => MessageReliability::Reliable,
+                ReliabilityType::Rexmit => MessageReliability::Rexmit {
+                    max_retransmits: self.reliability_value,
+                },
+                // Preserve the existing API: Timed(0) permits first sends and
+                // abandons the whole message when any fragment needs a retry.
+                ReliabilityType::Timed if self.reliability_value == 0 => {
+                    MessageReliability::Rexmit { max_retransmits: 0 }
+                }
+                ReliabilityType::Timed => MessageReliability::Timed {
+                    deadline: now + Duration::from_millis(self.reliability_value as u64),
+                },
+            }
+        };
 
         let mut chunks = vec![];
+        // The message length already determines its fragment count. Avoid
+        // reserving four DATA records for every single-fragment write.
+        if self.max_payload_size != 0 {
+            chunks.reserve_exact(remaining.div_ceil(self.max_payload_size as usize));
+        }
 
-        let head_abandoned = false;
-        let head_all_inflight = false;
         while remaining != 0 {
             let fragment_size = std::cmp::min(self.max_payload_size as usize, remaining); //self.association.max_payload_size
 
@@ -536,7 +551,8 @@ impl StreamState {
             let chunk = ChunkPayloadData {
                 // Timed reliability measures a message's age from here, so that
                 // a long wait for cwnd or rwnd counts against maxPacketLifeTime.
-                created_at: Some(now),
+                reliability,
+                stream_generation: self.generation,
                 stream_identifier: self.stream_identifier,
                 user_data,
                 unordered,
@@ -544,9 +560,6 @@ impl StreamState {
                 ending_fragment: remaining - fragment_size == 0,
                 immediate_sack: false,
                 payload_type: ppi,
-                stream_sequence_number: self.sequence_number,
-                abandoned: head_abandoned, // all fragmented chunks use the same abandoned
-                all_inflight: head_all_inflight, // all fragmented chunks use the same all_inflight
                 ..Default::default()
             };
 
@@ -554,14 +567,6 @@ impl StreamState {
 
             remaining -= fragment_size;
             i += fragment_size;
-        }
-
-        // RFC 4960 Sec 6.6
-        // Note: When transmitting ordered and unordered data, an endpoint does
-        // not increment its Stream Sequence Number when transmitting a DATA
-        // chunk with U flag set to 1.
-        if !unordered {
-            self.sequence_number = self.sequence_number.wrapping_add(1);
         }
 
         let old_amount = self.buffered_amount;
@@ -607,10 +612,5 @@ impl StreamState {
         );
 
         old_amount > self.buffered_amount_low && new_amount <= self.buffered_amount_low
-    }
-
-    pub(crate) fn get_num_bytes_in_reassembly_queue(&self) -> usize {
-        // No lock is required as it reads the size with atomic load function.
-        self.reassembly_queue.get_num_bytes()
     }
 }

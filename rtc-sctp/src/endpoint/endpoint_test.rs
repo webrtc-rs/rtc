@@ -1,5 +1,6 @@
 use super::*;
 use crate::association::Event;
+use crate::queue::receive_queue::ReceiveQueue;
 use shared::error::{Error, Result};
 
 use crate::AssociationError;
@@ -512,10 +513,9 @@ fn test_assoc_reliable_simple() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -642,10 +642,9 @@ fn test_assoc_reliable_ordered_reordered() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -706,10 +705,9 @@ fn test_assoc_reliable_ordered_fragmented_then_defragmented() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -770,10 +768,9 @@ fn test_assoc_reliable_unordered_fragmented_then_defragmented() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -860,10 +857,9 @@ fn test_assoc_reliable_unordered_ordered() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -931,10 +927,9 @@ fn test_assoc_reliable_retransmission() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -988,10 +983,9 @@ fn test_assoc_reliable_short_buffer() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -1072,10 +1066,9 @@ fn test_assoc_unreliable_rexmit_ordered_no_fragment() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -1232,10 +1225,9 @@ fn test_assoc_unreliable_rexmit_ordered_fragment() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -1310,10 +1302,9 @@ fn test_assoc_unreliable_rexmit_unordered_no_fragment() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -1386,20 +1377,14 @@ fn test_assoc_unreliable_rexmit_unordered_fragment() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
         assert_eq!(
             0,
-            q.unordered.len(),
-            "should be nothing in the unordered queue"
-        );
-        assert_eq!(
-            0,
-            q.unordered_chunks.len(),
-            "should be nothing in the unorderedChunks list"
+            q.get_num_bytes(),
+            "all reassembly and delivery bytes must be released"
         );
     }
 
@@ -1656,10 +1641,9 @@ fn test_assoc_unreliable_rexmit_timed_ordered() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
     }
 
@@ -1734,25 +1718,144 @@ fn test_assoc_unreliable_rexmit_timed_unordered() -> Result<()> {
     {
         let q = &pair
             .client_conn_mut(client_ch)
-            .streams
+            .receive_streams
             .get(&si)
-            .unwrap()
-            .reassembly_queue;
+            .unwrap();
         assert!(!q.is_readable(), "should no longer be readable");
         assert_eq!(
             0,
-            q.unordered.len(),
-            "should be nothing in the unordered queue"
-        );
-        assert_eq!(
-            0,
-            q.unordered_chunks.len(),
-            "should be nothing in the unorderedChunks list"
+            q.get_num_bytes(),
+            "all reassembly and delivery bytes must be released"
         );
     }
 
     close_association_pair(&mut pair, client_ch, server_ch, si);
 
+    Ok(())
+}
+
+// RFC 3758 section 4.1 TR4: expired DATA must not reach either retransmit path.
+#[test]
+fn test_assoc_timed_reliability_stops_retransmission() -> Result<()> {
+    for unordered in [false, true] {
+        for size in [32, 2000, 12000] {
+            let si = 9;
+            let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+            establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+            pair.client_stream(client_ch, si)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            pair.server_stream(server_ch, si)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            let now = pair.time;
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &Bytes::from(vec![0x55; size]),
+                PayloadProtocolIdentifier::Binary,
+            )?;
+            pair.drive_client();
+            assert!(!pair.server.inbound.is_empty());
+            pair.server.inbound.clear(); // Lose the first transmission.
+            pair.server_conn_mut(server_ch).stats.reset();
+
+            pair.time += Duration::from_millis(500);
+            pair.drive_client();
+            pair.time += Duration::from_millis(1500);
+            pair.drive_client();
+            let mut forwards = 0;
+            for (_, _, raw) in &pair.server.inbound {
+                for c in Packet::unmarshal(raw)?.chunks {
+                    assert!(
+                        !c.as_any().is::<ChunkPayloadData>(),
+                        "expired DATA was retransmitted: unordered={unordered}, size={size}"
+                    );
+                    forwards += usize::from(c.as_any().is::<ChunkForwardTsn>());
+                }
+            }
+            assert!(
+                forwards > 0,
+                "the receiver must be able to skip the message"
+            );
+            pair.drive_server();
+            pair.drive_client();
+            assert_eq!(0, pair.server_conn_mut(server_ch).stats.get_num_datas());
+            assert_eq!(0, pair.client_stream(client_ch, si)?.buffered_amount()?);
+            assert!(pair.client_conn_mut(client_ch).is_idle());
+
+            let now = pair.time;
+            let next = Bytes::from_static(b"still useful");
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &next,
+                PayloadProtocolIdentifier::Binary,
+            )?;
+            pair.drive();
+            let received = pair.server_stream(server_ch, si)?.read_sctp()?.unwrap();
+            let mut buf = vec![0; received.len()];
+            received.read(&mut buf)?;
+            assert_eq!(next.as_ref(), buf);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_assoc_timed_reliability_fast_retransmission() -> Result<()> {
+    for unordered in [false, true] {
+        for elapsed_ms in [50, 100, 500] {
+            let si = 9;
+            let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+            establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+            pair.client_stream(client_ch, si)?.set_reliability_params(
+                unordered,
+                ReliabilityType::Timed,
+                100,
+            )?;
+            let now = pair.time;
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &Bytes::from_static(b"lost"),
+                PayloadProtocolIdentifier::Binary,
+            )?;
+            pair.drive_client();
+            pair.server.inbound.clear();
+            pair.client_conn_mut(client_ch).stats.reset();
+            pair.time += Duration::from_millis(elapsed_ms);
+
+            // Three distinct gap reports trigger fast retransmit before T3.
+            for value in 1..=3 {
+                let now = pair.time;
+                pair.client_stream(client_ch, si)?.write_sctp(
+                    now,
+                    &Bytes::from(vec![value]),
+                    PayloadProtocolIdentifier::Binary,
+                )?;
+                pair.drive_client();
+                pair.drive_server();
+                pair.drive_client();
+            }
+            assert_eq!(
+                0,
+                pair.client_conn_mut(client_ch).stats.get_num_t3timeouts()
+            );
+            pair.drive();
+            let mut received = Vec::new();
+            while let Some(chunks) = pair.server_stream(server_ch, si)?.read_sctp()? {
+                let mut buf = vec![0; chunks.len()];
+                chunks.read(&mut buf)?;
+                received.push(buf);
+            }
+            assert_eq!(elapsed_ms < 100, received.contains(&b"lost".to_vec()));
+            received.retain(|msg| msg != b"lost");
+            assert_eq!(vec![vec![1], vec![2], vec![3]], received);
+            assert_eq!(0, pair.client_stream(client_ch, si)?.buffered_amount()?);
+        }
+    }
     Ok(())
 }
 
@@ -1814,10 +1917,9 @@ fn test_assoc_congestion_control_fast_retransmission() -> Result<()> {
         {
             let q = &pair
                 .server_conn_mut(server_ch)
-                .streams
+                .receive_streams
                 .get(&si)
-                .unwrap()
-                .reassembly_queue;
+                .unwrap();
             assert!(q.is_readable(), "should be readable at {}", i);
         }
 
@@ -1962,10 +2064,10 @@ fn test_assoc_congestion_control_congestion_avoidance() -> Result<()> {
         assert_eq!(
             0,
             pair.server_conn_mut(server_ch)
-                .streams
+                .receive_streams
                 .get(&si)
                 .unwrap()
-                .get_num_bytes_in_reassembly_queue(),
+                .get_num_bytes(),
             "reassembly queue should be empty"
         );
 
@@ -2018,10 +2120,11 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
     let mut rbuf = vec![0u8; 3000];
 
     // 1. First forward packets to receiver until rwnd becomes 0
-    // 2. Wait until the sender's cwnd becomes 1*MTU (RTO occurred)
+    // 2. Wait for a zero-window probe timeout (RFC 9260 6.1 A leaves cwnd intact)
     // 3. Stat reading a1's data
     let mut n_packets_received = 0u32;
     let mut has_rtoed = false;
+    let mut steps = 0;
     while pair.client_conn_mut(client_ch).buffered_amount() > 0
         && n_packets_received < n_packets_to_send
     {
@@ -2033,13 +2136,17 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
             n_packets_to_send
         );*/
 
+        steps += 1;
+        assert!(
+            steps < 1000,
+            "slow reader must resume after a bounded number of events"
+        );
         if !has_rtoed {
             let rwnd = pair
                 .server_conn_mut(server_ch)
                 .get_my_receiver_window_credit();
-            let cwnd = pair.client_conn_mut(client_ch).cwnd;
-            let cmtu = pair.client_conn_mut(client_ch).mtu;
-            if cwnd > cmtu || rwnd > 0 {
+            let timeouts = pair.client_conn_mut(client_ch).stats.get_num_t3timeouts();
+            if timeouts == 0 || rwnd > 0 {
                 // Do not read until a1.getMyReceiverWindowCredit() becomes zero
                 pair.step();
                 continue;
@@ -2074,10 +2181,10 @@ fn test_assoc_congestion_control_slow_reader() -> Result<()> {
     assert_eq!(
         0,
         pair.server_conn_mut(server_ch)
-            .streams
+            .receive_streams
             .get(&si)
             .unwrap()
-            .get_num_bytes_in_reassembly_queue(),
+            .get_num_bytes(),
         "reassembly queue should be empty"
     );
 
@@ -2150,10 +2257,10 @@ fn test_assoc_delayed_ack() -> Result<()> {
     assert_eq!(
         0,
         pair.server_conn_mut(server_ch)
-            .streams
+            .receive_streams
             .get(&si)
             .unwrap()
-            .get_num_bytes_in_reassembly_queue(),
+            .get_num_bytes(),
         "reassembly queue should be empty"
     );
 
@@ -2651,10 +2758,9 @@ fn test_old_rtx_on_regular_acks() -> Result<()> {
         {
             let q = &pair
                 .server_conn_mut(server_ch)
-                .streams
+                .receive_streams
                 .get(&si)
-                .unwrap()
-                .reassembly_queue;
+                .unwrap();
             //println!("q.is_readable()={}", q.is_readable());
             assert!(q.is_readable(), "should be readable at {}", i);
         }
@@ -3161,6 +3267,7 @@ fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
             a.destination_port,
         )
     };
+    let request_sequence = pair.server_conn_mut(server_ch).expected_reset_sequence();
     let packet = Packet {
         common_header: CommonHeader {
             source_port: sport,
@@ -3180,7 +3287,7 @@ fn kps_repro_816_bundled_data_and_reset_must_not_lose_data() -> Result<()> {
             }),
             Box::new(ChunkReconfig {
                 param_a: Some(Box::new(ParamOutgoingResetRequest {
-                    reconfig_request_sequence_number: 100,
+                    reconfig_request_sequence_number: request_sequence,
                     reconfig_response_sequence_number: 0,
                     sender_last_tsn: tsn,
                     stream_identifiers: vec![si],
@@ -3317,9 +3424,9 @@ fn kps_816_close_unregisters_streams_holding_unread_data() -> Result<()> {
     {
         let a = pair.server_conn_mut(server_ch);
         assert!(
-            a.streams
+            a.receive_streams
                 .get(&si)
-                .is_some_and(|s| s.reassembly_queue.is_readable()),
+                .is_some_and(ReceiveQueue::is_readable),
             "precondition: the server is holding a message the application never read"
         );
         a.close(AssociationError::LocallyClosed)?;
@@ -3406,5 +3513,142 @@ fn kps_816_deferred_reset_completes_when_the_application_drains() -> Result<()> 
         pair.server_conn_mut(server_ch).stream(si).is_err(),
         "once drained, the deferred reset must be performed"
     );
+    Ok(())
+}
+
+#[test]
+fn test_close_after_timed_expiry_recovers_lost_reciprocal_reset() -> Result<()> {
+    for unread in [false, true] {
+        let si = 9;
+        let ppi = PayloadProtocolIdentifier::Binary;
+        let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 0)?;
+        establish_session_pair(&mut pair, client_ch, server_ch, si)?;
+        if unread {
+            let now = pair.time;
+            pair.client_stream(client_ch, si)?.write_sctp(
+                now,
+                &Bytes::from_static(b"keep"),
+                ppi,
+            )?;
+            pair.drive();
+        }
+        pair.client_stream(client_ch, si)?.set_reliability_params(
+            true,
+            ReliabilityType::Timed,
+            100,
+        )?;
+        let now = pair.time;
+        pair.client_stream(client_ch, si)?
+            .write_sctp(now, &Bytes::from_static(b"lost"), ppi)?;
+        pair.drive_client();
+        assert!(!pair.server.inbound.is_empty());
+        pair.server.inbound.clear();
+        pair.time += Duration::from_secs(2);
+        let now = pair.time;
+        pair.client_stream(client_ch, si)?.close(now)?;
+        pair.drive_client();
+
+        let mut packets: Vec<_> = pair.server.inbound.drain(..).collect();
+        assert_eq!(2, packets.len());
+        packets.sort_by_key(|(_, _, raw)| {
+            !Packet::unmarshal(raw)
+                .unwrap()
+                .chunks
+                .iter()
+                .any(|c| c.as_any().is::<ChunkReconfig>())
+        });
+        let forward = packets.pop().unwrap();
+        pair.server.inbound.extend(packets);
+        pair.drive_server();
+        pair.drive_client();
+        // The recommended SACK accompanying InProgress may request another
+        // FORWARD-TSN immediately. Keep the first one held to exercise ordering.
+        assert!(pair.server.inbound.iter().all(|(_, _, raw)| {
+            Packet::unmarshal(raw)
+                .unwrap()
+                .chunks
+                .iter()
+                .all(|c| !c.as_any().is::<ChunkPayloadData>())
+        }));
+        pair.server.inbound.clear();
+        pair.server.inbound.push_back(forward);
+        pair.drive_server();
+        if unread {
+            let chunks = pair
+                .server_stream(server_ch, si)?
+                .read_sctp()?
+                .expect("reset must wait for unread DATA");
+            let mut bytes = [0; 4];
+            chunks.read(&mut bytes)?;
+            assert_eq!(&bytes, b"keep");
+            pair.drive_server();
+        }
+        assert!(pair.server_conn_mut(server_ch).stream(si).is_err());
+
+        let mut lost = 0;
+        pair.client.inbound.retain(|(_, _, raw)| {
+            let reciprocal = Packet::unmarshal(raw).unwrap().chunks.iter().any(|c| {
+                c.as_any()
+                    .downcast_ref::<ChunkReconfig>()
+                    .and_then(|c| c.param_a.as_ref())
+                    .is_some_and(|p| p.as_any().is::<ParamOutgoingResetRequest>())
+            });
+            if reciprocal {
+                lost += 1;
+            }
+            !reciprocal
+        });
+        assert_eq!(
+            1, lost,
+            "lose only the reciprocal reset, deliver SACK and SuccessPerformed"
+        );
+        pair.drive();
+        pair.time += Duration::from_secs(120);
+        pair.drive();
+        assert!(
+            pair.client_conn_mut(client_ch).stream(si).is_err(),
+            "one lost reciprocal RE-CONFIG leaves the closing initiator's stream registered indefinitely"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_peer_close_with_full_unrelated_receive_queue() -> Result<()> {
+    for unordered in [false, true] {
+        let (mut pair, client_ch, server_ch) = create_association_pair(AckMode::NoDelay, 4096)?;
+        establish_session_pair(&mut pair, client_ch, server_ch, 1)?;
+        establish_session_pair(&mut pair, client_ch, server_ch, 2)?;
+        pair.server_stream(server_ch, 2)?.set_reliability_params(
+            unordered,
+            ReliabilityType::Reliable,
+            0,
+        )?;
+        let ppi = PayloadProtocolIdentifier::Binary;
+        let now = pair.time;
+        pair.server_stream(server_ch, 2)?
+            .write_sctp(now, &Bytes::from(vec![5; 4096]), ppi)?;
+        pair.drive();
+        // Leave a complete message on stream 2 unread: client a_rwnd is zero.
+        assert_eq!(0, pair.server_stream(server_ch, 2)?.buffered_amount()?);
+        let now = pair.time;
+        pair.server_stream(server_ch, 2)?
+            .write_sctp(now, &Bytes::from(vec![7; 4000]), ppi)?;
+        pair.client_stream(client_ch, 1)?.close(now)?;
+        for _ in 0..10 {
+            pair.drive_client();
+            pair.drive_server();
+            pair.time += Duration::from_secs(1);
+        }
+        assert!(
+            pair.client_conn_mut(client_ch).stream(1).is_err(),
+            "peer-initiated close of stream 1 is blocked by unread stream 2"
+        );
+        assert!(pair.server_conn_mut(server_ch).stream(1).is_err());
+        let unread = pair.client_stream(client_ch, 2)?.read_sctp()?.unwrap();
+        let mut payload = vec![0; 4096];
+        assert_eq!(4096, unread.read(&mut payload)?);
+        assert!(payload.iter().all(|b| *b == 5));
+    }
     Ok(())
 }

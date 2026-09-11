@@ -1,0 +1,129 @@
+name: SCTP interoperability
+
+on:
+  push:
+    branches: [ master, v0.20.x, v0.21.x ]
+    paths:
+      - 'rtc-sctp/**'
+      - 'rtc-shared/**'
+      - 'rtc-datachannel/**'
+      - 'src/peer_connection/handler/mod.rs'
+      - 'src/peer_connection/handler/sctp.rs'
+      - 'src/peer_connection/handler/datachannel.rs'
+      - 'src/peer_connection/message/internal.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/sctp-interop.yml'
+  pull_request:
+    branches: [ master, v0.20.x, v0.21.x ]
+    paths:
+      - 'rtc-sctp/**'
+      - 'rtc-shared/**'
+      - 'rtc-datachannel/**'
+      - 'src/peer_connection/handler/mod.rs'
+      - 'src/peer_connection/handler/sctp.rs'
+      - 'src/peer_connection/handler/datachannel.rs'
+      - 'src/peer_connection/message/internal.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/sctp-interop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interop:
+    name: rtc with usrsctp and dcSCTP (both roles)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SCTP_INTEROP_DIR: /tmp/sctp-interop
+      CARGO_TARGET_DIR: /tmp/sctp-interop-target
+      CARGO_TERM_COLOR: always
+      CC: clang
+      CXX: clang++
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare artifacts
+        run: mkdir -p "$SCTP_INTEROP_DIR/artifacts/logs" "$SCTP_INTEROP_DIR/artifacts/manifests"
+
+      - name: Install test-only native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang cmake
+
+      - name: Check Python scripts
+        run: |
+          python3 -m py_compile rtc-sctp/interop/*.py
+          python3 rtc-sctp/interop/test_build_usrsctp.py -v
+
+      - name: Build pinned usrsctp and run its adapter self-test
+        run: |
+          python3 rtc-sctp/interop/build_usrsctp.py --build-dir "$SCTP_INTEROP_DIR/usrsctp" --self-test \
+            2>&1 | tee "$SCTP_INTEROP_DIR/artifacts/logs/usrsctp-build.log"
+
+      - name: Build pinned dcSCTP and run its adapter self-test
+        run: |
+          python3 rtc-sctp/interop/build_dcsctp.py --build-dir "$SCTP_INTEROP_DIR/dcsctp" --self-test \
+            2>&1 | tee "$SCTP_INTEROP_DIR/artifacts/logs/dcsctp-build.log"
+
+      - name: Build the rtc public API adapter
+        run: |
+          cargo build -p rtc-sctp --example sctp_interop --release \
+            2>&1 | tee "$SCTP_INTEROP_DIR/artifacts/logs/rtc-build.log"
+
+      - name: Run all 40 packet scenarios
+        run: |
+          python3 rtc-sctp/interop/run.py \
+            --rtc "$CARGO_TARGET_DIR/release/examples/sctp_interop" \
+            --usrsctp "$SCTP_INTEROP_DIR/usrsctp/build/usrsctp_peer" \
+            --dcsctp "$SCTP_INTEROP_DIR/dcsctp/build/dcsctp-peer" \
+            --output "$SCTP_INTEROP_DIR/artifacts/traces" \
+            2>&1 | tee "$SCTP_INTEROP_DIR/artifacts/logs/scenarios.log"
+
+      - name: Collect build inputs and manifests
+        if: always()
+        run: |
+          mkdir -p "$SCTP_INTEROP_DIR/artifacts/manifests"
+          git rev-parse HEAD > "$SCTP_INTEROP_DIR/artifacts/manifests/rtc-commit.txt"
+          rustc --version --verbose > "$SCTP_INTEROP_DIR/artifacts/manifests/rust-toolchain.txt" 2>&1 || true
+          python3 --version > "$SCTP_INTEROP_DIR/artifacts/manifests/python-version.txt" 2>&1 || true
+          clang --version > "$SCTP_INTEROP_DIR/artifacts/manifests/compiler.txt" 2>&1 || true
+          cmake --version > "$SCTP_INTEROP_DIR/artifacts/manifests/cmake-version.txt" 2>&1 || true
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+
+          root = Path(os.environ["SCTP_INTEROP_DIR"])
+          output = root / "artifacts/manifests"
+          files = {
+              Path("Cargo.lock"): "Cargo.lock",
+              root / "usrsctp/build/build.json": "usrsctp-build.json",
+              root / "dcsctp/project/CMakeLists.txt": "dcsctp-CMakeLists.txt",
+              root / "dcsctp/build/CMakeCache.txt": "dcsctp-CMakeCache.txt",
+              root / "dcsctp/self-test.jsonl": "dcsctp-self-test.jsonl",
+          }
+          for source, name in files.items():
+              if source.is_file():
+                  shutil.copyfile(source, output / name)
+          PY
+
+      - name: Upload traces and build manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sctp-interop-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.SCTP_INTEROP_DIR }}/artifacts
+          if-no-files-found: warn
+          retention-days: 14

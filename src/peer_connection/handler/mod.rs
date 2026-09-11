@@ -30,6 +30,7 @@ use crate::peer_connection::state::signaling_state::RTCSignalingState;
 use crate::statistics::accumulator::RTCStatsAccumulator;
 use ::interceptor::Packet;
 use log::warn;
+use sansio::Protocol;
 use shared::TaggedBytesMut;
 use shared::error::{Error, flatten_errs};
 use std::collections::VecDeque;
@@ -189,14 +190,100 @@ impl RTCPeerConnection {
     /// without the other.
     #[doc(hidden)]
     pub fn poll_data_read(&mut self) -> Option<TaggedRTCMessage> {
+        if self.pipeline_context.data_read_outs.is_empty() {
+            self.drain_sctp_reads();
+        }
         self.pipeline_context.data_read_outs.pop_front()
+    }
+
+    /// Continue the read pipeline after SCTP without requiring another network
+    /// packet. Reacquiring the handler for each output accounts for DATA just
+    /// published to the application backlog before the next bounded SCTP drain.
+    /// Lifecycle fences follow the same suffix as DATA, preserving channel reuse.
+    fn drain_sctp_reads(&mut self) {
+        let mut intermediate_routs = VecDeque::new();
+        loop {
+            let message = self.get_sctp_handler().poll_read();
+            let has_sctp_output = message.is_some();
+            if let Some(message) = message {
+                intermediate_routs.push_back(message);
+            }
+            // Interceptors may already have pending media even when SCTP has
+            // no output, so preserve the read pipeline's final empty pass.
+            process_handler_list!(call_macro: process_handler!(self, handler, {
+                while let Some(msg) = intermediate_routs.pop_front() {
+                    if let Err(err) = handler.handle_read(msg) {
+                        warn!("{}.handle_read got error: {}", handler.name(), err);
+                    }
+                }
+                while let Some(msg) = handler.poll_read() {
+                    intermediate_routs.push_back(msg);
+                }
+            }), [get_datachannel_handler, get_srtp_handler, get_interceptor_handler, get_endpoint_handler]);
+            self.publish_application_reads(&mut intermediate_routs);
+            if !has_sctp_output {
+                break;
+            }
+        }
+    }
+
+    fn publish_application_reads(
+        &mut self,
+        intermediate_routs: &mut VecDeque<TaggedRTCMessageInternal>,
+    ) {
+        // Finally, put intermediate_routs into RTCPeerConnection's routs
+        while let Some(msg) = intermediate_routs.pop_front() {
+            let rtc_message = match msg.message {
+                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(application_message)) => {
+                    if let DataChannelEvent::Message(data_channel_message) =
+                        application_message.data_channel_event
+                    {
+                        Some(RTCMessage::DataChannelMessage(
+                            application_message.data_channel_id,
+                            data_channel_message,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+                RTCMessageInternal::Rtp(RTPMessage::TrackPacket(track_packet)) => {
+                    match track_packet.packet {
+                        Packet::Rtp(packet) => {
+                            Some(RTCMessage::RtpPacket(track_packet.track_id, packet))
+                        }
+                        Packet::Rtcp(packet) => {
+                            Some(RTCMessage::RtcpPacket(track_packet.track_id, packet))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(rtc_message) = rtc_message {
+                // The instant travels with the message: the application learns when the packet
+                // was observed at the socket, not when it happened to drain it.
+                let tagged = TaggedRTCMessage {
+                    now: msg.now,
+                    message: rtc_message,
+                };
+                // Routed by kind, so a caller can decline data-channel output — the only way
+                // to apply SCTP back-pressure — without also declining media.
+                match &tagged.message {
+                    RTCMessage::DataChannelMessage(..) => {
+                        self.pipeline_context.data_read_outs.push_back(tagged)
+                    }
+                    _ => self.pipeline_context.media_read_outs.push_back(tagged),
+                }
+            }
+        }
     }
 
     pub(crate) fn get_sctp_handler(&mut self) -> SctpHandler<'_> {
         // The SCTP handler bounds how much it pulls out of the reassembly queues against what
         // the application has not yet consumed. That backlog lives here, not in the handler's
-        // own `read_outs` — the pipeline empties that within a single `handle_read` — and it
-        // is data-channel output only, so unrelated media cannot throttle SCTP.
+        // own `read_outs` — the read pipeline forwards those immediately — and it is
+        // data-channel output only, so unrelated media cannot throttle SCTP.
         let downstream_backlog = self.pipeline_context.data_read_outs.len();
         SctpHandler::new(
             &mut self.pipeline_context.sctp_handler_context,
@@ -258,7 +345,7 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             message: RTCMessageInternal::Raw(msg.message),
         });
 
-        for_each_handler!(forward: process_handler!(self, handler, {
+        process_handler_list!(call_macro: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
                 if let Err(err) = handler.handle_read(msg) {
                     warn!("{}.handle_read got error: {}", handler.name(), err);
@@ -267,59 +354,25 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
             while let Some(msg) = handler.poll_read() {
                 intermediate_routs.push_back(msg);
             }
-        }));
+        }), [get_demuxer_handler, get_ice_handler, get_dtls_handler]);
 
-        // Finally, put intermediate_routs into RTCPeerConnection's routs
-        while let Some(msg) = intermediate_routs.pop_front() {
-            let rtc_message = match msg.message {
-                RTCMessageInternal::Dtls(DTLSMessage::DataChannel(application_message)) => {
-                    if let DataChannelEvent::Message(data_channel_message) =
-                        application_message.data_channel_event
-                    {
-                        Some(RTCMessage::DataChannelMessage(
-                            application_message.data_channel_id,
-                            data_channel_message,
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                RTCMessageInternal::Rtp(RTPMessage::TrackPacket(track_packet)) => {
-                    match track_packet.packet {
-                        Packet::Rtp(packet) => {
-                            Some(RTCMessage::RtpPacket(track_packet.track_id, packet))
-                        }
-                        Packet::Rtcp(packet) => {
-                            Some(RTCMessage::RtcpPacket(track_packet.track_id, packet))
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(rtc_message) = rtc_message {
-                // The instant travels with the message: the application learns when the packet
-                // was observed at the socket, not when it happened to drain it.
-                let tagged = TaggedRTCMessage {
-                    now: msg.now,
-                    message: rtc_message,
-                };
-                // Routed by kind, so a caller can decline data-channel output — the only way
-                // to apply SCTP back-pressure — without also declining media.
-                match &tagged.message {
-                    RTCMessage::DataChannelMessage(..) => {
-                        self.pipeline_context.data_read_outs.push_back(tagged)
-                    }
-                    _ => self.pipeline_context.media_read_outs.push_back(tagged),
+        {
+            let mut handler = self.get_sctp_handler();
+            while let Some(msg) = intermediate_routs.pop_front() {
+                if let Err(err) = handler.handle_read(msg) {
+                    warn!("{}.handle_read got error: {}", handler.name(), err);
                 }
             }
         }
+        self.drain_sctp_reads();
 
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+        if self.pipeline_context.data_read_outs.is_empty() {
+            self.drain_sctp_reads();
+        }
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
             self.pipeline_context.media_read_outs.front(),

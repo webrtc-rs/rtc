@@ -68,6 +68,8 @@ pub(crate) struct TimerTable {
     data: [Option<Instant>; TIMER_COUNT],
     retrans: [usize; TIMER_COUNT],
     max_retrans: [usize; TIMER_COUNT],
+    reconfig_interval: Option<u64>,
+    reconfig_in_progress: bool,
 }
 
 impl TimerTable {
@@ -98,7 +100,13 @@ impl TimerTable {
     }
 
     pub fn start(&mut self, timer: Timer, now: Instant, interval: u64) {
-        let interval = if timer == Timer::Ack {
+        // T3 uses the destination's current RTO, which already includes backoff.
+        // Successful DATA acknowledgments reset its error counter independently.
+        let interval = if timer == Timer::Reconfig {
+            // RFC 6525 5.1.1: double this request's own interval, independently
+            // of changes to the DATA RTO caused by T3 or fresh RTT measurements.
+            *self.reconfig_interval.get_or_insert(interval)
+        } else if matches!(timer, Timer::Ack | Timer::T3RTX) {
             interval
         } else {
             calculate_next_timeout(interval, self.retrans[timer as usize])
@@ -108,26 +116,48 @@ impl TimerTable {
         self.data[timer as usize] = Some(time);
     }
 
-    /// Restarts the timer if the current instant is none or elapsed.
-    pub fn restart_if_stale(&mut self, timer: Timer, now: Instant, interval: u64) {
-        if let Some(current) = self.data[timer as usize]
-            && current >= now
-        {
-            return;
+    /// Start an idle timer without hiding an unhandled expiration. A due
+    /// deadline stays armed until timeout processing consumes it, unless an
+    /// explicit protocol restart first clears it (for T3, acknowledgment of
+    /// the earliest outstanding TSN under RFC 9260 section 6.3.2 R3).
+    pub fn start_if_idle(&mut self, timer: Timer, now: Instant, interval: u64) {
+        if self.data[timer as usize].is_none() {
+            self.start(timer, now, interval);
         }
-
-        self.start(timer, now, interval);
     }
 
     pub fn stop(&mut self, timer: Timer) {
         self.data[timer as usize] = None;
+        self.reset_retrans(timer);
+        if timer == Timer::Reconfig {
+            self.reconfig_interval = None;
+            self.reconfig_in_progress = false;
+        }
+    }
+
+    pub fn restart_reconfig_in_progress(&mut self, now: Instant, interval: u64) {
+        self.reset_retrans(Timer::Reconfig);
+        self.reconfig_in_progress = true;
+        self.start(Timer::Reconfig, now, interval);
+    }
+
+    pub fn is_reconfig_in_progress(&self) -> bool {
+        self.reconfig_in_progress
+    }
+
+    pub fn reset_retrans(&mut self, timer: Timer) {
         self.retrans[timer as usize] = 0;
     }
 
     pub fn is_expired(&mut self, timer: Timer, after: Instant) -> (bool, bool, usize) {
         let expired = self.data[timer as usize].is_some_and(|x| x <= after);
         let mut failure = false;
-        if expired {
+        if expired && timer == Timer::Reconfig {
+            self.reconfig_interval = self
+                .reconfig_interval
+                .map(|interval| calculate_next_timeout(interval, 1));
+        }
+        if expired && !(timer == Timer::Reconfig && self.reconfig_in_progress) {
             self.retrans[timer as usize] += 1;
             if self.retrans[timer as usize] > self.max_retrans[timer as usize] {
                 failure = true;
@@ -194,6 +224,13 @@ impl RtoManager {
         self.rto
     }
 
+    /// RFC 9260 6.3.3 E2: retain backoff until a new RTT measurement updates RTO.
+    pub(crate) fn backoff(&mut self) {
+        if !self.no_update {
+            self.rto = self.rto.saturating_mul(2).min(RTO_MAX);
+        }
+    }
+
     /// reset resets the RTO variables to the initial values.
     pub(crate) fn reset(&mut self) {
         if self.no_update {
@@ -228,6 +265,20 @@ fn calculate_next_timeout(rto: u64, n_rtos: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rto_backoff_respects_pinned_rto() {
+        let mut rto = RtoManager::new();
+        rto.set_rto(1000, true);
+        rto.backoff();
+        assert_eq!(1000, rto.get_rto());
+        rto.set_rto(1000, false);
+        rto.backoff();
+        assert_eq!(2000, rto.get_rto());
+        rto.set_rto(RTO_MAX - 1, false);
+        rto.backoff();
+        assert_eq!(RTO_MAX, rto.get_rto());
+    }
 
     #[test]
     fn rto_manager_uses_rfc9260_initial_rto() {
