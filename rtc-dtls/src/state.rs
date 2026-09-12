@@ -282,6 +282,13 @@ impl State {
         self.cipher_suite.as_deref()
     }
 
+    /// Whether the negotiated cipher suite authenticates with a pre-shared key.
+    pub fn is_cipher_suite_psk(&self) -> bool {
+        self.cipher_suite
+            .as_ref()
+            .is_some_and(|cipher_suite| cipher_suite.is_psk())
+    }
+
     /// Exports `length` bytes of keying material from an established session, as defined in
     /// RFC 5705.
     ///

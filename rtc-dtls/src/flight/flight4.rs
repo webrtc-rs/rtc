@@ -290,7 +290,9 @@ impl Flight for Flight4 {
                 }
 
                 let mut pre_master_secret = vec![];
-                if let Some(local_psk_callback) = &cfg.local_psk_callback {
+                if state.is_cipher_suite_psk()
+                    && let Some(local_psk_callback) = &cfg.local_psk_callback
+                {
                     let psk = match local_psk_callback(&client_key_exchange.identity_hint) {
                         Ok(psk) => psk,
                         Err(err) => {
@@ -449,6 +451,12 @@ impl Flight for Flight4 {
             ));
         };
 
+        // A psk suite is sent no CertificateRequest (see `generate`), so skip `client_auth`
+        // rather than fail it for a certificate it was never asked for.
+        if state.is_cipher_suite_psk() {
+            return Ok(Box::new(Flight6 {}) as Box<dyn Flight>);
+        }
+
         match cfg.client_auth {
             ClientAuthType::RequireAnyClientCert => {
                 trace!(
@@ -529,7 +537,7 @@ impl Flight for Flight4 {
             }));
         }
 
-        if cfg.local_psk_callback.is_none() {
+        if !state.is_cipher_suite_psk() {
             extensions.extend_from_slice(&[
                 Extension::SupportedEllipticCurves(ExtensionSupportedEllipticCurves {
                     elliptic_curves: cfg.local_named_curves.clone(),
@@ -564,7 +572,7 @@ impl Flight for Flight4 {
             reset_local_sequence_number: false,
         }];
 
-        if cfg.local_psk_callback.is_none() {
+        if !state.is_cipher_suite_psk() {
             let certificate = match cfg.get_certificate(&cfg.server_name) {
                 Ok(cert) => cert,
                 Err(err) => {
