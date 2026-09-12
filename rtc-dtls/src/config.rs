@@ -367,6 +367,18 @@ pub enum ExtendedMasterSecretType {
 }
 
 impl ConfigBuilder {
+    fn offered_cipher_suites(&self, is_client: bool) -> Result<Vec<Box<dyn CipherSuite>>> {
+        // a client offers one family or the other, while a server can only offer them if
+        // it actually holds a certificate.
+        let exclude_certificate = if is_client {
+            self.psk.is_some()
+        } else {
+            self.certificates.is_empty()
+        };
+
+        parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), exclude_certificate)
+    }
+
     fn validate(&self, is_client: bool) -> Result<()> {
         if is_client && self.psk.is_some() && self.psk_identity_hint.is_none() {
             return Err(Error::ErrPskAndIdentityMustBeSetForClient);
@@ -376,7 +388,8 @@ impl ConfigBuilder {
             return Err(Error::ErrServerMustHaveCertificate);
         }
 
-        if !self.certificates.is_empty() && self.psk.is_some() {
+        // A server may hold both and let each handshake pick
+        if is_client && !self.certificates.is_empty() && self.psk.is_some() {
             return Err(Error::ErrPskAndCertificate);
         }
 
@@ -384,7 +397,7 @@ impl ConfigBuilder {
             return Err(Error::ErrIdentityNoPsk);
         }
 
-        parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?;
+        self.offered_cipher_suites(is_client)?;
 
         Ok(())
     }
@@ -405,12 +418,12 @@ impl ConfigBuilder {
         })?;
         self.validate(is_client)?;
 
-        let mut local_cipher_suites: Vec<CipherSuiteId> =
-            parse_cipher_suites(&self.cipher_suites, self.psk.is_none(), self.psk.is_some())?
-                .iter()
-                .map(|cs| cs.id())
-                .filter(|id| id.supported_by(crypto_provider.crypto()))
-                .collect();
+        let mut local_cipher_suites: Vec<CipherSuiteId> = self
+            .offered_cipher_suites(is_client)?
+            .iter()
+            .map(|cs| cs.id())
+            .filter(|id| id.supported_by(crypto_provider.crypto()))
+            .collect();
         if local_cipher_suites.is_empty() {
             return Err(Error::ErrNoAvailableCipherSuites);
         }
