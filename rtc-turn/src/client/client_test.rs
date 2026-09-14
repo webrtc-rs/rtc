@@ -475,6 +475,105 @@ fn test_zero_lifetime_relay_does_not_freeze_its_deadline() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_refresh_response_reschedules_shorter_lifetime_from_response_time() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: None,
+        },
+        test_crypto_provider(),
+    )?;
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            None,
+        ),
+    );
+    assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(120)));
+
+    let mut response = Message::new();
+    response.build(&[
+        Box::new(TransactionId::new()),
+        Box::new(MessageType::new(METHOD_REFRESH, CLASS_SUCCESS_RESPONSE)),
+        Box::new(crate::proto::lifetime::Lifetime(Duration::from_secs(60))),
+    ])?;
+    client
+        .relay(relayed_addr)?
+        .handle_refresh_allocation_response(t(30), response)?;
+
+    assert_eq!(
+        client.relay(relayed_addr)?.poll_timeout(),
+        Some(t(60)),
+        "a shorter server lifetime must move the allocation refresh deadline earlier"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_refresh_response_reschedule_applies_interval_cap() -> Result<()> {
+    let base = Instant::now();
+    let t = |secs| base + Duration::from_secs(secs);
+    let udp_socket = UdpSocket::bind("0.0.0.0:0")?;
+    let mut client = Client::new(
+        ClientConfig {
+            stun_serv_addr: String::new(),
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: udp_socket.local_addr()?,
+            transport_protocol: TransportProtocol::UDP,
+            username: "user".to_owned(),
+            password: "pass".to_owned(),
+            realm: "realm".to_owned(),
+            software: "TEST SOFTWARE".to_owned(),
+            rto_in_ms: 0,
+            allocation_refresh_interval_cap: Some(Duration::from_secs(20)),
+        },
+        test_crypto_provider(),
+    )?;
+    let relayed_addr: RelayedAddr = "127.0.0.1:50000".parse().unwrap();
+    client.relays.insert(
+        relayed_addr,
+        RelayState::new(
+            t(0),
+            relayed_addr,
+            vec![0u8; 16],
+            Nonce::new(ATTR_NONCE, "nonce".to_owned()),
+            Duration::from_secs(600),
+            Some(Duration::from_secs(20)),
+        ),
+    );
+
+    let mut response = Message::new();
+    response.build(&[
+        Box::new(TransactionId::new()),
+        Box::new(MessageType::new(METHOD_REFRESH, CLASS_SUCCESS_RESPONSE)),
+        Box::new(crate::proto::lifetime::Lifetime(Duration::from_secs(60))),
+    ])?;
+    client
+        .relay(relayed_addr)?
+        .handle_refresh_allocation_response(t(30), response)?;
+
+    assert_eq!(client.relay(relayed_addr)?.poll_timeout(), Some(t(50)));
+    Ok(())
+}
+
 /// A server confirming deallocation must leave no relay behind.
 ///
 /// `close()` refreshes the allocation with `LIFETIME=0`; the server echoes that back to confirm
@@ -531,7 +630,7 @@ fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
 
     client
         .relay(relayed_addr)?
-        .handle_refresh_allocation_response(res)?;
+        .handle_refresh_allocation_response(t(1), res)?;
 
     assert!(
         !client.relays.contains_key(&relayed_addr),

@@ -358,7 +358,7 @@ impl Client {
                             relayed_addr,
                             client: self,
                         };
-                        relay.handle_refresh_allocation_response(msg)?;
+                        relay.handle_refresh_allocation_response(now, msg)?;
                     }
                 }
                 METHOD_CHANNEL_BIND => {

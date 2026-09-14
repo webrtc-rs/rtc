@@ -427,7 +427,11 @@ impl Relay<'_> {
         }
     }
 
-    pub(super) fn handle_refresh_allocation_response(&mut self, res: Message) -> Result<()> {
+    pub(super) fn handle_refresh_allocation_response(
+        &mut self,
+        now: Instant,
+        res: Message,
+    ) -> Result<()> {
         let mut released = false;
         let result = if let Some(relay) = self.client.relays.get_mut(&self.relayed_addr) {
             if res.typ.class == CLASS_ERROR_RESPONSE {
@@ -448,6 +452,10 @@ impl Relay<'_> {
                 updated_lifetime.get_from(&res)?;
 
                 relay.lifetime = updated_lifetime.0;
+                relay.refresh_alloc_timer = now.add(allocation_refresh_interval(
+                    relay.lifetime,
+                    relay.allocation_refresh_interval_cap,
+                ));
                 debug!("updated lifetime: {} seconds", relay.lifetime.as_secs());
 
                 // A zero lifetime is the server confirming deallocation — the reply to the
