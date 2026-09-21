@@ -755,3 +755,80 @@ fn test_requested_transport_defaults_to_udp() {
         TransportProtocol::UDP
     );
 }
+
+/// Over a reliable transport a request is sent once and answered or timed out as a whole: TCP
+/// already retransmits, and repeating the request on top of it only sends the server duplicates
+/// (RFC 8489 §6.2.2). The wait is Ti, 39.5 seconds, not the UDP schedule's ~8.
+#[test]
+fn test_a_request_over_tcp_is_sent_once_and_times_out_at_ti() -> Result<()> {
+    let start = Instant::now();
+    let mut client = Client::new(
+        ClientConfig {
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: "127.0.0.1:50000".parse().unwrap(),
+            transport_protocol: TransportProtocol::TCP,
+            ..Default::default()
+        },
+        test_crypto_provider(),
+    )?;
+    client.allocate(start)?;
+    // allocate() returns the id its authenticated retry will use; the timeout names the
+    // request that was actually sent, so take the id from the wire.
+    let sent = client.poll_write().expect("the request goes out once");
+    let mut request = Message::new();
+    request.raw = sent.message.to_vec();
+    request.decode()?;
+    let tid = request.transaction_id;
+
+    // Walk every deadline the client asks for, up to just short of Ti.
+    let ti = Duration::from_millis(39_500);
+    let mut sends = 0;
+    while let Some(deadline) = client.poll_timeout() {
+        if deadline >= start + ti {
+            break;
+        }
+        client.handle_timeout(deadline)?;
+        while client.poll_write().is_some() {
+            sends += 1;
+        }
+    }
+    assert_eq!(sends, 0, "nothing is retransmitted over TCP");
+    assert!(
+        client.poll_event().is_none(),
+        "no timeout before Ti has passed"
+    );
+
+    client.handle_timeout(start + ti)?;
+    assert!(client.poll_write().is_none(), "not even at the deadline");
+    assert!(
+        matches!(client.poll_event(), Some(Event::TransactionTimeout(id)) if id == tid),
+        "at Ti the request has timed out"
+    );
+    Ok(())
+}
+
+/// UDP keeps its schedule: the first retransmission is due one RTO after the request.
+#[test]
+fn test_a_request_over_udp_is_still_retransmitted() -> Result<()> {
+    let start = Instant::now();
+    let mut client = Client::new(
+        ClientConfig {
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: "127.0.0.1:50000".parse().unwrap(),
+            transport_protocol: TransportProtocol::UDP,
+            ..Default::default()
+        },
+        test_crypto_provider(),
+    )?;
+    client.allocate(start)?;
+    assert!(client.poll_write().is_some());
+    let first = client.poll_timeout().expect("a retransmit deadline");
+    assert!(
+        first < start + Duration::from_secs(1),
+        "{:?}",
+        first - start
+    );
+    client.handle_timeout(first)?;
+    assert!(client.poll_write().is_some(), "UDP retransmits");
+    Ok(())
+}
