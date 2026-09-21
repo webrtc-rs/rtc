@@ -17,6 +17,7 @@ fn create_listening_test_client(rto_in_ms: u64) -> Result<(UdpSocket, Client)> {
             turn_serv_addr: String::new(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: String::new(),
             password: String::new(),
             realm: String::new(),
@@ -39,6 +40,7 @@ fn create_listening_test_client_with_stun_serv() -> Result<(UdpSocket, Client)> 
             turn_serv_addr: String::new(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: String::new(),
             password: String::new(),
             realm: String::new(),
@@ -216,6 +218,7 @@ fn test_relay_refresh_timers_run_on_injected_time() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -297,6 +300,7 @@ fn test_allocation_refresh_interval_cap_is_applied() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -360,6 +364,7 @@ fn test_overdue_relay_refreshes_are_rescheduled_from_now() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -427,6 +432,7 @@ fn test_zero_lifetime_relay_does_not_freeze_its_deadline() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -486,6 +492,7 @@ fn test_refresh_response_reschedules_shorter_lifetime_from_response_time() -> Re
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -538,6 +545,7 @@ fn test_refresh_response_reschedule_applies_interval_cap() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -596,6 +604,7 @@ fn test_zero_lifetime_response_drops_the_relay() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -664,6 +673,7 @@ fn test_zero_lifetime_allocate_response_is_an_error() -> Result<()> {
             turn_serv_addr: "127.0.0.1:3478".to_owned(),
             local_addr: udp_socket.local_addr()?,
             transport_protocol: TransportProtocol::UDP,
+            requested_transport: TransportProtocol::UDP,
             username: "user".to_owned(),
             password: "pass".to_owned(),
             realm: "realm".to_owned(),
@@ -703,4 +713,45 @@ fn test_zero_lifetime_allocate_response_is_an_error() -> Result<()> {
             panic!("expected AllocateError for a zero-lifetime Allocate response, got {other:?}")
         }
     }
+}
+
+/// Over a TCP connection to the server the relay is still UDP: `REQUESTED-TRANSPORT` names what
+/// the allocation relays, not how the client reaches the server (RFC 8656 §7.1). Deriving it from
+/// the control transport asks a TCP client's server for an RFC 6062 TCP allocation instead.
+#[test]
+fn test_allocate_over_tcp_requests_a_udp_relay() -> Result<()> {
+    let mut client = Client::new(
+        ClientConfig {
+            turn_serv_addr: "127.0.0.1:3478".to_owned(),
+            local_addr: "127.0.0.1:50000".parse().unwrap(),
+            transport_protocol: TransportProtocol::TCP,
+            requested_transport: TransportProtocol::UDP,
+            ..Default::default()
+        },
+        test_crypto_provider(),
+    )?;
+    client.allocate(Instant::now())?;
+
+    let transmit = client.poll_write().expect("an Allocate request");
+    assert_eq!(
+        transmit.transport.transport_protocol,
+        TransportProtocol::TCP,
+        "the request itself still travels over TCP"
+    );
+    let mut msg = Message::new();
+    msg.raw = transmit.message.to_vec();
+    msg.decode()?;
+    let mut requested = RequestedTransport::default();
+    requested.get_from(&msg)?;
+    assert_eq!(requested.protocol, PROTO_UDP, "the relay is UDP");
+    Ok(())
+}
+
+/// Existing callers that set nothing keep asking for what they always got.
+#[test]
+fn test_requested_transport_defaults_to_udp() {
+    assert_eq!(
+        ClientConfig::default().requested_transport,
+        TransportProtocol::UDP
+    );
 }

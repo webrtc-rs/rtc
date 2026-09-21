@@ -29,7 +29,8 @@
 //! let config = ClientConfig {
 //!     turn_serv_addr: "turn.example.com:3478".to_owned(),
 //!     local_addr: "0.0.0.0:0".parse().unwrap(),
-//!     transport_protocol: TransportProtocol::UDP,
+//!     transport_protocol: TransportProtocol::UDP, // how the server is reached
+//!     requested_transport: TransportProtocol::UDP, // what the allocation relays
 //!     username: "user".to_owned(),
 //!     password: "pass".to_owned(),
 //!     realm: "example.com".to_owned(),
