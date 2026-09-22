@@ -241,25 +241,15 @@ impl RTCPeerConnection {
             &mut self.pipeline_context.stats,
         )
     }
-}
 
-impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
-    type Rout = TaggedRTCMessage;
-    type Wout = TaggedBytesMut;
-    type Eout = RTCPeerConnectionEvent;
-    type Error = Error;
-    type Time = Instant;
+    fn pump_reads(&mut self) {
 
-    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
-        let mut intermediate_routs = VecDeque::new();
-        intermediate_routs.push_back(TaggedRTCMessageInternal {
-            now: msg.now,
-            transport: msg.transport,
-            message: RTCMessageInternal::Raw(msg.message),
-        });
+        let mut intermediate_routs = VecDeque::<TaggedRTCMessageInternal>::new();
 
+        use sansio::Protocol;
         for_each_handler!(forward: process_handler!(self, handler, {
             while let Some(msg) = intermediate_routs.pop_front() {
+                warn!("handler {} pop_front: {:?}", handler.name(), msg.message); // TEMP
                 if let Err(err) = handler.handle_read(msg) {
                     warn!("{}.handle_read got error: {}", handler.name(), err);
                 }
@@ -315,11 +305,31 @@ impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCP
                 }
             }
         }
+    }
+}
 
+impl sansio::Protocol<TaggedBytesMut, TaggedRTCMessage, TaggedRTCEvent> for RTCPeerConnection {
+    type Rout = TaggedRTCMessage;
+    type Wout = TaggedBytesMut;
+    type Eout = RTCPeerConnectionEvent;
+    type Error = Error;
+    type Time = Instant;
+
+    fn handle_read(&mut self, msg: TaggedBytesMut) -> Result<(), Self::Error> {
+        let msg = TaggedRTCMessageInternal {
+            now: msg.now,
+            transport: msg.transport,
+            message: RTCMessageInternal::Raw(msg.message),
+        };
+        self.get_demuxer_handler().handle_read(msg)?;
+        self.pump_reads();
         Ok(())
     }
 
     fn poll_read(&mut self) -> Option<Self::Rout> {
+
+        self.pump_reads();
+
         if let (Some(data), Some(media)) = (
             self.pipeline_context.data_read_outs.front(),
             self.pipeline_context.media_read_outs.front(),
